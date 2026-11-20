@@ -137,8 +137,9 @@ export function mergeWaitsOn(
   if (thread.status === "stopped") return "its thread, which is stopped";
   if (pr === null || pr.state !== "open") return "its PR";
   if (thread.submitting !== null || thread.reviewing !== null) return "its review";
-  // Changes the round limit held wait on you to decide, as no review comes until then.
-  if (thread.verdict !== "approve" && thread.held !== null)
+  // Changes the round limit held wait on you to decide, as no review comes until then. Once you
+  // decided, such as by arming this very merge, it waits on an approval like any other round.
+  if (thread.verdict !== "approve" && thread.held !== null && !thread.limit_decided)
     return "a decision past its round limit";
   if (thread.verdict !== "approve") return "an approval";
   // A push Skelcrew didn't review, such as someone else's, is never merged unseen.

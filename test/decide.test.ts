@@ -902,6 +902,9 @@ test("a merge when ready waits until the approved head is green and merges clean
   expect(mergeWaitsOn({ ...ready, verdict: "changes", held: "Fix it" }, green, head)).toBe(
     "a decision past its round limit",
   );
+  // Once you decided, such as by arming this merge, it waits on an approval again.
+  const decided = { ...ready, verdict: "changes" as const, held: "Fix it", limit_decided: true };
+  expect(mergeWaitsOn(decided, green, head)).toBe("an approval");
   // A conflict or a failing check needs the builder, and running checks only time.
   expect(mergeWaitsOn(ready, pr({ ...green, conflicts: true }), head)).toBe(
     "its conflict with main to be fixed",
