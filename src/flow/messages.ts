@@ -685,8 +685,12 @@ async function typeNotes(
       const back = typeof host === "string" && scrolledBack(host, id);
       return back ? "the human has scrolled back in it" : "";
     };
-    // dropEndNotes cancels typing too, should it drop a note in the moment of the paste.
+    // dropEndNotes and dropLeadNotes cancel typing too, should they drop a note in the moment of
+    // the paste. A note they dropped while the lead was looked up above had no typing to cancel
+    // yet, so what would be said is looked at again once they can cancel it. A host with its own
+    // transport is never asked the hold's question, and would type that note in.
     for (const { id } of now.notes) typingNote.set(id, cancel);
+    if (batch().text !== now.text) cancel.abort();
     let typed: Typed;
     try {
       // However long the lead stays busy, the notes wait for it, as they must reach it.
@@ -720,6 +724,26 @@ export function dropEndNotes(db: Database, folder: string): void {
     .parse(db.query("SELECT id FROM notes WHERE ended = ?").all(folder));
   for (const { id } of ids) typingNote.get(id)?.abort();
   db.run("DELETE FROM notes WHERE ended = ?", [folder]);
+}
+
+// Drops the notes still waiting for a repository's lead whose text starts with `start`, and
+// cancels the typing of any under way. A host with its own transport may hold one handed to it
+// already, waiting for the lead to be idle: cancelling ends the host's command, so it types
+// nothing after. The rest of what was being typed goes in on the next pass without them.
+export function dropLeadNotes(
+  db: Database,
+  repository: { owner: string; repo: string },
+  start: string,
+): void {
+  const { owner, repo } = repository;
+  const sql = "SELECT id FROM notes WHERE owner = ? AND repo = ? AND substr(text, 1, ?) = ?";
+  const ids = z
+    .array(z.object({ id: z.number() }))
+    .parse(db.query(sql).all(owner, repo, start.length, start));
+  for (const { id } of ids) {
+    typingNote.get(id)?.abort();
+    db.run("DELETE FROM notes WHERE id = ?", [id]);
+  }
 }
 
 // The note typing under way for each repository's lead, by its owner/name.

@@ -148,7 +148,7 @@ export function tellOldKeys(repository: string | undefined): void {
     ["max_rounds", "rounds:"],
   ];
   // A role's line is old only for its harness and model. Its other settings stay there, such
-  // as lead: { may_arm_merges: true } and the reviewer's fallback.
+  // as lead: { can_merge: false } and the reviewer's fallback.
   const isOld = (value: unknown) => !isMapping(value) || "harness" in value || "model" in value;
   for (const [where, settings] of places)
     for (const [old, now] of replaced)
@@ -185,7 +185,7 @@ function readYaml(file: string): object {
   }
 }
 
-// Returns whether you let the lead arm a merge when ready when you ask it to in the
-// conversation. Only your config.yaml can say so, so a repository's files never grant it. Off
-// unless you turn it on. Throws when your config isn't valid.
-export const leadMayArmMerges = (): boolean => readSettings(["leadArms"]).leadArms;
+// Returns whether the lead may arm a merge, when ready or without Skelcrew's approval, when you
+// ask it to in the conversation. Only your config.yaml can say so, so a repository's files never
+// grant it. On unless you turn it off. Throws when your config isn't valid.
+export const leadCanMerge = (): boolean => readSettings(["leadCanMerge"]).leadCanMerge;

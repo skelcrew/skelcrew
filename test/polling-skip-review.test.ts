@@ -17,6 +17,7 @@ import {
   env,
   home,
   issue12,
+  leadMerging,
   leadSocket,
   leadTyped,
   login,
@@ -67,13 +68,14 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
         error:
           "app-12 changed since you said y, so it won't merge by itself: run sc merge --skip-review app-12 again",
       });
-      // Builders never can, and the lead needs your leave.
+      // Builders never can, and the lead can't once you turn that off.
+      leadMerging("lead: { can_merge: false }\n");
       expect(await askOn(builderSocket(), arming)).toEqual({
         error: "the daemon doesn't know that request",
       });
       expect(await askOn(leadSocket(), { ...arming, asked: "force merge it" })).toEqual({
         error:
-          "the human hasn't let you arm a merge: ask them to run sc merge --skip-review in their own terminal",
+          "the human turned off your arming merges: ask them to run sc merge --skip-review in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml",
       });
       expect(thread().merge_plan).toBeNull();
 
@@ -108,7 +110,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       expect(merges()).toEqual([]);
     }, 90_000);
 
-    test("a lead you let arm merges merges without approval with your words, and files its findings once", async () => {
+    test("a lead merges without approval with your words, and files its findings once", async () => {
       const head = await changesApp12();
       const words = "Force merge #7, the edge cases\ncan wait.";
       const file = join(home, "asked.txt");
@@ -118,10 +120,11 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
           [process.execPath, main, "merge", "--skip-review", "#7", "--asked-file", file],
           { env: { ...env(), SKELCREW_SOCKET: leadSocket() }, stdout: "pipe", stderr: "pipe" },
         );
-      expect(asLead().stderr.toString()).toContain("the human hasn't let you arm a merge");
+      leadMerging("lead: { can_merge: false }\n");
+      expect(asLead().stderr.toString()).toContain("the human turned off your arming merges");
       expect(thread().merge_plan).toBeNull();
-      const config = join(home, ".config", "skelcrew", "config.yaml");
-      writeFileSync(config, `${read(config)}lead: { may_arm_merges: true }\n`);
+      // The setting's old name still turns it on.
+      leadMerging("lead: { may_arm_merges: true }\n");
       expect(
         await askOn(leadSocket(), { command: "merge skip review", repo: "app", task: "12" }),
       ).toEqual({

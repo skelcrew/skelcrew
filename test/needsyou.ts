@@ -159,7 +159,8 @@ export const skel = (args: string[], more: Record<string, string> = {}) =>
 export const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
 // Puts simon/app, or another of simon's repositories, on the fake GitHub and tells Skelcrew about
-// it.
+// it. Its lead had a conversation before, so it starts with no opening turn, which would be one
+// more paste among those the tests count.
 export function addApp(name = "app"): void {
   const work = join(home, "work", name);
   mkdirSync(work, { recursive: true });
@@ -170,7 +171,7 @@ export function addApp(name = "app"): void {
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", `${name}.git`));
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}]);
+openDb().run("INSERT INTO repositories (name, owner, repo, lead_session) VALUES (?, 'simon', ?, ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}, crypto.randomUUID()]);
 openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());

@@ -21,6 +21,7 @@ import {
   headOf,
   home,
   issue12,
+  leadMerging,
   leadSocket,
   leadTyped,
   login,
@@ -143,7 +144,9 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
         stderr: "pipe",
       });
       expect(piped.stderr.toString()).toContain("run it at your own terminal");
-      // The builder's socket doesn't take it at all, and the lead's refuses it unless you let it.
+      // The builder's socket doesn't take it at all, and the lead's refuses it once you turn
+      // that off.
+      leadMerging("lead: { can_merge: false }\n");
       const request = { command: "merge when ready", repo: "app", task: "12" };
       const unknown = { error: "the daemon doesn't know that request" };
       expect(await askOn(leadSocket(), { ...request, asked: "merge it" })).toEqual({
@@ -197,9 +200,9 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       );
     }, 60_000);
 
-    // You let the lead arm merges in your own config. It then arms one with your words, and
-    // nothing else changes: the merge still waits for the approved head to be green.
-    test("a lead you let arm merges arms one with your words, and builders still can't", async () => {
+    // The lead may arm merges unless your own config turns it off. It arms one with your words,
+    // and nothing else changes: the merge still waits for the approved head to be green.
+    test("a lead arms a merge with your words unless you turn it off, and builders still can't", async () => {
       await approvedApp12();
       // Your words as you wrote them: over lines, with a double space, quotes, what a shell would
       // run, and lines that were once heredoc delimiters.
@@ -214,12 +217,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
           [process.execPath, main, "merge", "--when-ready", "#7", "--asked-file", file],
           { env: { ...env(), SKELCREW_SOCKET: leadSocket() }, stdout: "pipe", stderr: "pipe" },
         );
-      // Off by default: the lead is refused, and nothing is armed.
+      // Turned off, the lead is refused, and nothing is armed.
+      leadMerging("lead: { can_merge: false }\n");
       expect(asLead().stderr.toString()).toContain(notLet);
       expect(thread().merge_plan).toBeNull();
 
-      const config = join(home, ".config", "skelcrew", "config.yaml");
-      writeFileSync(config, `${read(config)}lead: { may_arm_merges: true }\n`);
+      // With no line, it is on.
+      leadMerging("");
       // Builders stay refused, the lead must give your words, and --asked-file is never yours.
       const request = { command: "merge when ready", repo: "app", task: "12", asked: words };
       expect(await askOn(builderSocket(), request)).toEqual({
