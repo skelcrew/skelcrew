@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { printThreads, type ThreadRow } from "../src/flow/list.ts";
+import { shownOf } from "../src/flow/marks.ts";
 import { type Status, threadWord } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 import { draw as drawWith, noticeLines } from "../src/screen/layout.ts";
@@ -1062,6 +1063,19 @@ test("a round that failed before its review answered reads as a failed review", 
 test("past the round limit it stays so while the builder submits again", () => {
   expect(word({ ...needing, rounds: 4, submitting: "the fix" })).toBe("round limit");
   expect(word({ ...needing, rounds: 4, reviewing: "abc" })).toBe("round limit");
+});
+
+// A thread past the round limit can still be approved, such as once you rerun its review. The
+// approval answers the changes the limit held, so it must not keep saying round limit.
+test("an approval past the round limit reads as approved, not as the round limit", () => {
+  const green = { ...needing, verdict: "approve", checks: "passing", ci_passed: true } as const;
+  expect(word({ ...green, rounds: 4 })).toBe("approved");
+  expect(shownOf({ ...state, ...green, rounds: 4 }, 3).mark).toEqual({
+    sign: "●",
+    colour: "green",
+  });
+  // Waiting on CI after it, it needs you for nothing.
+  expect(word({ status: "waiting", verdict: "approve", rounds: 4 })).toBe("checks");
 });
 
 test("approved is only said of a PR whose checks don't say otherwise", () => {

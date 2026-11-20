@@ -137,6 +137,16 @@ test("an approved task whose builder asks a question stays under Ready, marked a
   expect(row?.session).toBe("app-14");
 });
 
+// The default flow gives 3 rounds of changes, so 4 is past the limit. A review run again after it
+// approved, so the task is ready, and the round limit no longer needs you.
+test("a task approved past the round limit is under Ready, not needing you", () => {
+  sql("UPDATE tasks SET rounds = 4 WHERE task = '14';");
+  const row = rows().find((candidate) => candidate.name === "app-14");
+  expect(row).toMatchObject({ part: "ready", says: "approved", needsYou: false });
+  const ready = stageHeadings(rows(), new Set<ListStage>()).find((h) => h.stage === "ready");
+  expect(ready).toMatchObject({ count: 1, needYou: 0 });
+});
+
 test("each stage's heading counts its tasks and those that need you, open or closed", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
   expect(stageHeadings(rows(), new Set<ListStage>(["building"]))).toEqual([
