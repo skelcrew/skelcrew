@@ -63,7 +63,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(read(daemonLog())).not.toContain("the lead exited");
   });
 
-  test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
+  test("a PR's checks are saved for the list, without Skelcrew's own review check", async () => {
     await approvedApp12();
     await morePolls();
     pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });

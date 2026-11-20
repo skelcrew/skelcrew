@@ -120,6 +120,19 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   await until(() => acted.includes("start simon/app 31"), "the daemon to start app-31");
 });
 
+// The notice comes from the database, which the daemon writes once it installed a release.
+test("a release installed in the background shows as a notice above the lead", async () => {
+  sql("INSERT INTO installed (release) VALUES ('9.9.9');");
+  open("lead");
+  await ready("lead");
+  // The notice is cut at words to the sidebar's width, so it is read across its lines.
+  const words = () => left().join(" ").replace(/\s+/g, " ");
+  await until(() => words().includes("Skelcrew 9.9.9 installed · restart to use it"), "the notice");
+  const lines = left();
+  const at = lines.findIndex((line) => line.includes("9.9.9 installed"));
+  expect(at).toBeLessThan(lines.findIndex((line) => line.includes("lead")));
+});
+
 // A queued task shows under Up next, and Shift-Up there has the daemon move it earlier in the
 // queue, with the footer saying its place. No agent gets the key.
 test("Shift-Up on a queued task in Up next moves it in the queue, and the footer says its place", async () => {

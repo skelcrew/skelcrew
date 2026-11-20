@@ -165,13 +165,19 @@ const answers: Record<string, () => unknown> = {
 // host might.
 if (existsSync(join(dir, `garble-${question.ask}`))) process.exit(0);
 // With a file hold-<question> holding a number, it holds that question from its nth time on,
-// counting each time it was asked, until the file goes.
+// counting each time it was asked, until the file goes. A test removes the file while other
+// calls run, so one that finds it gone before reading it isn't held: reading it then would
+// fail the call, and the test would see a host that couldn't answer.
 const hold = join(dir, `hold-${question.ask}`);
-if (existsSync(hold)) {
+let from = 0;
+try {
+  from = Number(readFileSync(hold, "utf8"));
+} catch {}
+if (from > 0) {
   const times = readFileSync(join(dir, "asked"), "utf8")
     .split("\n")
     .filter((line) => line && JSON.parse(line).ask === question.ask).length;
-  if (times >= Number(readFileSync(hold, "utf8"))) while (existsSync(hold)) await Bun.sleep(20);
+  if (times >= from) while (existsSync(hold)) await Bun.sleep(20);
 }
 // With a file slow-<question>, it takes two seconds over that question, as a slow host would.
 if (existsSync(join(dir, `slow-${question.ask}`))) await Bun.sleep(2000);
