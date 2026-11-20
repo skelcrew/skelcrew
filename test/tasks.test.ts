@@ -280,6 +280,41 @@ console.log(JSON.stringify({ approved: stage("app-13"), working: stage("app-15")
   });
 });
 
+// A check seen before Skelcrew kept the commit it showed on may vanish by the first poll after
+// the upgrade. The daemon's upgrade saves the PR's head as one CI showed on, so the wait for CI's
+// first check never ends with none there and lets a merge go ahead.
+test("an upgrade saves the head of each PR that showed CI as one CI showed on", () => {
+  const shown = `import { finishUpgrade, moveToTasks, openDb } from ${JSON.stringify(source("db.ts"))};
+const db = openDb();
+moveToTasks(db);
+finishUpgrade(db);
+console.log(JSON.stringify(db.query("SELECT task, ci_shown FROM tasks WHERE repo = 'app' AND task IN (12, 13, 14) ORDER BY task").all()));`;
+  // From before tasks: PRs 40 and 41 had checks saved, at abc123 in Skelcrew's copy.
+  oldDatabase();
+  expect(JSON.parse(run(shown))).toEqual([
+    { task: 12, ci_shown: "abc123" },
+    { task: 13, ci_shown: "abc123" },
+    { task: 14, ci_shown: null },
+  ]);
+  // From a release with tasks, which kept whether a PR ever showed CI. app-12's saved checks are
+  // gone, yet its PR in the copy shows CI. app-13's PR left the copy, but the release kept that
+  // it showed CI, at the commit its reviewer approved. app-14 has no PR.
+  earlierTasks();
+  const earlier = new Database(dbFile());
+  earlier.run("ALTER TABLE tasks DROP COLUMN ci_shown");
+  earlier.run("ALTER TABLE tasks ADD COLUMN ci_seen INTEGER NOT NULL DEFAULT 0");
+  earlier.run("ALTER TABLE tasks ADD COLUMN reviewed_commit TEXT");
+  earlier.run("UPDATE tasks SET checks = NULL WHERE repo = 'app'");
+  earlier.run("UPDATE tasks SET ci_seen = 1, reviewed_commit = 'def456' WHERE task = 13");
+  earlier.run("DELETE FROM items WHERE kind = 'pr' AND id = '41'");
+  earlier.close();
+  expect(JSON.parse(run(shown))).toEqual([
+    { task: 12, ci_shown: "abc123" },
+    { task: 13, ci_shown: "def456" },
+    { task: 14, ci_shown: null },
+  ]);
+});
+
 // An approval from before reviews saved their commit keeps standing: the daemon saves on the
 // task the commit Skelcrew's clone keeps as the approval's ref, so the list, which reads only
 // the database, can still merge it. An approval whose ref is gone gets none.

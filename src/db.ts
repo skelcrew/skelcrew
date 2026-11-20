@@ -382,11 +382,33 @@ export function machineCode(db: Database): string {
 // ran, a task it started or merged afterwards would miss its link or its merge for good.
 export function finishUpgrade(db: Database): void {
   db.transaction(() => {
+    if (db.query("SELECT 1 FROM upgrades WHERE step = 'fill ci shown'").get()) {
+      markCiShown(db);
+      db.run("DELETE FROM upgrades WHERE step = 'fill ci shown'");
+    }
     if (!db.query("SELECT 1 FROM upgrades WHERE step = 'fill tasks'").get()) return;
     linkIssues(db);
     recoverMerges(db);
     db.run("DELETE FROM upgrades WHERE step = 'fill tasks'");
   }).immediate();
+}
+
+// Saves, on each task whose PR showed CI before Skelcrew kept the commit it showed on, that its
+// PR's head showed CI. Otherwise a check seen before the upgrade that has vanished by the first
+// poll after it would let the wait for CI's first check end with none, and a merge go ahead as
+// if no CI ran. CI showed when the task's saved checks say so, when the release before kept that
+// it once did, or when Skelcrew's copy of its PR has a check besides Skelcrew's own. The commit
+// is the PR's head in the copy, else the one its reviewer approved, which a merge when ready
+// merges. An item that isn't JSON is read as none.
+function markCiShown(db: Database): void {
+  const seen = hasColumn(db, "tasks", "ci_seen") ? "OR tasks.ci_seen = 1" : "";
+  const copy = `FROM items i WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'pr'
+    AND i.id = CAST(tasks.pr AS TEXT) AND json_valid(i.item)`;
+  db.run(`UPDATE tasks SET ci_shown = COALESCE(
+      (SELECT json_extract(i.item, '$.head') ${copy}), tasks.reviewed_commit)
+    WHERE ci_shown IS NULL AND pr IS NOT NULL AND (checks IS NOT NULL ${seen}
+      OR EXISTS (SELECT 1 ${copy} AND EXISTS (SELECT 1 FROM json_each(i.item, '$.checks') c
+        WHERE json_extract(c.value, '$.name') IS NOT 'skelcrew/check')))`);
 }
 
 // Returns whether the table has the column.
@@ -485,9 +507,14 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. A database from before
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
+  // A database that gains `ci_shown` fills it once its daemon moved its threads onto tasks, as
+  // finishUpgrade says.
+  let gainsCiShown = false;
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
-    if (!hasColumn(db, "threads", column))
+    if (!hasColumn(db, "threads", column)) {
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+      gainsCiShown ||= column === "ci_shown";
+    }
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
@@ -501,8 +528,11 @@ function prepareTables(db: Database): void {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
         if (column === "issue_link" || column === "merged" || column === "closes")
           db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill tasks')");
+        gainsCiShown ||= column === "ci_shown";
       }
   }
+  if (gainsCiShown && !fresh)
+    db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill ci shown')");
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an
   // open_items table, which nothing reads now. It stays, as a daemon of that release may still
