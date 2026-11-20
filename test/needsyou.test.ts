@@ -1129,10 +1129,10 @@ test("a missing host plugin puts its instruction before the lead's mark, once", 
 record(db, "app-12", { session: "s", host: "gone", host_id: "gone-app-12", needs_you_for: "apply the fix in #463" });
 await bringBack(db, "none", thread());
 await bringBack(db, "none", thread());
-console.log(JSON.stringify({ mark: thread().needs_you_for }));`);
-  expect(seen).toEqual({
-    mark: "run sc install: its session host gone is missing, then apply the fix in #463",
-  });
+console.log(JSON.stringify({ mark: thread().needs_you_for, notes: notes() }));`);
+  const mark = "run sc install: its session host gone is missing, then apply the fix in #463";
+  // The thread needed you already, so the lead hears of the plugin in a note of its own, once.
+  expect(seen).toEqual({ mark, notes: [`app-12 needs you: ${mark}`] });
 });
 
 // Only you can bring the plugin back, so the lead's marks and clears can't hide that.

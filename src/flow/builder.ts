@@ -31,7 +31,7 @@ import { pastRoundLimit } from "./decide.ts";
 import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
-import { forgetStatus } from "./status.ts";
+import { forgetStatus, needsYou } from "./status.ts";
 import { joinsQueue, joinTime } from "./task-queue.ts";
 import {
   builderHarness,
@@ -696,6 +696,17 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
       // the mark it had after the instruction.
       const had = markBeforeHost(thread.host, thread.needs_you_for);
       const mark = hostMissing(thread.host, had === undefined ? thread.needs_you_for : had);
+      // A thread that needed you already brings the lead no note that it starts to, so the lead
+      // is told of the plugin itself, once, as the mark first asks for it.
+      if (needsYou(thread) && had === undefined)
+        noteForLead(
+          db,
+          sessions,
+          thread,
+          `${threadName(db, thread)} needs you: ${mark}`,
+          null,
+          true,
+        );
       record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
       typeLeadNotes(db, sessions);
       return;

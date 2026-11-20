@@ -880,7 +880,10 @@ c.on("data", (d) => process.stdout.write(d));`;
         thread().needs_you_for ===
         "run sc install: its session host fake is missing, then check the design",
     );
-    expect(String(thread().noting)).toContain("session host fake isn't installed any more");
+    // It needed you already, for your mark, so the log says why it changed.
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      "session host fake isn't installed any more",
+    );
     expect(thread().host).toBe("fake");
     expect(hasSession("app-12")).toBe(false);
     // You install it again, and the daemon finds it as it starts, so the mark goes.
