@@ -232,6 +232,38 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE r
   await until(() => selected() === "◆ lead", "the lead's row");
 });
 
+// A host can fail to answer for a moment. A builder on it, shown on the right, stays shown and
+// marked, rather than being taken for ended.
+test("a builder on a plugin's host stays marked while its host fails to answer", async () => {
+  tmux(agents, "kill-session", "-t", "=app-12");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '{"sessions":[{"id":"fake-app-12","running":true,"labels":null}]}'\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
+  open("lead");
+  await ready("lead");
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  toFirstThread();
+  await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
+  await until(() => selected().includes("app-12"), "the sidebar to follow");
+  writeFileSync(join(plugin, "failing"), "");
+  const failed = looks();
+  await until(() => looks() > failed + 2, "the sidebar to ask the failing host");
+  await Bun.sleep(1200);
+  expect(selected()).toContain("app-12");
+  expect(seen()).toContain("I am fake-app-12 on fake");
+});
+
 test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");

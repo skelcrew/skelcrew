@@ -102,7 +102,7 @@ export async function runSidebar(
   const lookAtHosts = () => {
     if (lookingAtHosts) return;
     lookingAtHosts = true;
-    hostedAgents(db, open)
+    hostedAgents(db, open, hosted)
       .then((found) => {
         hosted = found;
       })
@@ -339,10 +339,13 @@ export async function runSidebar(
 // Returns the agents running on a plugin's host, each with the line that attaches to it, for the
 // sidebar: builders by their thread's folder, and the open repository's lead by its name, so a
 // lead there that ends is noticed and brought back, as one on tmux is. Each host is asked once
-// for all its agents. A host that fails shows none of them as running.
+// for all its agents. A host that fails to answer keeps what `before`, the last look, found on
+// it: a host can fail for a moment, and an agent shown on the right would otherwise be taken
+// for ended, and the lead's row marked while you still type to the agent.
 async function hostedAgents(
   db: ReturnType<typeof openDb>,
   open: Open,
+  before: Map<string, string>,
 ): Promise<Map<string, string>> {
   const found = new Map<string, string>();
   // Each agent on a plugin's host: what the sidebar knows it by, its host and its ID there.
@@ -359,10 +362,14 @@ async function hostedAgents(
   for (const name of new Set(agents.map((agent) => agent.host))) {
     const host = pluginHost(db, name);
     if (host === null) continue;
-    const listed = await listSessions(host).catch(() => []);
-    for (const agent of agents)
-      if (agent.host === name && listed.some((one) => one.name === agent.id && one.running))
+    const listed = await listSessions(host).catch(() => null);
+    for (const agent of agents) {
+      if (agent.host !== name) continue;
+      const kept = before.get(agent.key);
+      if (listed === null && kept !== undefined) found.set(agent.key, kept);
+      else if (listed?.some((one) => one.name === agent.id && one.running))
         found.set(agent.key, attachOnHostLine(host, agent.id));
+    }
   }
   return found;
 }
