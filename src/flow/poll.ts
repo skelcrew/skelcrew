@@ -37,7 +37,7 @@ import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
-import { ciWaitEnded, lastPushed } from "./round.ts";
+import { ciShowedIn, ciWaitEnded, lastPushed } from "./round.ts";
 import { needsYou } from "./status.ts";
 import { claimUnderWay } from "./task-queue.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
@@ -555,6 +555,8 @@ async function pollRepository(
       ];
       const items = answer.items.filter((item) => kinds.includes(item.kind));
       saveItems(db, owner, repo, items, next === null ? kinds : []);
+      if (items.some((item) => item.kind === "pr" && ciState(item) !== null))
+        ciShowedIn(`${owner}/${repo}`);
       nexts.set(plugin, answer.next);
     }
   } finally {

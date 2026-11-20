@@ -725,6 +725,37 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(waits).toHaveLength(1);
   }, 150_000);
 
+  // CI that shows on another PR after a review waited in vain means CI runs here after all. The
+  // repository's reviews wait for a first check again, even once that PR closed, so a commit
+  // with workflows isn't taken for one no CI runs on before its first check could start.
+  test("CI on another PR after a vain wait makes the next review wait again, though that PR closed", async () => {
+    addApp({ ".github/workflows/release.yml": "on: release\n" });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    // The first review is held once it has waited in vain, while CI shows on PR 20 and it closes.
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    await startApp12({ every: 200, env: { SKELCREW_CI_WAIT_MS: "5000" } });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
+    const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
+    const answered = async (items: object[]) => {
+      answer(plugin, "changed", { items, next: null });
+      const before = polls();
+      await until(() => polls() >= before + 3, 30_000);
+    };
+    const issue = taskItem("12", "Add export", { body: "As JSON" });
+    const ci = [{ name: "test", id: "8", state: "passed" }];
+    await answered([issue, prItem("20", "Fix a typo", { checks: ci })]);
+    await answered([issue]);
+    writeFileSync(join(codexHome(), "sessions", "go-1"), "");
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), longWait);
+    // Both reviews waited for a first check.
+    const waits = read(join(data(), "threads", "app-12.log")).match(
+      /waiting for CI's first check/g,
+    );
+    expect(waits).toHaveLength(2);
+  }, 150_000);
+
   // CI skips a change to docs and Markdown alone, so the review neither waits for it nor runs
   // the tests.
   test("on a change to docs alone, the review starts at once and runs no tests", async () => {

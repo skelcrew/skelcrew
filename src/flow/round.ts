@@ -177,6 +177,14 @@ const ciWait = z.coerce
 // reviewers then run the suite as well, until a check shows on one of the repository's PRs.
 const waitedInVain = new Set<string>();
 
+// Takes the repository, as owner/repo, out of those whose reviews wait no more for a first
+// check, as a poll found a CI check on one of its PRs. Its reviews and merges then make the
+// full wait again, even once that PR closed, so a PR with workflows isn't taken for one no CI
+// runs on before its first check could start.
+export function ciShowedIn(repository: string): void {
+  waitedInVain.delete(repository);
+}
+
 // When the wait for CI's first check began on each commit, by owner/repo and commit. A review
 // that waits for CI starts it, so its approval finds it ended. A docs-only review waits for no
 // CI, so the first poll after its approval starts it instead. Kept in memory, so a restart
