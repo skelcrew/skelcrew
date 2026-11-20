@@ -1246,13 +1246,18 @@ test("init asks nothing while the default branch has commits not on the remote",
 
 // A file sc init edits that had your changes already would bring them into its commit, so it
 // leaves the commit to you, saying why.
+// Both files have changes of yours, so git names each on a line of its own, and the second line
+// must be read as well as the first.
 test("init asks nothing when a file it edits had changes of yours", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   githubInstalledAsYours();
+  const lock = `skelcrew/skelcrew-github: { name: github, version: 0.1.0, commit: ${"a".repeat(40)} }\n`;
   writeFileSync(join(checkout, "skelcrew.yaml"), "setup: [make]\n");
-  git(checkout, "add", "skelcrew.yaml");
+  writeFileSync(join(checkout, "skelcrew.lock"), lock);
+  git(checkout, "add", "skelcrew.yaml", "skelcrew.lock");
   git(checkout, "commit", "-q", "-m", "config");
   writeFileSync(join(checkout, "skelcrew.yaml"), "# Mine, not yet committed.\nsetup: [make]\n");
+  writeFileSync(join(checkout, "skelcrew.lock"), `# Mine too.\n${lock}`);
   const run = await initAtTerminal(checkout, "y\n");
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("now? [Y/n]");

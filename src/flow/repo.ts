@@ -682,13 +682,10 @@ export async function initRepo(sessions: string): Promise<boolean> {
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   // Read before anything is written: changes of yours to a file sc init edits would ride along in
   // the commit it offers, so they keep it from offering. Only the files it then wrote count.
-  const yours = gitIn(root, ["status", "--porcelain", "--", "skelcrew.yaml", "skelcrew.lock"]);
-  const dirty = yours.said
-    .split("\n")
-    .filter((line) => line !== "")
-    // Each line is a status code, such as M or ??, then the path. The output is trimmed, so the
-    // first line can lose a space of its code, and the code is read up to the space after it.
-    .map((line) => line.replace(/^\S*\s+/, ""));
+  // Each file is asked about on its own, so nothing has to be read back out of git's lines.
+  const dirty = ["skelcrew.yaml", "skelcrew.lock"].filter(
+    (path) => gitIn(root, ["status", "--porcelain", "--", path]).said !== "",
+  );
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
   // The forge's plugin is installed before the repository comes in, so it can claim the remote.
   const forge = addForgePlugin(root, remote);
