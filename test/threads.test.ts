@@ -97,7 +97,7 @@ afterEach(async () => {
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
   // The fake session host's sessions end with the test too.
   const hosted = join(home, ".config", "skelcrew", "plugins", "fake", "sessions");
-  endFakeSessions(hosted);
+  await endFakeSessions(hosted);
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
   rmSync(join(folder, socket), { force: true });
   rmSync(home, { recursive: true, force: true });

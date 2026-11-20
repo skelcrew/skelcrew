@@ -188,13 +188,18 @@ export async function runSkel(args: string[], env: Record<string, string>, input
 }
 
 // Kills the process group of each session the fake host keeps in `sessions`, for a test's
-// clean-up, as those sessions outlive the daemon that started them. A session the host was still
-// starting as the test ended has no process ID yet. Its ID reads as 0, and killing group 0 kills
-// the caller's own group: in a parallel run, the whole test worker, which Bun then reports as
-// crashed with SIGKILL. So a session without a real ID is skipped.
-export function endFakeSessions(sessions: string): void {
+// clean-up, as those sessions outlive the daemon that started them. The host starts a session's
+// process before it writes the process's ID, so a session caught in between gets two seconds for
+// its ID to appear. A session whose ID never appears, as its host died before starting it, is
+// skipped: its ID would read as 0, and killing group 0 kills the caller's own group. In a
+// parallel run that is the whole test worker, which Bun then reports as crashed with SIGKILL.
+export async function endFakeSessions(sessions: string): Promise<void> {
   for (const id of existsSync(sessions) ? readdirSync(sessions) : []) {
-    const pid = Number(read(join(sessions, id, "pid")));
+    // An ID that isn't there yet, or is only half written, reads as 0 or NaN.
+    const started = () => Number(read(join(sessions, id, "pid")));
+    const deadline = Date.now() + 2000;
+    while (!(started() > 0) && Date.now() < deadline) await Bun.sleep(50);
+    const pid = started();
     if (!Number.isInteger(pid) || pid <= 0) continue;
     try {
       process.kill(-pid, "SIGKILL");

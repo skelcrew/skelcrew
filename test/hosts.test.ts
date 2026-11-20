@@ -42,12 +42,12 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-host-test-")));
   name = `fake-${Math.random().toString(36).slice(2)}`;
 });
-afterEach(() => {
+afterEach(async () => {
   // Each session's process group ends with the test, whatever it left running, on the host
   // this process asks and on the one a process of the test's own home asks.
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   for (const sessions of [join(settings(), "sessions"), join(fake, "sessions")])
-    endFakeSessions(sessions);
+    await endFakeSessions(sessions);
   rmSync(settings(), { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });

@@ -62,7 +62,7 @@ test("ending the fake host's sessions ends each one's processes, and skips one n
     mkdirSync(join(sessions, "fake-starting"));
     mkdirSync(join(sessions, "fake-half-written"));
     writeFileSync(join(sessions, "fake-half-written", "pid"), "");
-    endFakeSessions(sessions);
+    await endFakeSessions(sessions);
     await run.exited;
     // A process that exited but wasn't reaped has no command.
     const gone = () => {
@@ -73,6 +73,29 @@ test("ending the fake host's sessions ends each one's processes, and skips one n
       }
     };
     await until(gone, { what: () => "the session's process to end" });
+  } finally {
+    rmSync(sessions, { recursive: true, force: true });
+  }
+});
+
+// The fake host starts a session's process before it writes the process's ID, so clean-up can
+// run in between. That session must still end, or it would outlive its test.
+test("ending the fake host's sessions waits for an ID the host is about to write", async () => {
+  const sessions = mkdtempSync(join(tmpdir(), "skel-harness-sessions-"));
+  try {
+    const run = Bun.spawn(["sleep", "60"], {
+      detached: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    mkdirSync(join(sessions, "fake-starting"));
+    setTimeout(() => writeFileSync(join(sessions, "fake-starting", "pid"), String(run.pid)), 300);
+    await endFakeSessions(sessions);
+    const ended = await Promise.race([
+      run.exited.then(() => true),
+      Bun.sleep(5000).then(() => false),
+    ]);
+    if (!ended) run.kill("SIGKILL");
+    expect(ended).toBe(true);
   } finally {
     rmSync(sessions, { recursive: true, force: true });
   }
