@@ -1805,7 +1805,9 @@ done`,
     expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending"]);
   }, 120_000);
 
-  test("a review cancelled while it is posted doesn't set the check on the commit submitted again", async () => {
+  // A review being posted has its verdict saved already, so it still sets its check, which
+  // the PR's review and the thread agree with. The newer submit's pending check comes after it.
+  test("a review cancelled while it is posted sets its check before the commit submitted again gets pending", async () => {
     addApp();
     verdict(1, "approve", "Stale.");
     verdict(2, "approve", "Fresh.");
@@ -1820,7 +1822,31 @@ done`,
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     expect(reviews()).toHaveLength(1);
     await Bun.sleep(1500);
-    expect(statuses().map((s) => s.state)).toEqual(["pending", "pending"]);
+    expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending"]);
+  }, 120_000);
+
+  // Past the round limit, sc review asks again, and the reviewer approves. sc stop ends the
+  // round while the approval is being posted. The PR then shows it, so Skelcrew must have saved
+  // it too, rather than the changes that reached the limit.
+  test("past the round limit, a review stopped while it is posted is saved as the PR shows it", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
+    writeFileSync(join(plugin, "hold-review"), "");
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    await until(
+      () => existsSync(join(plugin, "held-review")) && reviews().at(-1)?.verdict === "approve",
+      60_000,
+    );
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    rmSync(join(plugin, "hold-review"));
+    await until(() => finished("success").length === 1, 30_000);
+    expect(thread()).toMatchObject({ verdict: "approve", review_round: 3, held: null });
+    expect((await skel(["ps", "--json"])).out).not.toContain("round limit");
   }, 120_000);
 
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {

@@ -531,13 +531,16 @@ async function reviewRound(
   await actOnVerdict(db, sessions, folder, sha, signal, { verdict, by, kept: null }, builderBack);
 }
 
-// Acts on a review's verdict: with a forge, puts it in Skelcrew's one review on the PR and sets
-// Skelcrew's check; saves what it means for the thread, and types changes into the builder once
-// `builderBack` settles.
+// Acts on a review's verdict: saves what it means for the thread, then, with a forge, puts it in
+// Skelcrew's one review on the PR and sets Skelcrew's check, and types changes into the builder
+// once `builderBack` settles.
 // Without a forge an approved branch needs you at once. An approval is saved as a ref in
 // Skelcrew's clone, so a later submit that only merges the base branch can keep it. `kept` is
 // the approved commit whose approval this one keeps, with no reviewer run, which the check and
-// the thread's log say. Stops without a word once a newer round cancels it.
+// the thread's log say. A round a newer one or sc stop cancels before the verdict is saved stops
+// without a word. Once saved, the verdict still goes on the PR and the check, so the PR never
+// shows a verdict Skelcrew didn't save, nor Skelcrew one the PR doesn't show. That is safe, as
+// a newer round's review starts only once this round has ended.
 async function actOnVerdict(
   db: Database,
   sessions: string,
@@ -553,10 +556,8 @@ async function actOnVerdict(
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
   const maxRounds = roundLimit(thread);
-  // Decide what the verdict means for the thread, then post it on the PR. A failed or timed out
-  // review is Skelcrew's problem, not the PR's, so it is never posted. A kept approval says so
-  // on the check and in the log, in place of the reviewer's.
-  if (signal.aborted) return;
+  // Decide what the verdict means for the thread. A kept approval says so on the check and in
+  // the log, in place of the reviewer's.
   const before = thread.rounds;
   const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
   const decided = afterReview(before, verdict, maxRounds, ready);
@@ -569,35 +570,19 @@ async function actOnVerdict(
           description: `approval kept: only merged ${prBase(db, thread)}`,
           why: ready === null ? `${keptWhy}, so it waits on CI` : `${keptWhy}; ${ready}`,
         };
+  // A newer submit, or sc stop, may have cancelled the round, and the thread is then its to
+  // change. Nothing is awaited from this check until the verdict is saved, so a cancel either
+  // comes first and nothing is saved or posted, or comes after and finds the verdict saved.
+  if (signal.aborted) return;
   // The whole review goes in the thread's log first, as the PR keeps only the latest one.
-  if (verdict.verdict === "approve" || verdict.verdict === "changes") {
-    const said = reviewComment(verdict, before + 1, sha);
-    record(db, folder, {}, `the review said (${verdict.verdict}): ${said}`);
-    if (pr !== null) await postOrEdit(db, folder, pr, sha, { ...verdict, round: before + 1 });
-  }
-  // A newer round may be reviewing the same commit, and its check must stay pending.
-  if (signal.aborted) return;
-  if (hasForge)
-    await setStatus(db, repository, {
-      commit: sha,
-      state: outcome.check,
-      description: outcome.description,
-    });
-  if (signal.aborted) return;
-  // The approved commit is kept for the next submit to compare with. Losing it costs only a
-  // review, so a ref git won't write fails nothing.
-  if (verdict.verdict === "approve")
-    await git(
-      cloneDir(thread.owner, thread.repo),
-      "update-ref",
-      `refs/skelcrew/approved/${thread.folder}`,
-      sha,
-    ).catch(() => {});
-  // A newer submit, or sc stop, may have cancelled the round meanwhile, and the thread is then
-  // its to change.
-  if (signal.aborted) return;
-  // Save the outcome, tell the lead if the thread now needs you or its review failed, and type
-  // any changes into the builder.
+  if (verdict.verdict === "approve" || verdict.verdict === "changes")
+    record(
+      db,
+      folder,
+      {},
+      `the review said (${verdict.verdict}): ${reviewComment(verdict, before + 1, sha)}`,
+    );
+  // Save the outcome, and tell the lead if the thread now needs you or its review failed.
   const { rounds, needsYou, status, tell, held } = outcome;
   const failed = verdict.verdict === "failed" || verdict.verdict === "timed out";
   // A new review asks anew about the round limit, so a decision about the last one ends.
@@ -629,9 +614,30 @@ async function actOnVerdict(
     noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`);
   }
   typeLeadNotes(db, sessions);
+  // The approved commit is kept for the next submit to compare with. Losing it costs only a
+  // review, so a ref git won't write fails nothing.
+  if (verdict.verdict === "approve")
+    await git(
+      cloneDir(thread.owner, thread.repo),
+      "update-ref",
+      `refs/skelcrew/approved/${thread.folder}`,
+      sha,
+    ).catch(() => {});
+  // Post the verdict on the PR, then set the check. A failed or timed out review is Skelcrew's
+  // problem, not the PR's, so it is never posted. A forge that fails here fails the round, so
+  // the thread shows its review failed and the lead can run it again.
+  if ((verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null)
+    await postOrEdit(db, folder, pr, sha, { ...verdict, round: before + 1 });
+  if (hasForge)
+    await setStatus(db, repository, {
+      commit: sha,
+      state: outcome.check,
+      description: outcome.description,
+    });
   if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
-  // for when you start it again.
+  // for when you start it again. A round cancelled meanwhile leaves them to the newer round,
+  // which drops them, or to sc start, which types them in.
   await builderBack;
   if (signal.aborted) return;
   await queueChanges(db, sessions, folder, tell, signal);
