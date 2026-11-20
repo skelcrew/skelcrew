@@ -56,8 +56,9 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // the Stop hooks its settings give, and waits at a ❯ prompt, keeping what is typed into it. Each
 // typed message ends in a paste mark and an Enter, and it runs the UserPromptSubmit hooks, then
 // answers it with another round, as a builder fixing a review would. `submits` false leaves the
-// first round to the test. While the file busy is in its config folder after a round, it looks
-// busy, as Claude Code does mid-turn, and its turn ends once the file is gone. Once a round's
+// first round to the test, and `answers` false keeps what is typed in without answering it.
+// While the file busy is in its config folder after a round, it looks busy, as Claude Code does
+// mid-turn, and its turn ends once the file is gone. Once a round's
 // Stop hooks have run, the file ended holds its number. A ci.yml there goes into each round as
 // the repository's first workflow. With docs-only there, a round changes only the file it names, else docs/change.md,
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
@@ -66,7 +67,7 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // arguments are written aside and moved into place, so a test that sees the file never reads
 // them half written. The instructions it reads from its instructions file go in told, the same
 // way and before them, so a test that sees its arguments can read told too.
-function fakeClaude(submits = true): void {
+function fakeClaude(submits = true, answers = true): void {
   script(
     "claude",
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
@@ -111,7 +112,7 @@ echo "❯"
 end=$(printf '\\033[201~')
 while IFS= read -r line; do
   printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"
-  case "$line" in *"$end"*) hook UserPromptSubmit; round; echo "❯" ;; esac
+  case "$line" in *"$end"*) hook UserPromptSubmit; ${answers ? "round; " : ""}echo "❯" ;; esac
 done
 exec sleep 300`,
   );
@@ -343,8 +344,11 @@ const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").le
 const finished = (state: string) => statuses().filter((s) => s.state === state);
 
 // Starts app-12 again after sc stop, and waits until its builder is back. The round it had
-// carries on only then, so a review asked for before could otherwise start a second time.
+// carries on only then, so a review asked for before could otherwise start a second time. The
+// builder brought back neither submits nor answers what is typed in, so the reviews that follow
+// are only those the test asks for.
 async function startAgain() {
+  fakeClaude(false, false);
   rmSync(join(builder(), "args"), { force: true });
   expect((await skel(["start", "app-12"])).err).toBe("");
   await until(() => existsSync(join(builder(), "args")), 30_000);
@@ -1677,9 +1681,12 @@ done`,
     rmSync(join(builder(), "busy"));
     await until(() => typedMessages() === 1, 30_000);
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
-    expect(reviews()).toHaveLength(1);
+    // One review was posted. The stop may cut short posting it, after the forge took it but
+    // before Skelcrew saved its ID, and it is then posted again, the same. A real forge's review
+    // is found by its marker instead, which this forge's copy, with no PR, can't show.
+    expect(new Set(reviews().map((review) => JSON.stringify(review))).size).toBe(1);
     // No second review ran, so no pending check came after the verdict's. The stop may cut short
-    // setting the verdict's check, which is then set again, the same.
+    // setting the verdict's check too, which is then set again, the same.
     const states = statuses()
       .filter((s) => s.sha === reviewed)
       .map((s) => s.state);
