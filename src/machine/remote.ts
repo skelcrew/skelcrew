@@ -327,17 +327,18 @@ function dropOnServer(machine: Machine, screen: string): Drop {
     return [ssh, "-o", "BatchMode=yes", ...rest];
   };
   const read = `tmux -L ${screenSocket("skelcrew")} display -p -t =${screen}: '#{${dropAnswerOption}}'`;
-  return async (files, ask) => {
-    // The sidebar's last answer, then the drop's question, then a wait there, of up to two
-    // seconds, for the answer to change.
+  // The sidebar's last answer, then the drop's question, then a wait there, of up to two seconds,
+  // for the answer to change.
+  const where = async (ask: () => void) => {
     const before = await quietly(quiet(read));
-    if (!before.ok) return files.map(() => null);
+    if (!before.ok) return null;
     ask();
     const wait = `b=${quoted(before.out.trim())}; i=0; while [ $i -lt 200 ]; do a=$(${read}); [ "$a" != "$b" ] && { printf '%s\n' "$a"; exit 0; }; sleep 0.01; i=$((i+1)); done; exit 1`;
     const asked = await quietly(quiet(`sh -c ${quoted(wait)}`));
-    const folder = asked.ok ? answeredFolder(asked.out.trim()) : null;
-    if (folder === null) return files.map(() => null);
-    return Promise.all(
+    return asked.ok ? answeredFolder(asked.out.trim()) : null;
+  };
+  const put = (folder: string, files: string[]) =>
+    Promise.all(
       files.map(async (file) => {
         const copy = dropPath(folder, file);
         const ignored = join(folder, dropsFolder, ".gitignore");
@@ -350,7 +351,7 @@ function dropOnServer(machine: Machine, screen: string): Drop {
         return (await sent.exited) === 0 ? copy : null;
       }),
     );
-  };
+  return { where, put };
 }
 
 // Sets up your server, for sc --remote <host> install, and returns the exit code. It sends your

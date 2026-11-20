@@ -38,13 +38,20 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// A filter that copies into the agent's folder and keeps what it sends on.
-const filter = () =>
+// A filter that copies into the folder `where` names, asking as the screen does, and keeps what
+// it sends on.
+const filter = (where: () => string = () => agent) =>
   pasteFilter(
     (bytes) => {
       sent += Buffer.from(bytes).toString();
     },
-    async (files) => copyDrops(agent, files),
+    {
+      where: async (ask) => {
+        ask();
+        return where();
+      },
+      put: async (folder, files) => copyDrops(folder, files),
+    },
   );
 
 // Makes a file in the test's home and returns its path.
@@ -54,10 +61,15 @@ function file(name: string, text = `the text of ${name}`): string {
   return path;
 }
 
-// Returns what reached the agent once the filter has had time to copy.
-async function afterCopies(): Promise<string> {
+// Returns what reached the screen once the filter has had time to copy, with each drop's
+// question, which the screen keeps from the agent.
+async function sentOn(): Promise<string> {
   await Bun.sleep(50);
   return sent;
+}
+// Returns what reached the agent once the filter has had time to copy.
+async function afterCopies(): Promise<string> {
+  return (await sentOn()).replaceAll(dropSignal, "");
 }
 
 const pasted = (text: string) => `\x1b[200~${text}\x1b[201~`;
@@ -157,7 +169,7 @@ test("a missing path, a folder, a file you can't read and one too big keep their
   ).toHaveLength(1);
 });
 
-test("a paste split over several reads, and keys right after it, arrive whole and in order", async () => {
+test("a paste split over several reads arrives whole, and keys after it go on at once", async () => {
   const shot = file("shot.png");
   const take = filter();
   const whole = `x${pasted(shot)}after`;
@@ -166,26 +178,104 @@ test("a paste split over several reads, and keys right after it, arrive whole an
   for (const piece of [whole.slice(0, 9), whole.slice(9, end), whole.slice(end)])
     take(Buffer.from(piece));
   take(Buffer.from("more"));
+  // What you type after the drop doesn't wait for its files.
+  expect(sent).toBe("xaftermore");
   const out = await afterCopies();
   expect(out).toMatch(
-    new RegExp(`^x\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~aftermore$`),
+    new RegExp(`^xaftermore\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~$`),
   );
 });
 
-test("a paste's start split anywhere across two reads is still seen, and sent once", async () => {
+test("keys go on while a drop's files are still being sent, and the paste follows them", async () => {
+  const shot = file("shot.png");
+  let finish: () => void = () => {};
+  const take = pasteFilter(
+    (bytes) => {
+      sent += Buffer.from(bytes).toString();
+    },
+    {
+      where: async (ask) => {
+        ask();
+        return agent;
+      },
+      put: (folder, files) =>
+        new Promise((done) => {
+          finish = () => done(copyDrops(folder, files));
+        }),
+    },
+  );
+  take(Buffer.from(pasted(shot)));
+  await Bun.sleep(20);
+  take(Buffer.from("\x1b[A"));
+  take(Buffer.from("\x1b[<65;3;4M"));
+  take(Buffer.from("q"));
+  expect(sent).toBe(`${dropSignal}\x1b[A\x1b[<65;3;4Mq`);
+  finish();
+  const out = await sentOn();
+  // Keys went on meanwhile, so it asked again where the drop goes, before the paste.
+  expect(out.startsWith(`${dropSignal}\x1b[A\x1b[<65;3;4Mq${dropSignal}\x1b[200~${agent}/`)).toBe(
+    true,
+  );
+});
+
+test("a drop whose agent you left while its files were copied is copied again to the new one", async () => {
+  const shot = file("shot.png");
+  const other = join(home, "other");
+  mkdirSync(other);
+  let asked = 0;
+  const take = pasteFilter(
+    (bytes) => {
+      sent += Buffer.from(bytes).toString();
+    },
+    {
+      where: async (ask) => {
+        ask();
+        return asked++ === 0 ? agent : other;
+      },
+      put: async (folder, files) => {
+        await Bun.sleep(30);
+        return copyDrops(folder, files);
+      },
+    },
+  );
+  take(Buffer.from(pasted(shot)));
+  // Alt-Down while the files are copied moves you to another agent.
+  await Bun.sleep(10);
+  take(Buffer.from("\x1b[1;3B"));
+  // Two copies of 30 milliseconds each.
+  await Bun.sleep(100);
+  const out = await afterCopies();
+  expect(out).toMatch(
+    new RegExp(`^\\x1b\\[1;3B\\x1b\\[200~${other}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~$`),
+  );
+});
+
+test("a paste's start split anywhere across two reads is still seen, and the question never lands inside it", async () => {
   const shot = file("shot.png");
   const whole = `x${pasted(shot)}y`;
-  // Each place inside the start, from after its Esc to before its last byte.
+  // Each place inside the start, from after its Esc to before its last byte. The part sent before
+  // the cut is closed as an empty paste, so the question and the paste each go in whole.
+  const copied = `\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~`;
+  const question = dropSignal.replaceAll("[", "\\[");
   for (let cut = 2; cut < 7; cut++) {
     sent = "";
     const take = filter();
     take(Buffer.from(whole.slice(0, cut)));
     take(Buffer.from(whole.slice(cut)));
-    const out = await afterCopies();
-    expect(out).toMatch(
-      new RegExp(`^x\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~y$`),
-    );
+    const out = await sentOn();
+    expect(out).toMatch(new RegExp(`^x\\x1b\\[200~\\x1b\\[201~y${question}${copied}$`));
   }
+});
+
+test("the question waits for a mouse event split across reads to end", async () => {
+  const shot = file("shot.png");
+  const take = filter();
+  take(Buffer.from(pasted(shot)));
+  take(Buffer.from("\x1b[<0;3"));
+  await Bun.sleep(10);
+  take(Buffer.from(";4M"));
+  const out = await sentOn();
+  expect(out.startsWith(`\x1b[<0;3;4M${dropSignal}\x1b[200~${agent}/`)).toBe(true);
 });
 
 test("a double-quoted path with an escaped quote in its name is copied", async () => {
@@ -201,17 +291,8 @@ test("a double-quoted path with an escaped quote in its name is copied", async (
 
 test("the drop's question goes on after the keys before it and ahead of the paste", async () => {
   const shot = file("shot.png");
-  const take = pasteFilter(
-    (bytes) => {
-      sent += Buffer.from(bytes).toString();
-    },
-    async (files, ask) => {
-      ask();
-      return copyDrops(agent, files);
-    },
-  );
-  take(Buffer.from(`\x1b[1;4B${pasted(shot)}`));
-  const out = await afterCopies();
+  filter()(Buffer.from(`\x1b[1;4B${pasted(shot)}`));
+  const out = await sentOn();
   expect(out.startsWith(`\x1b[1;4B${dropSignal}\x1b[200~${agent}/`)).toBe(true);
 });
 

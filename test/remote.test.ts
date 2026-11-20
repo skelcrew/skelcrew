@@ -1481,7 +1481,12 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
   });
   const named = join(home, "server", "screen-name");
   for (let waited = 0; !existsSync(named) && waited < 100; waited++) await Bun.sleep(50);
-  run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`);
+  // Keys don't wait for a drop's files, so Enter goes once the copy is there.
+  run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~`);
+  const sentTo = join(home, "server", "agent", ".skelcrew-drops");
+  for (let waited = 0; !existsSync(sentTo) && waited < 100; waited++) await Bun.sleep(50);
+  await Bun.sleep(300);
+  run.terminal?.write("\r");
   await run.exited;
   run.terminal?.close();
   const screen = readFileSync(named, "utf8").trim();

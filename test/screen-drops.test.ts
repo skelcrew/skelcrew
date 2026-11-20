@@ -26,8 +26,14 @@ afterEach(endTest);
 const skelcrew = () => join(home, ".local", "share", "skelcrew");
 
 // Drops a file onto the terminal, as a terminal pastes its path, and sends it to the agent.
-function drop(path: string): void {
+// Keys don't wait for a drop's files, so as a person would, it presses Enter a moment after the
+// copy is in `folder`, the agent's, or at once for a drop that copies nothing.
+async function drop(path: string, folder: string | null): Promise<void> {
   type(`\x1b[200~${path.replaceAll(" ", "\\ ")}\x1b[201~`);
+  if (folder !== null) {
+    await until(() => existsSync(join(folder, ".skelcrew-drops")), "the copy");
+    await Bun.sleep(300);
+  }
   press("Enter");
 }
 
@@ -43,7 +49,7 @@ test("a file dropped onto the lead reaches it as a copy in the lead's folder", a
   open("lead");
   await ready("lead");
   // app's lead is the one kept from before, in Skelcrew's folder named lead.
-  drop(shot);
+  await drop(shot, join(skelcrew(), "lead"));
   const line = await got("lead");
   expect(line.startsWith(`${join(skelcrew(), "lead", ".skelcrew-drops")}/`)).toBe(true);
   expect(line.endsWith("/Screen\\ Shot.png")).toBe(true);
@@ -58,7 +64,7 @@ test("a file dropped onto a builder you attached to reaches it in its clone", as
   await ready("lead");
   press("M-S-Down");
   await attachTo("app-12");
-  drop(notes);
+  await drop(notes, join(skelcrew(), "threads", "app-12"));
   const line = await got("app-12");
   expect(line.startsWith(`${join(skelcrew(), "threads", "app-12", ".skelcrew-drops")}/`)).toBe(
     true,
@@ -77,7 +83,7 @@ test("right after Ctrl-\\ back from a builder, a drop goes to its details, and n
   const clone = join(skelcrew(), "threads", "app-12");
   press("C-\\");
   await until(onDetails, "APP-12's details");
-  drop(notes);
+  await drop(notes, null);
   await Bun.sleep(500);
   expect(existsSync(join(clone, ".skelcrew-drops"))).toBe(false);
   expect(read("app-12.typed")).toBe("");

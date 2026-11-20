@@ -331,17 +331,18 @@ export async function openScreen(
     )
       .stdout.toString()
       .trim();
-  const drop: Drop = async (files, ask) => {
-    const before = answer();
-    ask();
-    for (let waited = 0; waited < 200; waited++) {
-      await Bun.sleep(10);
-      const now = answer();
-      if (now === before) continue;
-      const folder = answeredFolder(now);
-      return folder === null ? files.map(() => null) : copyDrops(folder, files);
-    }
-    return files.map(() => null);
+  const drop: Drop = {
+    where: async (ask) => {
+      const before = answer();
+      ask();
+      for (let waited = 0; waited < 200; waited++) {
+        await Bun.sleep(10);
+        const now = answer();
+        if (now !== before) return answeredFolder(now);
+      }
+      return null;
+    },
+    put: async (folder, files) => copyDrops(folder, files),
   };
   const code = await runWithDrops(argv, drop, env);
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);
