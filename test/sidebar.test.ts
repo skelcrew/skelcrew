@@ -12,7 +12,6 @@ import { draw as drawWith, noticeLines } from "../src/screen/layout.ts";
 import type { EntryCount } from "../src/screen/lists.ts";
 import { nextList, nextRow, rowAtLine } from "../src/screen/moves.ts";
 import { type Row, threadAge } from "../src/screen/rows.ts";
-import { sidebarWidth } from "../src/screen/screen.ts";
 import { source, threadSql } from "./harness.ts";
 
 const row = {
@@ -60,6 +59,9 @@ function stateOf(status: Row["status"], word: string): Status {
   return word === "working" ? "working" : "idle";
 }
 
+// The width the split screen's own sidebar was drawn at, which these tests of its drawing keep,
+// though the screen's sidebar is now the list.
+const sidebarWidth = 38;
 const size = { width: sidebarWidth, height: 12 };
 // The sidebar, a click and a move with no entries, as most of these tests need.
 const draw = (rows: Row[], shown: string | null, room: typeof size) =>
@@ -183,14 +185,6 @@ test("a thread with messages waiting for its builder says how many on its row", 
     "    claude",
     "    1 message waiting",
   ]);
-});
-
-test("the sidebar is 38 columns wide, with room for 31 of a name and title", () => {
-  expect(sidebarWidth).toBe(38);
-  const title = "Send people back to the page they came from after signing in";
-  expect(listed(draw([thread("app-9", { title })], "lead", size))[0]).toBe(
-    "  ○ 9 Send people back to the page…",
-  );
 });
 
 // A row of sc ps for a thread, with no PR or review unless given.

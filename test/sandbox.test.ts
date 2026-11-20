@@ -129,6 +129,21 @@ test("Claude Code starts every agent with its agent view off", () => {
   expect(env.CLAUDE_CODE_DISABLE_AGENT_VIEW).toBe("1");
 });
 
+// Claude Code's tips would be the first thing on the lead's screen, ahead of the lead's own
+// greeting. Nobody watches a builder, so its settings are left as they are. Nothing is started
+// here, so this runs inside Skelcrew's sandbox too.
+test("a lead's Claude Code shows no tips, and a builder's settings are left as they are", () => {
+  saveToken();
+  const configs = join(home, ".local", "share", "skelcrew", "claude");
+  const read = (name: string) =>
+    JSON.parse(readFileSync(join(configs, name, "settings.json"), "utf8"));
+  claude.start({ ...lead(), name: "lead", socket: socketPath, env: outside() });
+  expect(read("lead").spinnerTipsEnabled).toBe(false);
+  const thread = join(home, ".local", "share", "skelcrew", "threads", "app-12");
+  claude.start({ ...lead(), name: "app-12", thread, socket: socketPath, env: outside() });
+  expect(read("app-12")).toEqual({ skipDangerousModePermissionPrompt: true });
+});
+
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
 describe.skipIf(insideSandbox)("sandbox", () => {
   test("the lead writes in its folder and nowhere else", async () => {
@@ -534,12 +549,19 @@ describe("starting Claude Code", () => {
     const read = (name: string) =>
       JSON.parse(readFileSync(join(configs, name, "settings.json"), "utf8"));
     start("lead");
-    expect(read("lead")).toEqual({ skipDangerousModePermissionPrompt: true });
+    expect(read("lead")).toEqual({
+      skipDangerousModePermissionPrompt: true,
+      spinnerTipsEnabled: false,
+    });
     // A session started before Skelcrew wrote the file gets it when it starts again.
     mkdirSync(join(configs, "app-t3"), { recursive: true });
     writeFileSync(join(configs, "app-t3", "settings.json"), '{"theme":"dark"}\n');
     start("app-t3");
-    expect(read("app-t3")).toEqual({ theme: "dark", skipDangerousModePermissionPrompt: true });
+    expect(read("app-t3")).toEqual({
+      theme: "dark",
+      skipDangerousModePermissionPrompt: true,
+      spinnerTipsEnabled: false,
+    });
     expect(statSync(join(configs, "app-t3", "settings.json")).mode & 0o777).toBe(0o600);
     // An agent can change its own folder, so a link there is refused, never followed.
     const yours = join(home, "yours.json");

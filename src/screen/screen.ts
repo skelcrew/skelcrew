@@ -7,11 +7,19 @@ import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 import type { Entry } from "./lists.ts";
 
-// How wide the sidebar is, with the line it draws at its edge: room for 31 columns of a title,
-// between its mark and two columns of padding, so a thread's name, word, harness and time
-// usually fit on one line whole. tmux shares a resize out among panes, so it is set back after
-// each.
-export const sidebarWidth = 38;
+// How wide the sidebar is, with the line it draws at its edge: wide enough that a task's two lines
+// usually fit whole, such as `working · Editing rows.ts · #40 · CI passed · 14:31`. On a terminal
+// too narrow for it beside half the terminal, it narrows to what the right side leaves, as the
+// lead or an agent there must stay usable.
+export const sidebarWidth = 58;
+
+// Returns how wide the sidebar is in a terminal `width` columns wide: its own width, or less so the
+// right side keeps at least half, past the border between them.
+export const sidebarFor = (width: number) => Math.min(sidebarWidth, Math.floor((width - 1) / 2));
+
+// The same width as a tmux format, which tmux works out itself on each resize, from the window's
+// width.
+const sidebarFormat = `#{?#{e|<:#{window_width},${2 * sidebarWidth + 1}},#{e|/:#{e|-:#{window_width},1},2},${sidebarWidth}}`;
 
 // A word in the command of a right side attached to a builder. The screen's tmux finds it there,
 // so Ctrl-\ ends only that attachment, never the lead or a task's details.
@@ -64,15 +72,25 @@ const config = [
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
   // into the agent. A paste that matters comes bracketed anyway.
   ["set", "-g", "assume-paste-time", "0"],
-  // Alt-Up and Alt-Down, with or without Shift, and Alt-Shift-Left and Alt-Shift-Right go to
-  // the sidebar, in pane 0, without moving your typing from the agent. Plain Alt-Left and
-  // Alt-Right stay the agent's, as some terminals send them to move a word while you type.
+  // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-1 to
+  // Alt-6, which open and close the stages, go to the sidebar, in pane 0, without moving your
+  // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as some terminals send
+  // them to move a word while you type.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
+  ...["1", "2", "3", "4", "5", "6"].map((digit) => [
+    "bind",
+    "-n",
+    `M-${digit}`,
+    "send-keys",
+    "-t",
+    ":.0",
+    `M-${digit}`,
+  ]),
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
@@ -155,8 +173,9 @@ const config = [
   // from refusing the whole screen over it.
   ["set", "-sq", "theme", "terminal"],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
-  // each, with no process of Skelcrew's to do it.
-  ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
+  // each, with no process of Skelcrew's to do it. run-shell -C works out the width's format
+  // first, as resize-pane takes only a number.
+  ["set-hook", "-g", "window-resized", `run-shell -C "resize-pane -t :.0 -x ${sidebarFormat}"`],
 ];
 
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
@@ -229,7 +248,7 @@ export async function openScreen(
     ...border,
     ["new-session", "-s", name, "--", ...attachCommand(agents, session, lead)],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
-    ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
+    ["split-window", "-hbd", "-l", String(sidebarFor(process.stdout.columns || 80)), "--", ...left],
     // The footer goes across the whole width, below both, as the screen's third pane.
     ["split-window", "-vfd", "-l", footerHeight, "--", ...footerCommand(agents, name)],
     // Ctrl-C reaches a list until it has made its terminal raw, and Bun won't stay ignoring it.
