@@ -3,7 +3,7 @@
 // your answer. A shell script stands in for Claude Code as the lead and the builder.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, renameSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { leadPlaces } from "../src/paths.ts";
@@ -12,11 +12,15 @@ import {
   addApp,
   askForLead,
   asLead,
+  builder,
   data,
   home,
   lead,
+  running,
   serve,
   setUp,
+  skel,
+  startApp12,
   tearDown,
   until,
 } from "./needsyou.ts";
@@ -136,6 +140,41 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     );
     expect(threadOf("t2")).toBeNull();
   }, 60_000);
+
+  // A yes that brings back a stopped task, cut short by a stop, is done again as the daemon comes
+  // back. The daemon also brings back the builders that ran before the stop, and must not count
+  // the one the yes brings back among them, which would start its builder twice.
+  test("a yes that brings back a stopped task, cut short by a stop, brings its builder back once", async () => {
+    await startApp12();
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    for (const run of running.splice(0)) {
+      run.kill();
+      await run.exited;
+    }
+    // Each start of a builder from here on is counted, in the builder's own folder, which its
+    // sandbox can write.
+    const bin = join(home, "bin");
+    renameSync(join(bin, "claude"), join(bin, "claude-fake"));
+    writeFileSync(
+      join(bin, "claude"),
+      `#!/bin/sh\necho start >> "$CLAUDE_CONFIG_DIR/starts"\nexec ${join(bin, "claude-fake")} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
+      ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12 Add export?', 1, 1)`);
+    db.close();
+    serve();
+    await until(() => read(join(builder(), "starts")) !== "", 30_000);
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-12 Add export? It did it again: Started APP-12 again",
+      ),
+    );
+    // Long enough for a second start, had the daemon brought the builder back too.
+    await Bun.sleep(3000);
+    expect(read(join(builder(), "starts"))).toBe("start\n");
+  }, 90_000);
 
   test("a yes to a new task starts it with its title, description, short title and flow", async () => {
     await openApp();

@@ -501,6 +501,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     try {
       let action = taken.action;
       if (action.kind === "start new") {
+        // A repository with no commits can't start the task, as sc start says, so it isn't
+        // filed either.
+        if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
         const clone = cloneDir(owner, repo);
         if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
         const { title, body, short, flow } = action;
@@ -1116,9 +1119,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // would overwrite a limit a review met meanwhile and forget when it was met, so a review
   // that started before it could end it by finishing.
   restoreLimits(db);
-  // A yes to a lead's request that the last stop cut short is done again. It isn't waited on, as
-  // a start waits for the first poll.
-  void finishAnswers();
   // A freeze leaves nothing else in the log, so the daemon logs its own stalls.
   watchForStalls("The daemon");
   // A task that left the queue but whose builder's start the stop cut short goes back to it
@@ -1127,6 +1127,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
+  // A yes to a lead's request that the last stop cut short is done again, once the threads to
+  // bring back below are taken: one the yes brings back itself must not be brought back twice.
+  // It isn't waited on, as a start waits for the first poll.
+  void finishAnswers();
   // Reviews the daemon's stop cut short join the queue of reviews first, before any request or
   // builder could start one, and in the order they had: those that were running, then those
   // that waited, by when they joined. A review doesn't need its builder until it types changes

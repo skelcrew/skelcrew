@@ -625,6 +625,43 @@ ${threadSql({ task: "t1", title: "CSV export", status: "stopped" })}`),
   ]);
 });
 
+// A repository with no commits can't start a task, so a yes to a new task there files nothing,
+// as sc start doesn't, and tells you and the lead why.
+test("a yes to a new task in a repository with no commits files nothing, and says why", async () => {
+  setUp();
+  addRepository("app");
+  // The repository's remote is emptied, as a repository made on the forge and never pushed to.
+  rmSync(join(github(), "simon", "app.git"), { recursive: true, force: true });
+  git(home, "init", "-q", "--bare", join(github(), "simon", "app.git"));
+  serve();
+  await untilAnswers();
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it."}',
+    'Start a new task: CSV export?', 1)`),
+  );
+  const answered = await ask({ command: "answer", repo: "simon/app", id: 1, yes: true });
+  expect(answered).toEqual({ error: expect.stringContaining("no commits") });
+  expect(onDb((db) => db.query("SELECT task FROM backlog").all())).toEqual([]);
+  expect(
+    Bun.spawnSync([
+      "git",
+      "-C",
+      join(github(), "simon", "app.git"),
+      "for-each-ref",
+    ]).stdout.toString(),
+  ).toBe("");
+  expect(
+    onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all()),
+  ).toEqual([
+    {
+      text: expect.stringContaining(
+        "The human said yes in the list to your request: Start a new task: CSV export? It failed: ",
+      ),
+    },
+  ]);
+});
+
 // A daemon stopped partway through a yes does it again as it starts, and the lead hears what that
 // said. Here the yes asks for a flow that doesn't exist, so doing it again fails and says why, and
 // the task stays as it was.
