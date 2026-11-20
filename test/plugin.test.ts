@@ -810,7 +810,7 @@ test("sc add without -g pins a plugin installed here already at its version, ask
   const added = await skel(["add", "skelcrew/skelcrew-fake"], "", "", {}, app, false);
   expect(added.err).toBe("");
   expect(added.out).toBe(
-    "Added fake 0.1.0 to skelcrew.yaml and skelcrew.lock. They count once you commit and push them.\n",
+    "Added fake 0.1.0 to skelcrew.yaml and skelcrew.lock, at the version installed here. They count once you commit and push them.\n",
   );
   expect(parse(readFileSync(join(app, "skelcrew.yaml"), "utf8"))).toEqual({
     plugins: ["skelcrew/skelcrew-fake"],
@@ -818,6 +818,32 @@ test("sc add without -g pins a plugin installed here already at its version, ask
   expect(parse(readFileSync(join(app, "skelcrew.lock"), "utf8"))["skelcrew/skelcrew-fake"]).toEqual(
     { name: "fake", version: "0.1.0", commit: tagCommit("skelcrew/skelcrew-fake", "0.1.0") },
   );
+});
+
+// One name can't be two plugins, and a folder has no version a repository could pin.
+test("sc add without -g refuses a plugin whose name is installed here from a folder or another source", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  publish("simon/other-fake", "0.1.0");
+  await skel(["add", "-g", "simon/other-fake"], "y\n");
+  const app = appCheckout();
+  const other = await skel(["add", "skelcrew/skelcrew-fake"], "", "", {}, app, false);
+  expect(other.code).toBe(1);
+  expect(other.err).toContain(
+    "fake is installed here from simon/other-fake, another plugin with the same name, and one name can't be two plugins",
+  );
+  await skel(["remove", "-g", "fake"]);
+  const folder = join(home, "skelcrew-fake");
+  fakePlugin(folder, "0.1.0");
+  await skel(["add", "-g", "./skelcrew-fake"], "y\n");
+  const fromFolder = await skel(["add", "skelcrew/skelcrew-fake"], "", "", {}, app, false);
+  expect(fromFolder.code).toBe(1);
+  expect(fromFolder.err).toContain(
+    `fake is installed here from the folder ${folder}, which has no version a repository could pin`,
+  );
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
+    "# Shared.\nsetup: [bun install]\n",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
 });
 
 test("sc add without -g refuses outside a checkout, and for a folder, and a no writes nothing", async () => {
