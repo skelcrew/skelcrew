@@ -3,7 +3,7 @@
 // install installs what they pin.
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse, parseDocument } from "yaml";
+import { isMap, isScalar, isSeq, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { openDb } from "../db.ts";
 import { checkoutTop, repositories } from "../flow/repo.ts";
@@ -73,32 +73,65 @@ const readOr = (file: string, start: string) =>
 // one line keeps its brackets tight, as people write them.
 const asWritten = { lineWidth: 0, flowCollectionPadding: false };
 
-// Names `source` under plugins: in the skelcrew.yaml in `folder`, unless it is there already. The
-// file is changed in place, so its comments and other lines stay. A file that isn't there yet is
-// started with a line on top saying what it is. sc init uses it alone for a plugin the
-// repository's skelcrew.lock pins already, whose pin it keeps.
+// Returns `text` with `key` set to `value`, changing only where it goes, so every other line stays
+// byte for byte, as it would in the human's commit. A key that isn't there is added as a line at
+// the end. One with an empty list, such as plugins: [], gets the value in its place, on one line.
+// Returns null when neither fits, such as for a file written as one map on one line, or a key
+// with a value already, which the whole file must be written again to change.
+function withKey(text: string, key: string, value: unknown): string | null {
+  const { contents } = parseDocument(text);
+  const added = () =>
+    `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${stringify({ [key]: value }, asWritten)}`;
+  if (contents === null) return added();
+  if (!isMap(contents) || contents.flow) return null;
+  const pair = contents.items.find((item) => isScalar(item.key) && item.key.value === key);
+  if (!pair) return added();
+  const empty = pair.value;
+  if (!isSeq(empty) || !empty.range || empty.items.length > 0) return null;
+  const [start, end] = empty.range;
+  const flow = stringify(value, { ...asWritten, collectionStyle: "flow" }).trim();
+  return `${text.slice(0, start)}${flow}${text.slice(end)}`;
+}
+
+// Sets `key` to `value` in the YAML file, keeping its other lines as they are where it can, as
+// withKey does, and its comments otherwise. A file that isn't there yet is started with `start`,
+// a line on top saying what it is.
+function setKey(file: string, start: string, key: string, value: unknown): void {
+  const text = readOr(file, start);
+  const changed = withKey(text, key, value);
+  if (changed !== null) {
+    writeFileSync(file, changed);
+    return;
+  }
+  const document = parseDocument(text);
+  document.set(key, value);
+  writeFileSync(file, document.toString(asWritten));
+}
+
+// Names `source` under plugins: in the skelcrew.yaml in `folder`, unless it is there already.
+// sc init uses it alone for a plugin the repository's skelcrew.lock pins already, whose pin it
+// keeps.
 export function namePlugin(folder: string, source: string): void {
-  const yamlFile = join(folder, "skelcrew.yaml");
   const { plugins } = repositoryPlugins(folder);
   if (plugins.includes(source)) return;
-  const shared = parseDocument(
-    readOr(
-      yamlFile,
-      "# Shared with everyone who works on this repository. Never put a secret here.\n",
-    ),
+  setKey(
+    join(folder, "skelcrew.yaml"),
+    "# Shared with everyone who works on this repository. Never put a secret here.\n",
+    "plugins",
+    [...plugins, source],
   );
-  shared.set("plugins", [...plugins, source]);
-  writeFileSync(yamlFile, shared.toString(asWritten));
 }
 
 // Names `source` under plugins: in the skelcrew.yaml in `folder`, and pins it in its
-// skelcrew.lock. The lock is changed in place too, so its other pins and comments stay.
+// skelcrew.lock, keeping the lock's other pins and comments.
 function nameAndPin(folder: string, source: string, locked: Locked): void {
-  const lockFile = join(folder, "skelcrew.lock");
   namePlugin(folder, source);
-  const lock = parseDocument(readOr(lockFile, "# Written by sc add and sc update. Commit it.\n"));
-  lock.set(source, locked);
-  writeFileSync(lockFile, lock.toString(asWritten));
+  setKey(
+    join(folder, "skelcrew.lock"),
+    "# Written by sc add and sc update. Commit it.\n",
+    source,
+    locked,
+  );
 }
 
 // Adds a plugin to the repository you are in, for sc add without -g: installs it after asking,

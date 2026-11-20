@@ -863,7 +863,6 @@ test("init writes skelcrew.yaml and .agents/ from the built-in defaults, approve
 # tracker: none
 # At most this many builders at once in this repository.
 # limits: { threads: 4 }
-
 plugins:
   - skelcrew/skelcrew-github
 `,
@@ -1053,7 +1052,8 @@ test("init installs the forge's plugin at the pin a skelcrew.lock that is there 
 test("init adds the forge's pin to a skelcrew.lock that is there, keeping its other pins", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   const commit = githubInstalledAsYours();
-  const other = `simon/skelcrew-other: {name: other, version: 1.0.0, commit: ${"b".repeat(40)}}\n`;
+  // Written as people write it, with spaces, which a rewrite of the whole file would drop.
+  const other = `simon/skelcrew-other: { name: other, version: 1.0.0, commit: ${"b".repeat(40)} }\n`;
   writeFileSync(join(checkout, "skelcrew.lock"), `# Ours.\n${other}`);
   expect((await skel(["init"], "", checkout)).err).toBe("");
   const lock = readFileSync(join(checkout, "skelcrew.lock"), "utf8");
@@ -1080,6 +1080,24 @@ test("init says the lead will propose only what neither the repository nor your 
   const both = await skel(["init"], "", onGitHub("simon/web", "WRITE"));
   expect(both.err).toBe("");
   expect(both.out).not.toContain("filled in");
+});
+
+// The human commits the file, so a line init didn't need to change stays byte for byte.
+test("init adds the forge's plugin to a skelcrew.yaml without changing its other lines", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  const file = join(checkout, "skelcrew.yaml");
+  writeFileSync(file, "setup:   [ make, test ]  # ours\ntest: [make]");
+  expect((await skel(["init"], "", checkout)).err).toBe("");
+  expect(readFileSync(file, "utf8")).toBe(
+    "setup:   [ make, test ]  # ours\ntest: [make]\nplugins:\n  - skelcrew/skelcrew-github\n",
+  );
+  // An empty plugins: [] gets the plugin in its place.
+  writeFileSync(file, "setup:   [ make ]\nplugins: [ ]  # none yet\ntest: [make]\n");
+  expect((await skel(["init"], "", checkout)).err).toBe("");
+  expect(readFileSync(file, "utf8")).toBe(
+    "setup:   [ make ]\nplugins: [skelcrew/skelcrew-github]  # none yet\ntest: [make]\n",
+  );
 });
 
 // A repository that names its plugins chose them, so init leaves its files as they are.
