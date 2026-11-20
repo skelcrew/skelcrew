@@ -454,10 +454,10 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
 // redrew it. The input area is a rule, the ❯ prompt with what is typed indented under it, a
 // closing rule, and at most two indented status lines, ending the screen. A past message quoted
 // in the output also starts with ❯, and the agent may print a box like this one itself, so
-// anything after it shows whole. Above the input area, Claude Code keeps a row of its own for
-// notices, such as `◐ medium · /effort`, and while a turn runs it shows a tip under its busy
-// line, such as `⎿  Tip: Use /btw…`. Both go too, and the busy line stays, as it shows the agent
-// at work.
+// anything after it shows whole. Right on the input area, Claude Code shows some notices
+// right-aligned, such as `◐ medium · /effort`, and while a turn runs it shows a tip under its
+// busy line, such as `⎿  Tip: Use /btw…`. Both go too, and the busy line stays, as it shows the
+// agent at work. A line of any other shape may be the agent's output, so it stays.
 function inputStart(screen: string[]): number | null {
   const lines = screen.map((line) => Bun.stripANSI(line));
   const rule = (line: string) => /^─{3,}/.test(line.trim());
@@ -473,11 +473,10 @@ function inputStart(screen: string[]): number | null {
   // The busy line: a spinner, a word ending in …, then how long the turn has run, in brackets,
   // such as `✻ Forging… (2m 13s · ↓ 3.4k tokens · esc to interrupt)`.
   const busy = (line: string) => /^\S \S+… \(/.test(line);
-  // The row of notices sits right on the input area, with no blank line between them, as the
-  // agent's output always ends a blank line above it.
+  // A notice right on the input area is pushed to the right edge, far past the indent of any
+  // output.
   let start = at - 1;
-  const above = lines[start - 1] ?? "";
-  if (above.trim() !== "" && !busy(above)) start--;
+  if (/^ {10,}\S/.test(lines[start - 1] ?? "")) start--;
   // Under the busy line, everything is Claude Code's, its tip included, indented or blank. With
   // no busy line above them, indented lines are the agent's output, such as a tool's result.
   let under = start - 1;

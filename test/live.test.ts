@@ -19,7 +19,7 @@ const bottom = (text: string, count: number) =>
 
 test("Claude Code's prompt, rules and status line are cut, idle or at work", async () => {
   const idle = agentOutput("claude", await screen("claude-idle.txt"));
-  // The row of notices right on the input area goes with it.
+  // The notice right-aligned on the input area goes with it.
   expect(idle).not.toContain("/effort");
   expect(bottom(idle, 1)).toEqual(["  than Opus 5.5. Switch with /model."]);
   expect(idle).not.toContain("❯");
@@ -38,8 +38,8 @@ test("a long message typed into Claude Code is cut with its prompt, over all its
   const long = agentOutput("claude", await screen("claude-long.txt"));
   expect(long).not.toContain("every file in src");
   expect(long).not.toContain("Please write");
-  expect(long).not.toContain("tmux focus-events off");
-  expect(bottom(long, 1)).toEqual(["  than Opus 5.5. Switch with /model."]);
+  // A notice that isn't right-aligned can't be told from the agent's output, so it stays.
+  expect(bottom(long, 1)).toEqual([expect.stringContaining("tmux focus-events off")]);
 });
 
 test("Claude Code's tip under its busy line is cut, and the busy line stays", async () => {
@@ -53,6 +53,9 @@ test("Claude Code's tip under its busy line is cut, and the busy line stays", as
   // A tool's result is indented as a tip is, and stays when no busy line is over it.
   const idle = (await screen("claude-tip.txt")).replace(/.*Forging.*\n.*Tip:.*\n/, "");
   expect(bottom(agentOutput("claude", idle), 1)).toEqual(["  ⎿  Added 12 lines"]);
+  // Output that ends right on the input area, with no blank line between, stays whole.
+  const touching = idle.replace(/\n\n(.*─{3,})/, "\n⏺ Done.\n$1");
+  expect(bottom(agentOutput("claude", touching), 2)).toEqual(["  ⎿  Added 12 lines", "⏺ Done."]);
 });
 
 test("Codex's input box and footer are cut, idle, at work or with a long message typed", async () => {
