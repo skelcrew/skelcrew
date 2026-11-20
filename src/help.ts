@@ -41,7 +41,7 @@ const sections: [string, [string, string][]][] = [
   [
     "REPOSITORIES",
     [
-      ["init", "Write skelcrew.yaml and .agents/ here and add this repository"],
+      ["init", "Write skelcrew.yaml, skelcrew.lock and .agents/ here and add this repository"],
       ["repo add [<path> | <url> | <owner/repo>]", "Add a repository, this one by default"],
       ["repo ls", "Repositories Skelcrew works on"],
       ["repo rm <name>", "Remove Skelcrew's clone of one"],

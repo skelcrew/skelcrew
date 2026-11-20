@@ -3,7 +3,8 @@
 // install installs what they pin.
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse, parseDocument } from "yaml";
+import { isDeepStrictEqual } from "node:util";
+import { isMap, isScalar, isSeq, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { openDb } from "../db.ts";
 import { checkoutTop, repositories } from "../flow/repo.ts";
@@ -23,6 +24,9 @@ import {
 import { type Lock, type Locked, readLockAt, writeBoth, yourLock, yourPlugins } from "./lock.ts";
 import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
 
+// The GitHub plugin, the forge of every repository on github.com.
+export const githubPlugin = "skelcrew/skelcrew-github";
+
 // What Skelcrew reads of a repository's skelcrew.yaml here: only plugins:, by the GitHub
 // repository each comes from, such as skelcrew/skelcrew-github. The rest is the loader's, in
 // settings.ts. A path, such as ./plugin, is refused: a folder plugin has no pin, so a
@@ -30,7 +34,8 @@ import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
 const Source = z
   .string()
   .regex(/^\w[\w.-]*\/[\w.-]+$/, "must be owner/repo, such as skelcrew/skelcrew-github");
-const Shared = z.looseObject({ plugins: z.array(Source).optional() });
+// A bare plugins: is YAML's null, which names none, as a missing line does.
+const Shared = z.looseObject({ plugins: z.array(Source).nullish() });
 
 // Throws when `file` is there but isn't a plain file. A repository's files are someone else's
 // writing, and a link in them could point Skelcrew at any file of yours.
@@ -62,28 +67,111 @@ export function repositoryPlugins(folder: string): { plugins: string[]; lock: Lo
   return { plugins: shared.data.plugins ?? [], lock: readLockAt(lockFile) ?? {} };
 }
 
-// Names `source` under plugins: in the skelcrew.yaml in `folder`, and pins it in its
-// skelcrew.lock. Both files are changed in place, so their comments and other lines stay. A file
-// that isn't there yet is started with a line on top saying what it is.
-function nameAndPin(folder: string, source: string, locked: Locked): void {
-  const yamlFile = join(folder, "skelcrew.yaml");
-  const lockFile = join(folder, "skelcrew.lock");
+// Returns the text of a file in a repository, or `start` for one that isn't there yet.
+const readOr = (file: string, start: string) =>
+  lstatSync(file, { throwIfNoEntry: false }) ? readFileSync(file, "utf8") : start;
+
+// With no line width, a long line, such as a pin on one line, isn't folded, and a list written on
+// one line keeps its brackets tight, as people write them.
+const asWritten = { lineWidth: 0, flowCollectionPadding: false };
+
+// Returns `text` with `key` set to `value`, changing only where it goes, so every other line stays
+// byte for byte, as it would in the human's commit. A key that isn't there is added as a line at
+// the end of the document. One with an empty value, such as plugins: [] or a bare plugins:, gets
+// the value in its place, on one line.
+// Returns null when neither fits, such as for a file written as one map, like {setup: [make]}, or
+// a key with a value already, which the whole file must be written again to change.
+function editedInPlace(text: string, key: string, value: unknown): string | null {
+  const { contents } = parseDocument(text);
+  // A line of ... ends the document, so a new line goes before it, or YAML would refuse the file.
+  const added = () => {
+    const marker = text.search(/^\.\.\.[ \t]*(#.*)?$/m);
+    const before = marker === -1 ? text : text.slice(0, marker);
+    const after = marker === -1 ? "" : text.slice(marker);
+    const line = before === "" || before.endsWith("\n") ? "" : "\n";
+    return `${before}${line}${stringify({ [key]: value }, asWritten)}${after}`;
+  };
+  if (contents === null) return added();
+  if (!isMap(contents) || contents.flow) return null;
+  const pair = contents.items.find((item) => isScalar(item.key) && item.key.value === key);
+  if (!pair) return added();
+  const empty = pair.value;
+  const blank = isScalar(empty) && empty.value === null;
+  const emptyList = isSeq(empty) && empty.items.length === 0;
+  if (!(blank || emptyList) || !empty.range) return null;
+  const [start, end] = empty.range;
+  // A bare key has its empty value right after the colon, or right before a comment on its line,
+  // and YAML needs a space on each side of the value.
+  const space = text[start - 1] === ":" ? " " : "";
+  const spaceAfter = /^[^\s]/.test(text.slice(end)) ? " " : "";
+  const flow = stringify(value, { ...asWritten, collectionStyle: "flow" }).trim();
+  return `${text.slice(0, start)}${space}${flow}${spaceAfter}${text.slice(end)}`;
+}
+
+// Returns `text` with `key` set to `value` as editedInPlace changes it, or null when it can't.
+// Only text that reads back as the file did with the value set is kept, so a case editedInPlace
+// misses costs the file's spacing, never its meaning.
+function withKey(text: string, key: string, value: unknown): string | null {
+  const changed = editedInPlace(text, key, value);
+  if (changed === null) return null;
+  try {
+    const Keys = z.record(z.string(), z.unknown());
+    const before = Keys.parse(parse(text) ?? {});
+    return isDeepStrictEqual(Keys.parse(parse(changed)), { ...before, [key]: value })
+      ? changed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// Sets `key` to `value` in the YAML file, keeping its other lines as they are where it can, as
+// withKey does, and its comments otherwise. Throws, naming the line to add by hand, for a file
+// written as one map, which it never changes. A file that isn't there yet is started with `start`,
+// a line on top saying what it is.
+function setKey(file: string, start: string, key: string, value: unknown): void {
+  const text = readOr(file, start);
+  const changed = withKey(text, key, value);
+  if (changed !== null) {
+    writeFileSync(file, changed);
+    return;
+  }
+  const document = parseDocument(text);
+  // Written again, a file written as one map would change on every line, so it is left as it is.
+  if (isMap(document.contents) && document.contents.flow) {
+    const line = stringify({ [key]: value }, { ...asWritten, collectionStyle: "flow" }).trim();
+    throw new Error(
+      `${file} is written as one map, which Skelcrew leaves as it is. Add ${line.slice(1, -1)} to it by hand`,
+    );
+  }
+  document.set(key, value);
+  writeFileSync(file, document.toString(asWritten));
+}
+
+// Names `source` under plugins: in the skelcrew.yaml in `folder`, unless it is there already.
+// sc init uses it alone for a plugin the repository's skelcrew.lock pins already, whose pin it
+// keeps.
+export function namePlugin(folder: string, source: string): void {
   const { plugins } = repositoryPlugins(folder);
-  const read = (file: string, start: string) =>
-    lstatSync(file, { throwIfNoEntry: false }) ? readFileSync(file, "utf8") : start;
-  const shared = parseDocument(
-    read(
-      yamlFile,
-      "# Shared with everyone who works on this repository. Never put a secret here.\n",
-    ),
+  if (plugins.includes(source)) return;
+  setKey(
+    join(folder, "skelcrew.yaml"),
+    "# Shared with everyone who works on this repository. Never put a secret here.\n",
+    "plugins",
+    [...plugins, source],
   );
-  if (!plugins.includes(source)) shared.set("plugins", [...plugins, source]);
-  const lock = parseDocument(read(lockFile, "# Written by sc add and sc update. Commit it.\n"));
-  lock.set(source, locked);
-  // With no line width, a long line, such as a pin on one line, isn't folded, and a list
-  // written on one line keeps its brackets tight, as people write them.
-  writeFileSync(yamlFile, shared.toString({ lineWidth: 0, flowCollectionPadding: false }));
-  writeFileSync(lockFile, lock.toString({ lineWidth: 0, flowCollectionPadding: false }));
+}
+
+// Names `source` under plugins: in the skelcrew.yaml in `folder`, and pins it in its
+// skelcrew.lock, keeping the lock's other pins and comments.
+function nameAndPin(folder: string, source: string, locked: Locked): void {
+  namePlugin(folder, source);
+  setKey(
+    join(folder, "skelcrew.lock"),
+    "# Written by sc add and sc update. Commit it.\n",
+    source,
+    locked,
+  );
 }
 
 // Adds a plugin to the repository you are in, for sc add without -g: installs it after asking,
