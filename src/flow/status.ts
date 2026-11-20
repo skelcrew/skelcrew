@@ -599,8 +599,17 @@ export function markForgotten(
   const waiting = threads.filter((thread) => !needsYou(thread));
   for (const thread of waiting.filter(inFlight))
     db.run("UPDATE threads SET ended_at = ? WHERE folder = ?", [now, thread.folder]);
-  // The lead's messages to the builder are kept in order, so the last one is the newest.
-  const leadHeld = (thread: Thread) => (thread.updates.at(-1)?.at ?? 0) > now - leadHold;
+  // The lead's messages that went in are kept in order, so the last one is the newest. One still
+  // waiting to go in counts from when the lead sent it too: the builder can stop before it goes in.
+  const waitingFromLead = db.query(
+    "SELECT MAX(at) AS at FROM messages WHERE folder = ? AND sender = 'lead'",
+  );
+  const lastTold = (thread: Thread) =>
+    Math.max(
+      thread.updates.at(-1)?.at ?? 0,
+      z.object({ at: z.number().nullable() }).parse(waitingFromLead.get(thread.folder)).at ?? 0,
+    );
+  const leadHeld = (thread: Thread) => lastTold(thread) > now - leadHold;
   const forgotten = waiting.filter(
     (thread) => !inFlight(thread) && (thread.ended_at ?? now) <= since && !leadHeld(thread),
   );

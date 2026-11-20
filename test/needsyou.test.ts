@@ -375,3 +375,17 @@ markForgotten(db, "none", 5, told + 30 * 60_000);
 console.log(JSON.stringify({ held, word: needsYouFor(thread()) }));`);
   expect(seen).toEqual({ held: false, word: "I'll merge origin/main once t113 lands." });
 });
+
+// The lead can tell a builder mid-turn, and its message waits to go in. A stop before it goes in
+// still holds off from when the lead sent it, as the lead acted already.
+test("a lead's message still waiting to go in holds off the safety net too", () => {
+  const seen = inProcess(`
+const told = Date.now();
+db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'lead', 'Wait for t113.', 'Wait for t113.', ?, '[]')", [told]);
+turnEnded(db, "none", "app-12", { message: "Still on the export." });
+markForgotten(db, "none", 5, told + 29 * 60_000);
+const held = needsYou(thread());
+markForgotten(db, "none", 5, told + 30 * 60_000);
+console.log(JSON.stringify({ held, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({ held: false, word: "Still on the export." });
+});
