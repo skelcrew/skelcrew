@@ -210,6 +210,7 @@ const threadColumns = {
 // closes it though the tracker or Skelcrew's copy of it changed since. It is empty when there is
 // none, and null only in a row from before Skelcrew kept it. `review_post` is Skelcrew's review
 // on the PR, as JSON: the PR, the review's ID and what it last said, so each round edits it.
+// `posting` is the latest verdict, as JSON, until it is on the forge, so a restart finishes it.
 // `review_findings` is what the latest finished review found, as JSON, whether or not it reached
 // a PR, so the list shows it for a repository with no forge too. Null before Skelcrew kept it.
 // `agents` is the git tree of the .agents/ you had approved when the task started, which its
@@ -251,6 +252,7 @@ export const taskColumns = {
   review_limited: "INTEGER NOT NULL DEFAULT 0",
   review_reset: "INTEGER",
   review_post: "TEXT",
+  posting: "TEXT",
   review_findings: "TEXT",
   merged: "INTEGER NOT NULL DEFAULT 0",
   issue_link: "TEXT",

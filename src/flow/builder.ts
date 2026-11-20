@@ -340,6 +340,7 @@ async function recordThread(
       agents,
       flow,
       review_post: null,
+      posting: null,
       review_findings: null,
       queued_since: queued ? joinTime(db) : null,
     };

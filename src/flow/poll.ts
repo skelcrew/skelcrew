@@ -37,7 +37,7 @@ import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
-import { ciShowedIn, ciWaitEnded, lastPushed } from "./round.ts";
+import { ciShowedIn, ciWaitEnded, lastPushed, retryPost } from "./round.ts";
 import { needsYou } from "./status.ts";
 import { claimUnderWay } from "./task-queue.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
@@ -600,6 +600,8 @@ async function pollRepository(
   for (const before of threads) {
     if (!hasForge) await actOnBranch(db, sessions, repository, readThread(db, before.folder));
     else {
+      // A verdict whose post failed goes on the PR first, so the merge goes by it.
+      await retryPost(db, before.folder);
       // From the copy, just brought up to date, rather than from the answer: a forge answers
       // only what changed, and events held back for a thread, such as one stopped, were left
       // out of its `seen`, so its PR is acted on again until they are handed over.
