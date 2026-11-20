@@ -524,7 +524,7 @@ The lead answers a question itself when the answer follows from what you already
 
 **What Skelcrew marks itself**, by the same rule:
 
-- **Ready to merge.** An approved thread with green checks and no merge armed waits on you to merge it, as **Merge when ready** says. `sc ps`, `sc show` and a host's status say `ready to merge`, while the list's word stays `approved`, beside its green mark. One with a merge armed merges by itself, so it doesn't.
+- **Ready to merge.** An approved thread with green checks and no merge armed waits on you to merge it, as **Merge when ready** says. `sc ps`, `sc show`, a host's status, the list and the sidebar say `ready to merge`, beside its green mark. One with a merge armed merges by itself, so it doesn't.
 - **The round limit**, while nobody has decided, as step 7 of **The flow** says. A merge you armed, `sc start` to go on, or the lead or you marking or clearing the thread decides it, and the thread follows that decision. Decided, it no longer needs you for the limit, so a mark that clears or a merge plan that ends later, such as one you cancel, doesn't bring the limit back. Cleared, it still shows `round limit`, without needing you, until the next review, which asks again.
 - **A question** asked with the harness's question tool, and **a harness error**, as below.
 - **A missing session host plugin**, which only `sc install` brings back, as **Sessions** says. A mark the thread had already follows the instruction, such as `run sc install: its session host herdr is missing, then check the design`, and is all that is left once the engine finds the plugin again. While the plugin is still missing, marking or clearing the thread keeps the instruction first.
@@ -788,15 +788,19 @@ Plain `sc` opens the screen: the repository's list as a sidebar on the left, and
      asks you                                             │ issue #42  github.com/acme/app/issues/42
      asks: start a task on #31 "Export as CSV"?   y/n     │ PR #43     github.com/acme/app/pull/43
                                                           │
- 1 Backlog   2                                            │ Building · question
- 2 Building  3 · 1 needs you                              │ CI running: test ✓  lint ●  build ●
- ▸ ● app-t103  Rate limit the API                         │ Round 2 · changes asked
-     question · #43 · CI running · 14:02                  │   - The limit resets per process, not per user
-   ○ app-24  Login redirect                               │
-     working · Editing rows.ts · #40 · CI passed · 14:31  │ Add a limit per user to the public API, so one
-                                                          │ client can't starve the others. …
+ Needs you 1                                            │ Building · question
+ ▸ ● app-t103  Rate limit the API                         │ CI running: test ✓  lint ●  build ●
+     question · #43 · CI running · 14:02                  │ Round 2 · changes asked
+                                                          │   - The limit resets per process, not per user
+ 1 Backlog   2                                            │
+ 2 Building  2                                            │ Add a limit per user to the public API, so one
+   ○ app-24  Login redirect                               │ client can't starve the others. …
+     working · Editing rows.ts · #40 · CI passed · 14:31  │
+   ○ app-25  Export as CSV                                │ 13:40 submitted · 13:52 reviewed · 14:02 submitted
+     working · #44 · CI running · 14:40                   │
+                                                          │
  3 Reviewing 1                                            │
- 4 Checks    0                                            │ 13:40 submitted · 13:52 reviewed · 14:02 submitted
+ 4 Checks    0                                            │
  5 Ready     1                                            │
  6 Done      4                                            │
 
@@ -805,20 +809,22 @@ Plain `sc` opens the screen: the repository's list as a sidebar on the left, and
 
 The list is one repository's, picked as **Opening a repository** says. The top line has Skelcrew's version, with the host you gave `--remote` after it on a server, then a tab for each repository, together on the left. The open one is highlighted. Each other one has a badge: a dot and how many of its tasks need you, in yellow, or red when one of them went wrong, then a dot and how many are ready to merge, in green. Each shows only when there are any, and both when both apply, such as `site •2 •1`. An approved task is ready, not needing you, so it counts only in green. Tab or Alt-Shift-Right moves to the next one, Shift-Tab or Alt-Shift-Left to the previous one, each wrapping round, and a click on a tab opens it. The list asks your terminal to report the mouse only while it shows, so an agent you attach to and your shell after you quit get the mouse as usual.
 
-The repository's lead comes first, under the top line, always shown. Its row looks like a task's, so it reads as a row you open: its mark, `lead` and its harness, then under them what it is doing. Requests from the lead that wait for your yes, such as starting a task or adding a repository, show under it, one per line, newest first. Then come the repository's tasks, never its threads on their own, in six stages, in this order:
+The repository's lead comes first, under the top line, always shown. Its row looks like a task's, so it reads as a row you open: its mark, `lead` and its harness, then under them what it is doing. Requests from the lead that wait for your yes, such as starting a task or adding a repository, show under it, one per line, newest first. Then come the repository's tasks, never its threads on their own, in seven sections: Needs you, then six stages, in this order:
+
+- **Needs you**: every task that waits on you, whatever its stage, so one row and Enter reach it. Its word is what you must do, such as `question`, `ready to merge` or the action the lead marked it with, as **Needs you** says.
 
 - **Backlog**: not started yet. The tracker's open issues Skelcrew knows of that no thread works on, the tasks in Skelcrew's backlog, and tasks queued for a builder under `limits.threads`. The newest 10, then a row such as `… 24 more`, which Enter opens to show them all until you leave the list.
 - **Building**: a builder is working on it, including after the reviewer asked for changes. A thread that failed or stopped is here too, as its builder is what must start again.
 - **Reviewing**: a review is running, or queued for a place under `limits.reviews` or for its harness's usage limit. A review that failed or timed out is here too.
 - **Checks**: Skelcrew's reviewer approved, and the task waits on CI for that commit.
-- **Ready**: approved and green, ready for you to merge, which includes a merge when ready about to merge it.
+- **Ready**: approved and green. One that waits for you to merge it shows under Needs you, so Ready holds those with a merge when ready armed, which merge by themselves.
 - **Done**: merged or closed. Those that ended today, or the last 10 when fewer ended today.
 
-Each task is in exactly one stage, decided from its state alone. Needs you is never a stage: a task that needs you stays in the stage of its work, and its row is marked, whatever its stage. Within a stage, those that need you come first, and each of the two has the task that changed last first. Backlog has the newest issue first.
+Each task is in exactly one stage, decided from its state alone, and shows in exactly one section. Needs you is a section, not a stage: a task that needs you keeps the stage of its work, which decides what Enter and `m` do on it, and shows under Needs you instead of under its stage. Once it no longer needs you, such as when its mark clears, it goes back under its stage. The row you are on stays yours as it moves between sections, and a closed section it moves into opens. Needs you and each stage have the task that changed last first. Backlog has the newest issue first.
 
-Each stage's heading has the number key that opens and closes it, its name, how many tasks it has, lined up with the other headings' counts, and how many of them need you, such as `Building 4 · 2 need you`. Being approved and green doesn't count as needing you, so a task under Ready counts there only when something else blocks it on you, such as a question. Every heading's count always shows, so a closed stage still says what waits in it. An open stage's heading sits right above its rows and scrolls with them, so a heading with no rows under it is closed. When the stages don't fit, the lead stays and the stages scroll, keeping the row you are on in view. The first and last lines of the stages then say what is hidden past them, such as `↓ 5 more in Building`, with each heading hidden there pinned in short, such as `Checks 2`. On a terminal too narrow for that, the edge says it in fewer letters, then by number keys, such as `↓ 4:2`, so no count is cut off. The stages never end on an open heading whose rows are below them: it is pinned at the edge instead. Opening a stage moves you to its first row, so its heading and first rows show. Only Building is open when the list starts. The stages you open or close stay so until you leave the list, whichever repository you move to.
+Each stage's heading has the number key that opens and closes it, its name and how many tasks it has, lined up with the other headings' counts, such as `2 Building  4`. The Needs you heading has no number key, and its count is yellow while any task waits on you. Every heading's count always shows, so a closed section still says what waits in it. An open section's heading sits right above its rows and scrolls with them, so a heading with no rows under it is closed. When the sections don't fit, the lead stays and the sections scroll, keeping the row you are on in view. The first and last lines of the sections then say what is hidden past them, such as `↓ 5 more in Building`, with each heading hidden there pinned in short, such as `Checks 2`. On a terminal too narrow for that, the edge says it in fewer letters, then by number keys, with `!` for Needs you, such as `↓ 4:2`, so no count is cut off. The sections never end on an open heading whose rows are below them: it is pinned at the edge instead. Opening a section moves you to its first row, so its heading and first rows show. Only Needs you and Building are open when the list starts, and you start on the first task under Needs you, or on the lead when none waits on you. The sections you open or close stay so until you leave the list, whichever repository you move to.
 
-A task in Building, Reviewing, Checks or Ready takes two lines, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, its PR, its CI and when it last changed, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, with `14:31` today or `12 Nov` before. The step shows only when its harness gives one in words, such as a command's description, never the command itself. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. Its word says what is happening:
+A task in Needs you, Building, Reviewing, Checks or Ready takes two lines, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, its PR, its CI and when it last changed, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, with `14:31` today or `12 Nov` before. The step shows only when its harness gives one in words, such as a command's description, never the command itself. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. Its word says what is happening:
 
 | Word | Means |
 | --- | --- |
@@ -830,8 +836,10 @@ A task in Building, Reviewing, Checks or Ready takes two lines, so what it does 
 | `waiting` | The builder waits, with no review under way, no approval and no changes asked for |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
-| `approved` | Ready to merge. With a merge armed it merges by itself, so its mark is hollow and it doesn't count as ready |
-| `not reviewed` | Ready to merge, in a flow with no review. With a merge armed it merges by itself, as `approved` does |
+| `ready to merge` | Approved and green, and waits on you to merge it, so it shows under Needs you |
+| `approved` | Approved and green with a merge armed: it merges by itself, so its mark is hollow, it doesn't count as ready and it stays under Ready |
+| `ready to merge, not reviewed` | Green in a flow with no review, and waits on you to merge it, so it shows under Needs you. The word says nobody reviewed it |
+| `not reviewed` | Green in a flow with no review, with a merge armed: it merges by itself and stays under Ready, as `approved` does |
 | `question` | The builder asked with its harness's question tool |
 | `turn ended` | The builder ended its turn without submitting, and its last message went to the lead |
 | `error` | The builder's harness stopped on an error |
@@ -856,7 +864,7 @@ The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green i
 | `y` `n` | A request from the lead | Answers it |
 | Click | A task | Moves to it. A second click on it, or a double click, does what Enter does |
 | Click | The lead | Attaches full screen to the lead |
-| Click | A heading | Opens or closes its stage |
+| Click | A heading | Opens or closes its section, Needs you included |
 | Wheel | Anywhere | Moves one row up or down, which scrolls the list |
 | Tab, Alt-Shift-Right | Anywhere | The next repository, after the last the first |
 | Shift-Tab, Alt-Shift-Left | Anywhere | The previous repository, before the first the last |
@@ -884,7 +892,7 @@ Plain `sc` shows the list as a sidebar, on the left of your terminal, and on the
    ● lead    claude                                │ issue #42  github.com/acme/app/issues/42
      asks you                                      │ PR #43     github.com/acme/app/pull/43
                                                    │ Building · question
-   Needs you 1                                     │ CI running: test ✓  lint ●  build ●
+ Needs you 1                                       │ CI running: test ✓  lint ●  build ●
  ▸ ● app-t103  Rate limit the API                  │ Round 2 · changes asked
      question · #43 · CI running · 14:02           │ 13:40 submitted · 13:52 reviewed
                                                    │ ───────────────────────────────────
@@ -902,7 +910,7 @@ Plain `sc` shows the list as a sidebar, on the left of your terminal, and on the
  alt+↑↓ move  ⏎ open  alt+1-6 stages  alt+q quit   cpu 63%  mem 9/32G
 ```
 
-**The sidebar** is the list, as the rest of this section describes it, in a column of its own. Its top line has Skelcrew's version and the repositories' tabs, with their badges, and its bottom line the keys and the machine's load. Under the top line come the lead's row and the requests that wait for your yes. Then comes the `Needs you` section: every task that waits on you, whatever its stage, each in two lines, with the task that changed last first, and its word saying what you must do. A task there shows only there, not also under its stage. It keeps its stage, which decides what Enter and `m` do on it, and goes back under its stage once it no longer needs you, such as when its mark clears. Then come the six stages, Backlog, Building, Reviewing, Checks, Ready and Done, which open and close as in the list. The sidebar is wide enough that a task's two lines usually fit whole, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, and it keeps its width when the terminal is resized. The right side takes the rest.
+**The sidebar** is the list, as the rest of this section describes it, in a column of its own. Its top line has Skelcrew's version and the repositories' tabs, with their badges, and its bottom line the keys and the machine's load. Under the top line come the lead's row and the requests that wait for your yes, then the list's sections: `Needs you`, then the six stages, Backlog, Building, Reviewing, Checks, Ready and Done, which open and close as in the list. The sidebar is wide enough that a task's two lines usually fit whole, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, and it keeps its width when the terminal is resized. The right side takes the rest.
 
 **The right side** follows the row you are on:
 
@@ -923,7 +931,8 @@ Enter on any other row does what it does in the list: on Backlog it asks in the 
 | Alt-1 to Alt-6 | Anywhere | Open or close Backlog, Building, Reviewing, Checks, Ready or Done, as `1` to `6` do in the list |
 | Alt-Shift-Left, Alt-Shift-Right | Anywhere | The previous or next repository, each wrapping round |
 | Alt-Q, Ctrl-Q | Anywhere | Leaves the screen. Everything keeps running. Ctrl-Q is for a Mac terminal that doesn't send Option as Alt, and isn't shown |
-| Click, wheel | The sidebar | As in the list, wherever your typing goes |
+| Click | The lead | Moves to it, so the right side shows the lead, ready to type to. It never attaches full screen, as in the list |
+| Click, wheel | Anything else in the sidebar | As in the list, wherever your typing goes |
 | Ctrl-\ | An agent you attached to | Comes back to the task's details and live view |
 | Ctrl-\ | Anywhere else | Nothing, so pressing it once too often never leaves the screen, and it never reaches a pane |
 | The list's keys | A task's row or a request's | As in the list: ↑ ↓, `1` to `6`, Enter, `s`, `m`, `y` `n`, Tab and Shift-Tab. `q` does nothing, so text meant for an agent never closes the screen |
