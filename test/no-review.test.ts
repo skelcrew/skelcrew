@@ -6,7 +6,7 @@ import {
   type Check,
   ciOnHead,
   decide,
-  mergeStuck,
+  mergeNoteFor,
   mergeWaitsOn,
   type PullRequest,
   pastRoundLimit,
@@ -86,6 +86,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_asked: null,
     merge_waits: null,
     merge_noted: null,
+    merge_noted_for: [],
     merge_pinned: null,
     merge_record: null,
     merge_record_id: null,
@@ -221,21 +222,22 @@ test("a comment on the PR leaves a failed submit on a flow with no review failed
 test("an armed merge on a flow with no review tells the lead when it is stuck, once a submit", () => {
   const armed = thread({ merge_plan: "armed", review_at: 1000 });
   const stuck = "the forge, which refused: Pull Request is not mergeable";
-  expect(mergeStuck(armed, stuck)).toBe(true);
-  expect(mergeStuck(armed, "its conflict with main to be fixed")).toBe(true);
-  expect(mergeStuck(armed, "its failing checks to be fixed")).toBe(true);
-  expect(mergeStuck(armed, "its checks")).toBe(false);
+  expect(mergeNoteFor(armed, stuck)).not.toBeNull();
+  expect(mergeNoteFor(armed, "its conflict with main to be fixed")).not.toBeNull();
+  expect(mergeNoteFor(armed, "its failing checks to be fixed")).not.toBeNull();
+  expect(mergeNoteFor(armed, "its checks")).toBeNull();
   // A push or check that failed waits on someone, so the lead hears of it, while one still under
   // way only waits on checks.
   const failedPush = thread({ ...armed, review_failed: true, submitting: "Round 2" });
   expect(mergeWaitsOn(failedPush, pr(), head)).toBe("its submit, which failed");
-  expect(mergeStuck(failedPush, "its submit, which failed")).toBe(true);
+  expect(mergeNoteFor(failedPush, "its submit, which failed")).not.toBeNull();
   const failedCheck = thread({ ...armed, review_failed: true, reviewing: "b".repeat(40) });
   expect(mergeWaitsOn(failedCheck, pr(), head)).toBe("Skelcrew's check, which failed");
-  expect(mergeStuck(failedCheck, "Skelcrew's check, which failed")).toBe(true);
+  expect(mergeNoteFor(failedCheck, "Skelcrew's check, which failed")).not.toBeNull();
   // Told once for this submit, it waits for the next one.
-  expect(mergeStuck({ ...armed, merge_noted: 1000 }, stuck)).toBe(false);
-  expect(mergeStuck({ ...armed, merge_noted: 1000, review_at: 2000 }, stuck)).toBe(true);
+  const told = { ...armed, merge_noted: 1000, merge_noted_for: ["the forge, which"] };
+  expect(mergeNoteFor(told, stuck)).toBeNull();
+  expect(mergeNoteFor({ ...told, review_at: 2000 }, stuck)).toBe("the forge, which");
 });
 
 // A PR with only Skelcrew's check is ready only once the wait for CI's first check on its head
@@ -293,7 +295,7 @@ test("a merge when ready on a flow with no review waits only on CI at the commit
     "its builder to submit its newest commit",
   );
   const armed = thread({ merge_plan: "armed", review_at: 1000 });
-  expect(mergeStuck(armed, "its builder to submit its newest commit")).toBe(true);
+  expect(mergeNoteFor(armed, "its builder to submit its newest commit")).not.toBeNull();
   // Once that submit is marked not reviewed in turn, the merge goes at its commit.
   const newer = "b".repeat(40);
   const next = thread({ reviewed_commit: newer });

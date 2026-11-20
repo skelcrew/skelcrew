@@ -205,7 +205,10 @@ export const Thread = z.object({
   // your terminal.
   merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
+  // The review round the lead last heard the armed merge still waits after, and how each wait
+  // it heard in that round starts, so it hears each one once per round.
   merge_noted: z.number().nullable(),
+  merge_noted_for: savedJson("threads.merge_noted_for", z.array(z.string()), []),
   // The PR's head when you asked to merge it without Skelcrew's approval, or null for a merge when
   // ready. Only this commit merges, as you saw it, so a push after you asked cancels the plan.
   merge_pinned: z.string().nullable(),

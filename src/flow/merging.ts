@@ -10,7 +10,7 @@ import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from 
 import { errorText } from "../say.ts";
 import { openTasks, prOf } from "./copy.ts";
 import {
-  mergeStuck,
+  mergeNoteFor,
   mergeWaitsOn,
   noteRound,
   type PullRequest,
@@ -172,6 +172,7 @@ export function armMerge(
     merge_asked: asked,
     merge_waits: null,
     merge_noted: null,
+    merge_noted_for: [],
     merge_pinned: head ?? null,
   };
   const when = mergeWhen({ ...plan, verdict: thread.verdict });
@@ -231,7 +232,13 @@ export function cancelMerge(db: Database, thread: Thread): string {
     throw new Error(`${name} is merging on its forge right now, so it can't be cancelled`);
   if (thread.pr !== null && prOf(db, thread.owner, thread.repo, thread.pr)?.state === "merged")
     throw new Error(`${name}'s PR has merged already, so it can't be cancelled`);
-  const none = { merge_plan: null, merge_waits: null, merge_noted: null, merge_pinned: null };
+  const none = {
+    merge_plan: null,
+    merge_waits: null,
+    merge_noted: null,
+    merge_noted_for: [],
+    merge_pinned: null,
+  };
   record(db, thread.folder, none, "its armed merge was cancelled");
   return `${name} won't merge by itself. It waits for you to merge it.`;
 }
@@ -276,7 +283,13 @@ export async function mergeIfReady(
   // You asked to merge the commit you saw without approval. A newer one is a change nobody you
   // trust has looked at, so the plan ends, rather than waiting, and the lead hears it.
   if (pinned !== null && pr.state === "open" && pr.head !== null && pr.head !== pinned) {
-    const none = { merge_plan: null, merge_waits: null, merge_noted: null, merge_pinned: null };
+    const none = {
+      merge_plan: null,
+      merge_waits: null,
+      merge_noted: null,
+      merge_noted_for: [],
+      merge_pinned: null,
+    };
     record(db, folder, none, `a push to #${thread.pr} cancelled its merge without approval`);
     noteForLead(
       db,
@@ -382,8 +395,12 @@ export async function mergeIfReady(
   // What it waits on changes only now and then, so the log isn't filled with every poll.
   if (waits !== now.merge_waits)
     record(db, folder, { merge_waits: waits }, `its armed merge waits on ${waits}`);
-  if (mergeStuck(now, waits)) {
-    record(db, folder, { merge_noted: noteRound(now) });
+  const stuck = mergeNoteFor(now, waits);
+  if (stuck !== null) {
+    // The waits already heard are kept for this round only, so a new round hears them again.
+    const round = noteRound(now);
+    const heard = now.merge_noted === round ? now.merge_noted_for : [];
+    record(db, folder, { merge_noted: round, merge_noted_for: [...heard, stuck] });
     const when = pinned === null ? `once ${readyWhen(now)}` : "without Skelcrew's approval";
     noteForLead(
       db,
