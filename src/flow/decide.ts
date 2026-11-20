@@ -22,6 +22,11 @@ export const reviewCheck = "skelcrew/check";
 export const pastRoundLimit = (thread: Thread, maxRounds: number) =>
   thread.rounds > maxRounds && thread.verdict !== "approve";
 
+// Returns whether the round limit makes the thread need you as an event sets its builder working:
+// past the limit, with no submit or review under way, as waiting on a review never needs you.
+const limitNeedsYou = (thread: Thread, maxRounds: number) =>
+  pastRoundLimit(thread, maxRounds) && thread.submitting === null && thread.reviewing === null;
+
 // What decide says to do with a thread: end it, with the reason for its log and the note for
 // its lead, or tell its builder what is new and change the thread.
 export type Decision =
@@ -351,7 +356,11 @@ export function decide(
       ...[...tell, ...notice].map((t) => t.split("\n")[0]),
     ];
     // Past the round limit the thread still needs you, as the builder's next round would.
-    const change: Change = { status: "working", needs_you: past, review_failed: false };
+    const change: Change = {
+      status: "working",
+      needs_you: limitNeedsYou(thread, given.maxRounds),
+      review_failed: false,
+    };
     const why = `told the builder: ${told.join("; ")}`;
     return { seen, tell, notice, typedIn, failed, conflict, moved, change, why };
   }
@@ -398,7 +407,7 @@ export function decideBranch(
     // Past the round limit the thread still needs you, as the builder's next round would.
     change: {
       status: "working",
-      needs_you: pastRoundLimit(thread, given.maxRounds),
+      needs_you: limitNeedsYou(thread, given.maxRounds),
       review_failed: false,
     },
     why: `told the builder: ${notice.split(". ")[0]}`,
