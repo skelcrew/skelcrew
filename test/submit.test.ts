@@ -1873,6 +1873,27 @@ done`,
     await until(() => thread().posting === null);
   }, 120_000);
 
+  // sc stop ends the round while its approval is being posted, and the daemon stops before the
+  // post ends. A stopped thread isn't brought back, so the daemon's start posts it anyway.
+  test("a stopped thread's verdict the daemon's stop kept from the PR is posted as it starts again", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    first.kill();
+    await first.exited;
+    expect(thread()).toMatchObject({ status: "stopped", verdict: "approve" });
+    rmSync(join(plugin, "hold-review"));
+    serve();
+    await until(() => finished("success").length === 1, 30_000);
+    await until(() => thread().posting === null);
+    expect(thread().status).toBe("stopped");
+  }, 120_000);
+
   // sc stop forgets the round while its approval is still being posted. A review asked for
   // after sc start then waits for that post, so the PR ends on the newer verdict, as the thread
   // does, and the newer review's pending check comes after the older one's.

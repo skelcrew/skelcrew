@@ -624,18 +624,23 @@ async function actOnVerdict(
     noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`);
   }
   typeLeadNotes(db, sessions);
+  // The verdict takes its turn among the thread's writes to the forge as it is saved, with no
+  // await between. Otherwise sc stop, sc start and sc review could queue a newer review's pending
+  // check first, and this verdict's check would land on top of it. A forge that fails here fails
+  // the round, so the thread shows its review failed and the lead can run it again.
+  const posted = postVerdict(db, folder);
   // The approved commit is kept for the next submit to compare with. Losing it costs only a
   // review, so a ref git won't write fails nothing.
-  if (verdict.verdict === "approve")
-    await git(
-      cloneDir(thread.owner, thread.repo),
-      "update-ref",
-      `refs/skelcrew/approved/${thread.folder}`,
-      sha,
-    ).catch(() => {});
-  // A forge that fails here fails the round, so the thread shows its review failed and the lead
-  // can run it again.
-  await postVerdict(db, folder);
+  const keptRef =
+    verdict.verdict === "approve"
+      ? git(
+          cloneDir(thread.owner, thread.repo),
+          "update-ref",
+          `refs/skelcrew/approved/${thread.folder}`,
+          sha,
+        ).catch(() => {})
+      : null;
+  await Promise.all([posted, keptRef]);
   if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
   // for when you start it again. A round cancelled meanwhile leaves them to the newer round,
@@ -724,6 +729,21 @@ function postVerdict(db: Database, folder: string): Promise<void> {
     const now = readThread(db, folder).posting;
     if (JSON.stringify(now) === JSON.stringify(posting)) record(db, folder, { posting: null });
   });
+}
+
+// Puts on the forge the verdicts that stopped threads saved but didn't post, as the daemon
+// starts. sc start brings a stopped thread's round back, but until then its PR would show an
+// older review than the thread does. A forge that fails is said in the thread's log, and the
+// verdict stays saved for the next start, of the daemon or of the thread, to try again.
+export function postStoppedVerdicts(db: Database): void {
+  const rows = db
+    .query("SELECT * FROM task_threads WHERE status = 'stopped' AND posting IS NOT NULL")
+    .all()
+    .map((row) => Thread.parse(row));
+  for (const { folder } of rows)
+    postVerdict(db, folder).catch((error) =>
+      record(db, folder, {}, `couldn't put its saved verdict on the forge: ${errorText(error)}`),
+    );
 }
 
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
