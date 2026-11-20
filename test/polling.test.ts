@@ -2541,7 +2541,23 @@ exec ${bwrap} "$@"`,
       db.run("PRAGMA busy_timeout = 5000");
       db.run("UPDATE tasks SET verdict = 'not reviewed', review_round = NULL WHERE task = 12");
       db.close();
-      await arm();
+      // Nobody will approve it, so neither the question nor the answer says so.
+      const said = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        "Merge #7 (app-12 Add export) when its checks pass?",
+        "y",
+      );
+      expect(said).toContain(
+        "Merging #7 as soon as its checks pass. sc merge --cancel app-12 stops it.",
+      );
+      await until(() =>
+        leadTyped().includes(
+          "Merging #7 (app-12) as soon as its checks pass, as you asked at your terminal.",
+        ),
+      );
+      expect(leadTyped()).not.toContain("approved and green");
       const head = pushed();
       pr({ head, reviews: [], checks: [approved, check(5, "passed")] });
       await until(() => thread().status === "done");

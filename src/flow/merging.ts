@@ -14,6 +14,7 @@ import {
   mergeStuck,
   mergeWaitsOn,
   type PullRequest,
+  readyWhen,
   skipReviewWaitsOn,
 } from "./decide.ts";
 import { endThread, removing } from "./events.ts";
@@ -66,10 +67,11 @@ export function threadToMerge(
 }
 
 // Returns how a thread's armed merge is said, after "Merging #7", such as "as soon as it's
-// approved and green", for what sc merge says and the lead's notes.
-const mergeWhen = (thread: Pick<Thread, "merge_pinned">) =>
+// approved and green", or for a flow with no review stage "as soon as its checks pass", for what
+// sc merge says and the lead's notes.
+const mergeWhen = (thread: Pick<Thread, "merge_pinned" | "verdict">) =>
   thread.merge_pinned === null
-    ? "as soon as it's approved and green"
+    ? `as soon as ${readyWhen(thread)}`
     : "without Skelcrew's approval once its checks pass";
 
 // Returns what sc merge says of a merge already armed on the thread, and how to stop it, so a
@@ -172,12 +174,12 @@ export function armMerge(
     merge_noted: null,
     merge_pinned: head ?? null,
   };
-  const when = mergeWhen(plan);
+  const when = mergeWhen({ ...plan, verdict: thread.verdict });
   // The log keeps your words exactly, line breaks and spaces included. Written as JSON, they
   // still fit on one line of the daemon's log.
   const what = head
     ? `merge #${thread.pr} without Skelcrew's approval at commit ${head.slice(0, 7)}`
-    : `merge #${thread.pr} once it's approved and green`;
+    : `merge #${thread.pr} once ${readyWhen(thread)}`;
   const why =
     asked === null
       ? `you asked to ${what}`
@@ -382,7 +384,7 @@ export async function mergeIfReady(
     record(db, folder, { merge_waits: waits }, `its armed merge waits on ${waits}`);
   if (mergeStuck(now, waits)) {
     record(db, folder, { merge_noted: now.review_round });
-    const when = pinned === null ? "once it's approved and green" : "without Skelcrew's approval";
+    const when = pinned === null ? `once ${readyWhen(now)}` : "without Skelcrew's approval";
     noteForLead(
       db,
       sessions,

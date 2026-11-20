@@ -1,7 +1,7 @@
 // A task's stage: where it is, from an open issue to the merge. Every command that shows a
 // task reads its stage from here.
 import { z } from "zod";
-import { passedReviewStage } from "./decide.ts";
+import { passedReviewStage, waitsOnFirstCheck } from "./decide.ts";
 import { readyToMerge } from "./status.ts";
 import type { Thread } from "./thread.ts";
 
@@ -34,7 +34,7 @@ export type ListStage = z.infer<typeof ListStage>;
 // so. A thread that stopped or failed is under Building, as its builder is what must start
 // again. A review under way, waiting for a place or for its usage limit, or one that couldn't
 // run, is under Reviewing. An approval the builder isn't working on waits on CI, as does a submit
-// whose flow has no review stage. Ready includes a
+// whose flow has no review stage, from the moment it is pushed. Ready includes a
 // merge when ready that is about to merge, as it is approved and green.
 export function listStage(thread: Thread | null, issueOpen: boolean): ListStage {
   const stage = taskStage(thread, issueOpen);
@@ -44,6 +44,7 @@ export function listStage(thread: Thread | null, issueOpen: boolean): ListStage 
   if (thread === null || thread.status === "failed" || thread.status === "stopped")
     return "building";
   const reviewFailed = thread.verdict === "failed" || thread.verdict === "timed out";
+  if (waitsOnFirstCheck(thread)) return "checks";
   const reviewing = thread.submitting !== null || thread.reviewing !== null;
   if (reviewing || thread.review_limited || (thread.needs_you && reviewFailed)) return "reviewing";
   if (passedReviewStage(thread) && thread.status === "waiting") return "checks";

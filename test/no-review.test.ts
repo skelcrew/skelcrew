@@ -7,6 +7,7 @@ import {
   mergeWaitsOn,
   type PullRequest,
   pastRoundLimit,
+  readyWhen,
   reviewCheck,
 } from "../src/flow/decide.ts";
 import { shownOf } from "../src/flow/marks.ts";
@@ -150,6 +151,27 @@ test("a submit its flow doesn't review waits on CI, then is ready, and is never 
   expect(readyToMerge(thread({ ...green, conflicts: "main" }))).toBe(false);
 });
 
+// The submit saves "not reviewed" as it starts, so while it is pushed and waits for CI's first
+// check, it waits on checks rather than showing a review no reviewer will run.
+test("a submit its flow doesn't review waits on checks while it is pushed and waits for CI", () => {
+  for (const under of [{ submitting: "Round 1" }, { reviewing: head }]) {
+    const first = thread({ ...under, reviewed_commit: null, state: "working" });
+    expect(threadWord(first, 3)).toBe("checks");
+    expect(listStage(first, true)).toBe("checks");
+    expect(readyToMerge({ ...first, ...green })).toBe(false);
+  }
+  // A reviewed flow's round under way still shows its review.
+  expect(threadWord(thread({ verdict: null, reviewing: head }), 3)).toBe("reviewing");
+  expect(listStage(thread({ verdict: null, reviewing: head }), true)).toBe("reviewing");
+});
+
+// What sc merge --when-ready says, and the lead's notes, follow the flow.
+test("a merge when ready says it waits for checks alone on a flow with no review", () => {
+  expect(readyWhen(thread())).toBe("its checks pass");
+  expect(readyWhen(thread({ verdict: "approve" }))).toBe("it's approved and green");
+  expect(readyWhen(thread({ verdict: null }))).toBe("it's approved and green");
+});
+
 test("the poll marks a green PR whose flow has no review as ready, and says why", () => {
   const decision = decide(thread(), pr(), { maxRounds: 3, moved: false });
   if ("end" in decision) throw new Error("the thread ended");
@@ -180,7 +202,8 @@ test("a merge when ready on a flow with no review waits only on CI at the commit
     "its failing checks to be fixed",
   );
   // A newer submit waits for its own round, and a push Skelcrew never made is never merged.
-  expect(mergeWaitsOn(thread({ submitting: "Round 2" }), pr(), head, true)).toBe("its review");
+  expect(mergeWaitsOn(thread({ submitting: "Round 2" }), pr(), head, true)).toBe("its checks");
+  expect(mergeWaitsOn(thread({ reviewing: "b".repeat(40) }), pr(), head, true)).toBe("its checks");
   expect(mergeWaitsOn(thread(), pr({ head: "b".repeat(40) }), head, true)).toBe(
     "a review of its newest commit",
   );

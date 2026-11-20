@@ -135,7 +135,7 @@ export const Thread = z.object({
   reviewer: HarnessName.nullable(),
   // The latest finished review: its round, reviewer, verdict and the first line of what it said.
   // Each one is saved here, so it reaches the thread's log with the rest of the thread. A task
-  // whose flow has no review stage gets "not reviewed" for each submit, with no round or
+  // whose flow has no review stage gets "not reviewed" as each submit starts, with no round or
   // reviewer, and goes on to CI as an approval does.
   reviewed_by: HarnessName.nullable(),
   review_round: z.number().nullable(),

@@ -839,6 +839,9 @@ function pushAndReview(
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
   const { maxRounds, reviewer } = reviewConfig(thread);
+  // A flow with no review stage saves its verdict as the submit starts, so the thread waits on
+  // checks from then on, rather than showing a review no reviewer will run.
+  const unreviewed = flowRoles(thread).review === null;
   if (thread.status === "stopped" || stopping.has(folder))
     throw new Error("this thread was stopped, so Skelcrew won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
@@ -866,6 +869,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
       ci_passed: false,
       reviewer: reviewer.harness,
       review_at: Date.now(),
+      ...(unreviewed ? { verdict: "not reviewed" as const } : {}),
     },
     `submitted: ${summary}`,
   );

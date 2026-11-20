@@ -10,7 +10,7 @@ import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { roundLimit } from "../config.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
-import { passedReviewStage, pastRoundLimit } from "./decide.ts";
+import { passedReviewStage, pastRoundLimit, waitsOnFirstCheck } from "./decide.ts";
 import { leadOf } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
 import { messageLead, stopDelivering, typeLeadNotes } from "./messages.ts";
@@ -407,11 +407,13 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
     reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
   if (thread.erred && thread.limited) return limitWord(thread.limit_reset);
   if (thread.review_limited) return limitWord(thread.review_reset);
-  // A review waiting for a place shows as queued, any other round under way as reviewing, and
+  // A submit on a flow with no review stage waits on checks while it is pushed and waits for CI's
+  // first check. A review waiting for a place shows as queued, any other round under way as reviewing, and
   // a review's changes still waiting to be typed into the builder as changes. Otherwise it
   // works, or waits: on CI only for an approval, or a submit its flow doesn't review, and on the
   // builder after changes asked for.
   // Anything else only waits, as saying checks would claim CI is what it waits on.
+  if (waitsOnFirstCheck(thread)) return "checks";
   if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";

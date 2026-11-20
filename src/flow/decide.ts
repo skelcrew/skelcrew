@@ -20,6 +20,18 @@ export const reviewCheck = "skelcrew/check";
 export const passedReviewStage = (thread: Pick<Thread, "verdict">) =>
   thread.verdict === "approve" || thread.verdict === "not reviewed";
 
+// Returns whether a submit on a flow with no review stage is on its way: being pushed, or waiting
+// for CI's first check before it is marked not reviewed. Such a submit saves "not reviewed" as it
+// starts, so it is never shown as a review under way: no reviewer will run, and it waits on
+// checks.
+export const waitsOnFirstCheck = (thread: Pick<Thread, "verdict" | "submitting" | "reviewing">) =>
+  thread.verdict === "not reviewed" && (thread.submitting !== null || thread.reviewing !== null);
+
+// Returns how a merge when ready of the thread waits, in words after "once" or "as soon as": for
+// an approval and green checks, or on a flow with no review stage for its checks alone.
+export const readyWhen = (thread: Pick<Thread, "verdict">) =>
+  thread.verdict === "not reviewed" ? "its checks pass" : "it's approved and green";
+
 // Returns whether the thread has used up its rounds of changes. Past that it goes on needing
 // you, whatever its builder does, until you let it go on or its reviewer approves. An approval
 // answers the changes the limit held, so an approved thread is ready like any other rather
@@ -94,6 +106,7 @@ export function mergeWaitsOn(
   if (thread.status === "failed") return "its thread, which failed";
   if (thread.status === "stopped") return "its thread, which is stopped";
   if (pr === null || pr.state !== "open") return "its PR";
+  if (waitsOnFirstCheck(thread)) return "its checks";
   if (thread.submitting !== null || thread.reviewing !== null) return "its review";
   if (!passedReviewStage(thread)) return "an approval";
   // A push Skelcrew didn't review, such as someone else's, is never merged unseen.

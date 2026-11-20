@@ -38,6 +38,7 @@ import {
 } from "./builder.ts";
 import { holdCheckSlot } from "./checks.ts";
 import { ownTask, prOf, saveItems } from "./copy.ts";
+import { readyWhen } from "./decide.ts";
 import { removeThread, removing, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
@@ -593,6 +594,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           merging: thread.merge_plan === null ? null : alreadyMerging(db, thread),
           head: pr?.head ?? null,
           asks: stillAsks(thread),
+          ready: readyWhen(thread),
         };
       }
       // You arm one at your terminal, after saying y. A lead arms one

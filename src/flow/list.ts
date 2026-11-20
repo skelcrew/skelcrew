@@ -135,8 +135,10 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   const at = thread.review_at === null ? null : new Date(thread.review_at).toISOString();
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && (thread.submitting !== null || thread.reviewing !== null)) {
-    const state = roundRunning(thread.folder) ? "reviewing" : "failed";
-    return { state, round: thread.rounds + 1, at };
+    // A submit its flow doesn't review has no round: it waits only on CI's first check.
+    if (!roundRunning(thread.folder)) return { state: "failed", round: thread.rounds + 1, at };
+    if (thread.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
+    return { state: "reviewing", round: thread.rounds + 1, at };
   }
   if (thread.verdict === null) return { state: "none", round: null, at: null };
   // A review that timed out twice failed its check, so it shows as failed.
