@@ -546,9 +546,10 @@ export async function messageBuilder(
     said: text,
     typed_in: [],
   });
-  // The lead acted on a builder that stopped, so the safety net stops waiting on it, however long
-  // the message waits to go in.
-  if (thread.ended_at !== null) record(db, thread.folder, { ended_at: null, ended_said: null });
+  // The lead acted on a builder that stopped, so the safety net's wait starts again from now, and
+  // holds off for a while after the lead's message. It isn't cleared: a message that never goes
+  // in, such as to a builder that stays stopped, must still be caught once that hold is over.
+  if (thread.ended_at !== null) record(db, thread.folder, { ended_at: Date.now() });
   if (why === "" && ahead === 0) return `Telling ${name}'s builder now: it is idle.`;
   const earlier = ahead === 1 ? "1 earlier message waits" : `${ahead} earlier messages wait`;
   const reasons = [why, ahead > 0 ? earlier : ""].filter((reason) => reason).join(", and ");

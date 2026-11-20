@@ -253,9 +253,12 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await until(() => thread().turn_ended === 1);
     // The builder looks busy, so the reply waits.
     writeFileSync(join(builder(), "busy"), "");
+    const before = Date.now();
     const told = await asLead(["tell", "app-12", "Yes, delete them."]);
     expect(told.out).toContain("can't take it yet");
-    expect(thread().ended_at).toBe(null);
+    // The wait starts again from the lead's message, so a message that never goes in is still
+    // caught once the hold after it is over.
+    expect(thread().ended_at ?? 0).toBeGreaterThanOrEqual(before);
     await Bun.sleep(4000);
     expect(await needsYou()).toBe(false);
     expect(read(join(builder(), "typed"))).not.toContain("Yes, delete them.");
