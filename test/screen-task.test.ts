@@ -42,9 +42,12 @@ const typingTo = () =>
 // Does what the sidebar does on a task's row, by the row's name, as a process of its own with the
 // test's home: `show` shows the task's details, and `attach` attaches to its builder, both by the
 // row's name alone, and prints why it couldn't, if it couldn't.
-function onRow(action: "show" | "attach", name: string): string {
+// `path`, when given, goes before the PATH, such as a folder with a tmux of a test's own, which
+// the right side then runs too.
+function onRow(action: "show" | "attach", name: string, path = ""): string {
+  const PATH = `${path}${path ? ":" : ""}${process.env.PATH ?? ""}`;
   const run = Bun.spawnSync([process.execPath, "-e", rowCode(action, name)], {
-    env: env(),
+    env: { ...env(), PATH },
     stderr: "pipe",
   });
   if (!run.success) throw new Error(run.stderr.toString());
@@ -119,6 +122,29 @@ test("a builder that exits while attached brings the details back", async () => 
   await until(() => typingTo() === "0", "typing to come back to the sidebar");
   await until(() => right().includes("Login redirect"), "app-7's details again");
   expect(tmux(agents, "list-sessions", "-F", "#S").out).toContain("app-7");
+});
+
+// The builder exits after the row was read, before its attachment starts. Skelcrew's copy still
+// says it runs. A tmux in front of the real one takes a second to attach, so the watcher looks
+// before the client is there, and has nothing to detach yet.
+test("a builder that exits just before Enter attaches brings the details back", async () => {
+  const folder = join(home, "slow-attach");
+  mkdirSync(folder);
+  writeFileSync(
+    join(folder, "tmux"),
+    `#!/bin/sh\ncase "$*" in *" attach "*) sleep 1 ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
+    { mode: 0o755 },
+  );
+  await onApp7();
+  const pid = tmux(agents, "display-message", "-p", "-t", "=app-7:", "#{pane_pid}").out.trim();
+  process.kill(Number(pid), "SIGKILL");
+  await until(
+    () => tmux(agents, "display-message", "-p", "-t", "=app-7:", "#{pane_dead}").out.trim() === "1",
+    "app-7's pane to die",
+  );
+  expect(onRow("attach", "app-7", folder)).toBe("");
+  await until(() => right().includes("Login redirect"), "app-7's details again");
+  await until(() => typingTo() === "0", "typing to come back to the sidebar");
 });
 
 test("moving to another row while attached comes back from the builder, and shows that row", async () => {

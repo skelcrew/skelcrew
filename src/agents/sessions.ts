@@ -608,11 +608,12 @@ export function attachThen(socket: string, name: string, then: string): string[]
 // ends, then runs `then`, a line for sh. The screen's right side uses it for a builder you
 // attached to. A builder that exits leaves its session behind with its last screen, and the
 // client would stay on it, so a watcher looks every half second and detaches this terminal's own
-// client once the agent's pane is dead or gone. The watcher ends with the attachment. TMUX must
-// go, or tmux refuses to attach from inside tmux.
+// client whenever the agent's pane is dead or gone. It keeps looking until the attachment ends,
+// rather than detaching once: an agent that dies just before the client attaches would leave
+// nothing to detach yet. TMUX must go, or tmux refuses to attach from inside tmux.
 export function attachUntilEnded(socket: string, name: string, then: string): string[] {
   const client = 'tmux -L "$1" -f /dev/null';
-  const watch = `while [ "$(${client} display-message -p -t "=$2:" '#{pane_dead}' 2>/dev/null)" = 0 ]; do sleep 0.5; done; ${client} detach-client -t "$t" 2>/dev/null`;
+  const watch = `while sleep 0.5; do [ "$(${client} display-message -p -t "=$2:" '#{pane_dead}' 2>/dev/null)" = 0 ] || ${client} detach-client -t "$t" 2>/dev/null; done`;
   const script = `unset TMUX; t=$(tty); (${watch}) & w=$!; ${client} attach -t "=$2"; kill $w 2>/dev/null; ${then}`;
   return ["sh", "-c", script, "sh", socket, name];
 }
