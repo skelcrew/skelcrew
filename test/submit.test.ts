@@ -1914,6 +1914,38 @@ done`,
     expect(reviews().at(-1)?.verdict).toBe("approve");
   }, 120_000);
 
+  // A failed review is never posted. So when the forge didn't take the review before it, that
+  // review is the one the PR must show once the forge is back.
+  test("a failed review keeps the review before it that the forge didn't take yet", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    writeFileSync(join(plugin, "fail-review"), "GitHub is down");
+    await startApp12({ every: 1_000 });
+    await until(() => thread().verdict === "failed", 60_000);
+    rmSync(join(plugin, "fail-review"));
+    await until(() => thread().posting === null, 30_000);
+    expect(String(thread().review_post)).toContain('"verdict":"changes"');
+    expect(finished("failure").at(-1)?.description).toBe("review failed");
+  }, 120_000);
+
+  // A review stopped while its pending check waits for an earlier post never sets it, as no
+  // review of it would then end it.
+  test("a review stopped while its pending check waits behind an earlier post sets none", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    await startApp12();
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    rmSync(join(plugin, "hold-review"));
+    await until(() => finished("success").length === 1, 30_000);
+    await Bun.sleep(1500);
+    expect(statuses().map((s) => s.state)).toEqual(["pending", "success"]);
+  }, 120_000);
+
   // sc stop forgets the round while its approval is still being posted. A review asked for
   // after sc start then waits for that post, so the PR ends on the newer verdict, as the thread
   // does, and the newer review's pending check comes after the older one's.

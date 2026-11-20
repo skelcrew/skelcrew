@@ -286,8 +286,12 @@ async function reviewRound(
   const limit = reviewLimit();
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const bases = `refs/skelcrew/bases/${thread.folder}`;
+  // The check waits its turn behind the thread's earlier writes to the forge, such as a verdict
+  // still being posted. A round cancelled meanwhile writes none, as no review of it would then
+  // ever end the pending it sets.
   const setCheck = (state: "pending" | "success" | "failure", description: string) =>
     inTurn(folder, async () => {
+      if (signal.aborted) return;
       if (hasForge) await setStatus(db, repository, { commit: sha, state, description });
     });
   // A flow with no review stage saves its pushed commit at once, before any check is set, so a
@@ -588,10 +592,12 @@ async function actOnVerdict(
   // PR's, so it is never posted, though its check is set.
   const { rounds, needsYou, status, tell, held } = outcome;
   const failed = verdict.verdict === "failed" || verdict.verdict === "timed out";
+  // A failed review posts none, so a review before it that the forge didn't take yet is still
+  // the one the PR must show.
   const review =
     (verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null
-      ? { pr, ...verdict, round: before + 1 }
-      : null;
+      ? { pr, commit: sha, ...verdict, round: before + 1 }
+      : (thread.posting?.review ?? null);
   const { check, description } = outcome;
   const posting = hasForge ? { commit: sha, check, description, review } : null;
   // A new review asks anew about the round limit, so a decision about the last one ends.
@@ -739,7 +745,7 @@ function postVerdict(db: Database, folder: string): Promise<string | null> {
     if (posting === null) return null;
     const { commit, check, description, review } = posting;
     try {
-      if (review !== null) await postOrEdit(db, folder, review.pr, commit, review);
+      if (review !== null) await postOrEdit(db, folder, review.pr, review.commit, review);
       await setStatus(db, repositoryOf(db, thread), { commit, state: check, description });
     } catch (error) {
       return errorText(error);

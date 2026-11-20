@@ -34,8 +34,8 @@ const ReviewPost = z.object({
 export type ReviewPost = z.infer<typeof ReviewPost>;
 
 // A verdict saved on the thread but not yet on the forge: the commit, Skelcrew's check on it,
-// and the review to post on the PR, or null for a verdict that isn't posted, such as a failed
-// review.
+// and the review to post on the PR with the commit it covers, or null when there is none to
+// post. A failed review posts none, but keeps the review before it that is still to post.
 const Posting = z.object({
   commit: z.string(),
   check: z.enum(["success", "failure"]),
@@ -43,6 +43,7 @@ const Posting = z.object({
   review: z
     .object({
       pr: z.number(),
+      commit: z.string(),
       verdict: z.enum(["approve", "changes"]),
       body: z.string(),
       findings: z.array(z.string()),
