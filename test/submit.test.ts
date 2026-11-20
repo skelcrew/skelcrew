@@ -309,9 +309,13 @@ const statuses = (): Status[] =>
       state: String(q.state),
       description: String(q.description),
     }));
+// A review's body as the PR shows it: without the hidden marker Skelcrew puts last, naming the
+// thread, which the forge doesn't show.
+const shown = (body: unknown) =>
+  String(body).replace(/\n\n<!-- skelcrew:review thread=[\w-]+ -->$/, "");
 // A review's body without the line Skelcrew puts first, naming its round and commit, so a test
 // reads what the reviewer said and found.
-const said = (body: unknown) => String(body).replace(/^Round \d+ · commit \w+\n\n/, "");
+const said = (body: unknown) => shown(body).replace(/^Round \d+ · commit \w+\n\n/, "");
 const reviews = () =>
   asked(plugin)
     .filter((q) => q.ask === "review")
@@ -320,7 +324,7 @@ const reviews = () =>
 const edits = () =>
   asked(plugin)
     .filter((q) => q.ask === "edit review")
-    .map(({ pr, id, verdict, body }) => ({ pr, id, verdict, body }));
+    .map(({ pr, id, verdict, body }) => ({ pr, id, verdict, body: shown(body) }));
 // PR 7 as Skelcrew's copy of the forge holds it, or nothing yet.
 function copiedPr(): string {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -458,7 +462,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       },
       { commit: second, verdict: "approve", body: "Ready to merge." },
     ]);
-    expect(asked(plugin).find((q) => q.ask === "review")?.body).toBe(
+    expect(shown(asked(plugin).find((q) => q.ask === "review")?.body)).toBe(
       `Round 1 · commit ${first.slice(0, 7)}\n\nThe export has no test.\n\n1. The export has no test.`,
     );
     expect(edits()).toEqual([
@@ -1871,6 +1875,40 @@ done`,
       body: "Ready to merge.",
     });
     await until(() => thread().posting === null);
+  }, 120_000);
+
+  // The forge can take the review just before the daemon stops, with its ID not yet saved. The
+  // review is then in Skelcrew's copy of the PR, with its marker, so it isn't posted again.
+  test("a review the forge took before the daemon stopped is found by its marker, not posted twice", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    first.kill();
+    await first.exited;
+    // The forge took it: the copy of PR 7 shows it with the body Skelcrew sent.
+    const body = String(asked(plugin).find((q) => q.ask === "review")?.body);
+    expect(body).toContain("<!-- skelcrew:review thread=app-12 -->");
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          reviews: [{ id: "1001", text: body, author: null, verdict: "commented", lines: [] }],
+        }),
+      ],
+      next: null,
+    });
+    rmSync(join(plugin, "hold-review"));
+    serve({ every: 1_000 });
+    await until(() => finished("success").length === 1, 30_000);
+    await until(() => thread().posting === null);
+    expect(reviews()).toHaveLength(1);
+    expect(String(thread().review_post)).toContain('"id":"1001"');
   }, 120_000);
 
   // sc stop ends the round while its approval is being posted, and the daemon stops before the

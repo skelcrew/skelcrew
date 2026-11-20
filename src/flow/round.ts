@@ -756,9 +756,11 @@ function postVerdict(db: Database, folder: string): Promise<string | null> {
   });
 }
 
-// Tries again to put on the forge a verdict whose post failed, so the PR doesn't keep an older
-// review than the thread says until the daemon starts again. Each poll asks, and a forge that
-// still fails is logged and asked again at the next. A done thread's PR is closed, so it is
+// Tries again to put on the forge a verdict whose post failed, or that a stop of the daemon cut
+// short, on a stopped thread too, so the PR doesn't keep an older review than the thread says.
+// Each poll asks, once Skelcrew's copy of the PR is up to date, so a review the forge took just
+// before the stop is found by its marker rather than posted twice. A forge that still fails is
+// logged and asked again at the next. A done thread's PR is closed, so it is
 // left alone. A submit or review under way brings a newer verdict, which is posted in its place,
 // so it is left to that round. A round that only waits to type its changes in, such as for a
 // builder still starting, doesn't hold it up: posts take their turns one at a time, and one
@@ -775,22 +777,6 @@ export async function retryPost(db: Database, folder: string): Promise<void> {
   if (failed !== null)
     console.log(`${folder}: couldn't put its saved verdict on the forge: ${failed}`);
   else record(db, folder, {}, "its saved verdict is on the forge now");
-}
-
-// Puts on the forge the verdicts that stopped threads saved but didn't post, as the daemon
-// starts. sc start brings a stopped thread's round back, but until then its PR would show an
-// older review than the thread does. A forge that fails is said in the thread's log, and the
-// verdict stays saved for the next start, of the daemon or of the thread, to try again.
-export function postStoppedVerdicts(db: Database): void {
-  const rows = db
-    .query("SELECT * FROM task_threads WHERE status = 'stopped' AND posting IS NOT NULL")
-    .all()
-    .map((row) => Thread.parse(row));
-  for (const { folder } of rows)
-    postVerdict(db, folder).then((failed) => {
-      if (failed !== null)
-        record(db, folder, {}, `couldn't put its saved verdict on the forge: ${failed}`);
-    });
 }
 
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
@@ -811,28 +797,45 @@ async function postOrEdit(
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const { verdict, findings } = review;
-  const body = reviewComment(review, review.round, commit);
+  // The body ends with a hidden marker naming the thread. The forge keeps HTML comments, and
+  // gives them back unchanged, so Skelcrew can find its review in its copy of the PR.
+  const marker = `<!-- skelcrew:review thread=${thread.folder} -->`;
+  const body = `${reviewComment(review, review.round, commit)}\n\n${marker}`;
+  // A review the forge took just before the daemon stopped, with its ID not yet saved, is in
+  // the copy, which the poll brought up to date since the start. One that already says this is
+  // counted as posted, so a restart never posts it twice. Otherwise the latest one there is the
+  // one to edit when none is saved.
+  const marked = (prOf(db, thread.owner, thread.repo, pr)?.reviews ?? []).filter((posted) =>
+    posted.text.includes(marker),
+  );
+  const already = marked.find((posted) => posted.text.trim() === body.trim());
+  if (already) {
+    const saved = { review_post: { pr, id: already.id, verdict, findings } };
+    record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
+    return;
+  }
   // Only a review on this PR counts: a PR opened again after sc rm starts with none.
   const earlier = thread.review_post?.pr === pr ? thread.review_post : null;
+  const editing = earlier?.id ?? marked.at(-1)?.id ?? null;
   // A forge that fails to edit, such as a plugin that doesn't know the question yet, is treated
   // as one that can't, so the review still reaches the PR.
   const edit =
-    earlier === null
+    editing === null
       ? "gone"
-      : await editReview(db, repository, { pr, id: earlier.id, verdict, body }).catch(
+      : await editReview(db, repository, { pr, id: editing, verdict, body }).catch(
           () => "can't" as const,
         );
   const edited = edit === "edited";
   // A review deleted from the PR is posted again even when it would say the same, so the PR
-  // always shows one.
+  // always shows one. One found only by its marker may say anything, so it isn't the same.
   const same =
     earlier !== null &&
     earlier.verdict === verdict &&
     JSON.stringify(earlier.findings) === JSON.stringify(findings);
   if (edit === "can't" && same) return;
   const id =
-    edited && earlier !== null
-      ? earlier.id
+    edited && editing !== null
+      ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
   record(db, folder, { review_post: { pr, id, verdict, findings } }, `${how} on PR #${pr}`);
@@ -1294,10 +1297,11 @@ export function rerunReview(
   }
 }
 
-// Carries on with a round the daemon's stop cut short: a verdict saved but not yet on the
-// forge, a submit not yet pushed and reviewed, a review whose Skelcrew's check was left pending,
-// or changes not yet typed into the builder. The verdict goes on the forge first, in its turn,
-// before any check the round sets. Pushing again is harmless: the remote has the commit, or gets it now. A
+// Carries on with a round the daemon's stop cut short: a submit not yet pushed and reviewed, a
+// review whose Skelcrew's check was left pending, or changes not yet typed into the builder. A
+// verdict saved but not yet on the forge is left to the poll, which first brings Skelcrew's copy
+// of the PR up to date, so a review the forge took before the stop is found there, not posted
+// again. Pushing again is harmless: the remote has the commit, or gets it now. A
 // builder brought back can submit before this runs, and then its newer round wins. A review
 // joins the queue of reviews again rather than starting at once: one that waited keeps its
 // place, and one that was running goes ahead of every review that waited. The daemon asks for
@@ -1313,15 +1317,9 @@ export function resumeRound(
   // A thread with a round of its own already is past this. Otherwise carry on from the
   // furthest the round got: its push, its review, or typing its changes in.
   if (latestRounds.has(folder)) return;
-  const { submitting, reviewing, queued, telling, posting } = readThread(db, folder);
+  const { submitting, reviewing, queued, telling } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
-  // A forge that fails to take it is logged, and each poll tries again.
-  if (posting !== null)
-    postVerdict(db, folder).then((failed) => {
-      if (failed !== null)
-        record(db, folder, {}, `couldn't put its saved verdict on the forge: ${failed}`);
-    });
   if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined);
   else if (reviewing !== null)
     trackRound(
