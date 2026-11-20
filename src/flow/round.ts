@@ -623,24 +623,29 @@ async function actOnVerdict(
     const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
     noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`);
   }
-  typeLeadNotes(db, sessions);
+  // The approved commit is kept for the next submit to compare with. It is written at once,
+  // with no await since the save, so sc review, which deletes it as it asks for a review, never
+  // runs before the write and has it put back after. Losing it costs only a review, so a ref
+  // git won't write fails nothing.
+  if (verdict.verdict === "approve")
+    Bun.spawnSync(
+      [
+        "git",
+        "-C",
+        cloneDir(thread.owner, thread.repo),
+        "update-ref",
+        `refs/skelcrew/approved/${thread.folder}`,
+        sha,
+      ],
+      { stderr: "ignore" },
+    );
   // The verdict takes its turn among the thread's writes to the forge as it is saved, with no
   // await between. Otherwise sc stop, sc start and sc review could queue a newer review's pending
   // check first, and this verdict's check would land on top of it. A forge that fails here fails
   // the round, so the thread shows its review failed and the lead can run it again.
   const posted = postVerdict(db, folder);
-  // The approved commit is kept for the next submit to compare with. Losing it costs only a
-  // review, so a ref git won't write fails nothing.
-  const keptRef =
-    verdict.verdict === "approve"
-      ? git(
-          cloneDir(thread.owner, thread.repo),
-          "update-ref",
-          `refs/skelcrew/approved/${thread.folder}`,
-          sha,
-        ).catch(() => {})
-      : null;
-  await Promise.all([posted, keptRef]);
+  typeLeadNotes(db, sessions);
+  await posted;
   if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
   // for when you start it again. A round cancelled meanwhile leaves them to the newer round,
