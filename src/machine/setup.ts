@@ -7,13 +7,14 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from "../paths.ts";
-import { addPlugin, askYes, installYourPlugins } from "../plugins/install.ts";
+import { addPlugin, installYourPlugins } from "../plugins/install.ts";
 import { yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import {
   cantTell,
   checkoutNames,
   everyNamed,
+  gitHubShown,
   githubPlugin,
   installRepositoryPlugins,
   type Need,
@@ -255,36 +256,30 @@ function gitHubToOffer(remote: string | null): string | null {
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
-// Offers to install the GitHub plugin for a checkout of `repository`. The offer is asked first,
-// from the checkout's remote alone, so a no needs no network and is saved even with GitHub out of
-// reach. Only a yes fetches the plugin, which then shows its version, kind, what it provides and
-// the commands it runs, and asks again, as for any plugin. A yes there adds it to your plugins. A
-// no to either is saved in config.yaml, so no checkout of the repository asks again, and you can
-// undo it there. A failed install is only reported: Skelcrew works from git alone until you run
-// sc add -g.
+// Offers to install the GitHub plugin for a checkout of `repository`, saying first, in plain
+// words, why Skelcrew needs it. The plugin is fetched before the question, so the question can
+// name its version and show what it runs. A yes adds it to your plugins. A no is saved in
+// config.yaml, so no checkout of the repository asks again, and you can undo it there. No answer,
+// or a plugin that can't be fetched or installed, decides nothing, so the next run asks again:
+// Skelcrew works from git alone meanwhile, and sc add -g installs it.
 function offerGitHub(repository: string, remote: string): void {
-  console.log(
-    "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories.",
-  );
-  const answer = askYes("Add it? [Y/n]");
-  // No answer, such as after Ctrl-D, is no decision, so the next run asks again.
-  if (answer === null) return;
-  if (answer) {
-    // The plugin's setup is handed the remote, so it can set itself up for this repository.
-    try {
-      if (addPlugin(githubPlugin, remote)) return;
-    } catch (error) {
-      console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
-      return;
-    }
+  const shown = gitHubShown(repository);
+  // The plugin's setup is handed the remote, so it can set itself up for this repository.
+  let answer: boolean | null = null;
+  try {
+    answer = addPlugin(githubPlugin, remote, shown);
+  } catch (error) {
+    console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
+    return;
   }
+  if (answer) return;
   const { declined } = readSettings(["declined"]);
   const config = yourConfigDocument();
   config.set("github_declined", [...declined, repository]);
   mkdirSync(configDir(), { recursive: true });
   writeFileSync(configFile(), config.toString());
   console.log(
-    `Skelcrew won't ask again for ${repository}. To install it: sc add -g ${githubPlugin}`,
+    `Skelcrew won't ask again for ${repository}. To install it:\n${toRun([`sc add -g ${githubPlugin}`])}`,
   );
 }
 

@@ -266,12 +266,14 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories } = await import("./flow/list.ts");
   const { addRepo, initRepo, removeRepo, trustRepo } = await import("./flow/repo.ts");
+  // Once sc init pushed its files, the lead opens on them, as plain sc would open it.
   if (command === "init" && args.length === 1) {
-    await initRepo("skelcrew");
+    if (await initRepo("skelcrew")) await leadCommand(false);
     return;
   }
   if (sub === "add" && rest.length <= 1) {
-    await addRepo(rest[0], "skelcrew");
+    const added = await addRepo(rest[0], "skelcrew");
+    if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
     return;
   }
   if (sub === "ls" && rest.length === 0) {
@@ -331,7 +333,8 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
   }
   if (command === "add" && name && more.length === 0 && !yours) {
     const { addRepositoryPlugin } = await import("./plugins/repository.ts");
-    addRepositoryPlugin(name);
+    const added = addRepositoryPlugin(name);
+    if (added) console.log(added);
     return;
   }
   if ((command === "remove" || command === "update") && !yours)
