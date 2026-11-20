@@ -56,7 +56,7 @@ export function threadToMerge(
     thread = Thread.nullable().parse(row);
     if (!thread) throw new Error(`Skelcrew has no thread with PR #${which.pr} in ${name}`);
   } else if (which.task !== undefined) {
-    thread = threadOn(db, name, which.task);
+    thread = threadOn(db, `${owner}/${repo}`, which.task);
     if (!thread) throw new Error(`there is no thread ${name}-${which.task}`);
   }
   if (!thread) throw new Error("name the thread, such as app-12, or its PR, such as #7");

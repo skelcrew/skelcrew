@@ -32,8 +32,8 @@ const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
 // What the lead was told about issues, threads and PRs before sc ls and sc show, before threads
-// with no issue were named by their machine's code, and about the sidebar before sc --list, each
-// with what it is told now.
+// with no issue were numbered from t100, and about the sidebar before sc --list, each with what
+// it is told now.
 const leadTasks = [
   // Needs you came to mean the human must act to unblock a thread. The lead marks a thread
   // when only the human can, and clears the mark.
@@ -41,10 +41,10 @@ const leadTasks = [
     'When a thread starts needing the human, Skelcrew types a one line note into this session, such as "app-12 needs you: its builder asked a question". It comes from Skelcrew, not the human. Tell the human plainly what the thread needs.',
     '"Needs you" means the human must act to unblock a thread. When only the human can unblock one, such as a change only a person can push, mark it with sc needs-you app-12 "<the action, written for the human>", such as sc needs-you app-12 "apply the check.yml split in PR #463". Never mark one you can unblock yourself, or one that only waits on its review, CI or the queue. Skelcrew marks the facts it sees itself: a question asked in the builder\'s session, a harness error, the round limit before anyone decided, an approved thread with no merge armed, and a builder whose session host plugin is missing. A review or round that failed, or a builder that isn\'t running while messages wait for it, comes to you as a note instead: run the review again with sc review app-12, or bring the builder back with sc stop app-12 and sc start app-12. Once the human has acted, or you have decided it doesn\'t need them, run sc needs-you --clear app-12. Clearing a thread past its round limit is your decision that the human needn\'t decide it: run sc start app-12 instead when it should go on. A mark also clears when the human types to the builder, when it submits again, and when its PR merges or closes.\n\nA builder that stopped without submitting, and that nobody acts on for a few minutes, needs the human by itself, with its last message as the mark, so nothing waits unseen while you are busy. Answering it with sc tell, or marking or clearing it, is acting on it.\n\nWhen a thread starts needing the human, Skelcrew types a one line note into this session, such as "app-12 needs you: its builder asked a question". It comes from Skelcrew, not the human, and doesn\'t come for a mark you set yourself. Tell the human plainly what the thread needs.',
   ],
-  ["prints its name, such as app-t1.", "prints its name, such as app-wr1."],
+  ["prints its name, such as app-t1.", "prints its name, such as app-t100."],
   [
     "such as app-t1, has nothing that stays open, and sc start app-t1 starts it over.",
-    "such as app-wr1, has nothing that stays open, and sc start app-wr1 starts it over.",
+    "such as app-t100, has nothing that stays open, and sc start app-t100 starts it over.",
   ],
   [
     "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",

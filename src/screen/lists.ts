@@ -229,7 +229,7 @@ function threadGroups(threads: Known[], now: number): Group[] {
     const { thread, word } = open;
     // Only a review is on another harness, held on a usage limit or not, and a thread with no
     // harness saved started before Skelcrew saved it, when builders ran only on Claude Code. A
-    // thread with no issue in the tracker has a task such as wr1.
+    // thread with no issue in the tracker has a task such as t1.
     const harness = onReviewer(thread, word)
       ? (thread.reviewer ?? "")
       : (thread.harness ?? "claude");

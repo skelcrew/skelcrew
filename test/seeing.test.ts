@@ -541,6 +541,37 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     });
   });
 
+  // A task's name may be typed in any case, such as SITE-7 or App-T4, and finds the same task.
+  test("finds a task named in any case", async () => {
+    sql(threadSql({ task: "t4", status: "done", title: "Rate limit the API" }));
+    serve();
+    await untilAnswers();
+    const shown = await skel(["show", "site-7"]);
+    expect(shown.err).toBe("");
+    expect((await skel(["show", "SITE-7"])).out).toBe(shown.out);
+    expect((await skel(["show", "Site-7"])).out).toBe(shown.out);
+    const own = await skel(["show", "app-t4"]);
+    expect(own.out).toStartWith("app-t4  Rate limit the API\n");
+    expect((await skel(["show", "APP-T4"])).out).toBe(own.out);
+  });
+
+  // Two repositories whose names differ only in case, such as App and app, saved before Skelcrew
+  // named them apart. A name typed in any case would name both, so it is refused, saying how
+  // to name one, and never shows the other's task.
+  test("refuses a name that matches two repositories in different cases", async () => {
+    sql("INSERT INTO repositories (name, owner, repo) VALUES ('App', 'other', 'App')");
+    serve();
+    await untilAnswers();
+    const refused = await skel(["show", "APP-12"]);
+    expect(refused.out).toBe("");
+    expect(refused.err).toContain(
+      "APP names more than one repository: other/App, simon/app. Name one by its owner/name.",
+    );
+    const named = await skel(["show", "simon/app-12"]);
+    expect(named.err).toBe("");
+    expect(named.out).toStartWith("app-12  Add export\n");
+  });
+
   test("shows a task's issue, threads and description", async () => {
     serve();
     await untilAnswers();

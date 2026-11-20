@@ -41,7 +41,7 @@ export const Thread = z.object({
   owner: z.string(),
   // The repository's name on its forge, or its remote's path, without the owner.
   repo: z.string(),
-  // The task's ID in its tracker, such as 12, or, with no task there, Skelcrew's own, such as wr1.
+  // The task's ID in its tracker, such as 12, or, with no task there, Skelcrew's own, such as t1.
   task: z.coerce.string(),
   folder: z.string(),
   branch: z.string(),

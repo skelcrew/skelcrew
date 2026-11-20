@@ -557,8 +557,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const name = threadName(db, thread);
         await removeThread(db, sessions, thread, request.reason, leadOfCaller(caller) !== null);
         // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
-        // started on what you told the lead is named by the machine's code, such as app-wr1,
-        // and has none.
+        // started on what you told the lead, such as app-t1, has none.
         return { removed: name, issue: ownTask(thread.task) ? null : thread.task };
       }
       case "merge": {
