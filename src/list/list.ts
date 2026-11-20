@@ -2,7 +2,7 @@
 // a picker. Enter attaches you full screen to an agent through its session host, and leaving it
 // comes back here, on the same row. It also starts an issue, merges a task ready for review and
 // opens its PR, each asking first where it can't be taken back. The number keys open and close
-// the stages.
+// the stages, under Needs you, which holds every task waiting on you.
 import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { openRepository, startOrMerge } from "../client.ts";
@@ -16,6 +16,7 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { version } from "../version.ts";
+import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
@@ -30,17 +31,15 @@ import { liveNote, readLive } from "./live.ts";
 import { drawPane, type Live } from "./pane.ts";
 import {
   cutBacklog,
-  hasForge,
   listRows,
   type Open,
   type Question,
   type Row,
   repositoryTabs,
-  stageHeadings,
+  type Section,
+  sectionHeadings,
+  sections,
 } from "./rows.ts";
-
-// The command that opens a link in your browser.
-const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 
 // The keys the list reads, as your terminal sends them. Arrows come in either of the two forms a
 // terminal may use, and Ctrl-C leaves as q does, since the terminal is raw. Esc leaves too, but
@@ -119,24 +118,26 @@ export async function runList(agents: string, repository: string): Promise<void>
   const [owner = "", repo = ""] = repository.split("/");
   let open: Open = { owner, repo };
   // What the list keeps between draws: every row, those that show, which are the lead's and
-  // those of the open stages, the row you are on among those and how far it scrolled, the line
+  // those of the open sections, the row you are on among those and how far it scrolled, the line
   // at the bottom when it says something other than the keys, the question it asks, and whether
-  // the daemon is at work on an answer. Only Building is open at first. The stages you open
-  // stay open until you leave the list, whichever repository you move to, and so does a whole
-  // Backlog once you asked for it, which shows its newest issues until then.
+  // the daemon is at work on an answer. Needs you is always open, and Building is open at first.
+  // The sections you open stay open until you leave the list, whichever repository you move to,
+  // and so does a whole Backlog once you asked for it, which shows its newest issues until then.
   let all: Row[] = [];
   let rows: Row[] = [];
-  const opened = new Set<ListStage>(["building"]);
+  const opened = new Set<Section>(["needs you", "building"]);
   let wholeBacklog = false;
   const showing = () =>
-    cutBacklog(all, wholeBacklog).filter((row) => row.part === "lead" || opened.has(row.part));
+    cutBacklog(all, wholeBacklog).filter(
+      (row) => row.section === "lead" || opened.has(row.section),
+    );
   let here = -1;
   let top = 0;
   // What a click on each line of the screen reaches, as it was last drawn.
   let targets: Target[] = [];
   let said: string | null = null;
   // The open question, with the row it is about and whether it is a merge or a start.
-  let asking: { question: Question; row: string; merge: boolean } | null = null;
+  let asking: Asking | null = null;
   let working = false;
   let attached = false;
   // The details of the row you are on, by its name, read again with the rows each second, and
@@ -156,12 +157,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   const fixed = process.env.SKELCREW_FIXED_LOAD;
   let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
   let sample = cpuSample(cpus());
-  // Your browser opens a PR only on the machine you sit at. A Linux machine with no display,
-  // such as a server you ssh to, has none, so Enter copies the link to your clipboard instead.
-  const canOpen =
-    where === "" &&
-    (process.platform === "darwin" || !!process.env.DISPLAY || !!process.env.WAYLAND_DISPLAY) &&
-    Bun.which(openCommand) !== null;
+  const canOpen = canOpenLinks(where);
 
   // Returns what the list shows around its rows, with this bottom line and load.
   const frameWith = (bottom: (tabs: number) => string, shownLoad: string): Frame => {
@@ -202,7 +198,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
     const drawn = drawList(
       rows,
-      stageHeadings(all, opened),
+      sectionHeadings(all, opened),
       here,
       top,
       frameWith(bottom, load),
@@ -217,14 +213,19 @@ export async function runList(agents: string, repository: string): Promise<void>
     process.stdout.write(text);
   };
 
-  // Shows the rows of the open stages again, keeping you on the same row by its name, or at the
-  // same place when it went. The first time, you start on the first task that needs you in an
-  // open stage, so one Enter reaches it, or else on the lead.
+  // Shows the rows of the open sections again, keeping you on the same row by its name, or at
+  // the same place when it went. So a task that starts or stops needing you moves between Needs
+  // you and its stage with you still on it: a section it moves into that is closed opens, as
+  // otherwise its row would leave the list under you. The first time, you start on the first
+  // task under Needs you, so one Enter reaches it, or else on the lead.
   const reshow = () => {
     const name = rows[here]?.name;
+    const before = rows[here]?.section;
+    const moved = all.find((row) => row.name === name);
+    if (moved && moved.section !== before && moved.section !== "lead") opened.add(moved.section);
     rows = showing();
     const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
-    const needing = rows.findIndex((row) => row.part !== "lead" && row.needsYou);
+    const needing = rows.findIndex((row) => row.section === "needs you");
     if (at >= 0) here = at;
     else if (here < 0) here = Math.max(needing, 0);
     else here = Math.min(here, rows.length - 1);
@@ -245,10 +246,10 @@ export async function runList(agents: string, repository: string): Promise<void>
     rows = listRows(db, open, Date.now());
     // Tall enough for every row at two lines, the most one takes, every heading and the blank
     // line after each, so nothing scrolls out of the print.
-    const size = { width: 100, height: rows.length * 2 + ListStage.options.length * 2 + 8 };
+    const size = { width: 100, height: rows.length * 2 + sections.length * 2 + 8 };
     const { lines } = drawList(
       rows,
-      stageHeadings(rows, new Set(ListStage.options)),
+      sectionHeadings(rows, new Set(sections)),
       -1,
       0,
       frameWith(() => "", ""),
@@ -372,29 +373,7 @@ export async function runList(agents: string, repository: string): Promise<void>
         return say(errorText(error));
       }
     }
-    // A task that ended before Skelcrew saved PR links, and whose PR has left the forge's copy,
-    // still had a PR: the line names it, as there is no link left to open.
-    if (row.link === null && row.part === "done")
-      return say(
-        row.pr
-          ? `${row.name}'s PR ${row.pr} has no link saved, as it ended before Skelcrew kept them: open it on the forge`
-          : `${row.name} has no PR to open`,
-      );
-    if (row.link === null) {
-      const branch = row.branch ? ` on branch ${row.branch}` : "";
-      return say(
-        hasForge(db, open)
-          ? `${row.name} has no PR yet`
-          : `${row.name} is ready${branch}: open a PR or merge it yourself`,
-      );
-    }
-    if (canOpen) {
-      Bun.spawn([openCommand, row.link], { stdout: "ignore", stderr: "ignore" });
-      return say(`Opened ${row.link}`);
-    }
-    // OSC 52 puts the link on your terminal's clipboard, which reaches your laptop over ssh too.
-    process.stdout.write(`\x1b]52;c;${Buffer.from(row.link).toString("base64")}\x07`);
-    say(`Copied ${row.link}`);
+    say(openPr(db, open, row, canOpen, (text) => process.stdout.write(text)));
   };
 
   // Moves to a repository by its owner/name, and has the daemon start its lead if it never has.
@@ -420,13 +399,16 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (tabs.length > 1 && next) goTo(next.fullName);
   };
 
-  // Opens or closes a stage, as its number key does. Opening one moves you to its first row, so
-  // the list scrolls to show it, rather than open it out of sight.
-  const toggleStage = (stage: ListStage) => {
-    if (opened.delete(stage)) return reshow();
-    opened.add(stage);
+  // Opens or closes a section, as a stage's number key or a click on its heading does. Opening
+  // one moves you to its first row, so the list scrolls to show it, rather than open it out of
+  // sight. Needs you is always open: it has no key, so once closed nothing but a click would
+  // bring back what waits on you, so a click on its heading does nothing.
+  const toggleSection = (section: Section) => {
+    if (section === "needs you") return draw();
+    if (opened.delete(section)) return reshow();
+    opened.add(section);
     reshow();
-    const first = rows.findIndex((candidate) => candidate.part === stage);
+    const first = rows.findIndex((candidate) => candidate.section === section);
     if (first >= 0) here = first;
     return draw();
   };
@@ -441,9 +423,9 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Acts on the mouse, by what was drawn where it was pressed. The left button on a repository's
-  // tab opens that repository, and on a stage's heading, or its name pinned at an edge, opens or
-  // closes the stage. On a task's row it moves you there, and on the row you are on already it
-  // opens it, as Enter does, so a double click opens a row too. The lead's row opens the lead at
+  // tab opens that repository, and on a section's heading, or its name pinned at an edge, opens
+  // or closes the section. On a task's row it moves you there, and on the row you are on already
+  // it opens it, as Enter does, so a double click opens a row too. The lead's row opens the lead at
   // once. The wheel moves you a row up or down, which scrolls the list, as the row you are on
   // always stays in view. Another button, or a click on nothing, does nothing.
   const click = (sent: string) => {
@@ -466,11 +448,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (beside > 0 && Number(column) > width - 1 - beside - paneEdge.length) return draw();
     const target = targets[Number(line) - 1] ?? null;
     if (target === null) return draw();
-    if ("stage" in target) return toggleStage(target.stage);
+    if ("section" in target) return toggleSection(target.section);
     if ("pinned" in target) {
       const at = Number(column);
       const pinned = target.pinned.find((span) => span.from <= at && at <= span.to);
-      return pinned ? toggleStage(pinned.stage) : draw();
+      return pinned ? toggleSection(pinned.section) : draw();
     }
     const row = rows[target.row];
     if (!row) return draw();
@@ -521,19 +503,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       const action = asking;
       asking = null;
       if (key !== "y") return draw();
-      // The task can change while the question is open: CI can fail, the approval can go, or
-      // the issue can start elsewhere. So its row is read again, and only goes ahead while it
-      // still offers the very same request. Otherwise the line says why, when the row does.
+      // The row is read again, as the task can change while the question is open.
       refresh();
-      const row = rows.find((candidate) => candidate.name === action.row);
-      const offer = action.merge ? row?.merge : row?.start;
-      if (offer && "ask" in offer && Bun.deepEquals(offer.request, action.question.request))
-        return goAhead(offer);
-      return say(
-        offer && "refused" in offer
-          ? offer.refused
-          : `${action.row} changed while you were asked, so nothing was done`,
-      );
+      const offer = stillOffered(action, all);
+      return typeof offer === "string" ? say(offer) : goAhead(offer);
     }
     said = null;
     const row = rows[here];
@@ -543,7 +516,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (key.startsWith(`${esc}[<`)) return click(key);
     // 1 to 6 open or close the stages, in the order they show.
     const stage = ListStage.options[Number(key) - 1];
-    if (/^[1-6]$/.test(key) && stage) return toggleStage(stage);
+    if (/^[1-6]$/.test(key) && stage) return toggleSection(stage);
     if (key === "enter" && row) return openRow(row);
     // s starts a task not started yet, an issue or one of the backlog, as Enter does there.
     if (key === "s" && row?.part === "backlog" && row.start) {

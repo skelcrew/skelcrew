@@ -2,21 +2,27 @@
 // scrolling back and copying their text, several terminals, and your terminal's title.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { startSession, stillRunning } from "../src/agents/sessions.ts";
 import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
 import { source, threadSql } from "./harness.ts";
 import {
   agent,
+  agentColumn,
   agents,
+  asked,
+  attachTo,
   click,
-  clickRow,
+  daemon,
   endTest,
   env,
   given,
   home,
   labels,
   leaving,
+  onDetails,
+  onLead,
   open,
   pathNow,
   press,
@@ -46,67 +52,68 @@ setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 
-test("shows the lead and every thread that isn't done, beside the agent", async () => {
+test("shows the lead, then Needs you and the stages, beside the agent", async () => {
   open("lead");
   await ready("lead");
   const lines = seen().split("\n");
-  const y = lines.findIndex((line) => line.includes("◆ lead"));
-  // The lead is at the top of the sidebar, below a blank line, then a line, the entries with a
-  // blank line between each, another line, then ACTIVE.
-  expect(y).toBe(2);
-  expect(lines[1]?.slice(0, sidebar - 1).trim()).toBe("");
-  expect(selected()).toBe("◆ lead");
+  const left = (y: number) => lines[y]?.slice(0, sidebar - 1).trimEnd();
+  // The lead is at the top of the sidebar, below a blank line, then a blank line, Needs you and
+  // the six stages, with only Building open.
+  expect(left(1)).toBe("");
   expect(lines[1]).toContain("I am lead");
-  expect(lines[y + 1]).toContain("running · claude");
-  expect(lines[y + 2]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
-  expect(lines[y + 3]).toContain("Issues");
-  expect(lines[y + 4]?.slice(0, sidebar - 1).trim()).toBe("");
-  expect(lines[y + 5]).toContain("Threads");
-  expect(lines[y + 6]?.slice(0, sidebar - 1).trim()).toBe("");
-  expect(lines[y + 7]).toContain("PRs");
-  expect(lines[y + 8]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
-  expect(lines[y + 9]).toContain("Active");
-  expect(lines[y + 11]).toContain("○ 12 app-12");
-  expect(lines[y + 12]).toContain("claude");
-  expect(lines[y + 13]).toContain("working");
-  expect(lines[y + 14]).toContain("○ 7 app-7");
-  expect(seen()).not.toContain("app-3");
+  expect(left(2)).toMatch(/^ ▸ ○ lead\b/);
+  expect(left(3)).toBe("     running");
+  expect(left(4)).toBe("");
+  expect(left(5)).toBe("   Needs you 0");
+  expect(left(6)).toBe(" 1 Backlog   0");
+  expect(left(7)).toBe(" 2 Building  2");
+  expect(left(8)).toMatch(/^ {3}○ app-12/);
+  expect(left(9)).toMatch(/^ {5}working/);
+  expect(left(10)).toMatch(/^ {3}○ app-7/);
+  expect(left(12)).toBe("");
+  expect(left(13)).toBe(" 3 Reviewing 0");
+  expect(left(16)).toBe(" 6 Done      1");
+  expect(selected()).toMatch(/^▸ ○ lead\b/);
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
   expect(panes.sort()).toEqual(["app-12", "app-7", "lead"]);
 });
 
-test("Alt-Down and Alt-Up switch the right side, and you type to whichever agent it shows", async () => {
-  open("app-12");
-  await ready("app-12");
+test("Alt-Down and Alt-Up move the sidebar, and Enter on a task types to its builder", async () => {
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(() => selected().includes("app-12") && onDetails(), "app-12's details");
   press("M-Down");
-  await until(() => seen().includes("I am app-7"), "app-7");
-  await until(() => selected() === "○ 7 app-7", "the sidebar to follow");
+  await until(() => selected().includes("app-7"), "the sidebar to move");
+  await attachTo("app-7");
   type("hello\r");
   // The agent's shell makes the file before it writes the line, so wait for the whole line.
   await until(() => read("app-7.typed").endsWith("\n"), "the typing");
   expect(readFileSync(join(home, "app-7.typed"), "utf8")).toBe("hello\n");
   press("M-Up");
-  await until(() => seen().includes("I am app-12"), "app-12");
+  await attachTo("app-12");
   type("back\r");
   await until(() => existsSync(join(home, "app-12.typed")), "the typing");
 });
 
-test("clicking a row switches the right side and leaves your typing there", async () => {
+test("a click on a task shows its details, and a second click types to its builder", async () => {
   open("lead");
   await ready("lead");
   const y = seen()
     .split("\n")
-    .findIndex((line) => line.includes("○ 7 app-7"));
+    .findIndex((line) => line.includes("○ app-7"));
   click(5, y + 1);
-  await until(() => seen().includes("I am app-7"), "app-7");
+  await until(() => selected().includes("app-7") && onDetails(), "app-7's details");
+  click(5, y + 1);
+  await until(() => !onDetails() && seen().includes("I am app-7"), "app-7");
   type("hello\r");
   await until(() => existsSync(join(home, "app-7.typed")), "the typing");
 });
 
-// Until the list replaces the screen, a builder on a plugin's host is reached from the sidebar
-// too: its row shows it running, and picking it runs the host's own attach on the right.
-test("picking a builder on a plugin's host attaches to it through that host", async () => {
+// A builder on a plugin's host is reached from the sidebar too: Enter on its row runs the host's
+// own attach on the right.
+test("Enter on a builder on a plugin's host attaches to it through that host", async () => {
   tmux(agents, "kill-session", "-t", "=app-12");
   const plugin = join(home, "plugin-fake");
   mkdirSync(plugin, { recursive: true });
@@ -129,10 +136,34 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
     () => read(join("plugin-fake", "listed")).split("\n").length > 2,
     "the sidebar to ask the host",
   );
-  toFirstThread();
+  press("M-S-Down");
+  await until(onDetails, "app-12's details");
+  press("Enter");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   await until(() => selected().includes("app-12"), "the sidebar to follow");
 });
+
+// Writes a fake runtime plugin named fake into the test's home and records it, whose host lists
+// the sessions `listed` names as running, failing while a file named failing is there, and runs
+// `attach` as its attach. Returns the plugin's folder, and how many times the host was asked.
+function fakeHost(listed: string[], attach: string) {
+  tmux(agents, "kill-session", "-t", "=lead");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  const sessions = listed.map((id) => ({ id, running: true, labels: null }));
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '${JSON.stringify({ sessions })}'\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), attach);
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}')`);
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  return { plugin, looks };
+}
 
 // Plain sc opens the screen whatever the session host. A lead on a runtime plugin's host shows on
 // the right through the host's own attach, here a script that keeps every byte typed into it and
@@ -141,22 +172,11 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
 // that ends anyway is started again.
 test("a lead on a plugin's host shows on the right from the start, and never gets Ctrl-\\", async () => {
   given.extendedKeys = true;
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo '{"sessions":[{"id":"fake-lead","running":true,"labels":null}]}'\n`,
-  );
-  writeFileSync(
-    join(plugin, "attach.sh"),
+  const { plugin } = fakeHost(
+    ["fake-lead"],
     'echo >> attached; stty raw -echo; echo "I am $1 on fake"; dd bs=1 count=1 >> typed 2>/dev/null\n',
   );
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'`);
+  sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
   open("lead");
   await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
   expect(seen()).not.toContain("Waiting for the lead");
@@ -169,7 +189,7 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE rep
   await until(() => attached() === 2, "the host's attach to start again");
   type("y");
   await until(() => attached() === 3, "the host's attach to start again");
-  expect(read(join("plugin-fake", "typed"))).toBe("xy");
+  expect(readFileSync(join(plugin, "typed"), "utf8")).toBe("xy");
   expect(existsSync(join(home, "left-one"))).toBe(false);
 });
 
@@ -178,308 +198,97 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE rep
 // attach does the first time it runs. The sidebar must still see that the right side shows the
 // old one, and attach it to the new one.
 test("a lead that moves on its host while the screen opens is shown where it went", async () => {
-  tmux(agents, "kill-session", "-t", "=lead");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
+  const move = join(home, "move.ts");
   writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo '{"sessions":[{"id":"fake-lead-2","running":true,"labels":null}]}'\n`,
-  );
-  writeFileSync(
-    join(plugin, "move.ts"),
+    move,
     `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");`,
   );
-  writeFileSync(
-    join(plugin, "attach.sh"),
-    `[ -e moved ] || { touch moved; ${process.execPath} move.ts; }; echo "I am $1 on fake"; exec sleep 300\n`,
+  fakeHost(
+    ["fake-lead-2"],
+    `[ -e moved ] || { touch moved; ${process.execPath} ${move}; }; echo "I am $1 on fake"; exec sleep 300\n`,
   );
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  sql(
+    "UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'",
   );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'`);
   open("lead");
   await until(() => seen().includes("I am fake-lead-2 on fake"), "the lead where it went");
-});
-
-// A builder shown on the right comes back to the lead once it ends. A lead that moved on its host
-// meanwhile is shown where it went, with its row marked, though no tmux client says it shows.
-test("a builder that ends after its lead moved on its host comes back to where the lead went", async () => {
-  tmux(agents, "kill-session", "-t", "=lead");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo '{"sessions":[{"id":"fake-lead-1","running":true,"labels":null},{"id":"fake-lead-2","running":true,"labels":null}]}'\n`,
-  );
-  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'`);
-  open("lead");
-  await until(() => seen().includes("I am fake-lead-1 on fake"), "the lead through its host");
-  toFirstThread();
-  await until(() => seen().includes("I am app-12"), "app-12");
-  await until(() => selected() === "○ 12 app-12", "the sidebar to follow");
-  sql("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");
-  // The sidebar looks each second.
-  await Bun.sleep(2500);
-  tmux(agents, "kill-session", "-t", "=app-12");
-  await until(() => seen().includes("I am fake-lead-2 on fake"), "the lead where it went");
-  await until(() => selected() === "◆ lead", "the lead's row");
-});
-
-// A host can fail to answer for a moment. A builder on it, shown on the right, stays shown and
-// marked, rather than being taken for ended.
-test("a builder on a plugin's host stays marked while its host fails to answer", async () => {
-  tmux(agents, "kill-session", "-t", "=app-12");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '{"sessions":[{"id":"fake-app-12","running":true,"labels":null}]}'\n`,
-  );
-  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
-  open("lead");
-  await ready("lead");
-  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
-  await until(() => looks() > 2, "the sidebar to ask the host");
-  toFirstThread();
-  await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
-  await until(() => selected().includes("app-12"), "the sidebar to follow");
-  writeFileSync(join(plugin, "failing"), "");
-  const failed = looks();
-  await until(() => looks() > failed + 2, "the sidebar to ask the failing host");
-  await Bun.sleep(1200);
-  expect(selected()).toContain("app-12");
-  expect(seen()).toContain("I am fake-app-12 on fake");
-});
-
-// A builder on a plugin's host has no tmux client on the right. While the lead isn't running, it
-// still stays shown and marked, rather than being taken for the right side waiting on the lead.
-test("a builder on a plugin's host stays marked while the lead isn't running", async () => {
-  tmux(agents, "kill-session", "-t", "=app-12");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo >> listed; echo '{"sessions":[{"id":"fake-app-12","running":true,"labels":null}]}'\n`,
-  );
-  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
-  open("lead");
-  await ready("lead");
-  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
-  await until(() => looks() > 2, "the sidebar to ask the host");
-  toFirstThread();
-  await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
-  await until(() => selected().includes("app-12"), "the sidebar to follow");
-  tmux(agents, "kill-session", "-t", "=lead");
-  await Bun.sleep(2500);
-  expect(selected()).toContain("app-12");
-  expect(seen()).toContain("I am fake-app-12 on fake");
-});
-
-// A host that fails to answer can't say a builder ended. So once the builder's attach on the right
-// ends, the right side is back on the lead, also on a plugin's host, and its row is marked.
-test("a builder's attach that ends while its host fails to answer marks the lead again", async () => {
-  tmux(agents, "kill-session", "-t", "=lead");
-  tmux(agents, "kill-session", "-t", "=app-12");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '{"sessions":[{"id":"fake-lead","running":true,"labels":null},{"id":"fake-app-12","running":true,"labels":null}]}'\n`,
-  );
-  // The builder's attach ends at Enter, the lead's never.
-  writeFileSync(
-    join(plugin, "attach.sh"),
-    'echo "I am $1 on fake"; [ "$1" = fake-app-12 ] || exec sleep 300; read -r line\n',
-  );
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app';
-UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
-  open("lead");
-  await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
-  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
-  await until(() => looks() > 2, "the sidebar to ask the host");
-  toFirstThread();
-  await until(() => seen().includes("I am fake-app-12 on fake"), "the builder's attach");
-  await until(() => selected().includes("app-12"), "the sidebar to follow");
-  writeFileSync(join(plugin, "failing"), "");
-  const failed = looks();
-  await until(() => looks() > failed + 1, "the sidebar to ask the failing host");
-  type("\r");
-  await until(() => right().includes("I am fake-lead on fake"), "the lead again");
-  await until(() => selected() === "◆ lead", "the lead's row");
 });
 
 // The host's list can lag behind the lead, or fail. A lead that moved on its host meanwhile is
-// still shown where it went when you pick its row.
-test("picking a lead that moved on its host while its host fails to answer shows where it went", async () => {
-  tmux(agents, "kill-session", "-t", "=lead");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '{"sessions":[{"id":"fake-lead-1","running":true,"labels":null}]}'\n`,
+// still shown where it went when you come back to its row.
+test("coming back to a lead that moved on its host while its host fails to answer shows where it went", async () => {
+  const { plugin, looks } = fakeHost(["fake-lead-1"], 'echo "I am $1 on fake"; exec sleep 300\n');
+  sql(
+    "UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'",
   );
-  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'`);
   open("lead");
   await until(() => seen().includes("I am fake-lead-1 on fake"), "the lead through its host");
-  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
   await until(() => looks() > 2, "the sidebar to ask the host");
-  toFirstThread();
-  await until(() => seen().includes("I am app-12"), "app-12");
-  await until(() => selected() === "○ 12 app-12", "the sidebar to follow");
+  press("M-S-Down");
+  await until(onDetails, "app-12's details");
   writeFileSync(join(plugin, "failing"), "");
   sql("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");
   // The sidebar looks each second.
   await Bun.sleep(2500);
-  clickRow("lead");
-  await until(() => selected() === "◆ lead", "the lead's row");
+  press("M-S-Up");
+  await until(() => onLead(), "the lead's row");
   await until(() => right().includes("I am fake-lead-2 on fake"), "the lead where it went");
 });
 
-// A builder on a plugin's host shows on the right until its attach ends, whatever the host's list
-// says meanwhile: a list can leave it out for a moment. A lead that moves on its host meanwhile
-// never restarts the builder's attach, which would cut off what you type. Once the attach ends,
-// the right side shows the lead where it went.
-test("a builder on a plugin's host stays until its attach ends, and a lead that moves leaves it be", async () => {
-  tmux(agents, "kill-session", "-t", "=lead");
-  tmux(agents, "kill-session", "-t", "=app-12");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo >> listed; builder=',{"id":"fake-app-12","running":true,"labels":null}'; [ -e omit ] && builder=; echo "{\\"sessions\\":[{\\"id\\":\\"fake-lead-1\\",\\"running\\":true,\\"labels\\":null},{\\"id\\":\\"fake-lead-2\\",\\"running\\":true,\\"labels\\":null}$builder]}"\n`,
-  );
-  // The builder's attach counts its starts and ends at Enter, the lead's never ends.
-  writeFileSync(
-    join(plugin, "attach.sh"),
-    'echo "I am $1 on fake"; [ "$1" = fake-app-12 ] || exec sleep 300; echo >> builder; read -r line\n',
-  );
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app';
-UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
+// A host can fail to answer for a moment. A lead on it that ran when last seen still counts as
+// running, so the sidebar doesn't take it for crashed and ask the daemon to bring it back.
+test("a lead on a plugin's host isn't brought back while its host fails to answer", async () => {
+  daemon();
+  const { plugin, looks } = fakeHost(["fake-lead"], 'echo "I am $1 on fake"; exec sleep 300\n');
+  sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
   open("lead");
-  await until(() => seen().includes("I am fake-lead-1 on fake"), "the lead through its host");
-  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
-  await until(() => looks() > 2, "the sidebar to ask the host");
-  toFirstThread();
-  await until(() => seen().includes("I am fake-app-12 on fake"), "the builder's attach");
-  await until(() => selected().includes("app-12"), "the sidebar to follow");
-  writeFileSync(join(plugin, "omit"), "");
-  sql("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");
-  const omitted = looks();
-  await until(() => looks() > omitted + 2, "the sidebar to ask the host again");
-  await Bun.sleep(1200);
-  expect(selected()).toContain("app-12");
-  expect(read(join("plugin-fake", "builder"))).toBe("\n");
-  type("\r");
-  await until(() => right().includes("I am fake-lead-2 on fake"), "the lead where it went");
-  await until(() => selected() === "◆ lead", "the lead's row");
-});
-
-// Whether a builder ran is kept while its host fails to answer, but it is always reached through
-// the session it has now. A builder given a new session meanwhile is never reached through its
-// old one.
-test("a builder that moved on its host while its host fails to answer is attached to its new session", async () => {
-  tmux(agents, "kill-session", "-t", "=app-12");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '{"sessions":[{"id":"fake-app-12-a","running":true,"labels":null}]}'\n`,
-  );
-  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE threads SET host = 'fake', host_id = 'fake-app-12-a' WHERE folder = 'app-12'`);
-  open("lead");
-  await ready("lead");
-  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
   await until(() => looks() > 2, "the sidebar to ask the host");
   writeFileSync(join(plugin, "failing"), "");
-  sql("UPDATE threads SET host_id = 'fake-app-12-b' WHERE folder = 'app-12'");
   const failed = looks();
   await until(() => looks() > failed + 2, "the sidebar to ask the failing host");
-  toFirstThread();
-  await until(() => seen().includes("I am fake-app-12-b on fake"), "the builder's new session");
-  expect(seen()).not.toContain("I am fake-app-12-a on fake");
+  expect(asked).toEqual([]);
 });
 
-// A host can take its time to answer. A builder given a new session while it does is reached
-// through the new one when you pick it.
-test("a builder that moved on its host while its host is slow to answer is attached to its new session", async () => {
-  tmux(agents, "kill-session", "-t", "=app-12");
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "session.sh"),
-    `read -r question; echo >> listed; [ -e slow ] && sleep 5; echo '{"sessions":[{"id":"fake-app-12-a","running":true,"labels":null}]}'\n`,
-  );
-  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
-  );
-  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
-UPDATE threads SET host = 'fake', host_id = 'fake-app-12-a' WHERE folder = 'app-12'`);
+// Plain sc opens the screen for a lead on a plugin's host too, through the same code plain sc
+// runs, with a stand-in daemon that hands it the lead. The host's attach here swallows every key,
+// as a host whose own key to detach never arrives would. Alt-Q and Ctrl-Q, the screen's keys,
+// still leave, as tmux takes them before the host's attach sees them.
+for (const key of ["M-q", "C-q"])
+  test(`plain sc on a lead on a plugin's host opens the screen, and ${key} leaves it`, async () => {
+    fakeHost(["fake-lead"], 'stty raw -echo; echo "I am $1 on fake"; exec cat >/dev/null\n');
+    sql(
+      "UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'",
+    );
+    mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
+    const daemon = createServer((connection) =>
+      connection.on("data", () => connection.end('{"lead":"lead","repository":"simon/app"}\n')),
+    ).listen(join(home, "run", "skelcrew.sock"));
+    try {
+      const script = join(home, "plain-sc.ts");
+      writeFileSync(
+        script,
+        `import { attachToLead } from ${JSON.stringify(source("attach.ts"))};
+await attachToLead(${JSON.stringify(agents)}, false);
+await Bun.write(${JSON.stringify(join(home, "left-one"))}, "left");`,
+      );
+      const command = `TERM=xterm-256color ${process.execPath} ${script}; sleep 300`;
+      tmux(terminal, "new-session", "-d", "-s", "one", "-x", "120", "-y", "30", command);
+      await until(() => seen().includes("I am fake-lead on fake") && onLead(), "the screen");
+      press(key);
+      await until(() => existsSync(join(home, "left-one")), "the screen to leave");
+    } finally {
+      daemon.close();
+    }
+  });
+
+test("the screen starts on the lead's row, even while a task needs you", async () => {
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
   await ready("lead");
-  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
-  await until(() => looks() > 2, "the sidebar to ask the host");
-  writeFileSync(join(plugin, "slow"), "");
-  const before = looks();
-  await until(() => looks() > before, "a slow look to start");
-  sql("UPDATE threads SET host_id = 'fake-app-12-b' WHERE folder = 'app-12'");
-  toFirstThread();
-  await until(() => seen().includes("I am fake-app-12-b on fake"), "the builder's new session");
-  expect(seen()).not.toContain("I am fake-app-12-a on fake");
-  // The slow look ends before the test does, as a look after it starts only then.
-  rmSync(join(plugin, "slow"));
-  const slow = looks();
-  await until(() => looks() > slow, "the slow look to end");
-});
-
-test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
-  open("app-7");
-  await ready("app-7");
-  expect(selected()).toBe("○ 7 app-7");
+  await until(() => seen().includes("● app-12"), "app-12 under Needs you");
+  expect(selected()).toMatch(/^▸ ○ lead\b/);
 });
 
 test("updates on its own, with needs you in the sidebar", async () => {
@@ -488,8 +297,8 @@ test("updates on its own, with needs you in the sidebar", async () => {
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   await until(() => colours().includes("\x1b[38;5;221m●"), "needs you");
-  expect(seen()).toContain("● 12 app-12");
-  expect(seen()).toContain("needs you");
+  expect(seen()).toContain("● app-12");
+  expect(seen()).toContain("Needs you 1");
   // Its tab says so too, as other repositories' tabs would.
   expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew v[\d.]+ +│ {3}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
@@ -538,8 +347,8 @@ test("Ctrl-\\ leaves neither the screen nor the agent", async () => {
 // detaching crashed the server in every one of six runs. So each key that leaves does so twice
 // while they run, and a second terminal must keep its screen throughout.
 test("leaving never takes the screen away from another terminal, however busy the server", async () => {
-  open("app-7", "two");
-  await ready("app-7", "two");
+  open("lead", "two");
+  await ready("lead", "two");
   const asking = `while tmux -L ${screen} -f /dev/null list-clients >/dev/null 2>&1; do :; done`;
   const busy = Array.from({ length: 8 }, () =>
     Bun.spawn(["sh", "-c", asking], { env: { ...env(), TMUX: "" } }),
@@ -552,7 +361,7 @@ test("leaving never takes the screen away from another terminal, however busy th
       await until(() => seen("one").includes(leaving), `${key} to leave`, "one");
       expect(seen("one")).not.toContain("server exited unexpectedly");
       expect(screenSessions()).toHaveLength(1);
-      expect(seen("two")).toContain("I am app-7");
+      expect(seen("two")).toContain("I am lead");
       tmux(terminal, "kill-session", "-t", "=one");
       rmSync(join(home, "left-one"));
     }
@@ -619,7 +428,7 @@ for (const extended of [false, true])
     // tmux before 3.5 has only the xterm form of an extended key.
     const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
     expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
-    expect(selected()).toBe("◆ lead");
+    expect(selected()).toMatch(/^▸ ○ lead\b/);
     expect(seen()).toContain("I am lead");
   });
 
@@ -627,9 +436,8 @@ test("with a terminal that sends extended keys, the screen's own keys still work
   given.extendedKeys = true;
   open("lead");
   await ready("lead");
-  toSecondThread();
-  await until(() => selected() === "○ 7 app-7", "Alt-Shift-Down and Alt-Down to move");
-  await until(() => seen().includes("I am app-7"), "app-7");
+  await toSecondThread();
+  expect(selected()).toContain("app-7");
   type("hello");
   press("Enter");
   await until(() => read("app-7.typed") === "hello\n", "the typing");
@@ -725,13 +533,12 @@ test("every key pressed while scrolled back reaches the agent, Enter too", async
 
 test("Ctrl-Q and switching still work while scrolled back", async () => {
   agent("output", history);
-  sql(threadSql({ task: "20", folder: "output" }));
   open("output");
   await ready("output");
   wheel(64);
   await until(() => !seen().includes("I am output"), "the scrollback");
   press("M-Down");
-  await until(() => selected() === "○ 12 app-12", "the next row");
+  await until(() => selected().includes("app-12"), "the next row");
   press("C-q");
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
@@ -910,7 +717,7 @@ test("an agent that asked for the mouse gets a drag itself", async () => {
   agent("drawn", fullScreen("drawn", "\\033[?1002h\\033[?1006h"));
   open("drawn");
   await until(() => seen().includes("I am drawn"), "the agent");
-  await drag([60, 5], [[64, 5]], false);
+  await drag([agentColumn, 5], [[agentColumn + 4, 5]], false);
   await until(() => read("drawn.bytes").includes("\x1b[<0;25;4m"), "the release");
   expect(read("drawn.bytes")).toBe("\x1b[<0;21;4M\x1b[<32;25;4M\x1b[<0;25;4m");
   expect(scrolledBack()).not.toContain("1");
@@ -932,23 +739,23 @@ test("an agent's own copy reaches your terminal, and other agents can't read it"
 test("two terminals each get their own session, and leaving one leaves the other", async () => {
   open("lead", "one");
   await ready("lead", "one");
-  open("app-7", "two");
-  await ready("app-7", "two");
+  open("lead", "two");
+  await ready("lead", "two");
   expect(screenSessions()).toHaveLength(2);
-  press("M-Up", "two");
-  await until(() => selected("two") === "○ 12 app-12", "the second to switch", "two");
-  expect(selected("one")).toBe("◆ lead");
+  press("M-Down", "two");
+  await until(() => selected("two").includes("app-12"), "the second to switch", "two");
+  expect(onLead("one")).toBe(true);
   press("C-q", "one");
   await until(() => screenSessions().length === 1, "the first to end");
   press("M-Down", "two");
-  await until(() => selected("two") === "○ 7 app-7", "the second to go on working", "two");
+  await until(() => selected("two").includes("app-7"), "the second to go on working", "two");
 });
 
 test("a terminal that just goes leaves no session behind, and no sidebar running", async () => {
   open("lead", "one");
   await ready("lead", "one");
-  open("app-7", "two");
-  await ready("app-7", "two");
+  open("lead", "two");
+  await ready("lead", "two");
   const sidebars = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
   tmux(terminal, "kill-session", "-t", "=one");
   await until(() => screenSessions().length === 1, "the session to end");
@@ -960,37 +767,40 @@ test("a terminal that just goes leaves no session behind, and no sidebar running
   expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
 });
 
-test("when the agent you are looking at ends, the right side goes to the lead", async () => {
-  open("app-7");
-  await ready("app-7");
+test("when the builder you attached to ends, the right side goes back to its details", async () => {
+  open("lead");
+  await ready("lead");
+  await toSecondThread();
   tmux(agents, "kill-session", "-t", "=app-7");
-  await until(() => seen().includes("I am lead"), "the lead");
-  await until(() => selected() === "◆ lead", "the sidebar to follow");
+  await until(onDetails, "app-7's details");
+  expect(selected()).toContain("app-7");
 });
 
-test("when the thread you are on stops, its row goes and the right side goes to the lead", async () => {
-  open("app-7");
-  await ready("app-7");
-  sql("UPDATE threads SET status = 'stopped' WHERE task = 7");
-  tmux(agents, "kill-session", "-t", "=app-7");
-  await until(() => seen().includes("I am lead"), "the lead");
-  await until(() => selected() === "◆ lead", "the sidebar to follow");
-  await until(() => !seen().includes("app-7"), "the stopped thread to go");
-  expect(seen()).toContain("○ 12 app-12");
+test("a task that ends while you are on it stays yours, under Done, which opens", async () => {
+  open("lead");
+  await ready("lead");
+  await toSecondThread();
+  sql("UPDATE threads SET status = 'done' WHERE task = 7");
+  await until(() => seen().includes("6 Done      2"), "app-7 to end");
+  await until(() => selected().includes("app-7"), "the sidebar to stay on app-7");
+  expect(seen()).toContain("○ app-12");
 });
 
-test("a row whose agent isn't running can't be picked", async () => {
+test("Enter on a task whose builder isn't running says so on the right, until the next key", async () => {
   sql("UPDATE threads SET status = 'failed' WHERE task = 12");
   tmux(agents, "kill-session", "-t", "=app-12");
   open("lead");
   await ready("lead");
-  await until(() => seen().includes("app-12"), "the row");
-  const y = seen()
-    .split("\n")
-    .findIndex((line) => line.includes("app-12"));
-  click(5, y + 1);
-  toFirstThread();
-  await until(() => seen().includes("I am app-7"), "the row after it");
+  press("M-S-Down");
+  await until(() => selected().includes("app-12"), "app-12's row");
+  await until(() => right().includes("Builder not running"), "app-12's details");
+  press("Enter");
+  const why = "app-12's builder isn't running: sc start app-12";
+  await until(() => right().includes(why), "the right side to say why");
+  expect(tmux(agents, "list-clients").out).toBe("");
+  type("q");
+  await until(() => right().includes("Builder not running"), "app-12's details again");
+  expect(right()).not.toContain(why);
 });
 
 test("opens from a terminal this machine has no description of", async () => {
@@ -1033,7 +843,7 @@ test("two terminals on one machine keep a title each", async () => {
   open("lead", "two");
   await ready("lead", "two");
   await until(() => title("two") === "Skelcrew", "the second title");
-  toFirstThread();
+  await toFirstThread();
   await until(() => seen().includes("I am app-12"), "app-12");
   expect(title()).toBe("Skelcrew · simon@workbox");
 });
@@ -1045,7 +855,7 @@ test("an agent's own title never reaches the terminal, even after switching", as
   expect(tmux(agents, "list-panes", "-t", "=lead:", "-F", "#{pane_title}").out).toContain(
     "title of lead",
   );
-  toFirstThread();
+  await toFirstThread();
   await until(() => seen().includes("I am app-12"), "app-12");
   expect(title()).toBe("Skelcrew");
 });

@@ -2,7 +2,7 @@
 // at on the right, the strip above it and the footer across the bottom. It is a second tmux
 // server, one session per open terminal, ended when you leave.
 import type { Database } from "bun:sqlite";
-import { applyConfig, attachCommand, attachThen } from "../agents/sessions.ts";
+import { applyConfig, attachCommand } from "../agents/sessions.ts";
 import { envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
@@ -11,11 +11,23 @@ import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 import type { Entry } from "./lists.ts";
 
-// How wide the sidebar is, with the line it draws at its edge: room for 31 columns of a title,
-// between its mark and two columns of padding, so a thread's name, word, harness and time
-// usually fit on one line whole. tmux shares a resize out among panes, so it is set back after
-// each.
-export const sidebarWidth = 38;
+// How wide the sidebar is, with the line it draws at its edge: wide enough that a task's two lines
+// usually fit whole, such as `working · Editing rows.ts · #40 · CI passed · 14:31`. On a terminal
+// too narrow for it beside half the terminal, it narrows to what the right side leaves, as the
+// lead or an agent there must stay usable.
+export const sidebarWidth = 58;
+
+// Returns how wide the sidebar is in a terminal `width` columns wide: its own width, or less so the
+// right side keeps at least half, past the border between them.
+export const sidebarFor = (width: number) => Math.min(sidebarWidth, Math.floor((width - 1) / 2));
+
+// The same width as a tmux format, which tmux works out itself on each resize, from the window's
+// width.
+const sidebarFormat = `#{?#{e|<:#{window_width},${2 * sidebarWidth + 1}},#{e|/:#{e|-:#{window_width},1},2},${sidebarWidth}}`;
+
+// A word in the command of a right side attached to a builder. The screen's tmux finds it there,
+// so Ctrl-\ ends only that attachment, never the lead or a task's details.
+export const attachedMark = "skelcrew-attached";
 
 // The tmux commands that set up the screen's server. They run each time the screen opens,
 // before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf
@@ -37,11 +49,11 @@ const config = [
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
-  // Mac terminal that doesn't send Option as Alt. Ctrl-\ does nothing here: it only leaves an
-  // agent opened alone, back to where you came from. It stays bound, to an empty command, as
-  // left to reach the agents' server it would detach the agent's pane and leave it empty. It is
-  // also herdr's key to detach, so a runtime plugin's host would leave the right side empty
-  // too. Ctrl-4 goes the same way: a terminal sending extended keys sends it as a key of its
+  // Mac terminal that doesn't send Option as Alt. Ctrl-\ never reaches a pane: left to reach the
+  // agents' server or a host's own client, it would detach it and leave the right side empty. On
+  // a builder you attached to on the right side, it ends that attachment instead, found by the
+  // mark in the pane's command, and the pane goes back to the task's details. Anywhere else it
+  // does nothing. Ctrl-4 does the same: a terminal sending extended keys sends it as a key of its
   // own, which tmux would hand on to the pane as Ctrl-\'s byte.
   // Each key that leaves ends your terminal's session rather than detaching from it. tmux 3.6
   // crashed about one time in five when a detach met another command, such as the sidebar's,
@@ -51,22 +63,39 @@ const config = [
   ["unbind", "-a", "-T", "root"],
   ["bind", "-n", "M-q", "kill-session"],
   ["bind", "-n", "C-q", "kill-session"],
-  ["bind", "-n", "C-\\", ""],
-  ["bind", "-n", "C-4", ""],
+  ...["C-\\", "C-4"].map((key) => [
+    "bind",
+    "-n",
+    key,
+    "if",
+    "-F",
+    `#{m:*${attachedMark}*,#{pane_start_command}}`,
+    "run-shell 'pkill -P #{pane_pid}'",
+  ]),
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
   // into the agent. A paste that matters comes bracketed anyway.
   ["set", "-g", "assume-paste-time", "0"],
-  // Alt-Up and Alt-Down, with or without Shift, and Alt-Shift-Left and Alt-Shift-Right go to
-  // the sidebar, in pane 0, without moving your typing from the agent. Plain Alt-Left and
-  // Alt-Right stay the agent's, as some terminals send them to move a word while you type.
+  // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-1 to
+  // Alt-6, which open and close the stages, go to the sidebar, in pane 0, without moving your
+  // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as some terminals send
+  // them to move a word while you type.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
+  ...["1", "2", "3", "4", "5", "6"].map((digit) => [
+    "bind",
+    "-n",
+    `M-${digit}`,
+    "send-keys",
+    "-t",
+    ":.0",
+    `M-${digit}`,
+  ]),
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
@@ -149,13 +178,14 @@ const config = [
   // from refusing the whole screen over it.
   ["set", "-sq", "theme", "terminal"],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
-  // each, with no process of Skelcrew's to do it.
-  ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
+  // each, with no process of Skelcrew's to do it. run-shell -C works out the width's format
+  // first, as resize-pane takes only a number.
+  ["set-hook", "-g", "window-resized", `run-shell -C "resize-pane -t :.0 -x ${sidebarFormat}"`],
 ];
 
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
 // single file runs itself. Otherwise Bun runs this checkout's main file.
-function skelcrewCommand(...words: string[]): string[] {
+export function skelcrewCommand(...words: string[]): string[] {
   const checkout = singleFile ? [] : [mainFile];
   return [process.execPath, ...checkout, ...words];
 }
@@ -241,25 +271,21 @@ export async function openScreen(
   // The footer's pane starts as its line and its row, or its row alone where tmux's border above
   // it is a thin line already, and sizes itself from then on.
   const footerHeight = border.length > 0 ? "2" : "1";
-  // The right side shows the session, then the lead once it ends or you leave it. A lead on a
-  // runtime plugin's host is reached through the host's own attach, started again whenever it
-  // ends, as tmux's attach to the lead is.
+  // The right side shows the lead. A lead on a runtime plugin's host is reached through the
+  // host's own attach, started again whenever it ends, as tmux's attach to the lead is.
   const [owner = "", repo = ""] = repository.split("/");
   const onHost = leadOnHost(openDb(), { owner, repo });
-  const again = `while :; do ${onHost}; sleep 1; done`;
   const right =
     onHost === null
       ? attachCommand(agents, session, lead)
-      : session === lead
-        ? ["sh", "-c", again]
-        : attachThen(agents, session, again);
+      : ["sh", "-c", `while :; do ${onHost}; sleep 1; done`];
   const left = sidebarCommand(agents, name, where, repository, onHost ?? "");
   const open = [
     ...config,
     ...border,
     ["new-session", "-s", name, "--", ...right],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
-    ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
+    ["split-window", "-hbd", "-l", String(sidebarFor(process.stdout.columns || 80)), "--", ...left],
     // The footer goes across the whole width, below both, as the screen's third pane.
     ["split-window", "-vfd", "-l", footerHeight, "--", ...footerCommand(agents, name)],
     // Ctrl-C reaches a list until it has made its terminal raw, and Bun won't stay ignoring it.

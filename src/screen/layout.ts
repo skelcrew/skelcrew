@@ -1,6 +1,6 @@
 // The sidebar as lines for its pane: the lead's row on top, then the entries Issues, Threads and
-// PRs, then ACTIVE. It reads nothing, so what you see can be tested
-// without a terminal.
+// PRs, then the threads, those waiting on you under Needs you and the rest under Active. It reads
+// nothing, so what you see can be tested without a terminal.
 import { markOf } from "../flow/marks.ts";
 import type { Entry, EntryCount } from "./lists.ts";
 import {
@@ -18,7 +18,7 @@ import {
   tinted,
   white,
 } from "./look.ts";
-import type { Row } from "./rows.ts";
+import { type Row, waitsOnYou } from "./rows.ts";
 
 export type Size = { width: number; height: number };
 // One line of the sidebar, with where a click on it goes, if anywhere: a row's session or an
@@ -178,10 +178,11 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
 }
 
 // Returns the sidebar's lines, as many as its height holds at most.
-// The lead's row comes first, then the entries, then ACTIVE, which has the rest of the height
-// and scrolls in it. A terminal may be too short for the lead, the entries, ACTIVE's heading and
-// the row you are on. Then the entries and the heading go, and the lead and the threads fill the
-// sidebar with no heading, as they are what you move through.
+// The lead's row comes first, then the entries, then the threads, which have the rest of the
+// height and scroll in it: under Needs you those waiting on you, then under Active the rest. A
+// terminal may be too short for the lead, the entries, the first heading and the row you are on.
+// Then the entries and the headings go, and the lead and the threads fill the sidebar with no
+// heading, as they are what you move through.
 export function layout(
   rows: Row[],
   entries: EntryCount[],
@@ -210,15 +211,24 @@ function layoutBelowBlank(
   const width = size.width - 1;
   const linesOf = (row: Row) =>
     rowLines(row, row.session === shown, width).map((text) => ({ text, place: row.session }));
-  const blocks = rows.map(linesOf);
-  const here = rows.findIndex((row) => row.session === shown);
-  // The lead is the row with no status of its own, and ACTIVE has the rest. Its heading says
-  // Active, as Threads would repeat the entry above it.
+  // The lead is the row with no status of its own, and the threads have the rest, those waiting
+  // on you first, so the list reaches them fastest. The rows keep that order wherever they are
+  // drawn, so a click and a move find them where they show.
+  const ordered = sidebarOrder(rows);
+  const blocks = ordered.map(linesOf);
+  const here = ordered.findIndex((row) => row.session === shown);
+  const threads = ordered.filter((row) => row.status !== null);
   const lead = rows.filter((row) => row.status === null).flatMap(linesOf);
-  const threads = rows.filter((row) => row.status !== null);
-  const shownThread = threads.findIndex((row) => row.session === shown);
+  const needing = threads.filter(waitsOnYou);
+  const rest = threads.filter((row) => !waitsOnYou(row));
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  const heading = threads.length > 0 ? [{ text: paint(grey, `${pad}Active`) }, { text: "" }] : [];
+  // Each heading has a blank line under it. With one group, its heading stays above the threads
+  // as they scroll. With both, each heading scrolls with its own rows, so a row of Active never
+  // shows under a pinned Needs you heading, which would say it waits on you. Active's heading
+  // then has a blank line above it too.
+  const headingOf = (name: string) => [{ text: paint(grey, `${pad}${name}`) }, { text: "" }];
+  const both = needing.length > 0 && rest.length > 0;
+  const first = both ? [] : headingOf(needing.length > 0 ? "Needs you" : "Active");
   const top: Line[] = [
     ...lead,
     ...(lead.length > 0 && entries.length > 0 ? [divider] : []),
@@ -229,14 +239,37 @@ function layoutBelowBlank(
       const line = { text: entryLine(entry, place === shown, width), place };
       return i === 0 ? [line] : [{ text: "" }, line];
     }),
-    ...(heading.length > 0 ? [divider, ...heading] : []),
+    ...(threads.length > 0 ? [divider, ...first] : []),
   ];
   // Too short for all of that and the row you are on, or a row when you are on none of them:
   // the lead and the threads alone.
+  const shownThread = threads.findIndex((row) => row.session === shown);
   const left = size.height - top.length;
   const needed = threads.length > 0 ? rowHeight(threads[Math.max(shownThread, 0)]) : 0;
   if (left < needed) return scrolled(blocks, here, size.height);
-  return [...top, ...scrolled(threads.map(linesOf), Math.max(shownThread, 0), left)];
+  // With both groups, each heading is a block of its own among the threads, so the row you are
+  // on is one block further down under Needs you, and two under Active.
+  const threadBlocks = both
+    ? [
+        headingOf("Needs you"),
+        ...needing.map(linesOf),
+        [{ text: "" }, ...headingOf("Active")],
+        ...rest.map(linesOf),
+      ]
+    : threads.map(linesOf);
+  const at = Math.max(shownThread, 0);
+  const shownBlock = !both ? at : at < needing.length ? at + 1 : at + 2;
+  return [...top, ...scrolled(threadBlocks, shownBlock, left)];
+}
+
+// Returns the rows in the order the sidebar shows them: the lead, then the threads waiting on
+// you, then the rest, each part in the order given.
+export function sidebarOrder(rows: Row[]): Row[] {
+  return [
+    ...rows.filter((row) => row.status === null),
+    ...rows.filter((row) => row.status !== null && waitsOnYou(row)),
+    ...rows.filter((row) => row.status !== null && !waitsOnYou(row)),
+  ];
 }
 
 // Returns the whole sidebar as lines, given the rows, the entries, what is on the right, as a

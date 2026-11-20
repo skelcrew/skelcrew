@@ -25,6 +25,10 @@ const waiting =
 // none asks the lead.
 const settling =
   "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. Skelcrew never guesses them. The end of these instructions says which were configured, in either file, when this session started. A line that is only a comment, as sc init writes them, isn't configured. You can't read the human's config, so go by that, and by the skelcrew.yaml in the clone for any added since. While either is missing, the repository's standard setup isn't finished, and your first proposal, before anything else, is a thread that finishes it. Find the commands out by reading the repository: its CI workflow above all, which shows what the project really runs, its package files, its Makefile and its README. Propose only the missing ones to the human in plain words, such as \"Builders will set up with bun install and test with bun run check, as CI does. Shall I start a thread that fills that in?\" On a yes, start a small thread that fills in only the missing ones in the repository's skelcrew.yaml itself, as real lines rather than comments, and leaves a command that is configured as it is. Tell it to also fill in anything else sc init left as a comment that the repository clearly needs, such as limits: when its CI can run only a few builds at once. It is a normal PR the human merges. Until then, a builder that needs a command asks you. Later, a repository the human only drops into will be able to keep them under repos: in the human's own config instead.\n";
+// What the lead's file added once a lead's first start brought it an opening turn, so it speaks
+// first to a human who doesn't know to.
+const opening =
+  '\nOn your very first start, before the human has written anything, Skelcrew types a note starting "Skelcrew: this is your first start". It comes from Skelcrew, not the human. Greet the human in a line or two, then do what it says: propose the thread that finishes the setup, as below, or say what you can do here and ask what to work on.\n';
 // What the lead's file added once a lead came back after a restart without its conversation:
 // it looks at Skelcrew's state before anything else.
 const restarted =
@@ -189,6 +193,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(lead).toContain(waiting);
   expect(lead).toContain(settling);
   expect(lead).toContain(restarted);
+  expect(lead).toContain(opening);
   expect(lead).toContain(threadEnds);
   expect(lead).toContain(triage);
   expect(lead).toContain(labelTriage);
@@ -215,7 +220,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
   }
-  const without = [waiting, settling, restarted, threadEnds].reduce(
+  const without = [waiting, settling, opening, restarted, threadEnds].reduce(
     (text, added) => text.replace(added, ""),
     lead,
   );
