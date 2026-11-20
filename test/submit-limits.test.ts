@@ -301,11 +301,17 @@ done`,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const said = new Response(yours.stdout).text();
-    // Ending the review ends its check, so yours starts rather than waiting for the suite.
-    expect(await yours.exited).toBe(0);
-    expect(await said).toContain("number 1 in line");
-    expect(existsSync(join(mine, "started"))).toBe(true);
+    // Stopped if the test fails before it ends, and its suite with it.
+    try {
+      const said = new Response(yours.stdout).text();
+      // Ending the review ends its check, so yours starts rather than waiting for the suite.
+      expect(await yours.exited).toBe(0);
+      expect(await said).toContain("number 1 in line");
+      expect(existsSync(join(mine, "started"))).toBe(true);
+    } finally {
+      yours.kill();
+      await yours.exited;
+    }
     await until(() =>
       read(join(data(), "threads", "app-12.log")).includes("APP-12's review timed out"),
     );

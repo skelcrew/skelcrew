@@ -8,7 +8,11 @@ import type { Subprocess } from "bun";
 import { git, homeEnv, read, source, startDaemon, until } from "./harness.ts";
 
 let home = "";
+// The daemon and every sc check a test starts, stopped as it ends, even after a failure. Ending
+// sc check ends its suite's process group too.
 const running: Subprocess[] = [];
+// Process groups a test started on purpose, as a reviewer runs, which cleanup kills whole.
+const groups: number[] = [];
 // The daemon starts no session here, but it is given a tmux socket of its own all the same.
 const socket = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
 
@@ -42,6 +46,10 @@ openDb().run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app'
   if (!added.success) throw new Error(added.stderr.toString());
 });
 afterEach(async () => {
+  for (const group of groups.splice(0))
+    try {
+      process.kill(-group, "SIGKILL");
+    } catch {}
   for (const serve of running.splice(0)) {
     serve.kill();
     await serve.exited;
@@ -70,6 +78,7 @@ function check(folder: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
+  running.push(run);
   const said = { out: "" };
   const reading = (async () => {
     const decoder = new TextDecoder();
@@ -223,6 +232,7 @@ test("sc check killed with its whole process group, as a reviewer is, ends the s
       detached: true,
     },
   );
+  groups.push(reviewer.pid);
   await until(() => log().includes("start a") && suiteRuns(a));
   const second = check(b);
   await until(() => second.said.out.includes("number 1 in line"));
