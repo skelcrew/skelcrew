@@ -85,6 +85,9 @@ test("a screen whose input area isn't found shows whole", async () => {
   expect(agentOutput("codex", earlier.join("\n"))).toBe(earlier.join("\n"));
   const answered = ["", shade("› previous request"), "", "• Done.", "", `  ${dim("Ask Codex")}`];
   expect(agentOutput("codex", answered.join("\n"))).toBe(answered.join("\n"));
+  // Nor with an indented dim line under it: the box has shaded blank lines above and below it.
+  const dimmed = ["", shade("› previous request"), "", `  ${dim("result line")}`];
+  expect(agentOutput("codex", dimmed.join("\n"))).toBe(dimmed.join("\n"));
   // A message not shaded, or a footer with a colour such as 38;5;2 rather than dim, isn't either.
   const plain = ["", "› previous request", "", `  ${dim("100% context left")}`];
   expect(agentOutput("codex", plain.join("\n"))).toBe(plain.join("\n"));

@@ -526,23 +526,25 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
 
 // Returns the line where Codex's own input area starts on its screen, given as its lines with
 // their colours, or null when it isn't found, such as after an update that redrew it. The area
-// is its › prompt on a shaded background, with what is typed indented under it, a blank line,
-// then one or two indented footer lines in dim text, ending the screen. Earlier messages in the
-// output are shaded and start with › too, but Codex's output after one starts with •, and none
-// ends in a dim footer. Anything else shows whole, as a wrong cut could hide the agent's output.
+// is a shaded box: a shaded blank line, its › prompt with what is typed indented under it, and a
+// shaded blank line, then one or two indented footer lines in dim text, ending the screen.
+// Earlier messages in the output are shaded and start with › too, but Codex's output after one
+// starts with •. Anything else shows whole, as a wrong cut could hide the agent's output.
 function inputStart(screen: string[]): number | null {
   const lines = screen.map((line) => Bun.stripANSI(line));
   const blank = (line: string | undefined) => line !== undefined && line.trim() === "";
+  // A line of the box with nothing on it but its shade.
+  const padding = (at: number) => blank(lines[at]) && styled(screen[at] ?? "").shaded;
   const at = lines.findLastIndex((line) => line.startsWith("›"));
-  if (at < 0 || !styled(screen[at] ?? "").shaded) return null;
+  if (at < 1 || !styled(screen[at] ?? "").shaded || !padding(at - 1)) return null;
   if (lines.slice(at + 1).some((line) => line.startsWith("•"))) return null;
-  // What is typed goes on, indented, until the blank line under the box.
+  // What is typed goes on, indented, until the shaded line under it.
   let end = at + 1;
   while (lines[end]?.startsWith("  ") && !blank(lines[end])) end++;
-  if (!blank(lines[end])) return null;
-  const footer = screen.slice(end).filter((line) => !blank(Bun.stripANSI(line)));
+  if (!padding(end)) return null;
+  const footer = screen.slice(end + 1).filter((line) => !blank(Bun.stripANSI(line)));
   const dim = footer.every((line) => line.startsWith("  ") && styled(line).dim);
-  return footer.length >= 1 && footer.length <= 2 && dim ? at : null;
+  return footer.length >= 1 && footer.length <= 2 && dim ? at - 1 : null;
 }
 
 // Returns how a line of a screen is styled: whether it sets a background colour anywhere, as
