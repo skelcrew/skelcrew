@@ -776,3 +776,43 @@ console.log(JSON.stringify({ ...db.query("SELECT issue_link, closes FROM tasks")
     'items.item holds "not json", which Skelcrew can\'t read, so it reads as empty.\n',
   );
 });
+
+// A merge armed before Skelcrew kept which waits the lead heard in a round kept only the round.
+// The wait it last saved is the one the lead heard, so the upgrade counts it as heard, and the
+// lead isn't told it again in that round.
+test("an armed merge the lead heard about before the upgrade isn't noted again in that round", () => {
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const code = `import { Database } from "bun:sqlite";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+import { mergeNoteFor } from ${JSON.stringify(source("flow/decide.ts"))};
+const path = process.argv[1];
+// The earlier release's database: the same, without the new column.
+const old = openDb();
+old.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+${threadSql({ task: "12", status: "waiting", review_round: 2, merge_plan: "armed", merge_noted: 2, merge_waits: "its conflict with main to be fixed" })}
+${threadSql({ task: "13", status: "waiting", review_round: 2, merge_plan: "armed", merge_noted: 1, merge_waits: "its failing checks to be fixed" })}\`);
+old.run("DROP VIEW task_threads");
+old.run("ALTER TABLE threads DROP COLUMN merge_noted_for");
+old.close();
+const db = openDb();
+const heard = readThread(db, "app-12");
+const earlier = readThread(db, "app-13");
+console.log(JSON.stringify({
+  heard: heard.merge_noted_for,
+  again: mergeNoteFor(heard, heard.merge_waits),
+  earlier: mergeNoteFor(earlier, earlier.merge_waits),
+}));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    heard: ["its conflict with"],
+    again: null,
+    earlier: "its failing checks",
+  });
+});

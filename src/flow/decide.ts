@@ -190,6 +190,11 @@ const stuckWaits = [
   "a decision past its round limit",
 ];
 
+// Returns how a wait that needs someone starts, which names it whatever its details, or null for
+// a wait that is on its way. A forge's own words, after its name, change from poll to poll.
+export const stuckWait = (waits: string): string | null =>
+  stuckWaits.find((start) => waits.startsWith(start)) ?? null;
+
 // Returns which wait the lead should hear an armed merge is stuck on, after a review round
 // ended, or null for none. Only a wait someone must act on counts: a conflict, failing checks, a
 // thread that failed or stopped, the forge, or the round limit. A builder working on its round, a
@@ -199,8 +204,8 @@ const stuckWaits = [
 // back is how the wait starts, as a forge's own words change from poll to poll.
 export function mergeNoteFor(thread: Thread, waits: string | null): string | null {
   if (waits === null || thread.review_round === null) return null;
-  const stuck = stuckWaits.find((start) => waits.startsWith(start));
-  if (stuck === undefined) return null;
+  const stuck = stuckWait(waits);
+  if (stuck === null) return null;
   const heard =
     thread.merge_noted === thread.review_round && thread.merge_noted_for.includes(stuck);
   return heard ? null : stuck;

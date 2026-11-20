@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { stuckWait } from "./flow/decide.ts";
 import { dataDir, dbLogFile, threadsDir } from "./paths.ts";
 
 // `name` is the repository's name in Skelcrew. `owner` and `repo` are its name on its forge, or
@@ -67,6 +68,24 @@ function flagFailedReviews(db: Database): void {
     ? `(owner, repo, task) IN (SELECT owner, repo, task FROM tasks WHERE ${failed})`
     : failed;
   db.run(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE needs_you = 1 AND ${where}`);
+}
+
+// Counts the wait an armed merge last saved as heard by the lead in the round it last noted, once,
+// as the column that keeps the waits heard is added. The release before kept only that round,
+// and its note was about the wait it saved then, so without this the lead hears it again.
+function fillMergeNoted(db: Database): void {
+  const armed = db
+    .query("SELECT rowid, merge_waits FROM threads WHERE merge_noted IS NOT NULL")
+    .all();
+  const rows = z.array(z.object({ rowid: z.number(), merge_waits: z.string().nullable() }));
+  for (const row of rows.parse(armed)) {
+    const heard = row.merge_waits === null ? null : stuckWait(row.merge_waits);
+    if (heard !== null)
+      db.run("UPDATE threads SET merge_noted_for = ? WHERE rowid = ?", [
+        JSON.stringify([heard]),
+        row.rowid,
+      ]);
+  }
 }
 
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether
@@ -532,6 +551,7 @@ function prepareTables(db: Database): void {
     if (!hasColumn(db, "threads", column)) {
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
       gainsCiShown ||= column === "ci_shown";
+      if (column === "merge_noted_for" && !fresh) fillMergeNoted(db);
     }
   if (!fresh && reviewsFlagged) flagFailedReviews(db);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
