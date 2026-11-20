@@ -173,15 +173,14 @@ export async function runSidebar(
     rows = doing("reading the rows", () => sidebarRows(db, running, roundLimit, Date.now(), open));
     entries = doing("counting the lists", () => entryCounts(db, open));
     // An agent can end and its client move to the lead by itself, so the session shown is asked
-    // of tmux, unless a list shows. With no client on the right, the right side shows the lead:
-    // when the lead isn't running it waits for it, such as after a builder ended while its lead
-    // was gone, and when the agent shown has ended, it came back to a lead on a plugin's host,
-    // which no tmux client names. Only a running agent on a plugin's host shows with no client.
+    // of tmux, unless a list shows. With no client on the right, an agent on a plugin's host
+    // shows, which no tmux client names, or the lead does. So while the agent shown still runs,
+    // it stays. Once it has ended, the right side came back to the lead, or waits for it, such
+    // as after a builder ended while its lead was gone.
     if (!isEntry(shown)) {
       const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
-      else if (shown === null || !running.includes(shown) || !running.includes(open.lead))
-        shown = open.lead;
+      else if (shown === null || !running.includes(shown)) shown = open.lead;
     }
     // A lead that moved to or from a plugin's host, or to another session on it, is shown
     // through its host now. This comes once the sidebar knows what the right side shows, as at
