@@ -213,6 +213,12 @@ test("the list puts each task in exactly one stage, from its state", () => {
       true,
       "reviewing",
     ],
+    [
+      "a submit past the round limit, under review",
+      thread({ status: "waiting", reviewing: "abc", needs_you: true, rounds: 6 }),
+      true,
+      "reviewing",
+    ],
     ["an approval waiting on CI", thread({ ...approved, checks: "pending" }), true, "checks"],
     ["an approval no poll has checked yet", thread(approved), true, "checks"],
     [

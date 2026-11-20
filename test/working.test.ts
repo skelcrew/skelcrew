@@ -67,9 +67,20 @@ test("Claude Code: each tool says its step in its own way", () => {
   expect(claudeStep("NotebookEdit", { notebook_path: "/w/a.ipynb" })).toBe("Editing a.ipynb");
   expect(claudeStep("Read", { file_path: "/work/src/main.ts" })).toBe("Reading main.ts");
   expect(claudeStep("Agent", { description: "Find the hooks", prompt: "" })).toBe("Find the hooks");
-  expect(claudeStep("Bash", { command: "bun test\nls" })).toBe("bun test");
   expect(claudeStep("WebSearch", { query: "x" })).toBe("Web search");
   expect(claudeStep("mcp__github__get_issue")).toBe("Github get issue");
+});
+
+// A command is the agent's own shell text, such as a cd and a heredoc, which reads as noise in a
+// row. Only its description says the step in words, so a command without one gives no step, not
+// even the step before it, which it no longer is.
+test("Claude Code: a command says its step only by its description", () => {
+  expect(claudeStep("Bash", { command: "cd /work; python3 - <<EOF" })).toBeNull();
+  const lines = [
+    answer("m1", tool("Edit", { file_path: "/work/src/screen/rows.ts" })),
+    answer("m2", tool("Bash", { command: "bun test" })),
+  ];
+  expect(claude.progress(lines, noProgress).step).toBeNull();
 });
 
 test("a step is one line, however long the description", () => {
@@ -116,25 +127,37 @@ test("Codex: the tokens are its newest running count, without cached input", () 
   expect(codex.progress(["{}"], read).tokens).toBe(11_000);
 });
 
-test("Codex: the step is the last command or tool call, and the plan the last update_plan", () => {
+test("Codex: the step is the last tool call, and the plan the last update_plan", () => {
   const plan = (...statuses: string[]) =>
     call("update_plan", { plan: statuses.map((status) => ({ step: "x", status })) });
   const lines = [
     plan("in_progress", "pending"),
-    call("shell", { command: ["bash", "-lc", "bun test test/sidebar.test.ts"] }),
+    call("view_image", { path: "a.png" }),
     plan("completed", "completed", "in_progress", "pending"),
   ];
   const read = codex.progress(lines, noProgress);
-  expect(read.step).toBe("bun test test/sidebar.test.ts");
+  expect(read.step).toBe("View image");
   expect(read.plan).toEqual({ done: 2, total: 4 });
 });
 
+// Codex gives a command no description, and its shell text reads as noise in a row, so a command
+// gives no step, not even the step before it, which it no longer is.
+test("Codex: a command gives no step", () => {
+  const patch = "*** Begin Patch\n*** Update File: src/a.ts\n*** End Patch";
+  const edit = JSON.stringify({
+    type: "response_item",
+    payload: { type: "custom_tool_call", name: "apply_patch", input: patch, call_id: "c" },
+  });
+  for (const command of [
+    call("shell", { command: ["bash", "-lc", "cd /work; python3 - <<EOF"] }),
+    call("shell", { command: ["git", "status"] }),
+    call("shell_command", { command: "rg needs_you src" }),
+    call("exec_command", { cmd: "bun run check" }),
+  ])
+    expect(codex.progress([edit, command], noProgress).step).toBeNull();
+});
+
 test("Codex: each kind of call says its step in its own way", () => {
-  expect(codexStep(call("shell", { command: ["git", "status"] }))).toBe("git status");
-  expect(codexStep(call("shell_command", { command: "rg needs_you src" }))).toBe(
-    "rg needs_you src",
-  );
-  expect(codexStep(call("exec_command", { cmd: "bun run check" }))).toBe("bun run check");
   const patch = "*** Begin Patch\n*** Update File: src/screen/rows.ts\n@@\n-a\n+b\n*** End Patch";
   const custom = JSON.stringify({
     type: "response_item",
@@ -164,12 +187,12 @@ test("Codex: lines that aren't what Codex writes give nothing", () => {
     '{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":"x"}}}',
     '{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{not json"}}',
     '{"type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\\"plan\\":7}"}}',
-    '{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"no files"}}',
     '{"type":"response_item","payload":{"type":"local_shell_call"}}',
+    '{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"no files"}}',
   ];
   const read = codex.progress(nonsense, noProgress);
   expect(read.tokens).toBeNull();
   expect(read.plan).toBeNull();
-  // A call with nothing better to say is named by its tool, and one with no name says nothing.
+  // A call with nothing better to say is named by its tool.
   expect(read.step).toBe("Apply patch");
 });
