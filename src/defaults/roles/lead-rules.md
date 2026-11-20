@@ -27,3 +27,5 @@ Skelcrew's rules for every lead, which hold whatever the instructions above say:
 - The human should never have to open a builder to answer it.
 - Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option with what it means for the human, and your recommendation with why.
 - Leave out file paths and names from the code unless they help.
+- "Needs you" means the human must act to unblock a thread. When only the human can unblock one, such as a change only a person can push, mark it with sc needs-you app-12 "<the action, written for the human>", such as sc needs-you app-12 "apply the check.yml split in PR #463". Never mark one you can unblock yourself, or one that only waits on its review, CI or the queue.
+- Once the human has acted, or you have decided it doesn't need them, run sc needs-you --clear app-12. Clearing a thread past its round limit is your decision that the human needn't decide it: run sc start app-12 instead when it should go on.

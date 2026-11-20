@@ -502,13 +502,14 @@ describe.skipIf(insideSandbox)("sc submit", () => {
 
   // A review that only waited on CI once asked for changes it couldn't name. That answer is
   // now refused: nothing reaches the PR, and no round counts.
-  test("changes with no findings post nothing, count no round, and need you", async () => {
+  test("changes with no findings post nothing, count no round, and fail the review", async () => {
     addApp();
     verdict(1, "changes", "CI pending. I found no code problems.", []);
     await startApp12();
     await until(() => finished("failure").length === 1, 30_000);
     expect(finished("failure")[0]?.description).toBe("review failed");
-    await until(() => thread().needs_you === 1);
+    await until(() => thread().review_failed === 1);
+    expect(thread().needs_you).toBe(0);
     expect(reviews()).toEqual([]);
     expect(thread()).toMatchObject({ rounds: 0 });
     expect(typedMessages()).toBe(0);
@@ -853,12 +854,34 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 0 });
   }, 90_000);
 
-  test("a review that fails sets the check to review failed, posts nothing, and needs you", async () => {
+  // Clearing it is the lead's or your decision that you have nothing to do. A review after it
+  // asks again, as its changes are held anew.
+  test("past the round limit, clearing its mark stops it needing you, until the next review", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    verdict(3, "changes", "Third problem.");
+    await startApp12();
+    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
+    const ps = async () => JSON.parse((await skel(["ps", "--json"])).out)[0];
+    expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
+    expect((await skel(["needs-you", "--clear", "app-12"])).err).toBe("");
+    expect(await ps()).toMatchObject({ needsYou: false, needsYouFor: null });
+    expect(thread()).toMatchObject({ needs_you: 1, limit_decided: 1 });
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    await until(() => finished("failure").length === 3, 30_000);
+    await until(() => thread().limit_decided === 0);
+    expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
+  }, 90_000);
+
+  test("a review that fails sets the check to review failed, posts nothing, and tells the lead", async () => {
     addApp();
     await startApp12();
     await until(() => finished("failure").length === 1, 30_000);
     expect(finished("failure")[0]?.description).toBe("review failed");
-    await until(() => thread().needs_you === 1);
+    await until(() => thread().review_failed === 1);
+    expect(thread().needs_you).toBe(0);
     expect(reviews()).toEqual([]);
     expect(typedMessages()).toBe(0);
     // The daemon saves a thread before it appends the thread to its log.
@@ -901,10 +924,10 @@ done`,
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "error-1"), "ERROR: stream disconnected before completion\n");
     await startApp12();
-    await until(() => thread().needs_you === 1, 30_000);
+    await until(() => thread().review_failed === 1, 30_000);
     // The note reaches the lead a piece at a time, so the test waits for all of it.
     const said =
-      "app-12 needs you: review failed: codex exited with 1: stream disconnected before completion";
+      "app-12's review failed: codex exited with 1: stream disconnected before completion. sc review app-12 runs it again.";
     await until(() => read(join(lead(), "typed")).includes(said));
     expect(read(join(lead(), "typed"))).not.toContain("Add export");
   }, 60_000);
@@ -1028,12 +1051,14 @@ done`,
     writeFileSync(join(codexHome(), "slow-2"), "");
     verdict(3, "approve", "A third review should never run.");
     await startApp12();
-    await until(() => thread().needs_you === 1, 30_000);
-    expect(thread()).toMatchObject({ verdict: "timed out", reviewing: null });
+    await until(() => thread().review_failed === 1, 30_000);
+    expect(thread()).toMatchObject({ verdict: "timed out", reviewing: null, needs_you: 0 });
     expect(finished("failure")[0]?.description).toBe("review timed out");
     expect(reviews()).toEqual([]);
     await until(() =>
-      read(join(lead(), "typed")).includes("app-12 needs you: its review timed out twice (0.1m)"),
+      read(join(lead(), "typed")).includes(
+        "app-12: its review timed out twice (0.1m). sc review app-12 runs it again.",
+      ),
     );
     expect(read(join(lead(), "typed"))).toContain("app-12's review timed out after 0.1m; retrying");
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
@@ -1379,19 +1404,20 @@ done`,
       const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
       try {
-        type Row = { needs_you: number; queued: number | null };
+        type Row = { review_failed: number; queued: number | null };
         const query = db.query<Row, [string]>(
-          "SELECT needs_you, queued FROM task_threads WHERE folder = ?",
+          "SELECT review_failed, queued FROM task_threads WHERE folder = ?",
         );
-        return query.get("app-13") ?? { needs_you: 0, queued: null };
+        return query.get("app-13") ?? { review_failed: 0, queued: null };
       } finally {
         db.close();
       }
     };
-    await until(() => app13().needs_you === 1, longWait);
+    // The round failed, which the lead hears of and can run again, so it doesn't need you.
+    await until(() => app13().review_failed === 1, longWait);
     expect(app13().queued).toBeNull();
     expect((await skel(["ps", "app", "--json"])).out).toContain(
-      '"thread":"app-13","short":null,"title":"Add import","status":"waiting","needsYou":true,"queued":false',
+      '"thread":"app-13","short":null,"title":"Add import","status":"waiting","needsYou":false,"needsYouFor":null,"queued":false',
     );
   }, 120_000);
 
@@ -1498,7 +1524,11 @@ done`,
     // the session ends only once the watch is over, as for a builder that ended mid-work.
     await until(() => Date.now() > Number(thread().working_since) + 2000);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
-    await until(() => thread().needs_you === 1, 30_000);
+    await until(
+      () => read(join(lead(), "typed")).includes("app-12's builder isn't running"),
+      30_000,
+    );
+    expect(thread().needs_you).toBe(0);
     expect(String(thread().telling)).toContain("The export has no test.");
   }, 60_000);
 
@@ -1694,7 +1724,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(2, "changes", "The export has no test.");
     verdict(3, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => thread().needs_you === 1, 30_000);
+    await until(() => thread().review_failed === 1, 30_000);
     const first = pushed();
     const again = await skel(["review", "app-12"]);
     expect(again.err).toBe("");
@@ -1821,7 +1851,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(2, "approve", "Stale.");
     verdict(3, "approve", "Fresh.");
     await startApp12();
-    await until(() => thread().needs_you === 1, 30_000);
+    await until(() => thread().review_failed === 1, 30_000);
     const older = pushed();
     // Held so the second ask comes before the check is pending again.
     writeFileSync(join(plugin, "hold-status-pending"), "");

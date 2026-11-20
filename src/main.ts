@@ -107,6 +107,7 @@ function usage(command?: string): never {
     "attach",
     "peek",
     "interrupt",
+    "needs-you",
     "review",
     "submit",
     "check",
@@ -772,6 +773,29 @@ async function threadCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
+// Marks a thread as needing you, with the action you must take, as sc needs-you <thread>
+// "<action>", or clears its mark, as sc needs-you --clear <thread>. The lead runs it when only you
+// can unblock a thread, and you can too. The daemon refuses a builder.
+async function needsYouCommand(args: string[]): Promise<void> {
+  const [command, first, second, ...rest] = args;
+  const { markNeedsYou } = await import("./client.ts");
+  if (first === "--clear" && rest.length === 0) {
+    const thread = splitThreadName(second);
+    if (!thread) usage(command);
+    const { thread: name, needsYou } = await markNeedsYou(...thread, null);
+    console.log(
+      needsYou
+        ? `Cleared ${name}'s mark. It still needs you for something Skelcrew sees itself.`
+        : `${name} no longer needs you.`,
+    );
+    return;
+  }
+  const thread = splitThreadName(first);
+  if (!thread || !second?.trim() || rest.length > 0) usage(command);
+  const { thread: name } = await markNeedsYou(...thread, second.trim());
+  console.log(`${name} needs you: ${second.trim()}. sc needs-you --clear ${name} clears it.`);
+}
+
 // Types a message from the lead into a builder, from a builder into the lead, or from a lead
 // into another repository's lead, as sc tell lead <repo> "<text>". A brief can be long, so with
 // - as its text it comes on stdin instead, which needs no shell quoting. A builder's sc tell lead
@@ -935,6 +959,8 @@ async function runCommand(args: string[]): Promise<void> {
     case "interrupt":
     case "attach":
       return threadCommand(words);
+    case "needs-you":
+      return needsYouCommand(words);
     case "tell":
       return tellCommand(words);
     case "check":

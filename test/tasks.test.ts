@@ -115,6 +115,30 @@ function turnEndedWaits(saved: ReturnType<typeof shownBefore>): void {
   saved.tabs[1].needYou = 0;
 }
 
+// Changes what the release before tasks showed of app-14, whose thread failed, to what Skelcrew
+// shows of it now. It then needed you. The lead now starts it again, so it waits beside the
+// stopped threads, red but hollow, and counts nowhere.
+function failedWaits(saved: ReturnType<typeof shownBefore>): void {
+  const app = saved.screen[0];
+  app.entries[1].notes = [["1 needs you", "38;5;221"]];
+  const [needing, ready, working, stopped] = app.lists[1];
+  const failed = needing.rows.find((row: { name: string }) => row.name === "app-14");
+  failed.mark = ["○", "38;5;210"];
+  needing.rows = needing.rows.filter((row: { name: string }) => row.name !== "app-14");
+  stopped.rows = [...stopped.rows, failed];
+  app.lists[1] = [needing, ready, working, stopped];
+  saved.tabs[0] = { ...saved.tabs[0], needYou: 1, colour: "yellow" };
+}
+
+// Adds what sc ps now says each thread needs you for, which the release before tasks didn't
+// say: app-t1's builder asked a question, and app-13 is approved with green checks, waiting for
+// you to merge it.
+function sayWhatFor(saved: ReturnType<typeof shownBefore>): void {
+  const words: Record<string, string> = { "app-t1": "question", "app-13": "ready to merge" };
+  for (const row of [...saved.ps, ...saved.psNotes])
+    row.needsYouFor = row.needsYou ? (words[row.thread] ?? null) : null;
+}
+
 // Returns the names of the database's tables.
 function tables(file: string): string[] {
   const db = new Database(file, { readonly: true });
@@ -137,6 +161,8 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
   // Before the new daemon moves it, sc shows the threads as they are.
   const shownThen = shownBefore();
   turnEndedWaits(shownThen);
+  failedWaits(shownThen);
+  sayWhatFor(shownThen);
   // That release didn't read .agents/ or plugins:, and neither repository has either, so none
   // waits for you.
   for (const row of shownThen.repositories) {

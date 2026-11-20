@@ -94,6 +94,11 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_record: null,
     merge_record_id: null,
     merge_followup: null,
+    needs_you_for: null,
+    limit_decided: false,
+    ended_at: null,
+    ended_said: null,
+    review_failed: false,
     agents: null,
     flow: "default",
     review_post: null,
@@ -177,7 +182,7 @@ test("a failed check is handed on to tell the builder, with the thread working a
   const decision = acted(thread(), pr({ checks: [run(29, "lint", "passed"), failing] }));
   expect(decision.failed).toEqual([failing]);
   expect(decision.seen).toEqual(["29", "30"]);
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
 });
 
 test("a check still running, or cancelled, tells the builder nothing", () => {
@@ -211,7 +216,7 @@ test("a failed check with no ID is told while the thread waits, then not again",
   const status: Check = { name: "ci/circleci", id: null, state: "failed" };
   const decision = acted(thread(), pr({ checks: [status] }));
   expect(decision.failed).toEqual([status]);
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
   // Told, the builder works on it until it submits, as for a conflict.
   expect(acted(thread({ status: "working" }), pr({ checks: [status] })).failed).toEqual([]);
 });
@@ -268,12 +273,35 @@ test("a thread that already needs you isn't marked again", () => {
 
 test("your comment is typed into the builder, even past the round limit", () => {
   const comments = [comment(50, you, "Rename it to exportJson.")];
-  const decision = acted(thread({ rounds: 4, needs_you: true }), pr({ comments }));
+  const past = thread({ rounds: 4, needs_you: true, verdict: "changes" });
+  const decision = acted(past, pr({ comments }));
   expect(decision.tell).toEqual([expect.stringContaining("Rename it to exportJson.")]);
   expect(decision.tell[0]).toContain("simon");
   expect(decision.seen).toEqual(["50"]);
   // Past the round limit the thread still needs you, as a round now would.
-  expect(decision.change).toEqual({ status: "working", needs_you: true });
+  expect(decision.change).toEqual({ status: "working", needs_you: true, review_failed: false });
+});
+
+// A submit past the round limit waits on its review, which never needs you, so an event that
+// comes meanwhile doesn't bring the limit back. Only a review asking for changes does.
+test("an event past the round limit doesn't need you while a submit or review is under way", () => {
+  const comments = [comment(50, you, "Rename it to exportJson.")];
+  for (const underWay of [{ submitting: "Round 5" }, { reviewing: "abc" }]) {
+    const past = thread({ rounds: 4, verdict: "changes", ...underWay });
+    expect(acted(past, pr({ comments })).change).toMatchObject({ needs_you: false });
+    const moved = decideBranch({ ...past, pr: null, seen: [] }, "f00d", { ...given, moved: true });
+    expect(moved?.change).toMatchObject({ needs_you: false });
+  }
+});
+
+// A review that failed past the round limit is the lead's to run again, so a comment after it
+// doesn't bring the limit back. Only a review asking for changes does.
+test("an event past the round limit after a failed review doesn't need you", () => {
+  const comments = [comment(50, you, "Rename it to exportJson.")];
+  const failed = thread({ rounds: 4, verdict: "failed", review_failed: true });
+  expect(acted(failed, pr({ comments })).change).toMatchObject({ needs_you: false });
+  const changes = thread({ rounds: 4, verdict: "changes" });
+  expect(acted(changes, pr({ comments })).change).toMatchObject({ needs_you: true });
 });
 
 // On a public repository anyone can comment, and what is typed into the builder steers it.
@@ -315,7 +343,7 @@ test("a person's review is typed in with its line comments", () => {
   expect(decision.tell[0]).toContain("src/export.ts:12");
   expect(decision.tell[0]).toContain("Use the helper here.");
   expect(decision.seen).toEqual(["60"]);
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
 });
 
 // The forge marks these seen once they are typed in, so the person sees Skelcrew picked them up.
@@ -389,7 +417,7 @@ test("a merge conflict tells the builder to merge the base branch", () => {
   expect(decision.tell).toEqual([]);
   // Skelcrew's clone, the builder's origin, must hold next before the builder is told.
   expect(decision.conflict).toBe("next");
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
 });
 
 // A comment is a person's words, which hold whatever the commit, and the conflict Skelcrew's own
@@ -424,7 +452,7 @@ test("a branch that moved on the forge tells the builder to merge it, once", () 
     "git fetch origin, merge origin/skelcrew/12-add-export into your branch",
   );
   // It isn't ready to merge while the builder hasn't got what is on its branch.
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
   // Told, the same head is never told again.
   const told = thread({ seen: decision.seen });
   const again = decide(told, moved, { ...given, moved: true });
@@ -495,7 +523,7 @@ test("a branch at the commit Skelcrew pushed hasn't moved", () => {
 
 test("an approved PR with a conflict doesn't need you yet", () => {
   const decision = acted(thread(), pr({ conflicts: true, checks: [approved] }));
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
 });
 
 test("a thread never polled before starts after the PR's history, acting on none of it", () => {
@@ -708,6 +736,15 @@ test("changes asked for type the body and each finding into the builder, and cou
   expect(outcome.tell).toContain(
     "Ran the export tests.\n\n1. The export has no test.\n2. The flag is misspelled.",
   );
+});
+
+// Past the round limit only a review that asks for changes needs you again. One that failed is
+// the lead's to run again.
+test("past the round limit, changes need you again, and a failed review doesn't", () => {
+  const changes = { verdict: "changes" as const, body: "Again.", findings: ["No test."] };
+  expect(afterReview(4, changes, 3, null)).toMatchObject({ needsYou: true, tell: null });
+  const failed = { verdict: "failed" as const, body: "no verdict", findings: [] };
+  expect(afterReview(4, failed, 3, null)).toMatchObject({ needsYou: false, rounds: 4 });
 });
 
 // One comment is edited each round, so it says which round and commit it now holds.

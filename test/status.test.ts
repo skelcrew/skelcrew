@@ -1,7 +1,8 @@
 // The status module's five words: what a host shows for each thread's builder, from the same
 // fields as its word in the sidebar.
 import { expect, test } from "bun:test";
-import { statusOf } from "../src/flow/status.ts";
+import { readyToMerge, shownOf } from "../src/flow/marks.ts";
+import { statusOf, threadWord } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 
 // A thread at work, with nothing else going on.
@@ -72,6 +73,11 @@ const state: Thread = {
   merge_record: null,
   merge_record_id: null,
   merge_followup: null,
+  needs_you_for: null,
+  limit_decided: false,
+  ended_at: null,
+  ended_said: null,
+  review_failed: false,
   agents: null,
   flow: "default",
   review_post: null,
@@ -107,10 +113,74 @@ test("an approval whose PR conflicts isn't ready to merge, even once the thread 
   expect(status({ ...approved, conflicts: "main" })).toBe("idle");
 });
 
-test("a question, the round limit or a failed review needs you", () => {
+test("a question or the round limit needs you, and a failed review doesn't", () => {
   expect(status({ asking: true })).toBe("needs you");
   expect(status({ status: "waiting", needs_you: true, rounds: 4 })).toBe("needs you");
-  expect(status({ status: "waiting", needs_you: true, verdict: "failed" })).toBe("needs you");
+  // The lead hears of a failed review and can run it again.
+  const failed = { status: "waiting", verdict: "failed", review_failed: true } as const;
+  expect(status(failed)).toBe("idle");
+  expect(threadWord({ ...state, ...failed }, 3)).toBe("review failed");
+});
+
+// The lead marks a thread when only you can unblock it, saying what to do, and the word says it.
+test("a thread the lead marked needs you, and its word is the action", () => {
+  const marked = {
+    status: "waiting",
+    needs_you_for: "apply the check.yml split in PR #463",
+  } as const;
+  expect(status(marked)).toBe("needs you");
+  expect(threadWord({ ...state, ...marked }, 3)).toBe("apply the check.yml split in PR #463");
+  expect(shownOf({ ...state, ...marked }, 3).mark).toEqual({ sign: "●", colour: "yellow" });
+  // It says what you must do even over an approval, as the lead knows something blocks the merge.
+  const approved = { ...marked, needs_you: true, verdict: "approve", checks: "passing" } as const;
+  expect(status({ ...approved, ci_passed: true })).toBe("needs you");
+  // A question or an error the builder stopped on comes first: you must answer it before anything.
+  expect(threadWord({ ...state, ...marked, asking: true }, 3)).toBe("question");
+  expect(threadWord({ ...state, ...marked, erred: true }, 3)).toBe("error");
+});
+
+// Past the round limit the thread needs you until someone decides: you arm a merge, or the lead
+// or you clear it, and then it shows the round limit without needing you.
+test("the round limit needs you only until a merge is armed or its mark is cleared", () => {
+  const past = { status: "waiting", needs_you: true, rounds: 4, verdict: "changes" } as const;
+  const word = (more: Partial<Thread>) => threadWord({ ...state, ...past, ...more }, 3);
+  expect(status(past)).toBe("needs you");
+  expect(word({})).toBe("round limit");
+  expect(status({ ...past, merge_plan: "armed" })).toBe("idle");
+  expect(word({ merge_plan: "armed" })).toBe("round limit");
+  expect(shownOf({ ...state, ...past, merge_plan: "armed" }, 3).mark.sign).toBe("○");
+  expect(status({ ...past, limit_decided: true })).toBe("idle");
+});
+
+// An armed merge merges an approved, green thread itself, so you have nothing to do.
+test("an approved thread with a merge armed waits, hollow, and isn't counted as ready", () => {
+  const ready = {
+    status: "waiting",
+    needs_you: true,
+    verdict: "approve",
+    checks: "passing",
+    ci_passed: true,
+    merge_plan: "armed",
+  } as const;
+  expect(status(ready)).toBe("idle");
+  const mark = shownOf({ ...state, ...ready }, 3).mark;
+  expect(mark).toEqual({ sign: "○", colour: "green" });
+  expect(readyToMerge(mark)).toBe(false);
+  expect(threadWord({ ...state, ...ready }, 3)).toBe("approved");
+  // Without the merge armed, it waits on you to merge it.
+  expect(status({ ...ready, merge_plan: null })).toBe("ready");
+});
+
+// The lead or you may mark a thread whatever its status, and the word must say what to do.
+test("a mark on a queued, failed or stopped thread still says what to do", () => {
+  for (const status of ["queued", "failed", "stopped"] as const)
+    expect(threadWord({ ...state, status, needs_you_for: "approve the new design" }, 3)).toBe(
+      "approve the new design",
+    );
+  // The host shows a marked thread as needing you, even one that failed.
+  expect(status({ status: "failed", needs_you_for: "approve the new design" })).toBe("needs you");
+  // A done thread's end clears its mark, so it never shows one.
+  expect(threadWord({ ...state, status: "done", needs_you_for: "approve it" }, 3)).toBe("done");
 });
 
 // Its last message went to the lead, who brings a real question to you.

@@ -31,7 +31,7 @@ import { pastRoundLimit } from "./decide.ts";
 import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
-import { forgetStatus } from "./status.ts";
+import { forgetStatus, needsYou } from "./status.ts";
 import { joinsQueue, joinTime } from "./task-queue.ts";
 import {
   builderHarness,
@@ -39,7 +39,9 @@ import {
   cloneOf,
   folderName,
   hostGone,
+  hostMissing,
   log,
+  markBeforeHost,
   readThread,
   record,
   renameOnHost,
@@ -334,6 +336,11 @@ async function recordThread(
       merge_record: null,
       merge_record_id: null,
       merge_followup: null,
+      needs_you_for: null,
+      limit_decided: false,
+      ended_at: null,
+      ended_said: null,
+      review_failed: false,
       agents,
       flow,
       review_post: null,
@@ -685,10 +692,35 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
   // A builder you stopped has no host left to look on.
   if (thread.host !== null) {
     if (hostNamed(db, sessions, thread.host) === null) {
-      record(db, thread.folder, { needs_you: true }, hostGone(thread));
+      // A thread marked already, such as after a restart while the plugin stays gone, keeps
+      // the mark it had after the instruction.
+      const had = markBeforeHost(thread.host, thread.needs_you_for);
+      const mark = hostMissing(thread.host, had === undefined ? thread.needs_you_for : had);
+      // A thread that needed you already brings the lead no note that it starts to, so the lead
+      // is told of the plugin itself, once, as the mark first asks for it.
+      if (needsYou(thread) && had === undefined)
+        noteForLead(
+          db,
+          sessions,
+          thread,
+          `${threadName(db, thread)} needs you: ${mark}`,
+          null,
+          true,
+        );
+      record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
       typeLeadNotes(db, sessions);
       return;
     }
+    // The plugin is back, such as after sc install, so the mark that asked for it goes, and any
+    // mark the thread had before comes back.
+    const before = markBeforeHost(thread.host, thread.needs_you_for);
+    if (before !== undefined)
+      record(
+        db,
+        thread.folder,
+        { needs_you_for: before },
+        `its session host ${thread.host} is back`,
+      );
     let told = false;
     while (true) {
       try {
