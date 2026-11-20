@@ -16,7 +16,6 @@ import {
   onLead,
   open,
   press,
-  read,
   ready,
   screen,
   screenSessions,
@@ -182,21 +181,13 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
 
-test("the strip ends the top row, and the agent's height stays as you switch", async () => {
-  sql(`UPDATE tasks SET title = 'Fix the login', pr = 34, checks = 'passing',
-    review_round = 2, reviewer = 'claude', reviewed_by = 'codex', verdict = 'changes',
-    review_line = 'A test is missing.' WHERE task = 7`);
-  // Wide enough for the whole strip beside the sidebar.
-  open("lead", "one", "xterm-256color", "150");
+test("the agent's height stays as you switch", async () => {
+  open("lead");
   await ready("lead");
   const height = readFileSync(join(home, "lead.size"), "utf8");
   await toSecondThread();
-  const line = "app-7  Fix the login  #34  checks passing  round 2 · codex · changes";
-  await until(() => tabRow().endsWith(line), "the strip");
-  expect(seen()).not.toContain("A test is missing.");
   expect(readFileSync(join(home, "app-7.size"), "utf8")).toBe(height);
   press("M-Up");
-  await until(() => tabRow().endsWith("app-12"), "app-12's strip");
   await attachTo("app-12");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
@@ -243,17 +234,13 @@ test("the footer ends with the machine's own load, even with no thread working",
   expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
 });
 
-test("the header, the tabs and the strip share one row, and the agent starts right under it", async () => {
-  sql("UPDATE tasks SET title = 'Fix the login', pr = 34 WHERE task = 7");
+test("the header and the tabs share one row, and the agent starts right under it", async () => {
   open("lead");
   await ready("lead");
   await toSecondThread();
-  await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
-  // Skelcrew above the sidebar, its edge, and the tab above the agent, then the strip.
-  expect(lines[0]?.trimEnd()).toMatch(
-    /^ {2}Skelcrew v[\d.]+ +│ {3}app +app-7 {2}Fix the login {2}#34$/,
-  );
+  // Skelcrew above the sidebar, its edge, and the tab above the agent, with nothing after it.
+  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew v[\d.]+ +│ {3}app$/);
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
   expect(lines[1]).toContain("I am app-7");
@@ -309,29 +296,7 @@ test("the sidebar's edge runs from the top row down to the footer, at every widt
   }
 });
 
-test("a thread's strip follows it as it changes", async () => {
-  open("app-7");
-  await ready("app-7");
-  await until(() => tabRow().endsWith("app-7"), "the strip");
-  sql(`UPDATE tasks SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
-    review_line = 'Looks right.' WHERE task = 7`);
-  await until(() => seen().includes("app-7  round 1 · codex · approved"), "the review");
-});
-
-test("what a title says is shown, never run or read as a format", async () => {
-  const proof = join(home, "ran");
-  const title = `100% %H #(touch ${proof}) #[fg=red] #{pane_pid}`;
-  sql(`UPDATE tasks SET title = '${title}' WHERE task = 7`);
-  // Wide enough for the whole title, which holds a path as long as the test's folder.
-  open("app-7", "one", "xterm-256color", "200");
-  await ready("app-7");
-  await until(() => seen().includes("#(touch"), "the strip");
-  expect(seen()).toContain(title);
-  await Bun.sleep(300);
-  expect(existsSync(proof)).toBe(false);
-});
-
-test("clicking the strip, or turning the wheel over it, does nothing", async () => {
+test("clicking the top row past the tabs, or turning the wheel over it, does nothing", async () => {
   open("lead");
   await ready("lead");
   click(100, 1);
@@ -343,11 +308,10 @@ test("clicking the strip, or turning the wheel over it, does nothing", async () 
   expect(seen()).toContain("I am lead");
 });
 
-test("the footer has only the keys you need most, and a click on it away from ? keys does nothing", async () => {
+test("the footer has only the keys you need most, and a click on it does nothing", async () => {
   open("lead");
   await ready("lead");
   await until(() => footer().startsWith("  ⌥↑↓ move  ⌥Q quit"), "the footer");
-  expect(seen()).not.toContain("? keys");
   expect(seen()).not.toContain("⌃Q");
   expect(seen()).not.toContain("⌥⇧↑↓");
   expect(seen()).not.toContain("⌥←→");
@@ -356,27 +320,5 @@ test("the footer has only the keys you need most, and a click on it away from ? 
   click(5, 28);
   await Bun.sleep(200);
   expect(onLead()).toBe(true);
-  expect(keysOpen()).toBe(false);
-});
-
-// The rows of keys across the screen, between the thin line above them and the one above the
-// footer. None while they are hidden.
-function keysShown(): string[] {
-  // The footer is the last row with anything on it, under its line.
-  const lines = seen().trimEnd().split("\n");
-  const footerLine = lines.length - 2;
-  const rule = (line: string) => /^─{40,}$/.test(line.trimEnd());
-  const above = lines.findLastIndex((line, at) => at < footerLine && rule(line));
-  return above < 0 ? [] : lines.slice(above + 1, footerLine).map((text) => text.trimEnd());
-}
-const keysOpen = () => keysShown().some((line) => line.trim() !== "");
-
-test("Alt-/ is no key of Skelcrew's, and plain ? on an agent is the agent's, so neither shows the keys", async () => {
-  open("lead");
-  await ready("lead");
-  type("\x1b/");
-  type("?");
-  press("Enter");
-  await until(() => read("lead.typed").includes("?"), "the agent to get ?");
-  expect(keysOpen()).toBe(false);
+  expect(footer()).toStartWith("  ⌥↑↓ move  ⌥Q quit");
 });

@@ -119,3 +119,17 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   type("y");
   await until(() => acted.includes("start simon/app 31"), "the daemon to start app-31");
 });
+
+// The notice comes from the database, which the daemon writes once it installed a release.
+test("a release installed in the background shows as a notice above the lead", async () => {
+  sql("INSERT INTO installed (release) VALUES ('9.9.9');");
+  open("lead");
+  await ready("lead");
+  await until(
+    () => left().some((line) => line.includes("Skelcrew 9.9.9 installed · restart to use it")),
+    "the notice",
+  );
+  const lines = left();
+  const at = lines.findIndex((line) => line.includes("9.9.9 installed"));
+  expect(at).toBeLessThan(lines.findIndex((line) => line.includes("lead")));
+});

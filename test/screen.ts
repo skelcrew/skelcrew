@@ -54,12 +54,11 @@ export const read = (file: string) => {
 // What you see in the first terminal, or a second one.
 export const seen = (window = "one") =>
   tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
-// The top row as you see it: Skelcrew above the sidebar, then the tabs and the strip above the
-// agent.
+// The top row as you see it: Skelcrew above the sidebar, then the tabs above the right side.
 export const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
 // The row you are looking at, as the name line with the grey background shows it, below the
-// status line, where the open tab has the same grey, and left of the sidebar's edge, as the
-// row you are on in a list on the right has it too. Empty until the sidebar has drawn one.
+// status line, where the open tab has the same grey, and left of the sidebar's edge. Empty until
+// the sidebar has drawn one.
 export function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
   const line = colours

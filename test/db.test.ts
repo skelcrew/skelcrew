@@ -722,7 +722,7 @@ test("a screen of the release before 2026-11-18 reads every thread right once a 
   copyFileSync(join(import.meta.dir, "databases", "before-nov-18.db"), join(data, "skelcrew.db"));
   const code = `import { Database } from "bun:sqlite";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb } from ${JSON.stringify(source("db.ts"))};
-import { sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
+import { listRows } from ${JSON.stringify(source("list/rows.ts"))};
 // The old screen's sidebar, with its query as that release wrote it, has drawn once.
 const oldScreen = new Database(process.argv[1]);
 const threads = oldScreen.query(\`SELECT * FROM task_threads
@@ -735,8 +735,8 @@ moveToTasks(db);
 moveTurnEnded(db);
 finishUpgrade(db);
 const after = threads.all("simon", "app");
-// The newer release's own sidebar draws from it too.
-const rows = sidebarRows(db, [], () => 3, 0, { owner: "simon", repo: "app", lead: "lead" });
+// The newer release's own list, which its sidebar is, draws from it too.
+const rows = listRows(db, { owner: "simon", repo: "app" }, 0);
 console.log(JSON.stringify({ before, after, rows: rows.map((row) => row.name) }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
     env: { ...process.env, HOME: home },

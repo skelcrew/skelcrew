@@ -57,14 +57,12 @@ function run(code: string, ...args: string[]): string {
 }
 
 // Code that prints what each command and the screen show of the saved database's threads: sc
-// repo ls, sc ps, sc ls and sc show, the sidebar, the lists and the tabs.
+// repo ls, sc ps, sc ls and sc show, and the tabs.
 const showAll = `import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
 const list = await import(${JSON.stringify(source("flow/list.ts"))});
-const { listGroups, entryCounts } = await import(${JSON.stringify(source("screen/lists.ts"))});
-const { sidebarRows, repositoryTabs } = await import(${JSON.stringify(source("screen/rows.ts"))});
+const { repositoryTabs } = await import(${JSON.stringify(source("list/rows.ts"))});
 const db = openDb();
 if (process.argv.includes("move")) moveToTasks(db);
-const now = Date.UTC(2026, 10, 10, 12, 0, 0);
 const tasks = ["app-12", "app-13", "app-14", "app-15", "app-16", "app-17", "app-t1", "notes-t1", "notes-t2"];
 const shown = {
   repositories: list.listRepositories(db),
@@ -77,15 +75,7 @@ const shown = {
       return list.showTask(db, { repo, task }).catch(String);
     }),
   ),
-  screen: ["app", "notes"].map((repo) => {
-    const open = { owner: "simon", repo, lead: "lead-" + repo };
-    return {
-      sidebar: sidebarRows(db, [], () => 5, now, open),
-      lists: ["issues", "threads", "prs"].map((e) => listGroups(db, open, e, now)),
-      entries: entryCounts(db, open),
-    };
-  }),
-  tabs: repositoryTabs(db, () => 5),
+  tabs: repositoryTabs(db, null),
 };
 console.log(JSON.stringify(shown));`;
 
@@ -103,15 +93,6 @@ function turnEndedWaits(saved: ReturnType<typeof shownBefore>): void {
   for (const row of [...saved.ps, ...saved.psNotes])
     if (row.thread === "notes-t1") row.needsYou = false;
   for (const task of saved.show) if (task.issue === "notes-t1") task.thread.needsYou = false;
-  const notes = saved.screen[1];
-  notes.entries[0].notes = [];
-  const [needing, working] = notes.lists[1];
-  const row = needing.rows[0];
-  row.mark = ["○", "90"];
-  row.ends[0] = ["turn ended", "90"];
-  notes.lists[1] = [{ heading: "Working", rows: [...working.rows, row] }];
-  for (const screen of saved.screen)
-    for (const entry of screen.sidebar) if (entry.name === "notes-t1") entry.state = "idle";
   saved.tabs[1].needYou = 0;
 }
 
@@ -119,27 +100,16 @@ function turnEndedWaits(saved: ReturnType<typeof shownBefore>): void {
 // shows of it now. It then needed you. The lead now starts it again, so it waits beside the
 // stopped threads, red but hollow, and counts nowhere.
 function failedWaits(saved: ReturnType<typeof shownBefore>): void {
-  const app = saved.screen[0];
-  app.entries[1].notes = [["1 needs you", "38;5;221"]];
-  const [needing, ready, working, stopped] = app.lists[1];
-  const failed = needing.rows.find((row: { name: string }) => row.name === "app-14");
-  failed.mark = ["○", "38;5;210"];
-  needing.rows = needing.rows.filter((row: { name: string }) => row.name !== "app-14");
-  stopped.rows = [...stopped.rows, failed];
-  app.lists[1] = [needing, ready, working, stopped];
   saved.tabs[0] = { ...saved.tabs[0], needYou: 1, colour: "yellow" };
 }
 
-// Adds what sc ps and the sidebar now say each thread needs you for, which the release before
+// Adds what sc ps now says each thread needs you for, which the release before
 // tasks didn't say: app-t1's builder asked a question, and app-13 is approved with green checks,
 // waiting for you to merge it.
 function sayWhatFor(saved: ReturnType<typeof shownBefore>): void {
   const words: Record<string, string> = { "app-t1": "question", "app-13": "ready to merge" };
   for (const row of [...saved.ps, ...saved.psNotes])
     row.needsYouFor = row.needsYou ? (words[row.thread] ?? null) : null;
-  // The sidebar says what you must do too, where that release said only approved.
-  for (const screen of saved.screen)
-    for (const row of screen.sidebar) if (row.word === "approved") row.word = "ready to merge";
 }
 
 // Returns the names of the database's tables.
@@ -172,7 +142,9 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
     row.agentsWaiting = false;
     row.installWaiting = false;
   }
-  const { issues, show, prs, ...saved } = shownThen;
+  // The screen of that release drew its own sidebar and lists, which are gone, so only its tabs
+  // are compared.
+  const { issues, show, prs, screen, ...saved } = shownThen;
   const before = JSON.parse(run(showAll));
   const { ls, show: shown, ...same } = before;
   expect(same).toEqual(saved);
