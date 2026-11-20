@@ -302,6 +302,24 @@ test("Up next has the queued tasks in the order they start, then the paused ones
   expect(upNext[2]?.mark).toEqual({ sign: "○", colour: "dim" });
 });
 
+// A queued task whose issue's claim hasn't reached the tracker holds back the queue, though
+// builders are free, so it and every task after it say that is what they wait on.
+test("a claim the tracker hasn't taken yet is what the queue waits on, with builders free", () => {
+  queueTwo();
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\nlimits: { threads: 5 }\n");
+  sql("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '21');");
+  const all = rows();
+  const waits = all.filter((row) => row.place !== null).map((row) => [row.name, row.waits]);
+  expect(waits).toEqual([
+    ["app-21", "Starts next: app-21 waits for its issue's claim to reach the tracker"],
+    ["app-20", "2nd in line: app-21 waits for its issue's claim to reach the tracker"],
+  ]);
+  expect(all.find((row) => row.name === "app-31")?.start?.ask).toBe(
+    "Queue app-31? app-21 waits for its issue's claim to reach the tracker, so it starts after the 2 queued. y/n",
+  );
+});
+
 // A paused thread's last change can come from a poll, such as its CI, so the newest task comes
 // first, however lately each changed.
 test("Up next has the paused tasks newest first, whenever each last changed", () => {

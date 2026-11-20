@@ -353,6 +353,22 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     builders.limit === null
       ? "its repository's limits.threads can't be read"
       : `${builders.running} of ${builders.limit} builders busy`;
+  // A queued task whose issue's claim hasn't reached the tracker yet holds back itself and every
+  // task after it, free builders or not, as the daemon keeps the queue first come first served.
+  // So from the first such task on, that claim is what they wait on.
+  const claimed = new Set(
+    db
+      .query("SELECT task FROM claims WHERE owner = ? AND repo = ?")
+      .all(open.owner, open.repo)
+      .map((row) => z.object({ task: z.string() }).parse(row).task),
+  );
+  const held = queue.findIndex((thread) => claimed.has(thread.task));
+  const holder = queue[held];
+  const claim = holder
+    ? `${repository.name}-${holder.task} waits for its issue's claim to reach the tracker`
+    : "";
+  // Returns what the task at a place in the queue, counted from 0, waits on.
+  const waitsOn = (at: number) => (holder && at >= held ? claim : busy);
   // A queued or paused task says where it is in line, or that it is paused, and the pane says
   // what it waits on, under Needs you too. Up next's rows say it in their word as well. One
   // under Needs you keeps its word, as it says what you must do.
@@ -361,7 +377,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     const at = queue.findIndex((queued) => `${repository.name}-${queued.task}` === row.name);
     if (at >= 0) {
       row.place = at + 1;
-      row.waits = `${at === 0 ? "Starts next" : `${ordinal(at + 1)} in line`}: ${busy}`;
+      row.waits = `${at === 0 ? "Starts next" : `${ordinal(at + 1)} in line`}: ${waitsOn(at)}`;
       if (row.section === "up next")
         row.says = at === 0 ? "starts next" : `${ordinal(at + 1)} in line`;
     } else if (thread?.thread.status === "stopped") {
@@ -373,7 +389,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     }
   }
   // A start while every builder is busy, or while tasks already wait, queues the task at the end
-  // of the queue, as the daemon decides, so the question says so.
+  // of the queue, as the daemon decides, so the question says so, and what the queue waits on.
   const full =
     builders.limit !== null && (builders.queued > 0 || builders.running >= builders.limit);
   // Returns the row of a task not started yet, which Enter asks to start, as sc start does.
@@ -399,7 +415,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       tmux: false,
       start: full
         ? {
-            ask: `Queue ${name}? ${busy}, so it starts${after}. y/n`,
+            ask: `Queue ${name}? ${waitsOn(queue.length)}, so it starts${after}. y/n`,
             working: `Queueing ${name}…`,
             request: { command: "start", repo: `${open.owner}/${open.repo}`, task },
             queues: true,
