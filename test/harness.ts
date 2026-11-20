@@ -195,16 +195,15 @@ export async function runSkel(args: string[], env: Record<string, string>, input
 // which Bun then reports as crashed with SIGKILL.
 export async function endFakeSessions(settings: string): Promise<void> {
   // The calls still running, by the IDs they noted. A call that ended took its note away. One
-  // that was killed left it, so its process is looked for too.
+  // that was killed left it, so its process is looked for too. A call notes itself only once
+  // Bun has started it, so the calls not yet noted are found too, by the settings folder in
+  // their command.
   const calls = join(settings, "running-calls");
   const running = () =>
-    (existsSync(calls) ? readdirSync(calls) : []).map(Number).filter((pid) => {
-      try {
-        return pid > 0 && process.kill(pid, 0);
-      } catch {
-        return false;
-      }
-    });
+    living([
+      ...(existsSync(calls) ? readdirSync(calls) : []).map(Number),
+      ...hostCallsOf(settings),
+    ]);
   // A start takes a moment. A call a test holds on purpose gets five seconds, then is killed
   // with its group: a held call hasn't started anything yet.
   const deadline = Date.now() + 5000;
@@ -213,6 +212,11 @@ export async function endFakeSessions(settings: string): Promise<void> {
     try {
       process.kill(-pid, "SIGKILL");
     } catch {}
+  // A kill takes a moment, and a call still running could start a session after the sessions
+  // are looked at. So they are looked at only once the calls have ended.
+  const killed = Date.now() + 5000;
+  while (running().length > 0 && Date.now() < killed) await Bun.sleep(20);
+  if (running().length > 0) throw new Error(`the fake host's calls in ${settings} didn't end`);
   const sessions = join(settings, "sessions");
   for (const id of existsSync(sessions) ? readdirSync(sessions) : []) {
     const pid = Number(read(join(sessions, id, "pid")));
@@ -221,6 +225,43 @@ export async function endFakeSessions(settings: string): Promise<void> {
       process.kill(-pid, "SIGKILL");
     } catch {}
   }
+}
+
+// Returns those of these process IDs that still run. A process that ended but wasn't reaped,
+// a zombie, runs nothing, though a signal still reaches it: the test run takes in the processes
+// a daemon left and reaps them only when it ends.
+function living(pids: number[]): number[] {
+  const states = new Map(
+    Bun.spawnSync(["ps", "-A", "-o", "pid=", "-o", "stat="])
+      .stdout.toString()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/))
+      .map(([pid, state]) => [Number(pid), state ?? ""]),
+  );
+  return pids.filter((pid) => pid > 0 && !(states.get(pid) ?? "Z").startsWith("Z"));
+}
+
+// The command a runtime plugin's manifest gives to run the fake host with these settings. The
+// settings folder, the test's own, goes as an argument the host ignores, so a test's clean-up
+// can find its calls with ps, on Linux and macOS alike, even before a call has noted itself.
+export const fakeHostCommand = (settings: string) => [
+  "bun",
+  join(import.meta.dir, "fake-host.ts"),
+  settings,
+];
+
+// Returns the IDs of the fake host's calls running with these settings, noted or not, as
+// fakeHostCommand starts them. A session the host started runs another command, so it never
+// counts.
+function hostCallsOf(settings: string): number[] {
+  const listed = Bun.spawnSync(["ps", "-A", "-ww", "-o", "pid=", "-o", "args="]);
+  const call = `${fakeHostCommand(settings).slice(1).join(" ")}`;
+  return listed.stdout
+    .toString()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith(call))
+    .map((line) => Number(line.split(/\s+/)[0]));
 }
 
 // Installs the fake tracker and forge as a plugin named `name`, doing `jobs`, for a test with

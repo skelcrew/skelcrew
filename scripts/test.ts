@@ -1,11 +1,45 @@
 // Runs Skelcrew's tests, for `bun run check` and for a builder running a few test files, as
-// bun scripts/test.ts [files]. The same run inside Skelcrew's own sandbox and outside it.
+// bun scripts/test.ts [files], and for one of CI's shards, as bun scripts/test.ts --shard=2/4. The same run inside Skelcrew's own sandbox and outside it.
 
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { socketFolderInside } from "../src/agents/sandbox.ts";
+import { shardFiles, timesOfFiles } from "./shards.ts";
 import { timings } from "./timings.ts";
+
+// CI splits the tests into shards, as --shard=2/4. The split is made here, by the time each
+// file took as test/times.json keeps it, and the shard's files are handed to Bun by name. Bun's
+// own --shard splits by name, so where the slow files land is luck.
+const given = Bun.argv.slice(2);
+const shardArg = given.find((arg) => arg.startsWith("--shard="));
+let args = given;
+if (shardArg) {
+  const [index, count] = shardArg.slice("--shard=".length).split("/").map(Number);
+  if (!index || !count || index > count) throw new Error(`${shardArg} isn't a shard such as 2/4`);
+  const files = [...new Bun.Glob("**/*.test.ts").scanSync(".")].filter(
+    (file) => !file.startsWith("node_modules/"),
+  );
+  const timesFile = join("test", "times.json");
+  const times = existsSync(timesFile)
+    ? timesOfFiles.parse(JSON.parse(readFileSync(timesFile, "utf8")))
+    : {};
+  const mine = shardFiles(files, times, index, count);
+  // Bun given no file runs every file, so a shard with none ends here.
+  if (mine.length === 0) {
+    console.log(`Shard ${index} of ${count} has no test files.`);
+    process.exit(0);
+  }
+  args = [...given.filter((arg) => arg !== shardArg), ...mine.map((file) => `./${file}`)];
+}
 
 // Skelcrew's sandbox gives every agent SKELCREW_SANDBOX and the daemon's SKELCREW_SOCKET, and a
 // laptop's server gets variables of its own. Tests would hand them on to every sc, daemon and
@@ -70,7 +104,7 @@ const run = Bun.spawn(
     "--preload",
     join(import.meta.dir, "stopped.ts"),
     ...reporting,
-    ...Bun.argv.slice(2),
+    ...args,
   ],
   { env, stdio: ["inherit", "inherit", "inherit"] },
 );
