@@ -37,6 +37,10 @@ export function answeredFolder(answer: string): string | null {
 // take far smaller files as images anyway. A bigger file keeps its path.
 export const largestDrop = 100 * 1024 * 1024;
 
+// A paste longer than this is never only dropped files' paths, so it goes on without waiting
+// for its end.
+const longestPaths = 64 * 1024;
+
 // What a terminal sends around a paste, once the program asked for bracketed pastes.
 const pasteStart = Buffer.from("\x1b[200~");
 const pasteEnd = Buffer.from("\x1b[201~");
@@ -47,7 +51,9 @@ type Part = { written: string; path?: string };
 // Splits a paste into paths and the spaces between them, reading quotes and backslashes as a
 // terminal writes them for a dropped file, such as `/Users/me/My\ File.png` or `'/tmp/a b.pdf'`.
 // Returns null unless the paste holds only absolute paths, so any other text passes untouched.
-function pastedPaths(text: string): Part[] | null {
+// Given only the start of a paste, `whole` false, it returns null once that start shows the paste
+// can't be only paths, and the parts read so far otherwise.
+function pastedPaths(text: string, whole = true): Part[] | null {
   const parts: Part[] = [];
   let at = 0;
   while (at < text.length) {
@@ -64,12 +70,12 @@ function pastedPaths(text: string): Part[] | null {
     while (end < text.length && !/\s/.test(text[end] ?? "")) {
       const char = text[end] ?? "";
       if (char === "\\") {
-        if (end + 1 >= text.length) return null;
+        if (end + 1 >= text.length) return whole ? null : parts;
         path += text[end + 1];
         end += 2;
       } else if (char === "'") {
         const close = text.indexOf("'", end + 1);
-        if (close < 0) return null;
+        if (close < 0) return whole ? null : parts;
         path += text.slice(end + 1, close);
         end = close + 1;
       } else if (char === '"') {
@@ -86,7 +92,7 @@ function pastedPaths(text: string): Part[] | null {
             close++;
           }
         }
-        if (close >= text.length) return null;
+        if (close >= text.length) return whole ? null : parts;
         end = close + 1;
       } else {
         path += char;
@@ -97,7 +103,7 @@ function pastedPaths(text: string): Part[] | null {
     parts.push({ written: text.slice(at, end), path });
     at = end;
   }
-  return parts.some((part) => part.path !== undefined) ? parts : null;
+  return !whole || parts.some((part) => part.path !== undefined) ? parts : null;
 }
 
 // Writes `path` the way `written` was written: in the same quotes, or with spaces and the
@@ -143,8 +149,7 @@ async function readableBy(folder: string, file: string): Promise<boolean> {
 }
 
 // Copies dropped files into an agent's folder on this machine, and returns each copy's path, in
-// order, or null for a file left as it was. A file the agent can read where it is is left, such
-// as one sc --remote sent there already.
+// order, or null for a file left as it was. A file the agent can read where it is is left.
 // It runs without holding up the screen, so a big file or a slow disk never stops it.
 export function copyDrops(folder: string, files: string[]): Promise<(string | null)[]> {
   return Promise.all(
@@ -215,6 +220,10 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // Each comes with what to do once it went in.
   const adding: { bytes: Buffer; then: () => void }[] = [];
   let addLater: ReturnType<typeof setTimeout> | null = null;
+  // Whether a paste that can't be only paths is going on as it comes, and the last bytes of it
+  // sent, where its end may have begun.
+  let streaming = false;
+  let streamedLast: Buffer = Buffer.alloc(0);
   // Whether a drop's files are on their way, and what you sent meanwhile.
   let dropping = false;
   const waiting: Buffer[] = [];
@@ -281,6 +290,21 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
     }
     let rest: Buffer = Buffer.from(piece);
     while (rest.length > 0) {
+      // A paste going on as it comes passes through to its end, then what follows is read again.
+      if (streaming) {
+        const seen = Buffer.concat([streamedLast, rest]);
+        const end = seen.indexOf(pasteEnd);
+        if (end < 0) {
+          pass(rest);
+          streamedLast = seen.subarray(Math.max(seen.length - pasteEnd.length + 1, 0));
+          return;
+        }
+        const through = end + pasteEnd.length - streamedLast.length;
+        pass(rest.subarray(0, through));
+        rest = rest.subarray(through);
+        streaming = false;
+        continue;
+      }
       // Outside a paste, everything goes on, up to the start of one. A start split across two
       // reads began in the sequence sent last, and startSent says how much of it went.
       if (held === null) {
@@ -302,6 +326,14 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       const end = sofar.indexOf(pasteEnd);
       if (end < 0) {
         held = sofar;
+        // A paste whose start already shows it isn't only paths, or too long to be, goes on now,
+        // after what was sent of its start, and the rest of it as it comes.
+        if (sofar.length > longestPaths || pastedPaths(sofar.toString(), false) === null) {
+          pass(Buffer.concat([pasteStart.subarray(startSent), sofar]));
+          held = null;
+          streaming = true;
+          streamedLast = sofar.subarray(Math.max(sofar.length - pasteEnd.length + 1, 0));
+        }
         return;
       }
       held = null;

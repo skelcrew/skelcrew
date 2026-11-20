@@ -344,7 +344,13 @@ export async function openScreen(
     },
     put: async (folder, files) => copyDrops(folder, files),
   };
-  const code = await runWithDrops(argv, drop, env);
+  // A screen opened from a laptop with sc --remote leaves drops to the laptop's sc, as a file you
+  // drop is on the laptop. A path in such a paste that names a file here too must never bring
+  // this machine's file to the agent.
+  const code =
+    where === ""
+      ? await runWithDrops(argv, drop, env)
+      : await Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);
   // tmux says [exited] on its way out, straight to your terminal, which reads like something went
   // wrong. Its line is the one above, so it is cleared, and the line saying what happened takes

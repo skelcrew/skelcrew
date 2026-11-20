@@ -112,6 +112,17 @@ test("a right click on the top row does what it did before a drop could ask ther
   expect(tmux(screen, "show", "-qv", "-t", session, "@drop-answer").out.trim()).toBe("");
 });
 
+test("a screen opened from a laptop with sc --remote leaves a drop to the laptop", async () => {
+  // The path names a file on this machine too, which must never reach the agent in its place.
+  const shot = join(home, "shot.png");
+  writeFileSync(shot, "pixels");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
+  await ready("lead");
+  drop(shot);
+  expect(await got("lead")).toBe(shot);
+  expect(existsSync(join(skelcrew(), "lead", ".skelcrew-drops"))).toBe(false);
+});
+
 test("text pasted onto the screen reaches the agent as it was", async () => {
   open("lead");
   await ready("lead");

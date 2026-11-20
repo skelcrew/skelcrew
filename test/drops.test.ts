@@ -135,6 +135,30 @@ test("a text paste passes as it came, at once", () => {
   expect(existsSync(join(agent, dropsFolder))).toBe(false);
 });
 
+test("a text paste goes on as it comes, once its start shows it isn't paths", async () => {
+  const shot = file("shot.png");
+  const take = filter();
+  take(Buffer.from("\x1b[200~hello"));
+  expect(sent).toBe("\x1b[200~hello");
+  take(Buffer.from(" there\x1b[20"));
+  expect(sent).toBe("\x1b[200~hello there\x1b[20");
+  // Its end, split across reads, is still found, so a drop after it is copied.
+  take(Buffer.from(`1~${pasted(shot)}`));
+  const out = await afterCopies();
+  expect(out).toMatch(
+    new RegExp(
+      `^\\x1b\\[200~hello there\\x1b\\[201~\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~$`,
+    ),
+  );
+});
+
+test("a paste too long to be paths goes on before its end", () => {
+  const take = filter();
+  const long = `/${"a".repeat(70_000)}`;
+  take(Buffer.from(`\x1b[200~${long}`));
+  expect(sent).toBe(`\x1b[200~${long}`);
+});
+
 test("keys pass at once, an Esc on its own too", () => {
   const take = filter();
   take(Buffer.from("a"));
