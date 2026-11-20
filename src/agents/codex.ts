@@ -524,39 +524,21 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
   return { reset: again === undefined ? null : resetTime(again, now) };
 }
 
-// Returns the line where Codex's own input area starts on its screen, given as its lines with
-// their colours, or null when it isn't found, such as after an update that redrew it. Past
-// messages in the output start with › too, so the whole box must match: a blank line, its ›
-// prompt on a shaded background with what is typed indented under it, a blank line, then at
-// most two indented footer lines, ending the screen. Anything else shows whole, as cutting a
-// screen Codex drew another way could hide output.
-function inputStart(screen: string[]): number | null {
-  const lines = screen.map((line) => Bun.stripANSI(line));
-  const blank = (line: string | undefined) => line !== undefined && line.trim() === "";
-  const at = lines.findLastIndex((line) => line.startsWith("›"));
-  if (at < 1 || !blank(lines[at - 1]) || !shaded(screen[at] ?? "")) return null;
-  // What is typed goes on, indented, until the blank line under the box.
-  let end = at + 1;
-  while (lines[end]?.startsWith("  ") && !blank(lines[end])) end++;
-  if (!blank(lines[end])) return null;
-  const footer = lines.slice(end).filter((line) => !blank(line));
-  return footer.length <= 2 && footer.every((line) => line.startsWith("  ")) ? at : null;
-}
+// What Codex's input box shows while nothing is typed in it. Only the box shows it, so it tells
+// the box apart from an earlier message in the output, which also starts with ›.
+const emptyPrompt = "› Ask Codex to do anything";
 
-// Returns whether a line of a screen sets a background colour, as Codex's input box has. A
-// colour from a palette or in red, green and blue takes numbers of its own after 38, 48 or 58,
-// such as 38;5;42 for a foreground, so those are skipped rather than read as codes.
-function shaded(line: string): boolean {
-  const esc = "\x1b";
-  for (const [, given = ""] of line.matchAll(new RegExp(`${esc}\\[([0-9;:]*)m`, "g"))) {
-    const numbers = given.split(/[;:]/).map(Number);
-    for (let at = 0; at < numbers.length; at++) {
-      const code = numbers[at] ?? 0;
-      if (code === 48 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107)) return true;
-      if (code === 38 || code === 58) at += numbers[at + 1] === 2 ? 4 : 2;
-    }
-  }
-  return false;
+// Returns the line where Codex's own input area starts on its screen, given as its lines with
+// their colours, or null when it isn't found. The area is its empty prompt, then at most two
+// indented footer lines, ending the screen. While a message is typed the box reads like an
+// earlier message, and a box an update redrew may not show the prompt, so both show whole: a
+// cut there could hide the agent's output.
+function inputStart(screen: string[]): number | null {
+  const lines = screen.map((line) => Bun.stripANSI(line).trimEnd());
+  const at = lines.lastIndexOf(emptyPrompt);
+  if (at < 0) return null;
+  const footer = lines.slice(at + 1).filter((line) => line.trim() !== "");
+  return footer.length <= 2 && footer.every((line) => line.startsWith("  ")) ? at : null;
 }
 
 // Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input
@@ -570,7 +552,7 @@ export const codex = {
   title: "Codex",
   program: "codex",
   install: "npm install -g @openai/codex",
-  marks: { busy: "esc to interrupt", prompt: "› Ask Codex to do anything" },
+  marks: { busy: "esc to interrupt", prompt: emptyPrompt },
   keys: ["OPENAI_API_KEY", "CODEX_API_KEY"],
   start: startCommand,
   saved: savedConversation,

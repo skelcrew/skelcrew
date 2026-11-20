@@ -39,16 +39,18 @@ test("a long message typed into Claude Code is cut with its prompt, over all its
   expect(bottom(long, 1)).toEqual([expect.stringContaining("tmux focus-events off")]);
 });
 
-test("Codex's input box and footer are cut, idle, at work or with a long message typed", async () => {
+test("Codex's input box and footer are cut while its input is empty, idle or at work", async () => {
   const idle = agentOutput("codex", await screen("codex-idle.txt"));
   expect(bottom(idle, 1)).toEqual(["• Edited src/api/limit.ts (+12 -0)"]);
   const busy = agentOutput("codex", await screen("codex-busy.txt"));
   expect(bottom(busy, 1)).toEqual(["• Working (42s • esc to interrupt)"]);
   expect(busy).toContain("› Rate limit the API per user");
   expect(busy).not.toContain("context left");
-  const long = agentOutput("codex", await screen("codex-long.txt"));
-  expect(bottom(long, 1)).toEqual(["• Working (42s • esc to interrupt)"]);
-  expect(long).not.toContain("every file in src");
+});
+
+test("Codex with a message typed shows whole, as its box then looks like an earlier message", async () => {
+  const long = await screen("codex-long.txt");
+  expect(agentOutput("codex", long)).toBe(long);
 });
 
 test("a screen whose input area isn't found shows whole", async () => {
@@ -73,13 +75,11 @@ test("a screen whose input area isn't found shows whole", async () => {
   // Without the line under its prompt either, it still shows whole.
   const bare = ["› Rate limit the API per user", "", "Working on it.", "Done."].join("\n");
   expect(agentOutput("codex", bare)).toBe(bare);
-  // An earlier message in Codex's output, with an indented line under it, isn't its input box,
-  // which is shaded.
-  const earlier = ["› previous request", "", "  result line"].join("\n");
-  expect(agentOutput("codex", earlier)).toBe(earlier);
-  // A coloured message isn't shaded either, whatever numbers its colour takes.
-  const coloured = ["", "\x1b[38;5;42m› previous request\x1b[39m", "", "  result line"].join("\n");
-  expect(agentOutput("codex", coloured)).toBe(coloured);
+  // An earlier message in Codex's output, shaded as its box is, with blank and indented lines
+  // under it, isn't its input box, such as when an update changed the box.
+  const shade = (text: string) => `\x1b[48;5;236m${text}\x1b[49m`;
+  const earlier = ["", shade("› previous request"), "", "  result line", "", "  Ask Codex"];
+  expect(agentOutput("codex", earlier.join("\n"))).toBe(earlier.join("\n"));
   // Claude Code's box quoted in its output, with more output after it, isn't its input box, which
   // ends the screen.
   const rule = "─".repeat(40);
