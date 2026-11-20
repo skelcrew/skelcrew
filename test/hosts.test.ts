@@ -1258,17 +1258,32 @@ process.exit(0);`,
 // the sandbox shows Claude Code's prompt and keeps what is typed. Once the lead started, a
 // last note goes in, so what was typed before it is all there is. With `failFirst`, a first
 // start fails before the session begins, as Claude Code's login is missing, and a second one
-// follows once it is there.
-function typedAfterStart(config: string, row = "", failFirst = false): string {
+// follows once it is there. With `spokeFirst`, the human has a draft at the lead's prompt as it
+// starts, which holds Skelcrew's typing, and sends it, as the lead's hook reports.
+function typedAfterStart(
+  config: string,
+  { row = "", failFirst = false, spokeFirst = false } = {},
+): string {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const typed = join(home, "typed.txt");
-  const lead = `#!/bin/sh\necho "${claude.marks.prompt}"\ncat >> ${typed}\n`;
+  const draft = join(home, "draft");
+  if (spokeFirst) writeFileSync(draft, "");
+  const { prompt } = claude.marks;
+  const lead = `#!/bin/sh
+if [ -e ${draft} ]; then
+  echo "${prompt} hi"
+  while [ -e ${draft} ]; do sleep 0.1; done
+  printf '\\033[2J'
+fi
+echo "${prompt}"
+cat >> ${typed}
+`;
   mkdirSync(join(home, "bin"), { recursive: true });
   for (const sandbox of ["bwrap", "sandbox-exec"])
     writeFileSync(join(home, "bin", sandbox), lead, { mode: 0o755 });
   runWithFakeHost(
     "sessions",
-    `const { startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+    `const { leadPrompted, startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
 const { noteForLead } = await import(${JSON.stringify(source("flow/messages.ts"))});
 const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
 const fs = require("node:fs");
@@ -1283,6 +1298,11 @@ const repository = { name: "app", owner: "simon", repo: "app", forge: null, remo
 if (${failFirst}) await startLead(db, "unused", repository).catch(() => {});
 token();
 await startLead(db, "unused", repository);
+if (${spokeFirst}) {
+  await Bun.sleep(1500);
+  leadPrompted(db, "simon", "app");
+  fs.rmSync(${JSON.stringify(draft)});
+}
 noteForLead(db, "unused", repository, "last note");
 const typed = () => (fs.existsSync(${JSON.stringify(typed)}) ? fs.readFileSync(${JSON.stringify(typed)}, "utf8") : "");
 for (let i = 0; i < 300 && !typed().includes("last note"); i++) await Bun.sleep(50);
@@ -1310,12 +1330,22 @@ test("a configured repository's first start has the lead ask what to work on", (
 // The failed start saved the lead's session first, which the next start must not take for an
 // earlier conversation.
 test("a first start that failed before the lead began keeps the opening turn, once", () => {
-  const typed = typedAfterStart("", "", true);
+  const typed = typedAfterStart("", { failFirst: true });
   expect(typed.split("Skelcrew: this is your first start")).toHaveLength(2);
 }, 30_000);
 
 test("a lead with an earlier conversation gets no opening turn", () => {
-  const typed = typedAfterStart("", ", '6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b', 'claude'");
+  const typed = typedAfterStart("", {
+    row: ", '6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b', 'claude'",
+  });
+  expect(typed).toContain("last note");
+  expect(typed).not.toContain("first start");
+}, 30_000);
+
+// The opening says the human hasn't written yet, so once they have, it would have the lead greet
+// them again or propose the setup out of turn.
+test("a human who speaks before the opening turn goes in gets no opening turn", () => {
+  const typed = typedAfterStart("", { spokeFirst: true });
   expect(typed).toContain("last note");
   expect(typed).not.toContain("first start");
 }, 30_000);

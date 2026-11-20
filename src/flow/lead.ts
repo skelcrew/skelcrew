@@ -331,16 +331,34 @@ export async function startLead(
   await checkAgentStarted(host, id, "lead");
 }
 
+// How the note that gives a lead its opening turn starts, which marks it as Skelcrew's, not the
+// human's words, and finds it again while it waits.
+const opening = "Skelcrew: this is your first start";
+
 // Returns the note that gives a lead its opening turn on its first start: greet the human, then
 // propose the thread that finishes the setup while setup or test is missing, or else say what it
-// can do and ask what to work on. It starts with "Skelcrew:", so the lead takes it for
-// Skelcrew's, not the human's words.
+// can do and ask what to work on.
 function openingNote({ setup, test }: Pick<Settings, "setup" | "test">): string {
   const then =
     setup === undefined || test === undefined
       ? "Then, as your instructions say, propose the thread that finishes the setup."
       : "Then say in a line what you can do here, and ask what to work on.";
-  return `Skelcrew: this is your first start, and the human hasn't written anything yet. Greet them in a line or two. ${then}`;
+  return `${opening}, and the human hasn't written anything yet. Greet them in a line or two. ${then}`;
+}
+
+// Drops a lead's opening note while it still waits, as its harness reports something typed at
+// its prompt. The note says the human hasn't written yet, and waits while the lead is busy or
+// the human has a draft at its prompt. Once the human has spoken first, it would have the lead
+// greet them again, or propose the setup out of turn. Every paste of Skelcrew's carries each note
+// still waiting, so anything typed while this one waits came from the human. A paste of the note
+// itself reports it too, after it was typed, so dropping it then changes nothing.
+export function leadPrompted(db: Database, owner: string, repo: string): void {
+  db.run("DELETE FROM notes WHERE owner = ? AND repo = ? AND substr(text, 1, ?) = ?", [
+    owner,
+    repo,
+    opening.length,
+    opening,
+  ]);
 }
 
 // Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
