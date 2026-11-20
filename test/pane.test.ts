@@ -130,6 +130,29 @@ test("the live view shows the bottom of the screen, colours kept and long lines 
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(40);
 });
 
+// A host can set a colour once and leave it on over the lines after it, until it is reset.
+test("a colour set on one line of the screen goes on over the lines after it until reset", () => {
+  const screen = [
+    "\x1b[32mgreen from here, out of sight",
+    ...Array.from({ length: 30 }, (_, i) => `line ${i}`),
+    "\x1b[1mbold too",
+    "\x1b[0;34mblue alone",
+    "still blue\x1b[m",
+    "plain again",
+  ].join("\n");
+  const lines = drawPane(row, details, { screen }, 50, 30);
+  const live = lines.slice(lines.findIndex((line) => line.includes("───")) + 1);
+  const at = (text: string) => live.find((line) => Bun.stripANSI(line) === text) ?? "";
+  // The green set above the part shown still colours the lines shown.
+  expect(at("line 29")).toStartWith("\x1b[32mline 29");
+  expect(at("bold too")).toStartWith("\x1b[32m\x1b[1mbold too");
+  // A code that resets first drops the colours before it.
+  expect(at("still blue")).toContain("34m");
+  expect(at("still blue")).not.toContain("32m");
+  expect(at("still blue")).not.toContain("\x1b[1m");
+  expect(at("plain again")).toStartWith("plain again");
+});
+
 test("a task with no running agent says so, and a row that isn't a task has an empty pane", () => {
   const lines = plain(drawPane(row, details, { note: "Builder not running" }, 50, 30));
   expect(lines.slice(lines.indexOf("─".repeat(50)) + 1, -1).filter(Boolean)).toEqual([

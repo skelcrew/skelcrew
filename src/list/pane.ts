@@ -200,12 +200,29 @@ function keepColours(line: string): string {
 // Returns the bottom of an agent's screen as `count` lines, `width` columns wide at most. Blank
 // lines at the very bottom are left out first, as a screen not yet full has them below its
 // prompt. Each line is cut on the right rather than wrapped, so a line of the agent's stays one
-// line, and it ends by resetting colours, so none reaches the line after it.
+// line, and it ends by resetting colours, so none reaches the pane's edge or the list. A colour
+// set on one line goes on over the lines after it until reset, as a host can send a screen that
+// way, so each line starts with the colours still set from the lines above it, shown or not.
 function screenLines(screen: string, width: number, count: number): string[] {
   if (count <= 0) return [];
   const lines = screen.replace(/\n$/, "").split("\n").map(keepColours);
   while (lines.length > 0 && Bun.stripANSI(lines.at(-1) ?? "").trim() === "") lines.pop();
-  return lines.slice(-count).map((line) => `${Bun.sliceAnsi(line, 0, width)}\x1b[0m`);
+  // The colour codes set since the last reset, carried from line to line. A code whose first
+  // number is 0 or missing resets first, such as ESC[m, ESC[0m or ESC[0;31m, and then sets what
+  // follows it, if anything.
+  const esc = "\x1b";
+  const codes = new RegExp(`${esc}\\[([0-9;:]*)m`, "g");
+  let carried = "";
+  const coloured = lines.map((line) => {
+    const shown = carried + line;
+    for (const [code, numbers = ""] of line.matchAll(codes)) {
+      const [first = "", ...rest] = numbers.split(";");
+      if (!/^0*$/.test(first)) carried += code;
+      else carried = rest.length > 0 ? code : "";
+    }
+    return shown;
+  });
+  return coloured.slice(-count).map((line) => `${Bun.sliceAnsi(line, 0, width)}\x1b[0m`);
 }
 
 // The lines the live view always keeps under the details: the dim line over it and two of the
