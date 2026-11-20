@@ -567,6 +567,43 @@ function prepareTables(db: Database): void {
     item TEXT NOT NULL,
     PRIMARY KEY (owner, repo, kind, id)
   )`);
+  // The daemon's copy of each repository's backlog: the tasks filed with sc task add, which its
+  // remote keeps, so the list reads them without asking the remote. `filed_commit` is the commit
+  // the remote keeps each one at.
+  db.run(`CREATE TABLE IF NOT EXISTS backlog (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created TEXT NOT NULL,
+    by TEXT NOT NULL,
+    filed_commit TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
+  // The tries to file a task in the backlog whose outcome this machine hasn't heard yet: the name
+  // each claimed, at which commit, with the task's title and description. A push the remote took
+  // can fail on its way back, and the same task given again finds its try here, so it is filed
+  // once, while a task filed twice on purpose, whose tries were all heard, is filed twice.
+  db.run(`CREATE TABLE IF NOT EXISTS filing_tries (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    claim_commit TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, claim_commit)
+  )`);
+  // The starts of backlog tasks this machine claimed on the remote and hasn't recorded a thread
+  // for yet, each by the commit of its claim. A start a stop cut short is put back in the
+  // backlog from here, while another machine's claim, which this table never holds, is left be.
+  db.run(`CREATE TABLE IF NOT EXISTS backlog_starts (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    started_commit TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from a tracker, kept until they are typed in, since the lead may not be running.
   // A note's ID is never used twice, which AUTOINCREMENT makes so: without it, SQLite gives a

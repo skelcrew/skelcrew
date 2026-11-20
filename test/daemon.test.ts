@@ -599,8 +599,9 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     for (const line of claudeLines()) {
       expect(line).toContain("told: You are a lead");
       expect(line).toContain("sc issue create");
-      // The lead talks to the human, who sees issues and threads, never Skelcrew's word task.
-      expect(line).not.toMatch(/\btasks?\b/i);
+      // The lead talks to the human, who sees issues and threads, never Skelcrew's word task. The
+      // command that files work in the backlog is named sc task add, which the lead runs.
+      expect(line.replaceAll("sc task add", "")).not.toMatch(/\btasks?\b/i);
       expect(line).toContain("You are the lead of simon/app.");
       expect(line).toContain("--model opus");
       expect(line.trimEnd()).toEndWith("agent-view-off=1");
@@ -639,7 +640,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(line).toContain("start no thread and file no issue");
     expect(line).toContain("Start these?");
     expect(line).toContain("Run sc start only once the human says yes.");
-    expect(line).toContain("File an issue only when the human asks for one");
+    expect(line).toContain("park work for later, file it in Skelcrew's backlog with sc task add");
+    expect(line).toContain("Create an issue in the tracker only when the human explicitly asks");
     // Filing in a private repository unasked once read as leave to file without asking.
     expect(line).not.toContain("file it and say you did");
   });

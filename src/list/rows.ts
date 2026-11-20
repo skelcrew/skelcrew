@@ -5,6 +5,7 @@
 // its threads need you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
@@ -253,12 +254,12 @@ const doneShown = 10;
 
 // Returns the repository's rows as the database has them now, at a moment in milliseconds: its
 // lead, then its tasks in the order of their stages. Backlog has its open issues no thread works
-// on, newest first. Each other stage has those that need you first, so the list reaches them
-// fastest, and within each, the one that changed last first. Done has the tasks that ended
-// today, latest first, or the last ten when fewer ended today, so an old repository's history
-// never fills the list. It reads the database, and a working builder's conversation file for its
-// step, as the sidebar does, never tmux, so the list opens at once and works on any session
-// host. Settings are read only for a thread that needs you while a review runs, to tell the
+// on and the tasks filed in its backlog, newest first. Each other stage has those that need you
+// first, so the list reaches them fastest, and within each, the one that changed last first.
+// Done has the tasks that ended today, latest first, or the last ten when fewer ended today, so
+// an old repository's history never fills the list. It reads the database, and a working
+// builder's conversation file for its step, as the sidebar does, never tmux, so the list opens
+// at once and works on any session host. Settings are read only for a thread that needs you while a review runs, to tell the
 // round limit from another reason.
 export function listRows(db: Database, open: Open, now: number): Row[] {
   const repository = findRepository(db, `${open.owner}/${open.repo}`);
@@ -278,38 +279,51 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       ? []
       : [taskRow(db, open, repository.name, thread, saved, stage, now)];
   });
-  const waiting = issues
-    .map((issue) => ({ issue, name: `${repository.name}-${issue.id}` }))
-    .filter(({ name }) => !tasks.some((row) => row.name === name))
-    .map(({ issue, name }): Row => {
-      const updated = Date.parse(issue.updated);
-      return {
-        part: "backlog",
-        name,
-        task: issue.id,
-        title: removeControlCodes(issue.title),
-        mark: { sign: "○", colour: "dim" },
-        says: "",
-        colour: "dim",
-        step: "",
-        pr: "",
-        checks: "",
-        when: Number.isNaN(updated) ? "" : changedAt(updated, now),
-        needsYou: false,
-        session: null,
-        running: false,
-        tmux: false,
-        start: {
-          ask: `Start ${name}? y/n`,
-          working: `Starting ${name}…`,
-          request: { command: "start", repo: `${open.owner}/${open.repo}`, task: issue.id },
-        },
-        merge: null,
-        link: null,
-        branch: null,
-        more: 0,
-      };
-    });
+  // Returns the row of a task not started yet, which Enter asks to start, as sc start does.
+  const notStarted = (task: string, title: string, changed: number): Row => {
+    const name = `${repository.name}-${task}`;
+    return {
+      part: "backlog",
+      name,
+      task,
+      title: removeControlCodes(title),
+      mark: { sign: "○", colour: "dim" },
+      says: "",
+      colour: "dim",
+      step: "",
+      pr: "",
+      checks: "",
+      when: Number.isNaN(changed) ? "" : changedAt(changed, now),
+      needsYou: false,
+      session: null,
+      running: false,
+      tmux: false,
+      start: {
+        ask: `Start ${name}? y/n`,
+        working: `Starting ${name}…`,
+        request: { command: "start", repo: `${open.owner}/${open.repo}`, task },
+      },
+      merge: null,
+      link: null,
+      branch: null,
+      more: 0,
+    };
+  };
+  // The open issues no thread works on, and the tasks filed in the backlog, newest first.
+  const waiting = [
+    ...issues
+      .filter((issue) => !tasks.some((row) => row.name === `${repository.name}-${issue.id}`))
+      .map((issue) => ({
+        created: issue.created,
+        row: notStarted(issue.id, issue.title, Date.parse(issue.updated)),
+      })),
+    ...backlogOf(db, open.owner, open.repo).map((t) => ({
+      created: t.created,
+      row: notStarted(t.task, t.title, Date.parse(t.created)),
+    })),
+  ]
+    .sort((a, b) => b.created.localeCompare(a.created))
+    .map(({ row }) => row);
   // When each task last changed. For an ended task that is when it ended, as nothing changes
   // it after.
   const changedOf = (row: Row) => {

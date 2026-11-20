@@ -15,6 +15,7 @@ const sections: [string, [string, string][]][] = [
       ["start <issue> [--from <branch>]", "Start, resume, or go on past the limit"],
       ['start <repo> "<title>" "<body>"', "Start a thread, with no issue in the tracker"],
       ["start <repo> < <file>", "The same, with the title on stdin's first line"],
+      ['task add <repo> "<title>" "<body>"', "File a task in the backlog, starting nothing"],
       ["stop <thread>", "End the builder, keeping its clone and PR"],
       ['rm <task> ["<reason>"]', "Close its PR, delete its branch and clone"],
       ["attach <thread>", "Open that builder full screen. ctrl+\\ detaches on tmux"],
