@@ -1123,6 +1123,40 @@ console.log(JSON.stringify({ mark: thread().needs_you_for }));`);
   });
 });
 
+// Only you can bring the plugin back, so the lead's marks and clears can't hide that.
+test("while the host plugin is missing, a mark or a clear keeps its instruction first", () => {
+  const seen = inProcess(`
+record(db, "app-12", { session: "s", host: "gone", host_id: "gone-app-12" });
+await bringBack(db, "none", thread());
+markNeedsYou(db, "none", thread(), "check the design", "lead");
+const marked = thread().needs_you_for;
+markNeedsYou(db, "none", thread(), null, "lead");
+console.log(JSON.stringify({ marked, cleared: thread().needs_you_for }));`);
+  expect(seen).toEqual({
+    marked: "run sc install: its session host gone is missing, then check the design",
+    cleared: "run sc install: its session host gone is missing",
+  });
+});
+
+// A release before this one had a failed review need you. The lead can run it again, so once
+// upgraded it shows as failed without needing you. One past the round limit still needs you.
+test("an upgrade moves a failed review off needing you, but not one past the round limit", () => {
+  const seen = inProcess(`
+db.run(\`${threadSql({ task: "13", status: "waiting" })}\`);
+db.run("UPDATE threads SET needs_you = 1");
+db.run("UPDATE tasks SET verdict = 'failed'");
+db.run("UPDATE tasks SET held = 'Fix it.' WHERE task = '13'");
+db.run("DROP VIEW task_threads");
+db.run("ALTER TABLE threads DROP COLUMN review_failed");
+const upgraded = openDb();
+const row = (folder) => upgraded.query("SELECT needs_you, review_failed FROM task_threads WHERE folder = ?").get(folder);
+console.log(JSON.stringify({ failed: row("app-12"), past: row("app-13") }));`);
+  expect(seen).toEqual({
+    failed: { needs_you: 0, review_failed: 1 },
+    past: { needs_you: 1, review_failed: 0 },
+  });
+});
+
 test("a new submit clears the mark", () => {
   const seen = inProcess(`
 markNeedsYou(db, "none", thread(), "say which format", "lead");
@@ -1180,6 +1214,17 @@ const decided = thread().limit_decided;
 cancelMerge(db, thread());
 console.log(JSON.stringify({ before, decided, after: needsYou(thread()) }));`);
   expect(seen).toEqual({ before: true, decided: true, after: false });
+});
+
+// A turn that left work it didn't submit shows turn ended, but its last submit is still reviewed,
+// so nothing waits on you yet.
+test("the safety net doesn't start while the last submit is reviewed, even with work left over", () => {
+  const seen = inProcess(`
+record(db, "app-12", { status: "waiting", reviewing: "abc" });
+turnEnded(db, "none", "app-12", { message: "I started on the next part." });
+markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
+console.log(JSON.stringify({ turnEnded: thread().turn_ended, ended: thread().ended_at, needsYou: needsYou(thread()) }));`);
+  expect(seen).toEqual({ turnEnded: true, ended: null, needsYou: false });
 });
 
 // A thread ready to merge is seen already, so a builder's reply there marks nothing.

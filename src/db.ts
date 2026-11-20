@@ -56,6 +56,18 @@ export function nameRepositories(db: Database): void {
     THEN owner || '/' || repo ELSE repo END`);
 }
 
+// Moves a review that failed or timed out, saved by a release that had it need you, onto its
+// own flag, once, as the column that holds it is added. The lead can run such a review again, so
+// it no longer needs you. One past the round limit, with changes held, still needs you for the
+// limit, and one with a round under way is carried on as the engine starts, so both are left.
+function flagFailedReviews(db: Database): void {
+  const failed = `verdict IN ('failed', 'timed out') AND held IS NULL AND submitting IS NULL AND reviewing IS NULL`;
+  const where = hasTasks(db)
+    ? `(owner, repo, task) IN (SELECT owner, repo, task FROM tasks WHERE ${failed})`
+    : failed;
+  db.run(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE needs_you = 1 AND ${where}`);
+}
+
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether
 // the builder ran sc submit in its current turn, `told_lead` whether it ran sc tell lead in it, and `turn_ended` whether it ended a turn without
 // one since, which waits on the lead. It is null on a thread an earlier release saved, until the
@@ -506,10 +518,12 @@ function prepareTables(db: Database): void {
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
   const threadsSeen = !hasColumn(db, "threads", "ci_seen");
+  const reviewsFlagged = !hasColumn(db, "threads", "review_failed");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
     if (!hasColumn(db, "threads", column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
   if (threadsSeen) db.run(seenBefore("threads"));
+  if (!fresh && reviewsFlagged) flagFailedReviews(db);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);

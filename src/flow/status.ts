@@ -19,7 +19,9 @@ import { lastPushed } from "./round.ts";
 import {
   AgentState,
   builderHarness,
+  hostMissing,
   liveThreads,
+  markBeforeHost,
   queuedForReview,
   readThread,
   record,
@@ -515,10 +517,13 @@ export function turnEnded(
     return;
   }
   // The safety net times the wait from here, and marks the thread with what the builder said
-  // if nobody acts on it.
+  // if nobody acts on it. Only with nothing in flight: while the last submit is still reviewed or
+  // waits on CI, the builder's words went to the lead, and waiting on those never needs you.
   if (!thread.turn_ended) {
-    const stopped = { turn_ended: true, ended_at: Date.now(), ended_said: ended.message ?? null };
-    record(db, folder, stopped, "its builder stopped without submitting");
+    const timed = submitStands(thread)
+      ? {}
+      : { ended_at: Date.now(), ended_said: ended.message ?? null };
+    record(db, folder, { turn_ended: true, ...timed }, "its builder stopped without submitting");
   }
 }
 
@@ -546,10 +551,13 @@ export function markForgotten(
     .all(since);
   // A thread that already needs you, such as one ready to merge, is seen already. Its wait ends,
   // so a builder's reply doesn't mark it once that need is over.
+  // A submit that went in meanwhile, still reviewed or waiting on CI, is in flight too, so its
+  // wait ends as well.
   const threads = rows.map((row) => Thread.parse(row));
-  for (const thread of threads.filter(needsYou))
+  const seenOrInFlight = (thread: Thread) => needsYou(thread) || submitStands(thread);
+  for (const thread of threads.filter(seenOrInFlight))
     record(db, thread.folder, { ended_at: null, ended_said: null });
-  const forgotten = threads.filter((thread) => !needsYou(thread));
+  const forgotten = threads.filter((thread) => !seenOrInFlight(thread));
   for (const thread of forgotten) {
     const said = oneLine(thread.ended_said ?? "");
     const reason = said === "" ? "its builder stopped" : cut(said, saidLength);
@@ -586,16 +594,28 @@ export function markNeedsYou(
   const acted = { ended_at: null, ended_said: null };
   // Marking or clearing a thread past its round limit is a decision about it.
   const decision = limitWaits(thread) ? { limit_decided: true } : {};
+  // While the builder's host plugin is still missing, only you can bring it back, so its
+  // instruction stays first, whatever the mark becomes.
+  const host = thread.host;
+  const hostStillGone =
+    host !== null &&
+    markBeforeHost(host, thread.needs_you_for) !== undefined &&
+    hostNamed(db, sessions, host) === null;
   if (reason !== null) {
-    const action = oneLine(reason);
-    if (action === "") throw new Error("say what the human must do to unblock the thread");
+    const said = oneLine(reason);
+    if (said === "") throw new Error("say what the human must do to unblock the thread");
+    const action = hostStillGone ? hostMissing(host, said) : said;
     const quiet = by === "lead" && !needsYou(thread) ? { noting: null } : {};
     const change = { needs_you_for: action, ...acted, ...decision, ...quiet };
     const marked = record(db, thread.folder, change, `${who} marked it: ${action}`);
     typeLeadNotes(db, sessions);
     return marked;
   }
-  const change = { needs_you_for: null, ...acted, ...decision };
+  const change = {
+    needs_you_for: hostStillGone ? hostMissing(host) : null,
+    ...acted,
+    ...decision,
+  };
   const what =
     thread.needs_you_for ?? ("limit_decided" in decision ? "the round limit" : "nothing");
   return record(db, thread.folder, change, `${who} cleared its needs you: ${what}`);
