@@ -38,7 +38,9 @@ const details: Details = {
     stage: "working",
     title: "Rate limit the API",
     issue: { id: "#42", link: "https://github.com/acme/app/issues/42" },
-    threads: [{ thread: "app-12/builder", status: "working", needsYou: true }],
+    threads: [
+      { thread: "app-12/builder", status: "working", needsYou: true, needsYouFor: "a question" },
+    ],
     body: "Add a limit per user to the public API, so one client can't starve the others.\n\nIt resets each minute. Clients over it get a 429 with a Retry-After header. The limit is set per repository.",
     pr: 43,
     review: { state: "changes", round: 2, at: null },
