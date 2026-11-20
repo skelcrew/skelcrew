@@ -111,9 +111,11 @@ export async function createTask(
 
 // Has the daemon file a task in the repository's backlog, for sc task add, and returns its name,
 // such as app-t104. The daemon keeps it on the repository's remote, so every machine shows it.
-export async function fileTask(repository: string, title: string, body: string): Promise<string> {
+// `already` says the backlog held the same task, as filed by an earlier try, and nothing was
+// filed again.
+export async function fileTask(repository: string, title: string, body: string) {
   const reply = await request({ command: "task add", repo: repository, title, body });
-  return checkReply(z.object({ task: z.string() }), reply).task;
+  return checkReply(z.object({ task: z.string(), already: z.boolean().default(false) }), reply);
 }
 
 // Has the daemon start a thread on a task, for sc start, and returns what it did, in a

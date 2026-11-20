@@ -517,8 +517,12 @@ async function taskCommand(args: string[]): Promise<void> {
   else if (words.length === 0 && !process.stdin.isTTY)
     given = taskFrom(await Bun.stdin.text(), "sc task add");
   if (!given) usage(command);
-  const task = await fileTask(repository, given.title, given.body);
-  console.log(`Filed ${task} in the backlog. sc start ${task} starts it.`);
+  const { task, already } = await fileTask(repository, given.title, given.body);
+  console.log(
+    already
+      ? `${task} already holds this task in the backlog, so nothing more was filed. sc start ${task} starts it.`
+      : `Filed ${task} in the backlog. sc start ${task} starts it.`,
+  );
 }
 
 // Shows the task a PR belongs to, for sc pr show, a short name for sc show. The PR is named by

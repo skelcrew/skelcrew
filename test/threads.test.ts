@@ -1509,7 +1509,7 @@ describe("the backlog", () => {
     await skel("task", "add", "app", "Add export", "As JSON");
     writeFileSync(
       join(home, "bin", "git"),
-      `#!/bin/sh\ncase "$*" in *":refs/skelcrew/tasks/"*) echo refused >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      `#!/bin/sh\ncase "$*" in *push*":refs/skelcrew/tasks/"*) echo refused >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
       { mode: 0o755 },
     );
     const refused = await skel("start", "app-t100");
@@ -1640,7 +1640,7 @@ describe("the backlog", () => {
     await untilCloned();
     writeFileSync(
       join(home, "bin", "git"),
-      `#!/bin/sh\ncase "$*" in *":refs/skelcrew/tasks/"*) ${Bun.which("git") ?? "git"} "$@"; echo "connection lost" >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      `#!/bin/sh\ncase "$*" in *push*":refs/skelcrew/tasks/"*) ${Bun.which("git") ?? "git"} "$@"; echo "connection lost" >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
       { mode: 0o755 },
     );
     const filed = await skel("task", "add", "app", "Add export", "As JSON");
@@ -1663,6 +1663,38 @@ describe("the backlog", () => {
     expect(filed.out).toBe("Filed app-t100 in the backlog. sc start app-t100 starts it.\n");
     expect((await skel("start", "app-t100")).out).toBe("Started app-t100.\n");
     expect(thread()).toMatchObject({ task: "t100", title: "Add export", body });
+  }, 60_000);
+
+  // The remote takes the push that files the task, then can't be reached at all, so Skelcrew
+  // can't tell it took it. Running sc task add again once the remote is back files nothing twice.
+  test("sc task add again after a filing nobody could confirm files the task once", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *push*":refs/skelcrew/tasks/"*) ${real} "$@"; touch "$HOME/down"; exit 1 ;; esac
+if [ -e "$HOME/down" ]; then case "$*" in *ls-remote*|*fetch*) echo "unreachable" >&2; exit 1 ;; esac; fi
+exec ${real} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const failed = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(failed.err).toContain("run the same sc task add again once it can be reached");
+    // While the remote is out of reach, nothing is filed.
+    const meanwhile = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(meanwhile.err).toContain("Skelcrew can't read app's backlog on its remote");
+    rmSync(join(home, "down"));
+    const again = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(again.err).toBe("");
+    expect(again.out).toBe(
+      "app-t100 already holds this task in the backlog, so nothing more was filed. sc start app-t100 starts it.\n",
+    );
+    const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*");
+    expect(refs).toContain("refs/skelcrew/tasks/t100");
+    expect(refs).not.toContain("refs/skelcrew/tasks/t101");
   }, 60_000);
 
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
