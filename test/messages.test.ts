@@ -155,19 +155,23 @@ console.log(JSON.stringify({ noted: noted(), needsYou: thread.needs_you, word: t
 // that is missing. While the check fails, the lead hears of it, and the thread isn't ready to
 // merge, nor its task ready for review.
 test("a missing builder told of a failed check is told to the lead, and isn't ready to merge", () => {
-  const seen = run(`
+  const seen = run(
+    `
 import { threadWord } from ${JSON.stringify(source("flow/status.ts"))};
 import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 db.run("UPDATE tasks SET verdict = 'approve', checks = 'failing', ci_passed = 0, pr = 7");
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "test failed.", said: "test failed", typed_in: [] });
 const noted = () => db.query("SELECT COUNT(*) AS n FROM notes").get().n;
-for (let i = 0; i < 30 && noted() === 0; i++) {
-  deliverAllWaiting(db, tmux);
-  await Bun.sleep(500);
+for (let i = 0; i < 100 && noted() === 0; i++) {
+  await deliverAllWaiting(db, tmux);
+  await Bun.sleep(50);
 }
 const thread = readThread(db, "app-12");
-console.log(JSON.stringify({ noted: noted(), needsYou: thread.needs_you, word: threadWord(thread, 3), stage: taskStage(thread, true) }));`);
+console.log(JSON.stringify({ noted: noted(), needsYou: thread.needs_you, word: threadWord(thread, 3), stage: taskStage(thread, true) }));`,
+    false,
+    missing,
+  );
   expect(JSON.parse(seen)).toEqual({ noted: 1, needsYou: false, word: "checks", stage: "working" });
 });
 
