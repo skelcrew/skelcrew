@@ -159,20 +159,24 @@ async function asDaemon(code: string) {
   return { out, err, code: code_ };
 }
 
-test("installing from GitHub shows what the plugin runs, asks, and on a bare Enter installs its newest tag", async () => {
+// The question says first what the plugin is for, in its own one line, then where it is from and
+// that it runs as you. d shows what it runs and asks again.
+test("installing from GitHub says what the plugin is, shows what it runs on d, and on a bare Enter installs its newest tag", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0", "0.9.0", "0.10.0");
-  const { out, err, code } = await skel(["plugin", "install", "skelcrew/skelcrew-fake"], "\n");
+  const { out, err, code } = await skel(["plugin", "install", "skelcrew/skelcrew-fake"], "d\n\n");
   expect(err).toBe("");
   expect(code).toBe(0);
-  expect(
-    out,
-  ).toStartWith(`fake 0.10.0 from skelcrew/skelcrew-fake is an I/O plugin that provides tracker, forge. It runs these as you, outside Skelcrew's sandbox:
+  expect(out).toStartWith(`Tasks from a fake tracker
+
+fake plugin 0.10.0, from skelcrew/skelcrew-fake. Runs on this machine as you, outside the agents' sandbox. Type d for details.
+Install the fake plugin? [Y/n] 
+fake 0.10.0 from skelcrew/skelcrew-fake is an I/O plugin that provides tracker, forge. It runs these as you, outside Skelcrew's sandbox:
   bun build.ts
   sh setup.sh
   bun call.ts
   sh credentials.sh
-Install it? [Y/n]`);
-  expect(out).not.toContain("Tasks from a fake tracker");
+
+Install the fake plugin? [Y/n]`);
   expect(out).toContain("setting up fake");
   expect(out).toContain("Installed fake 0.10.0.");
   const folder = join(plugins(), "fake", "0.10.0");
@@ -304,9 +308,11 @@ test("a runtime plugin can provide sessions, transport and status, with their co
     readFileSync(manifest, "utf8").replace("kind: io\nprovides: [tracker, forge]", runtime),
   );
   // Its session and attach commands run as you too, so the question shows them.
-  const installed = await skel(["plugin", "install", "./skelcrew-fake"], "y\n");
+  const installed = await skel(["plugin", "install", "./skelcrew-fake"], "d\ny\n");
   expect(installed.code).toBe(0);
-  expect(installed.out).toContain("  sh session.sh\n  sh attach.sh\nInstall it? [Y/n]");
+  expect(installed.out).toContain(
+    "  sh session.sh\n  sh attach.sh\n\nInstall the fake plugin? [Y/n]",
+  );
   expect((await skel(["plugin", "ls"])).out).toBe(
     "fake 0.1.0 runtime: sessions, transport, status\n",
   );
@@ -388,17 +394,17 @@ test("a plugin from a folder is used where it is, and update builds it again", a
     "Skelcrew left out fake, as each runs its commands, which needs your yes at a terminal",
   );
   expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.2.0");
-  const updated = await skel(["plugin", "update", "fake"], "y\n");
+  const updated = await skel(["plugin", "update", "fake"], "d\ny\n");
   expect(updated.err).toBe("");
   expect(updated.out).toContain(`fake 0.3.0 from ${folder} is an I/O plugin`);
   expect(updated.out).toContain("  true\n");
-  expect(updated.out).toContain("Build it? [Y/n]");
+  expect(updated.out).toContain("Build the fake plugin? [Y/n]");
   expect(updated.out).toContain(`Built fake 0.3.0 again from ${folder}.`);
   expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.3.0");
   // Once approved, the new commands build again without asking.
   const again = await skel(["update", "-g", "fake"], "", "", {}, home, false);
   expect(again.code).toBe(0);
-  expect(again.out).not.toContain("Build it?");
+  expect(again.out).not.toContain("[Y/n]");
   // A command whose words differ is a change, even when they read the same joined with spaces.
   writeFileSync(
     manifest,
@@ -408,7 +414,7 @@ test("a plugin from a folder is used where it is, and update builds it again", a
   expect(regrouped.code).toBe(1);
   expect(regrouped.err).toContain("Skelcrew left out fake");
   // The question shows where each word ends, so you can see what changed.
-  const shown = await skel(["update", "-g", "fake"], "n\n");
+  const shown = await skel(["update", "-g", "fake"], "d\nn\n");
   expect(shown.out).toContain("\n  'bun build.ts'\n  true\n  sh setup.sh\n");
   expect(shown.out).toContain("Skelcrew didn't build fake again.");
 
@@ -441,9 +447,9 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
   const updated = await skel(["plugin", "update", "fake"], "\n");
   expect(updated.err).toBe("");
   expect(updated.out).toContain(
-    "fake 0.2.0 from skelcrew/skelcrew-fake is an I/O plugin that provides tracker, forge.",
+    "fake plugin 0.2.0, from skelcrew/skelcrew-fake. Runs on this machine as you, outside the agents' sandbox.",
   );
-  expect(updated.out).toContain("\nUpdate it? [Y/n]");
+  expect(updated.out).toContain("\nUpdate the fake plugin? [Y/n]");
   expect(updated.out).toContain("Updated fake from 0.1.0 to 0.2.0.");
   expect((await skel(["plugin", "ls"])).out).toBe("fake 0.2.0 io: tracker, forge\n");
   expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(false);
@@ -637,7 +643,7 @@ test("sc add -g installs after asking, names the plugin in your config and pins 
   writeFileSync(yourConfig(), "harness: claude # mine\n");
   const added = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
   expect(added.err).toBe("");
-  expect(added.out).toContain("Install it? [Y/n]");
+  expect(added.out).toContain("Install the fake plugin? [Y/n]");
   expect(added.out).toContain("Installed fake 0.2.0.");
   expect(readFileSync(yourConfig(), "utf8")).toBe(
     "harness: claude # mine\nplugins:\n  - skelcrew/skelcrew-fake\n",
@@ -657,7 +663,7 @@ test("without a terminal nothing installs, even with a yes piped in", async () =
   const run = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n", "", {}, home, false);
   // It fails, so a script running it can tell the plugin isn't installed.
   expect(run.code).toBe(1);
-  expect(run.out).toContain("Install it? [Y/n] There is no terminal to answer in.\n");
+  expect(run.out).toContain("Install the fake plugin? [Y/n] There is no terminal to answer in.\n");
   expect(run.err).toContain(
     "installing fake runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them",
   );
@@ -768,7 +774,7 @@ test("sc add without -g names the plugin in the checkout's skelcrew.yaml and pin
   const app = appCheckout();
   const added = await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
   expect(added.err).toBe("");
-  expect(added.out).toContain("Install it? [Y/n]");
+  expect(added.out).toContain("Install the fake plugin? [Y/n]");
   expect(added.out).toContain("Installed fake 0.2.0.");
   expect(added.out).toContain(
     "Added fake 0.2.0 to skelcrew.yaml and skelcrew.lock. They count once you commit and push them.",
@@ -872,7 +878,7 @@ test("sc update -g leaves a plugin only a repository names alone", async () => {
   await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
   publish("skelcrew/skelcrew-fake", "0.2.0");
   const run = await skel(["update", "-g"], "y\n");
-  expect(run.out).not.toContain("Update it?");
+  expect(run.out).not.toContain("[Y/n]");
   expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
     "fake 0.1.0 io: tracker, forge\n",
   );
@@ -1054,7 +1060,7 @@ test("a repository can't name a runtime plugin", async () => {
   // Refused before it asks, so nothing of it runs.
   const fresh = await skel(["add", "skelcrew/skelcrew-runtime"], "y\n", "", {}, app);
   expect(fresh.code).toBe(1);
-  expect(fresh.out).not.toContain("Install it?");
+  expect(fresh.out).not.toContain("[Y/n]");
   expect(fresh.err).toContain(
     "fake is a runtime plugin, which is always yours and never a repository's. sc add -g adds it as yours",
   );

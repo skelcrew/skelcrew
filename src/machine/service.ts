@@ -20,10 +20,16 @@ const unitFile = () => join(homedir(), ".config", "systemd", "user", "skelcrew.s
 // Returns the file that defines the daemon's service here and marks it as installed.
 export const serviceFile = () => (process.platform === "darwin" ? plistFile() : unitFile());
 
-// Runs a service installation command in your terminal and stops setup if it fails.
-function runServiceCommand(command: string[]): void {
-  const run = Bun.spawnSync(command, { stdio: ["inherit", "inherit", "inherit"] });
-  if (!run.success) throw new Error(`${command.join(" ")} failed, so the daemon isn't installed`);
+// Runs a service installation command and stops setup if it fails. systemctl's own lines, such
+// as "Created symlink ...skelcrew.service", mean nothing to you during setup, so with `quiet`
+// they are kept back, and shown only in the error when it fails. loginctl keeps your terminal, as
+// enabling lingering can ask for your password.
+function runServiceCommand(command: string[], quiet = false): void {
+  const output = quiet ? "pipe" : "inherit";
+  const run = Bun.spawnSync(command, { stdio: ["inherit", output, output] });
+  if (run.success) return;
+  const said = quiet ? `: ${`${run.stdout}${run.stderr}`.trim()}` : "";
+  throw new Error(`${command.join(" ")} failed, so the daemon isn't installed${said}`);
 }
 
 // Returns a value safe for the daemon's unit file, rejecting quotes and backslashes and
@@ -134,9 +140,9 @@ export function installService(): void {
     }
     // An installed service only needs systemd to read its file again. It runs the new one
     // from the daemon's next start.
-    runServiceCommand(["systemctl", "--user", "daemon-reload"]);
+    runServiceCommand(["systemctl", "--user", "daemon-reload"], true);
     if (before !== null) return;
-    runServiceCommand(["systemctl", "--user", "enable", "--now", "skelcrew"]);
+    runServiceCommand(["systemctl", "--user", "enable", "--now", "skelcrew"], true);
     // Lingering keeps the daemon running after you log out, and starts it after a reboot.
     console.log("Keeping Skelcrew running after you log out or restart.");
     runServiceCommand(["loginctl", "enable-linger"]);

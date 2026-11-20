@@ -510,21 +510,21 @@ test("an issue whose work ended is back under Backlog, to start again", () => {
 // to start it as it does an issue.
 test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest first", () => {
   sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
-  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1'),
-    ('simon', 'app', 't105', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
+  VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1'),
+    ('simon', 'app', 't6', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
   const backlog = rows().filter((row) => row.part === "backlog");
   expect(backlog.map((row) => [row.name, row.title, row.when])).toEqual([
-    ["APP-T104", "Add export", "7 Nov"],
+    ["APP-T5", "Add export", "7 Nov"],
     ["APP-31", "Export as CSV", "5 Nov"],
-    ["APP-T105", "Add import", "1 Nov"],
+    ["APP-T6", "Add import", "1 Nov"],
   ]);
   expect(backlog[0]?.start).toEqual({
-    ask: "Start APP-T104? y/n",
-    working: "Starting APP-T104…",
-    request: { command: "start", repo: "simon/app", task: "t104" },
+    ask: "Start APP-T5? y/n",
+    working: "Starting APP-T5…",
+    request: { command: "start", repo: "simon/app", task: "t5" },
     queues: false,
   });
-  expect(shown("t104")).toContain("Filed   by simon on 7 November 2026");
+  expect(shown("t5")).toContain("Filed   by simon on 7 November 2026");
 });
 
 // Returns SQL for open issues from 100 on, each a day older than the one before.
@@ -1602,15 +1602,15 @@ test("Ctrl-\\ in every form leaves a question open, and y then answers it", asyn
 // what the daemon answered.
 test("s asks to start a task in Backlog, and y starts it", async () => {
   sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
-  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
+  VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-T104"), "the backlog task's row");
+  await until(() => here().startsWith("▸ ○ APP-T5"), "the backlog task's row");
   expect(seen()).toContain("s start");
   type("s");
-  await until(() => seen().includes("Start APP-T104? y/n"), "the question");
+  await until(() => seen().includes("Start APP-T5? y/n"), "the question");
   type("y");
-  await until(() => asked.includes("start simon/app t104"), "the start");
+  await until(() => asked.includes("start simon/app t5"), "the start");
   // The line says what the daemon did, as the task could have been queued meanwhile.
   await until(() => seen().includes("Started."), "the daemon's answer");
 });

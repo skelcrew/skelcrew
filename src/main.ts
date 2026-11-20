@@ -153,10 +153,12 @@ async function leadCommand(list: boolean, from?: string): Promise<void> {
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
   const origin = originHere();
+  // It is a step to take, not an error, so it goes to stdout like the first run's steps.
   if (from === undefined && origin === null && checkoutTop() !== null) {
-    console.error(
-      "This git repository has no remote. To add a remote and push it:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n\nThen run sc again.\n",
-    );
+    const { toRun } = await import("./say.ts");
+    const steps = toRun(["git remote add origin <url>", "git push -u origin HEAD"]);
+    console.log(`This git repository has no remote. To add a remote and push it:\n${steps}`);
+    console.log("Then run sc again.");
     process.exit(1);
   }
   // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
@@ -252,12 +254,14 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories } = await import("./flow/list.ts");
   const { addRepo, initRepo, removeRepo, trustRepo } = await import("./flow/repo.ts");
+  // Once sc init pushed its files, the lead opens on them, as plain sc would open it.
   if (command === "init" && args.length === 1) {
-    await initRepo("skelcrew");
+    if (await initRepo("skelcrew")) await leadCommand(false);
     return;
   }
   if (sub === "add" && rest.length <= 1) {
-    await addRepo(rest[0], "skelcrew");
+    const added = await addRepo(rest[0], "skelcrew");
+    if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
     return;
   }
   if (sub === "ls" && rest.length === 0) {
@@ -317,7 +321,8 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
   }
   if (command === "add" && name && more.length === 0 && !yours) {
     const { addRepositoryPlugin } = await import("./plugins/repository.ts");
-    addRepositoryPlugin(name);
+    const added = addRepositoryPlugin(name);
+    if (added) console.log(added);
     return;
   }
   if ((command === "remove" || command === "update") && !yours)

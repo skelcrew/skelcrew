@@ -278,8 +278,9 @@ test("asks its forge nothing and fetches nothing for a repository Skelcrew has",
   expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
 
+// A step to take, so it goes to stdout, with a blank line around each command.
 const noRemoteLine =
-  "This git repository has no remote. To add a remote and push it:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n\nThen run sc again.\n\n";
+  "This git repository has no remote. To add a remote and push it:\n\n  git remote add origin <url>\n\n  git push -u origin HEAD\n\nThen run sc again.\n";
 
 // With no forge to say you can push to it, Skelcrew can't vouch for what is in it.
 test("asks about a repository no forge claims, and does nothing in one with no origin", async () => {
@@ -291,7 +292,7 @@ test("asks about a repository no forge claims, and does nothing in one with no o
   expect(elsewhere.out).toContain(hint);
   expect(calls()).not.toContain("daemon lead");
   git(checkout, "remote", "remove", "origin");
-  expect(await skel([], "", checkout)).toEqual({ out: "", err: noRemoteLine, code: 1 });
+  expect(await skel([], "", checkout)).toEqual({ out: noRemoteLine, err: "", code: 1 });
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
@@ -340,7 +341,7 @@ test("outside a repository and with every tab closed, sc opens nothing and says 
   const loose = join(home, "loose");
   mkdirSync(loose);
   git(loose, "init", "-q");
-  expect(await skel([], "", loose)).toEqual({ out: "", err: noRemoteLine, code: 1 });
+  expect(await skel([], "", loose)).toEqual({ out: noRemoteLine, err: "", code: 1 });
   expect(calls()).not.toContain("screen on");
 });
 
@@ -351,7 +352,7 @@ test("in a repository with no remote, sc opens nothing even with tabs open, and 
   const loose = join(home, "loose");
   mkdirSync(loose);
   git(loose, "init", "-q");
-  expect(await skel([], "", loose)).toEqual({ out: "", err: noRemoteLine, code: 1 });
+  expect(await skel([], "", loose)).toEqual({ out: noRemoteLine, err: "", code: 1 });
   expect(calls()).not.toContain("screen on");
   expect(calls()).not.toContain("daemon lead");
 });
@@ -699,7 +700,7 @@ test("repo add adds the checkout you are in, and attaches to nothing", async () 
   const run = await skel(["repo", "add"], "", checkout);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toBe("Cloning simon/app for Skelcrew.\nAdded simon/app, as app.\n");
+  expect(run.out).toBe("Adding simon/app to Skelcrew...\nAdded simon/app, as app.\n");
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(calls()).not.toContain("daemon");
 });
@@ -939,12 +940,24 @@ plugins:
   );
   expect(approved).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
-  expect(run.out).toContain("Added simon/app, as app.");
-  expect(run.out).toContain(
-    "Wrote skelcrew.yaml, skelcrew.lock and .agents/. They count once you commit and push them to the default branch.",
-  );
-  expect(run.out).toContain(
-    "setup: and test: aren't filled in yet. Before anything else, the lead will propose a thread that fills them in from what the repository's CI runs.",
+  // Without a terminal to say yes at, it shows the commands that bring the files to the default
+  // branch, one per line.
+  expect(run.out).toBe(
+    [
+      "Adding simon/app to Skelcrew...",
+      "",
+      "Wrote skelcrew.yaml, skelcrew.lock and .agents/.",
+      "Skelcrew reads these files from main, so commit and push them there:",
+      "",
+      "  git add skelcrew.yaml skelcrew.lock .agents",
+      "",
+      '  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents',
+      "",
+      "  git push origin main",
+      "",
+      "Then run sc.",
+      "",
+    ].join("\n"),
   );
 });
 
@@ -964,8 +977,10 @@ test("init installs the forge's plugin after asking, and pins it", async () => {
   });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Install it? [Y/n]");
-  expect(run.out).toContain("Installed github 0.1.0.");
+  // It says why Skelcrew needs the plugin, and asks once.
+  expect(run.out).toStartWith(
+    "This is a GitHub repository (simon/app). Skelcrew needs its GitHub plugin to read issues, open pull requests and merge them.\n\nGitHub plugin 0.1.0, from skelcrew/skelcrew-github. Runs on this machine as you, outside the agents' sandbox. Type d for details.\nInstall the GitHub plugin? [Y/n] Installed the GitHub plugin.\nAdding simon/app to Skelcrew...\n",
+  );
   expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).plugins).toEqual([
     "skelcrew/skelcrew-github",
   ]);
@@ -974,7 +989,7 @@ test("init installs the forge's plugin after asking, and pins it", async () => {
   });
   // The plugin is the repository's, never yours.
   expect(existsSync(join(home, ".config", "skelcrew", "skelcrew.lock"))).toBe(false);
-  expect(run.out).toContain("Added simon/app, as app.");
+  expect(await listed()).toEqual([["app", "simon/app", "github"]]);
 });
 
 // A skelcrew.yaml from sc init has setup: and test: only as comments, so the lead is told
@@ -1034,13 +1049,8 @@ test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin, 
   expect(run.out).toContain(
     "skelcrew.yaml is there already, so Skelcrew only added skelcrew/skelcrew-github to its plugins.",
   );
-  expect(run.out).toContain(
-    "Wrote skelcrew.yaml, skelcrew.lock and .agents/. They count once you commit and push them to the default branch.",
-  );
-  expect(run.out).toContain(
-    "test: isn't filled in yet. Before anything else, the lead will propose a thread that fills it in from what the repository's CI runs.",
-  );
-  expect(run.out).toContain("Added simon/app, as app.");
+  expect(run.out).toContain("Wrote skelcrew.yaml, skelcrew.lock and .agents/.\n");
+  expect(await listed()).toEqual([["app", "simon/app", "github"]]);
 });
 
 // sc add would move a pin to the version installed here, so a pin the repository has already
@@ -1058,9 +1068,7 @@ test("init keeps the pin a skelcrew.lock that is there has for the forge's plugi
   expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
     "setup: [make]\nplugins:\n  - skelcrew/skelcrew-github\n",
   );
-  expect(run.out).toContain(
-    "Wrote skelcrew.yaml. It counts once you commit and push it to the default branch.",
-  );
+  expect(run.out).toContain("Wrote skelcrew.yaml.\n");
 });
 
 // A pin the repository has already must still bring its plugin, or the repository would come in
@@ -1081,7 +1089,7 @@ test("init installs the forge's plugin at the pin a skelcrew.lock that is there 
   });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Install it? [Y/n]");
+  expect(run.out).toContain("Install the github plugin? [Y/n]");
   expect(run.out).toContain("Installed github 0.1.0.");
   expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(lock);
   expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).plugins).toEqual([
@@ -1089,7 +1097,7 @@ test("init installs the forge's plugin at the pin a skelcrew.lock that is there 
   ]);
   // The forge it installed claimed the remote, so the repository came in with no question.
   expect(run.out).not.toContain("Do you trust");
-  expect(run.out).toContain("Added simon/app, as app.");
+  expect(await listed()).toEqual([["app", "simon/app", "github"]]);
 });
 
 // A skelcrew.lock that pins other plugins keeps them, and gains the forge's pin beside them.
@@ -1109,21 +1117,248 @@ test("init adds the forge's pin to a skelcrew.lock that is there, keeping its ot
   });
 });
 
-// The lead is told setup and test from your own config too, so sc init promises only the ones
-// nothing sets.
-test("init says the lead will propose only what neither the repository nor your config sets", async () => {
+// Runs sc init in the checkout with a terminal as its input, typing `typed`, with a git identity
+// for the commit it offers.
+function initAtTerminal(checkout: string, typed: string) {
+  appendFileSync(join(home, ".gitconfig"), "[user]\n\tname = t\n\temail = t@t\n");
+  return inTerminal([process.execPath, main, "init"], {
+    typed,
+    env: {
+      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+      HOME: home,
+      XDG_RUNTIME_DIR: join(home, "run"),
+    },
+    cwd: checkout,
+  });
+}
+
+// What sc init shows when it leaves the commit to you, after the reason it gives.
+const commands =
+  '\n  git add skelcrew.yaml skelcrew.lock .agents\n\n  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents\n\n  git push origin main\n\nThen run sc.\n';
+
+// The lead and builders read the repository as its default branch has it, so sc init offers to
+// commit what it wrote and push it there, then opens the lead as plain sc does.
+test("init on a yes commits only the files it wrote, pushes them to the default branch, and opens the lead", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
   githubInstalledAsYours();
-  const config = join(home, ".config", "skelcrew", "config.yaml");
-  writeFileSync(config, "harness: claude\nsetup: [make]\n");
-  const one = await skel(["init"], "", onGitHub("simon/app", "WRITE"));
-  expect(one.err).toBe("");
-  expect(one.out).toContain(
-    "test: isn't filled in yet. Before anything else, the lead will propose a thread that fills it in from what the repository's CI runs.",
+  writeFileSync(join(checkout, "notes.txt"), "mine\n");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Wrote skelcrew.yaml, skelcrew.lock and .agents/.\nCommit and push these files to main now? [Y/n] Pushed them to main.\n",
   );
-  writeFileSync(config, "harness: claude\nsetup: [make]\ntest: [make test]\n");
-  const both = await skel(["init"], "", onGitHub("simon/web", "WRITE"));
-  expect(both.err).toBe("");
-  expect(both.out).not.toContain("filled in");
+  expect(run.out).toEndWith(left);
+  expect(calls()).toContain("daemon lead\n");
+  // Your other work stays as it was, out of the commit.
+  expect(git(checkout, "status", "--porcelain")).toBe("?? notes.txt\n");
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("Set up Skelcrew\n");
+  const bare = join(home, "github", "simon", "app.git");
+  expect(git(bare, "ls-tree", "--name-only", "main").split("\n")).toEqual([
+    ".agents",
+    "README",
+    "skelcrew.lock",
+    "skelcrew.yaml",
+    "",
+  ]);
+  // Skelcrew's clone has them already, so the lead opens on them.
+  expect(existsSync(join(clone("simon/app"), "skelcrew.yaml"))).toBe(true);
+});
+
+test("init after a no commits nothing, shows the commands, and opens no lead", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  const run = await initAtTerminal(checkout, "n\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toEndWith(
+    `Commit and push these files to main now? [Y/n] Skelcrew reads these files from main, so commit and push them there:\n${commands}`,
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("start\n");
+  expect(calls()).not.toContain("daemon lead");
+});
+
+// With other work staged, sc init asks nothing and leaves the commit to you. The commit it shows
+// names its files, so following it keeps the staged work out.
+test("init with other changes staged asks nothing and leaves the commit to you", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  writeFileSync(join(checkout, "notes.txt"), "mine\n");
+  git(checkout, "add", "notes.txt");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toEndWith(
+    `Other changes are staged here, so Skelcrew leaves the commit to you. The commit below names its files, so they stay out of it. Skelcrew reads these files from main, so commit and push them there:\n${commands}`,
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("start\n");
+  // Run as shown, the commit takes only sc init's files.
+  git(checkout, "add", "skelcrew.yaml", "skelcrew.lock", ".agents");
+  git(
+    checkout,
+    "commit",
+    "-q",
+    "-m",
+    "Set up Skelcrew",
+    "--",
+    "skelcrew.yaml",
+    "skelcrew.lock",
+    ".agents",
+  );
+  expect(git(checkout, "status", "--porcelain")).toBe("A  notes.txt\n");
+});
+
+// An untracked skelcrew.yaml is yours, even where git is set to hide untracked files, so the
+// plugin sc init adds to it doesn't take its lines into a commit.
+test("init asks nothing when a file it edits is yours and untracked, even with untracked files hidden", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  git(checkout, "config", "status.showUntrackedFiles", "no");
+  writeFileSync(join(checkout, "skelcrew.yaml"), "# Mine, never committed.\nsetup: [make]\n");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toContain(
+    "skelcrew.yaml had changes of yours already, which the commit would take too, so Skelcrew leaves it to you.",
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("start\n");
+});
+
+// Tracked files in .agents/ you deleted come back as sc init writes .agents/ again, and its commit
+// would take your deletions too, so it asks nothing.
+test("init asks nothing when .agents/ had tracked files you deleted", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "old.md"), "old\n");
+  git(checkout, "add", ".agents");
+  git(checkout, "commit", "-q", "-m", "agents");
+  rmSync(join(checkout, ".agents"), { recursive: true });
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toContain(
+    ".agents/ had changes of yours already, which the commit would take too, so Skelcrew leaves it to you.",
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("agents\n");
+});
+
+// A file of yours sc init doesn't change stays out of its commit, so its changes don't keep the
+// offer away.
+test("init offers its commit when only a file it left alone has changes of yours", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  const config = "plugins:\n  - skelcrew/skelcrew-github\n";
+  writeFileSync(join(checkout, "skelcrew.yaml"), config);
+  git(checkout, "add", "skelcrew.yaml");
+  git(checkout, "commit", "-q", "-m", "config");
+  git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  writeFileSync(join(checkout, "skelcrew.yaml"), `${config}setup: [make]\n`);
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Wrote .agents/.\nCommit and push these files to main now? [Y/n] Pushed them to main.\n",
+  );
+  expect(git(checkout, "status", "--porcelain")).toBe(" M skelcrew.yaml\n");
+});
+
+// The push would send every commit the branch has that the remote doesn't, so commits of yours
+// not pushed yet keep the offer away.
+test("init asks nothing while the default branch has commits not on the remote", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  writeFileSync(join(checkout, "NEWS"), "not yet public\n");
+  git(checkout, "add", "NEWS");
+  git(checkout, "commit", "-q", "-m", "mine");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toEndWith(
+    `main here isn't where it is on the remote, so a push would send commits of yours too, and Skelcrew leaves it to you. Skelcrew reads these files from main, so commit and push them there:\n${commands}`,
+  );
+  const bare = join(home, "github", "simon", "app.git");
+  expect(git(bare, "log", "-1", "--format=%s", "main")).toBe("start\n");
+});
+
+// A file sc init edits that had your changes already would bring them into its commit, so it
+// leaves the commit to you, saying why.
+// Both files have changes of yours, so git names each on a line of its own, and the second line
+// must be read as well as the first.
+test("init asks nothing when a file it edits had changes of yours", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  const lock = `skelcrew/skelcrew-github: { name: github, version: 0.1.0, commit: ${"a".repeat(40)} }\n`;
+  writeFileSync(join(checkout, "skelcrew.yaml"), "setup: [make]\n");
+  writeFileSync(join(checkout, "skelcrew.lock"), lock);
+  git(checkout, "add", "skelcrew.yaml", "skelcrew.lock");
+  git(checkout, "commit", "-q", "-m", "config");
+  writeFileSync(join(checkout, "skelcrew.yaml"), "# Mine, not yet committed.\nsetup: [make]\n");
+  writeFileSync(join(checkout, "skelcrew.lock"), `# Mine too.\n${lock}`);
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toContain(
+    "skelcrew.yaml had changes of yours already, which the commit would take too, so Skelcrew leaves it to you.",
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("config\n");
+});
+
+// A push from another branch wouldn't reach the default branch, and switching there can fail
+// where it tracks a file sc init wrote here. So the commands commit and push this branch, and
+// say to merge it into the default branch.
+test("init on another branch asks nothing, and its commands push that branch to merge", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  git(checkout, "switch", "-q", "-c", "setup");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toEndWith(
+    'You are on setup, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them:\n\n  git add skelcrew.yaml skelcrew.lock .agents\n\n  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents\n\n  git push origin setup\n\nThen merge setup into main, such as with a pull request, and run sc.\n',
+  );
+  // Followed as shown, the commands need no switch, which could fail where main tracks one of
+  // the files. The push goes straight to the fake GitHub's folder, as the test's git has no
+  // setting that leads github.com there.
+  const bare = join(home, "github", "simon", "app.git");
+  for (const step of [
+    ["add", "skelcrew.yaml", "skelcrew.lock", ".agents"],
+    ["commit", "-q", "-m", "Set up Skelcrew", "--", "skelcrew.yaml", "skelcrew.lock", ".agents"],
+    ["push", "-q", bare, "setup"],
+  ])
+    git(checkout, ...step);
+  expect(git(bare, "ls-tree", "--name-only", "setup")).toContain("skelcrew.yaml");
+});
+
+// With no branch checked out, the commands make one first, so the commit has a branch to push.
+test("init on no branch starts its commands by making one", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  git(checkout, "switch", "-q", "--detach");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "You are on no branch, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them:\n\n  git switch -c skelcrew-setup\n\n",
+  );
+  expect(run.out).toContain("  git push origin skelcrew-setup\n");
+  expect(run.out).toEndWith(
+    "Then merge skelcrew-setup into main, such as with a pull request, and run sc.\n",
+  );
+});
+
+// The lead only sees pushed files, so a push that fails opens no lead, and says what is left.
+test("init whose push fails says why, shows the push that is left, and opens no lead", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  const hook = join(home, "github", "simon", "app.git", "hooks", "pre-receive");
+  writeFileSync(hook, "#!/bin/sh\necho 'protected branch' >&2\nexit 1\n", { mode: 0o755 });
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("git push failed: ");
+  expect(run.out).toContain("protected branch");
+  expect(run.out).toEndWith(
+    "The lead only sees the files once they are pushed.\n\n  git push origin main\n\nThen run sc.\n",
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("Set up Skelcrew\n");
+  expect(calls()).not.toContain("daemon lead");
 });
 
 // The human commits the file, so a line init didn't need to change stays byte for byte.
@@ -1510,7 +1745,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     needsSetup();
     const screen = await atTerminal(checkout, ["repo", "add"]);
     expect(screen).toContain(
-      "Installed.\nCloning simon/app for Skelcrew.\nAdded simon/app, as app.\n",
+      "Installed.\nAdding simon/app to Skelcrew...\nAdded simon/app, as app.\n",
     );
     expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   }, 60_000);

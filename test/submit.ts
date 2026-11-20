@@ -224,7 +224,7 @@ export const until = (done: () => boolean, timeout = 30_000) =>
 // written, or one that gives no reason, is left out.
 export function lastSteps(): string {
   const threads = join(data(), "threads");
-  const log = existsSync(join(threads, "app-12.log")) ? "app-12.log" : `app-t100.log`;
+  const log = existsSync(join(threads, "app-12.log")) ? "app-12.log" : `app-t1.log`;
   const lines = read(join(threads, log)).split("\n");
   const steps: string[] = [];
   for (const line of lines.slice(-12))

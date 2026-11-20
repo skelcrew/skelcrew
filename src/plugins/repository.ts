@@ -19,6 +19,7 @@ import {
   refuseOtherName,
   refuseRuntime,
   removePlugin,
+  type Shown,
   updatePlugin,
 } from "./install.ts";
 import { type Lock, type Locked, readLockAt, writeBoth, yourLock, yourPlugins } from "./lock.ts";
@@ -26,6 +27,14 @@ import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
 
 // The GitHub plugin, the forge of every repository on github.com.
 export const githubPlugin = "skelcrew/skelcrew-github";
+
+// Returns how Skelcrew names the GitHub plugin when it offers it for a repository on GitHub, given
+// as owner/name, and what it says first: why it needs the plugin, in plain words. Plain sc and sc
+// init offer it the same way.
+export const gitHubShown = (repository: string): Shown => ({
+  title: "GitHub",
+  intro: `This is a GitHub repository (${repository}). Skelcrew needs its GitHub plugin to read issues, open pull requests and merge them.`,
+});
 
 // What Skelcrew reads of a repository's skelcrew.yaml here: only plugins:, by the GitHub
 // repository each comes from, such as skelcrew/skelcrew-github. The rest is the loader's, in
@@ -177,8 +186,10 @@ function nameAndPin(folder: string, source: string, locked: Locked): void {
 // Adds a plugin to the repository you are in, for sc add without -g: installs it after asking,
 // then names it in the checkout's skelcrew.yaml and pins its version and commit in its
 // skelcrew.lock. A plugin installed here already is pinned at its version with nothing to ask,
-// as you approved that exact version before. Returns whether it was added.
-export function addRepositoryPlugin(given: string): boolean {
+// as you approved that exact version before. Returns the line saying what it added, for sc add to
+// print, or null when it added nothing. sc init says it in its own words. `shown` is how its
+// question names the plugin and starts.
+export function addRepositoryPlugin(given: string, shown: Shown = {}): string | null {
   // A folder's path means nothing on a teammate's machine, and it has no version to pin.
   if (given.startsWith(".") || given.startsWith("/"))
     throw new Error(
@@ -195,8 +206,8 @@ export function addRepositoryPlugin(given: string): boolean {
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
   // The repository's plugin goes into its own files, never into your lock.
   const fresh = !installed();
-  if (fresh && !installPlugin(given, { remote: originHere(top), pin: false, io: true }))
-    return false;
+  if (fresh && !installPlugin(given, { remote: originHere(top), pin: false, io: true, shown }))
+    return null;
   const plugin = installed();
   if (!plugin) throw new Error(`${given} isn't installed after all`);
   const manifest = readManifest(plugin.folder);
@@ -217,10 +228,7 @@ export function addRepositoryPlugin(given: string): boolean {
     throw error;
   }
   const pinned = fresh ? "" : ", at the version installed here";
-  console.log(
-    `Added ${manifest.name} ${manifest.version} to skelcrew.yaml and skelcrew.lock${pinned}. They count once you commit and push them.`,
-  );
-  return true;
+  return `Added ${manifest.name} ${manifest.version} to skelcrew.yaml and skelcrew.lock${pinned}. They count once you commit and push them.`;
 }
 
 // One plugin a repository needs: its source, the repository that names it, as `where` says it,
