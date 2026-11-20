@@ -319,11 +319,9 @@ async function actOnPr(
   // approval is ready to merge only while they all pass.
   const checks = ciState(pr);
   const green = allGreen(pr);
-  const seen = thread.ci_seen || checks !== null;
-  const ciChanged =
-    checks !== thread.checks || green !== thread.ci_passed || seen !== thread.ci_seen;
+  const ciChanged = checks !== thread.checks || green !== thread.ci_passed;
   if (!stale && thread.submitting === null && ciChanged)
-    record(db, folder, { checks, ci_passed: green, ci_seen: seen });
+    record(db, folder, { checks, ci_passed: green });
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
   if ("end" in decision) {
@@ -573,15 +571,7 @@ async function pollRepository(
         ...(jobs.includes("forge") ? ["pr" as const] : []),
       ];
       const items = answer.items.filter((item) => kinds.includes(item.kind));
-      // The repository keeps that CI ran on one of its PRs, as that PR may close before a merge
-      // asks, and a merge must wait for CI's checks wherever CI has run. It is saved with the
-      // copy, in one transaction, so a daemon that stops between the two never keeps the PR
-      // without the repository's mark, which the next poll could drop with the closed PR.
-      db.transaction(() => {
-        saveItems(db, owner, repo, items, next === null ? kinds : []);
-        if (items.some((item) => item.kind === "pr" && ciState(item) !== null))
-          db.run("UPDATE repositories SET ci_seen = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
-      })();
+      saveItems(db, owner, repo, items, next === null ? kinds : []);
       nexts.set(plugin, answer.next);
     }
   } finally {

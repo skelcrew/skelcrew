@@ -950,13 +950,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       status: "waiting",
       needs_you: 1,
       checks: "passing",
-      ci_seen: 1,
     });
-    // The CI checks vanish from the forge: the saved checks go back to none, but polls still
-    // remember the PR had CI, so the list never takes it for a repository without any.
-    pr({ reviews: [skelReview], checks: [approved] });
-    await until(() => thread().checks === null);
-    expect(thread()).toMatchObject({ ci_seen: 1 });
   });
 
   test("a failed check reaches the builder once, even after the forge fails and the daemon restarts", async () => {

@@ -233,8 +233,7 @@ console.log(JSON.stringify({ rounds, short, status }));`;
 
 // Leaves the database as the first release with tasks did: moved, with a tasks table without
 // the columns added since: whether the work merged, the link to its issue, the line that
-// closes it, whether CI passed after the approval, whether polls ever found CI and the commit
-// the latest review was about.
+// closes it, whether CI passed after the approval and the commit the latest review was about.
 function earlierTasks(): void {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
@@ -245,7 +244,6 @@ moveToTasks(openDb());`);
   earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
   earlier.run("ALTER TABLE tasks DROP COLUMN closes");
   earlier.run("ALTER TABLE tasks DROP COLUMN ci_passed");
-  earlier.run("ALTER TABLE tasks DROP COLUMN ci_seen");
   earlier.run("ALTER TABLE tasks DROP COLUMN reviewed_commit");
   earlier.close();
 }
@@ -280,54 +278,6 @@ console.log(JSON.stringify({ approved: stage("app-13"), working: stage("app-15")
     approved: [false, "working"],
     working: [false, "working"],
   });
-});
-
-// A poll saves a PR's checks as none once they vanish, and polls remember they once found CI
-// only from the release that keeps that. So the upgrade takes saved checks as CI found: a task
-// whose checks then vanish at the first poll after it never reads as a repository without CI.
-test("an upgrade counts saved checks as CI found, which a poll with the checks gone keeps", () => {
-  earlierTasks();
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
-const db = openDb();
-const seen = (folder) => readThread(db, folder).ci_seen;
-const before = { approved: seen("app-13"), pending: seen("app-12"), none: seen("app-15") };
-// The first poll finds app-13's checks gone, and saves them as a poll does.
-const thread = readThread(db, "app-13");
-record(db, "app-13", { checks: null, ci_seen: thread.ci_seen || false });
-console.log(JSON.stringify({ before, after: [readThread(db, "app-13").checks, seen("app-13")] }));`;
-  expect(JSON.parse(run(code))).toEqual({
-    before: { approved: true, pending: true, none: false },
-    after: [null, true],
-  });
-});
-
-// A PR that showed CI before the repository kept it may close while the daemon is down, and the
-// first poll after then drops it from the copy. So the upgrade takes CI on a PR in the copy as
-// CI found in its repository, so neither merge reads it as a repository without CI.
-test("an upgrade counts CI on a PR in the copy as the repository's, before a poll drops it", () => {
-  earlierTasks();
-  const earlier = new Database(dbFile());
-  earlier.run("ALTER TABLE repositories DROP COLUMN ci_seen");
-  earlier.run("DELETE FROM items");
-  const item = (repo: string, id: string, checks: object[]) =>
-    earlier.run(
-      "INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', ?, 'pr', ?, 'open', '2026-11-05T10:00:00Z', ?)",
-      [repo, id, JSON.stringify({ id, checks })],
-    );
-  item("app", "50", [{ name: "test", id: "1", state: "passed" }]);
-  // Skelcrew's own check is no CI, and an item that isn't JSON is skipped.
-  item("notes", "51", [{ name: "skelcrew/check", id: null, state: "passed" }]);
-  earlier.run(
-    "INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'notes', 'pr', '52', 'open', '2026-11-05T10:00:00Z', 'not json')",
-  );
-  earlier.close();
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-console.log(JSON.stringify(openDb().query("SELECT repo, ci_seen FROM repositories ORDER BY repo").all()));`;
-  expect(JSON.parse(run(code))).toEqual([
-    { repo: "app", ci_seen: 1 },
-    { repo: "notes", ci_seen: 0 },
-  ]);
 });
 
 // An approval from before reviews saved their commit keeps standing: the daemon saves on the
