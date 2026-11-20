@@ -1913,6 +1913,10 @@ test("a click on the lead's row opens the lead at once", async () => {
 
 test("a click on a stage's heading opens or closes it, and the wheel moves a row", async () => {
   await open();
+  // Needs you has no key to open it again, so a click on its heading leaves it open.
+  clickOn(lineOf("Needs you"));
+  await Bun.sleep(300);
+  expect(seen()).toContain("● app-12");
   clickOn(lineOf("Backlog"));
   await until(() => here().startsWith("▸ ○ app-31"), "Backlog open, on its issue");
   clickOn(lineOf("Building"));

@@ -123,9 +123,9 @@ export async function runList(agents: string, repository: string): Promise<void>
   // What the list keeps between draws: every row, those that show, which are the lead's and
   // those of the open sections, the row you are on among those and how far it scrolled, the line
   // at the bottom when it says something other than the keys, the question it asks, and whether
-  // the daemon is at work on an answer. Only Needs you and Building are open at first. The
-  // sections you open stay open until you leave the list, whichever repository you move to, and
-  // so does a whole Backlog once you asked for it, which shows its newest issues until then.
+  // the daemon is at work on an answer. Needs you is always open, and Building is open at first.
+  // The sections you open stay open until you leave the list, whichever repository you move to,
+  // and so does a whole Backlog once you asked for it, which shows its newest issues until then.
   let all: Row[] = [];
   let rows: Row[] = [];
   const opened = new Set<Section>(["needs you", "building"]);
@@ -431,8 +431,10 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   // Opens or closes a section, as a stage's number key or a click on its heading does. Opening
   // one moves you to its first row, so the list scrolls to show it, rather than open it out of
-  // sight.
+  // sight. Needs you is always open: it has no key, so once closed nothing but a click would
+  // bring back what waits on you, so a click on its heading does nothing.
   const toggleSection = (section: Section) => {
+    if (section === "needs you") return draw();
     if (opened.delete(section)) return reshow();
     opened.add(section);
     reshow();
