@@ -525,13 +525,20 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
 }
 
 // Returns the line where Codex's own input area starts on its screen, given as plain lines, or
-// null when it isn't found, such as after an update that redrew it. The area is its › prompt,
-// with what is typed under it, and the footer below. Past messages in the output start with ›
-// too, so it is the last one, and only when none of Codex's own • output lines comes after it.
+// null when it isn't found, such as after an update that redrew it. Past messages in the output
+// start with › too, so the whole box must match: a blank line, its › prompt with what is typed
+// indented under it, a blank line, then at most two indented footer lines, ending the screen.
+// Anything else shows whole, as cutting a screen Codex drew another way could hide output.
 function inputStart(lines: string[]): number | null {
+  const blank = (line: string | undefined) => line !== undefined && line.trim() === "";
   const at = lines.findLastIndex((line) => line.startsWith("›"));
-  if (at < 0 || lines.slice(at + 1).some((line) => line.startsWith("•"))) return null;
-  return at;
+  if (at < 1 || !blank(lines[at - 1])) return null;
+  // What is typed goes on, indented, until the blank line under the box.
+  let end = at + 1;
+  while (lines[end]?.startsWith("  ") && !blank(lines[end])) end++;
+  if (!blank(lines[end])) return null;
+  const footer = lines.slice(end).filter((line) => !blank(line));
+  return footer.length <= 2 && footer.every((line) => line.startsWith("  ")) ? at : null;
 }
 
 // Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input

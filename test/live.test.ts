@@ -55,6 +55,24 @@ test("a screen whose input area isn't found shows whole", async () => {
   const unknown = await screen("unknown.txt");
   expect(agentOutput("claude", unknown)).toBe(unknown);
   expect(agentOutput("codex", unknown)).toBe(unknown);
+  // A Codex whose input box looks other than it knows, such as after an update, shows whole, even
+  // with an earlier message in the output and no • after it.
+  const changed = [
+    "› Rate limit the API per user",
+    "",
+    "I'll add the limit in the request handler first.",
+    "Edited src/api/limit.ts (+12 -0)",
+    "",
+    "  └ 12 lines changed",
+    "",
+    "> Ask Codex to do anything",
+    "",
+    "  100% context left",
+  ].join("\n");
+  expect(agentOutput("codex", changed)).toBe(changed);
+  // Without the line under its prompt either, it still shows whole.
+  const bare = ["› Rate limit the API per user", "", "Working on it.", "Done."].join("\n");
+  expect(agentOutput("codex", bare)).toBe(bare);
   // A harness drawn another way, such as Codex's screen read as Claude Code's, keeps its input.
   const codex = await screen("codex-busy.txt");
   expect(agentOutput("claude", codex)).toBe(codex);
