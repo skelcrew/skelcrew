@@ -1,7 +1,7 @@
 // Runs Skelcrew's tests, for `bun run check` and for a builder running a few test files, as
 // bun scripts/test.ts [files]. The same run inside Skelcrew's own sandbox and outside it.
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { socketFolderInside } from "../src/agents/sandbox.ts";
@@ -36,8 +36,8 @@ if (inside) {
 }
 
 // In CI, Bun writes a JUnit report with each test's time, a preload writes each file's, and the
-// run prints where its time went once it ends. The tests that start a real sandbox run only
-// outside Skelcrew's own, so CI is where their times show.
+// run prints where its time went once it ends, in its log and on its summary page. The tests
+// that start a real sandbox run only outside Skelcrew's own, so CI is where their times show.
 const report = process.env.GITHUB_ACTIONS === "true" ? join(own, "report.xml") : "";
 const fileTimes = join(own, "file-times.jsonl");
 const reporting = report
@@ -118,7 +118,11 @@ run.exited.then(async (code) => {
   if (report && existsSync(report))
     try {
       const files = existsSync(fileTimes) ? await Bun.file(fileTimes).text() : "";
-      console.log(`\n${timings(await Bun.file(report).text(), files, 25)}`);
+      const table = timings(await Bun.file(report).text(), files, 25);
+      console.log(`\n${table}`);
+      // The run's summary page shows it too, as anyone can read that page without the job's log.
+      const summary = process.env.GITHUB_STEP_SUMMARY;
+      if (summary) appendFileSync(summary, `\n\`\`\`\n${table}\`\`\`\n`);
     } catch (error) {
       console.error(`The test report couldn't be read: ${error}`);
     }
