@@ -188,7 +188,14 @@ review:
 
 CI and ready have no settings: ready waits for green checks when the repository has a forge.
 
-**Picking a flow.** Every task gets `default`, unless the repository has other flow files. Then the lead triages: it picks the flow when it starts or proposes a task, with `sc start --flow <name>`, and whenever it picks anything but `default`, it tells you which and why. A task started from the `skelcrew` label gets `default`. The lead can switch a task's flow only until its builder first runs `sc submit`, with `sc start <task> --flow <name>` on the task already working, and it tells you which and why. The builder keeps working, and the first round follows the new flow. After the first submit the flow is fixed, and `sc start --flow` on the task refuses and says so, since rounds already ran under the old one. The built-in lead's instructions say this, so it holds in every repository.
+**A flow without a review.** A flow file with no `review:` goes build, CI and ready, with no reviewer, for changes too small to need one, such as docs, wording or a one-line fix. Skelcrew ships no such flow: a repository that wants one adds it, under the name it chooses. A file that says `review:` with nothing under it still has the stage, with its defaults.
+
+- **Submit.** `sc submit` pushes and opens the PR as in any flow, and queues no reviewer. The submit waits for CI's first check as a review would, a change to docs alone included, as nobody else will look at it, then Skelcrew's check goes green with "not reviewed: this flow has no review stage", so branch protection that requires it lets the PR through.
+- **State.** The task is never shown as approved, nor as reviewing. From its submit on, while it is pushed and waits for CI's first check, and then on CI, it shows `checks`, and once CI is green it is ready with the word `not reviewed` in place of `approved`, in `sc ps`, `sc ls`, `sc show`, the list and its details pane, and the sidebar. It counts no rounds, so it never reaches the round limit. A submit that fails says what failed, never `review failed`: `submit failed` when its push or opening its PR failed, with the forge's error in the note to the lead, or `check failed` when Skelcrew couldn't set its check once it was pushed. Like a failed review it doesn't need you, as the lead can run it again with `sc review`, and `sc ps`, `sc ls` and `sc show` still give its review as `not reviewed`, with no round. An armed merge then waits on its submit or Skelcrew's check, which failed, and the lead hears it. Without a forge it is ready at once, as an approved branch is.
+- **Merge when ready.** `sc merge --when-ready` asks `Merge #7 (app-12 Fix typo) when its checks pass?` and says it merges "as soon as its checks pass", as does the lead's note. It waits only for CI, at the commit last submitted, by the same rules as an approval: the wait for checks, every check passed and no conflict. A newer submit takes the place of the last, as a new approval does, and a push Skelcrew didn't make is never merged. `m` in the list merges it only at that commit too. In a repository with no forge, `sc ps` still shows it as `not reviewed`. A needs-you mark for ready to merge shows as for an approved task. When an armed merge is stuck, such as on a conflict or a refusal, the lead hears it once per submit, as it would once per review round. It posts no record of who asked on the PR, as the forge would show that record as an approval nobody gave: the task's log keeps who asked. A merge skipping the review has nothing to skip, so `sc merge --skip-review` refuses and says to merge it as usual, even while the submit waits for CI's first check.
+- **On the PR.** Skelcrew posts no review and no note. Its check says the PR wasn't reviewed, and the PR stays quiet: a forge's review carries a verdict, such as GitHub's "Approved.", which would contradict it.
+
+**Picking a flow.** Every task gets `default`, unless the repository has other flow files. Then the lead triages: it picks the flow when it starts or proposes a task, with `sc start --flow <name>`, and whenever it picks anything but `default`, it tells you which and why. A task started from the `skelcrew` label gets `default`. The lead can switch a task's flow only until its builder first runs `sc submit`, with `sc start <task> --flow <name>` on the task already working, and it tells you which and why. The builder keeps working, and the first round follows the new flow. After the first submit the flow is fixed, and `sc start --flow` on the task refuses and says so, since rounds already ran under the old one. It picks a flow with no review only for a change too small to need one, such as docs, wording or a trivial config change, and always tells you, as nobody will review it. The built-in lead's instructions say this, so it holds in every repository.
 
 Your own confirmations are never flow settings: you always merge, you always add repositories, and you always say yes before a lead starts work or briefs another lead. No flow can drop them.
 
@@ -825,21 +832,23 @@ A task in Needs you, Building, Reviewing, Checks or Ready takes two lines, so wh
 | `queued` | The task waits for a builder under `limits.threads` |
 | `queued for review` | A review waits for a place under `limits.reviews` |
 | `reviewing` | A review is under way, or waits for CI's first check |
-| `checks` | Approved, and waiting on CI for that commit |
+| `checks` | Approved, or submitted in a flow with no review, and waiting on CI for that commit |
 | `waiting` | The builder waits, with no review under way, no approval and no changes asked for |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
 | `ready to merge` | Approved and green, and waits on you to merge it, so it shows under Needs you |
 | `approved` | Approved and green with a merge armed: it merges by itself, so its mark is hollow, it doesn't count as ready and it stays under Ready |
+| `not reviewed` | Ready to merge, in a flow with no review. It shows under Needs you and keeps this word, so you know nobody reviewed it. With a merge armed it merges by itself and stays under Ready, as `approved` does |
 | `question` | The builder asked with its harness's question tool |
 | `turn ended` | The builder ended its turn without submitting, and its last message went to the lead |
 | `error` | The builder's harness stopped on an error |
 | `round limit` | Review hit its round limit. It needs you until you or the lead decide, as **Needs you** says |
 | the action, such as `apply the check.yml split in PR #463` | The lead, you or the safety net marked the thread as needing you, with what you must do. It shows on a queued, failed or stopped thread too, and only a question or an error comes before it |
 | `review failed`, `review timed out` | The review couldn't run, or ran past its time limit twice. The lead can run it again, so it doesn't need you |
+| `submit failed`, `check failed` | In a flow with no review, pushing the submit or opening its PR failed, or Skelcrew couldn't set its check. The lead can run it again, so it doesn't need you |
 | `failed`, `stopped` | As the thread's status says. Neither needs you: the lead hears why a thread failed and can start it again |
 
-The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green is ready, yellow wants you, red is wrong (its harness errored, filled, or the thread or its review failed, hollow, as the lead can start or run it again), bright is working and dim waits. The word always says what is happening, so nothing is told by colour alone. Text from the tracker has its control codes removed before it reaches your terminal.
+The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green is ready, yellow wants you, red is wrong (its harness errored, filled, or the thread, its review, or a submit its flow doesn't review failed, hollow, as the lead can start or run it again), bright is working and dim waits. The word always says what is happening, so nothing is told by colour alone. Text from the tracker has its control codes removed before it reaches your terminal.
 
 | Key | On | What it does |
 | --- | --- | --- |
@@ -914,7 +923,7 @@ A database from an earlier release is moved forward once, when the new engine st
 ## Not in this version
 
 - Reviewing pull requests Skelcrew didn't open
-- Richer flows: custom stages, several reviewers, skipping stages, and picking a flow by label or rule. They come once real use shows what is needed
+- Richer flows: custom stages, several reviewers, skipping stages other than the review, and picking a flow by label or rule. They come once real use shows what is needed
 - Reviewers as threads, which would remember earlier rounds at the cost of the fresh view
 - More than one PR per task, such as one per repository
 - Harnesses other than Claude Code and Codex

@@ -10,7 +10,7 @@ import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { roundLimit } from "../config.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
-import { pastRoundLimit } from "./decide.ts";
+import { passedReviewStage, pastRoundLimit, waitsOnFirstCheck } from "./decide.ts";
 import { leadOf } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
 import {
@@ -108,7 +108,7 @@ export const waitsOnSubmit = (thread: Thread, unchanged: boolean) =>
 // wait on them.
 const submitStands = (thread: Thread) =>
   thread.reviewing !== null ||
-  (thread.verdict === "approve" &&
+  (passedReviewStage(thread) &&
     thread.checks !== "failing" &&
     thread.conflicts === null &&
     thread.telling === null);
@@ -120,7 +120,7 @@ const inFlight = (thread: Thread) =>
   !thread.review_failed && (thread.submitting !== null || submitStands(thread));
 
 // Returns whether the thread waits for you to merge it: Skelcrew's reviewer approved its latest
-// round, with no newer one under way, and the latest poll found every check on its PR green,
+// round, or its flow has no review stage, with no newer one under way, and the latest poll found every check on its PR green,
 // which polling marks by having it need you. A branch without a forge has no PR or checks, so
 // its approval alone makes it ready. A PR that conflicts isn't ready to merge until the
 // builder's next round, even when something else, such as its builder missing, makes the
@@ -129,7 +129,7 @@ export const readyToMerge = (thread: Thread) =>
   thread.needs_you &&
   thread.submitting === null &&
   thread.reviewing === null &&
-  thread.verdict === "approve" &&
+  passedReviewStage(thread) &&
   (thread.checks === "passing" || thread.checks === null) &&
   (thread.pr === null || thread.ci_passed) &&
   thread.conflicts === null;
@@ -137,7 +137,7 @@ export const readyToMerge = (thread: Thread) =>
 // Returns the thread's status, one of the five words a host can show, from the same fields and
 // in the same order as its word in the sidebar, which then serves as the reason. A thread that
 // failed, or whose harness stopped on an error, is in error. An approval with green checks is
-// ready to merge. Anything else that needs you comes next. A builder waiting out its usage limit
+// ready to merge, and so is a task whose flow skipped the review. Anything else that needs you comes next. A builder waiting out its usage limit
 // idles, as it is woken once the limit resets, and so does one that isn't running. Otherwise
 // the builder's own state says whether it works, such as idle after Esc while its thread still
 // works. Before its first hook, a working thread works, and one waiting on its review idles.
@@ -146,8 +146,10 @@ export function statusOf(thread: Thread, maxRounds: number, now = Date.now()): S
   // A mark shown as the word is an action for you, even on a thread that failed.
   if (thread.needs_you_for !== null && word === thread.needs_you_for) return "needs you";
   if (thread.status === "failed" || word === "error") return "error";
-  // An approved thread with a merge armed merges by itself, so it waits rather than on you.
-  if (word === "approved") return thread.merge_plan === "armed" ? "idle" : "ready";
+  // An approved thread with a merge armed merges by itself, so it waits rather than on you, as
+  // does one its flow didn't review.
+  if (word === "approved" || word === "not reviewed")
+    return thread.merge_plan === "armed" ? "idle" : "ready";
   if (needsYou(thread)) return "needs you";
   if (thread.erred && thread.limited) return "idle";
   if (thread.status !== "working" && thread.status !== "waiting") return "idle";
@@ -459,7 +461,13 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // its CI passing must not read as waiting on checks.
   const past = thread.held !== null || (thread.needs_you && pastRoundLimit(thread, maxRounds));
   if (past) return "round limit";
-  if (readyToMerge(thread)) return "approved";
+  // A task whose flow has no review stage is never called approved, as nobody reviewed it.
+  if (readyToMerge(thread)) return verdict === "not reviewed" ? "not reviewed" : "approved";
+  // A round on a flow with no review stage fails on its submit, pushing it or opening its PR,
+  // or on setting Skelcrew's check once it is pushed, never on a review, so it says which. The
+  // note to the lead gives the error itself, such as the forge's.
+  if (thread.review_failed && waitsOnFirstCheck(thread))
+    return thread.submitting !== null ? "submit failed" : "check failed";
   // A review that failed doesn't need you, but says so until something sets the builder working
   // again, or a new round starts.
   if (thread.review_failed && verdict === "timed out" && !underWay) return "review timed out";
@@ -473,15 +481,18 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
     reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
   if (thread.erred && thread.limited) return limitWord(thread.limit_reset);
   if (thread.review_limited) return limitWord(thread.review_reset);
-  // A review waiting for a place shows as queued, any other round under way as reviewing, and
+  // A submit on a flow with no review stage waits on checks while it is pushed and waits for CI's
+  // first check. A review waiting for a place shows as queued, any other round under way as reviewing, and
   // a review's changes still waiting to be typed into the builder as changes. Otherwise it
-  // works, or waits: on CI only for an approval, and on the builder after changes asked for.
+  // works, or waits: on CI only for an approval, or a submit its flow doesn't review, and on the
+  // builder after changes asked for.
   // Anything else only waits, as saying checks would claim CI is what it waits on.
+  if (waitsOnFirstCheck(thread)) return "checks";
   if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
   if (status === "working") return "working";
-  if (verdict === "approve") return "checks";
+  if (passedReviewStage(thread)) return "checks";
   return verdict === "changes" ? "changes" : "waiting";
 }
 

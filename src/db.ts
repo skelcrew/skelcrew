@@ -85,7 +85,8 @@ function flagFailedReviews(db: Database): void {
 // who armed it and when, for the PR's record. `merge_asked` is your words, exactly, when you
 // asked the lead to arm it, so the plan itself shows what let it merge, and null when you armed
 // it at your terminal. `merge_waits` is what an armed merge waits on, as the last poll
-// found, and `merge_noted` the review round the lead last heard it still waits after.
+// found, and `merge_noted` the review round the lead last heard it still waits after, or on a
+// flow with no review stage when the submit it heard of was marked not reviewed.
 // `merge_pinned` is the PR's head when you asked to merge it without Skelcrew's approval, and
 // null for a merge when ready: only that commit merges, so a push after you asked cancels it.
 // `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
