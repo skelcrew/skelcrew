@@ -6,7 +6,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -29,7 +28,7 @@ import {
 } from "../src/agents/sessions.ts";
 import { deliver, forQuestion, idle, whyBusy } from "../src/agents/transport.ts";
 import type { PluginHost } from "../src/plugins/runtime.ts";
-import { homeEnv, source, threadSql, until as wait } from "./harness.ts";
+import { endFakeSessions, homeEnv, source, threadSql, until as wait } from "./harness.ts";
 
 const moment = 100;
 let home = "";
@@ -48,10 +47,7 @@ afterEach(() => {
   // this process asks and on the one a process of the test's own home asks.
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   for (const sessions of [join(settings(), "sessions"), join(fake, "sessions")])
-    for (const id of existsSync(sessions) ? readdirSync(sessions) : [])
-      try {
-        process.kill(-Number(readFileSync(join(sessions, id, "pid"), "utf8")), "SIGKILL");
-      } catch {}
+    endFakeSessions(sessions);
   rmSync(settings(), { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });

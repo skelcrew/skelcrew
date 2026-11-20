@@ -3,15 +3,7 @@
 // for GitHub.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -21,6 +13,7 @@ import { stillRunning } from "../src/agents/sessions.ts";
 import {
   answer,
   asked,
+  endFakeSessions,
   fakePlugin,
   git,
   homeEnv,
@@ -104,10 +97,7 @@ afterEach(async () => {
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
   // The fake session host's sessions end with the test too.
   const hosted = join(home, ".config", "skelcrew", "plugins", "fake", "sessions");
-  for (const id of existsSync(hosted) ? readdirSync(hosted) : [])
-    try {
-      process.kill(-Number(read(join(hosted, id, "pid"))), "SIGKILL");
-    } catch {}
+  endFakeSessions(hosted);
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
   rmSync(join(folder, socket), { force: true });
   rmSync(home, { recursive: true, force: true });

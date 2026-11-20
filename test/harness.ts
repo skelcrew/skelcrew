@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -184,6 +185,21 @@ export async function runSkel(args: string[], env: Record<string, string>, input
     run.exited,
   ]);
   return { out, err, code };
+}
+
+// Kills the process group of each session the fake host keeps in `sessions`, for a test's
+// clean-up, as those sessions outlive the daemon that started them. A session the host was still
+// starting as the test ended has no process ID yet. Its ID reads as 0, and killing group 0 kills
+// the caller's own group: in a parallel run, the whole test worker, which Bun then reports as
+// crashed with SIGKILL. So a session without a real ID is skipped.
+export function endFakeSessions(sessions: string): void {
+  for (const id of existsSync(sessions) ? readdirSync(sessions) : []) {
+    const pid = Number(read(join(sessions, id, "pid")));
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
+  }
 }
 
 // Installs the fake tracker and forge as a plugin named `name`, doing `jobs`, for a test with
