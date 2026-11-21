@@ -16,7 +16,6 @@ import {
   env,
   home,
   labels,
-  leaving,
   onDetails,
   onLead,
   open,
@@ -184,13 +183,13 @@ test("the last tab closing moves the screen to the tab before it", async () => {
   expect(tabRow()).not.toContain("site");
 });
 
-test("with no tab left, the screen leaves as Ctrl-Q does", async () => {
+test("with no tab left, the screen stays, saying how to open a repository", async () => {
   open("lead");
   await ready("lead");
   closeTab("app");
-  await until(() => read("left-one") === "left", "the screen to leave");
-  expect(seen()).toContain(leaving);
-  expect(screenSessions()).toEqual([]);
+  await until(() => right().includes("No repository is open."), "the empty screen");
+  expect(read("left-one")).toBe("");
+  expect(screenSessions()).toHaveLength(1);
   expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
 });
 
