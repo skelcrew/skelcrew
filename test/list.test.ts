@@ -596,6 +596,24 @@ test("a task in Backlog has the same time in its details as on its row", () => {
   });
 });
 
+// A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
+test("a row says one short word, with no merge when ready or messages waiting after it", () => {
+  sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
+INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-7', 'lead', 'one', 'one', 0);`);
+  const row = rows().find((candidate) => candidate.name === "APP-7");
+  expect(row).toMatchObject({ says: "working", pr: "", when: "5m" });
+});
+
+test("an issue whose work ended is back under Backlog, to start again", () => {
+  sql("UPDATE threads SET status = 'done' WHERE folder = 'app-7';");
+  sql(itemSql("app", "task", 7, "Login redirect", "2026-11-01T10:00:00Z"));
+  expect(
+    rows()
+      .filter((row) => row.part === "backlog")
+      .map((row) => row.name),
+  ).toEqual(["APP-31", "APP-7"]);
+});
+
 // A task filed in Skelcrew's backlog waits beside the issues, by when it was filed, and Enter asks
 // to start it as it does an issue.
 test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest first", () => {
