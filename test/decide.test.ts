@@ -16,6 +16,7 @@ import {
   labeledToStart,
   mergeNoteFor,
   mergeWaitsOn,
+  nextRound,
   onlyDocs,
   type PullRequest,
   refusedWorkflow,
@@ -68,6 +69,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     reviewer: null,
     reviewed_by: null,
     review_round: null,
+    top_round: null,
     verdict: null,
     review_line: null,
     reviewed_commit: null,
@@ -805,6 +807,40 @@ test("past the round limit, changes need you again, and a failed review doesn't"
   expect(afterReview(4, changes, 3, null)).toMatchObject({ needsYou: true, tell: null });
   const failed = { verdict: "failed" as const, body: "no verdict", findings: [] };
   expect(afterReview(4, failed, 3, null)).toMatchObject({ needsYou: false, rounds: 4 });
+});
+
+// A round's number goes up with every review that gave a verdict, an approval kept after a merge
+// of main included, whatever sc start does to the count of rounds of changes. A review that
+// failed is run again under the same number.
+test("a thread's round numbers only go up, through sc start past the limit and a merge of main", () => {
+  const changes = { verdict: "changes" as const, body: "Again.", findings: ["No test."] };
+  const failed = { verdict: "failed" as const, body: "no verdict" };
+  let saved = thread();
+  const numbers: number[] = [];
+  // Saves a review's outcome on the thread as a finished round does.
+  const reviewed = (review: typeof changes | typeof failed | typeof approval) => {
+    const round = nextRound(saved);
+    const { rounds } = afterReview(saved.rounds, review, 1, null);
+    const counted = review.verdict !== "failed";
+    const top_round = counted ? round : saved.top_round;
+    saved = { ...saved, rounds, review_round: round, top_round, verdict: review.verdict };
+    numbers.push(round);
+  };
+  // sc start past the limit sets the rounds of changes back to the limit.
+  const goOn = () => {
+    saved = { ...saved, rounds: 1 };
+  };
+  reviewed(changes);
+  reviewed(changes);
+  goOn();
+  reviewed(failed);
+  reviewed(changes);
+  reviewed(changes);
+  goOn();
+  reviewed(approval);
+  // A submit that only merged main keeps the approval, as a round of its own.
+  reviewed(approval);
+  expect(numbers).toEqual([1, 2, 3, 3, 4, 5, 6]);
 });
 
 // One comment is edited each round, so it says which round and commit it now holds.
