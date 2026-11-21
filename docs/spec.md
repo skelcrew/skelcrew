@@ -1,6 +1,8 @@
 # Skelcrew spec
 
-Nov 18, 2026 · @Simon · the design of Skelcrew v6.
+Nov 21, 2026 · @Simon · the design of Skelcrew v6.
+
+This spec says what Skelcrew is and what it guarantees. It should rarely need to change. How each part works today, down to keys, wording and output, is in the detail docs, which builders keep true to the code: [the screen](screen.md), [commands](commands.md), [the flow in detail](flow.md), [files and settings](files.md), and [plugins and base modules](runtime.md). Where a detail doc and this spec differ, this spec wins.
 
 ## Goal
 
@@ -29,7 +31,7 @@ The code is small, plain and tested. `AGENTS.md` says how to write it, and `docs
 | Word | Meaning |
 | --- | --- |
 | Lead | Your agent session for one repository, on your harness. One per repository: it starts the first time you open that repository, and from then on is always running. It acts only in its own repository, and reads every other repository Skelcrew has. You talk to it. It proposes tasks and starts them only once you say yes, files an issue only when you ask for one, and never acts on brainstorming alone. |
-| Repository | A git repository Skelcrew works on, from a clone of its own, with a lead of its own. It is named by its name on its forge, such as GitHub's `app`, or without a forge by its remote's path, with the owner added (`simon/app`) only when two share a name, in any case, such as `App` and `app`. |
+| Repository | A git repository Skelcrew works on, from a clone of its own, with a lead of its own. It is named by its name on its forge, such as `app`, or without a forge by its remote's path, with the owner added (`simon/app`) only when two share a name. |
 | Task | What you want done, kept by Skelcrew: its title, description, flow, stage, the lead's updates, and links to the issue it came from and the PR it produced. One task makes at most one PR. |
 | Issue | An item in a tracker, such as a GitHub issue or a Linear ticket. An issue can become a task. A task needs no issue. |
 | Stage | Where a task is: `issue`, `working`, `ready for review`, `merged` or `closed`. |
@@ -42,84 +44,76 @@ The code is small, plain and tested. `AGENTS.md` says how to write it, and `docs
 | Reviewer | The role that reviews each round, fresh each time. It runs once per round, with no session and no thread, and never inherits the builder's context. |
 | Round | One submit and the review of it. |
 | Event | Something that happened to a task: a review, a PR comment, a failed check, a merge. |
-| Needs you | A flag on a thread, shown on its task: you must act to unblock it, and its word says what to do. The lead sets it when only you can unblock the thread, and Skelcrew sets it for what it sees itself, such as a question asked in the builder's session, a harness error or the round limit. A task in `ready for review` waits on you too, by its stage. |
+| Needs you | A flag on a thread: you must act to unblock it, and its word says what to do. The lead sets it when only you can unblock the thread, and Skelcrew sets it for what it sees itself, such as a question asked in the builder's session, a harness error or the round limit. A task in `ready for review` waits on you too, by its stage. |
 | Skill | Knowledge an agent loads when it needs it, as a folder with a `SKILL.md`. A folder in `.agents/skills/`. |
 | Session host | What runs agents' sessions and lets you attach to them: tmux, or a runtime plugin that provides sessions, such as herdr. |
 | Base module | One of the five parts that run agents: sessions, transport, messages, sandbox and status. Each has a built-in default, and a runtime plugin can provide some. |
 | Plugin | A program in a repository of its own, of one of two kinds. An I/O plugin brings work in and sends results out, such as GitHub. A runtime plugin provides some of where and how agents run, such as herdr. |
 | Lock file | `skelcrew.lock`: the exact version and commit of every plugin a repository uses. |
 
-Tracker items are called issues everywhere: in commands, in the list and in the lead's words. The word task means Skelcrew's own object only.
+Tracker items are called issues everywhere: in commands, on the screen and in the lead's words. The word task means Skelcrew's own object only.
 
 ## Tasks and threads
 
 ### Tasks
 
-A task is Skelcrew's own record of a piece of work, from the first words to the merge. It has:
-
-- a **name**, such as `APP-12` or `APP-T103`;
-- a **title** and a **description**, which the builder gets as its first message, and a **short title** of two or three words, such as `Login redirect`, which the lead gives it for the list;
-- a **flow**, named when it starts, `default` unless said otherwise;
-- a **stage**;
-- the **lead's updates**: every message the lead typed into one of its threads after it started, in order, with who sent it and when;
-- a link to the **issue** it came from, if it came from one, and whether Skelcrew assigned you that issue;
-- a link to the **PR** it produced, once there is one, with its CI state and Skelcrew's review state: the round, the reviewer, the verdict.
+A task is Skelcrew's own record of a piece of work, from the first words to the merge. It has a name, a title and a description, which the builder gets as its first message, a short title the lead gives it, a flow, a stage, the lead's updates, a link to the issue it came from and whether Skelcrew assigned you that issue, and a link to the PR it produced, with its CI state and Skelcrew's review state.
 
 | Stage | When |
 | --- | --- |
-| `issue` | Not started: an open issue with no work running on it, never started or started and then removed with `sc rm`, or a task in the backlog. A task started with no issue, by `sc start <repo>`, never has this stage: it starts in `working`. |
-| `working` | Agents are on it: the builder works, a review runs, CI runs, or a thread needs you. A task whose thread stopped or failed stays here too, so it doesn't vanish. A task waiting in the queue of `limits.threads` is here, shown as `queued`. |
-| `ready for review` | Skelcrew's reviewer approved the latest round and CI is green: the wait for CI's first check on the approved commit has ended and every check on it passed, as **The wait for checks** says. It waits for you to review and merge. Without a forge, the branch is approved and waits for you. |
+| `issue` | Not started: an open issue with no work running on it, or a task in the backlog. A task started with no issue never has this stage: it starts in `working`. |
+| `working` | Agents are on it: the builder works, a review runs, CI runs, or a thread needs you. A task whose thread stopped or failed stays here, so it doesn't vanish, and so does a task queued for a builder. |
+| `ready for review` | Skelcrew's reviewer approved the latest round and CI is green on that commit, as **The wait for checks** says. It waits for you to review and merge. Without a forge, the approved branch waits for you. |
 | `merged` | The PR merged, or without a forge, the branch's changes reached the default branch. |
-| `closed` | The work ended without a merge, by `sc rm` or a PR closed without merging, and there is no open issue behind it. Or its issue closed while it was still in stage `issue`. |
+| `closed` | The work ended without a merge and there is no open issue behind it, or its issue closed while it was still in stage `issue`. |
 
-`merged` is the end. `closed` is the end unless you start the task again with `sc start`, which moves it back to `working`. The list shows the latest of both under Done, and `sc ls --all` shows them all.
+`merged` is the end. `closed` is the end unless you start the task again. When the work on a task ends without a merge and its issue is still open, the task goes back to stage `issue`: the same task, with the same name, its earlier attempt kept in its log. Starting it again begins afresh, from the issue as it is then, in a fresh clone on a fresh branch, with no updates carried over. A task with no issue goes to `closed`, and starts again from its own title and description.
 
-When the work on a task ends without a merge and its issue is still open, the task goes back to stage `issue`, not to `closed`. After `sc rm APP-12`, issue #12 shows as not started again. It is the same task, with the same name. Its threads, its closed PR and the lead's updates stay in its log, and `sc show APP-12` lists them as an earlier attempt. `sc start APP-12` starts it again from the issue's title and body as they are then, in a fresh clone on a fresh branch, with no updates carried over. A task with no issue, such as `APP-T103`, goes to `closed`, and `sc start APP-T103` starts it again from its own title and description.
-
-Needs you is a flag on a thread, never a stage. A task in `working` can need you, and the list shows why in its row.
+Needs you is a flag on a thread, never a stage.
 
 ### The backlog
 
-Work you want done later, but not as an issue in the tracker, is filed in Skelcrew's backlog with `sc task add app "<title>" "<description>"`. It makes a task with no issue and no thread, named as any task with no issue is, such as `APP-T104`, in stage `issue`. The lead parks work there, and creates an issue only when you explicitly ask for one. You can file one too.
+Work you want done later, but not as an issue in the tracker, is filed in Skelcrew's backlog: a task with no issue and no thread, in stage `issue`. The lead parks work there, and creates an issue only when you explicitly ask for one. You can file one too.
 
-The backlog is shared between machines through the repository's git remote, never through the tracker. Each task is a commit under a hidden ref, `refs/skelcrew/tasks/t104`, holding its title, description, when it was filed and by whom, such as `simon` or `simon via the lead`. It is never a branch or a file in the tree. The same push that claims the task's name files it, so a name is never claimed without its task, nor a task filed without its name. The claim of the name is a commit of its own, which holds none of the task's words, so once the task's ref goes, no ref holds them. Every machine's engine fetches these refs each time it refreshes its clone of the repository, so the list, `sc ls` and `sc show` on any machine show the same backlog within a poll.
+The backlog is shared between machines through the repository's git remote, never through the tracker, and never as a branch or a file in the tree. It guarantees:
 
-`sc start APP-T104`, or `s` or Enter on its row in the list, starts it like an issue, from its title and description. Starting it first claims the start on the remote: one push moves the task from its ref to `refs/skelcrew/started/t104`, a commit that keeps its words, with a lease on the commit Skelcrew read. So two machines never both start it: the second is refused before it records anything. The engine notes the claim in its database before the push, and keeps the note when the push fails without saying how, such as a connection lost on the way back: it asks the remote whose claim is there, and goes on when it is its own. A start retried before that is settled settles the earlier note first: with its claim on the remote, it goes on from it, and with no answer from the remote, it starts nothing. Within one engine, a refresh, a start and a removal of the backlog run one at a time, so none writes back what another just changed. Then it records the thread, which holds the task's words from then on, and deletes the claim. An engine that stops in between finds its claim at its next refresh: it deletes it once the thread is there, and otherwise puts the task back in the backlog, so a task is never lost. A claim the engine didn't note is another machine's start, and that machine finishes it. From then on its thread keeps its words, and once its work ends without a merge it goes to `closed`, as any task with no issue does. `sc rm APP-T104` deletes a task that never started, on the remote too. Its name stays claimed, so it never names other work.
+- a name is never claimed without its task, nor a task filed without its name;
+- every machine shows the same backlog within a poll;
+- two machines never both start the same task, and an engine that stops half way through a start never loses the task;
+- a task removed before it started is gone from the remote too, while its name stays claimed, so it never names other work;
+- once a task is removed, or its start is recorded, no ref on the remote holds its words.
+
+A task of the backlog that starts keeps its words in its thread, and ends in `closed` like any task with no issue. How the refs and claims work is in [the flow in detail](flow.md#the-backlog).
 
 ### Names
 
-A task has one name, used everywhere. It is the issue's ID with the repository's short name in front when the ID doesn't name a repository: GitHub issue #12 in app is `APP-12`, since its number is only unique within app, and Linear's `JOTT-12` stays `JOTT-12`. A task with no issue gets a `t` and a number of Skelcrew's, such as `APP-T103`, so it never clashes with an issue's name. The number is the next one after every `t` number claimed on the repository's remote or held by a task on this machine, so a brand-new repository's first is `t1`. Names from before Skelcrew claimed them, such as `APP-T25`, live only on the machine that started them, and have low numbers. The engine claims each one on the remote as an old name, apart from new names' claims, when it next refreshes the repository. While any old name is claimed on the remote, or held unclaimed on this machine, new numbers start at `t100`, above them all, so a new name never equals an old one. One gap is left: a machine whose engine hasn't run since this release, while another machine starts the repository's very first task. A claim doesn't say which machine made it, so an old name that a new claim took first is left shared. Skelcrew claims it on the remote before using it, in one push that also moves the remote's last claim, which must still be the one Skelcrew read. So two machines on one repository never take the same name, and a name is never below one claimed before it. A name is typed in any case: `sc show APP-T103` and `sc show app-t103` show the same task. Skelcrew shows a name in uppercase wherever you read it, as Linear does: the list, `sc ps`, `sc ls`, `sc show`, the notes and messages agents get, the terminal's title and a host's own apps. Wherever it stores or matches a name, it keeps it in lowercase: its database, folders, branches, sessions and their labels, and claims on the remote. So nothing on disk changes, and a file system that ignores case never sees two spellings of one task. So an issue whose ID has the shape of Skelcrew's own in any case, such as `T103`, is left out of Skelcrew's copy of the tracker, as it would share a name. A name never changes, so you can always tell which issue a task is. A dash, because no shell reads a dash as anything special.
+A task has one name, used everywhere. It is the issue's ID with the repository's short name in front when the ID doesn't name a repository: GitHub issue #12 in app is `APP-12`, and Linear's `JOTT-12` stays `JOTT-12`. A task with no issue gets a `t` and a number of Skelcrew's, such as `APP-T103`, so it never clashes with an issue's name, and an issue whose ID has that shape is left out of Skelcrew's copy of the tracker.
 
-A thread is addressed as its task and its role: `APP-12/builder`. Wherever a command takes a thread, the task's name alone means its active thread: the one that needs you, or else its builder. The slash never needs quoting in a shell.
+- Two machines on one repository never take the same name, as Skelcrew claims each on the remote before using it. A name is never below one claimed before it. One narrow gap, for names from before claims existed, is in [the flow in detail](flow.md#names).
+- A name never changes, so you can always tell which issue a task is.
+- A name is typed in any case. Skelcrew shows it in uppercase wherever you read it, and stores and matches it in lowercase wherever it is kept, such as folders, branches and sessions, so a file system that ignores case never sees two spellings of one task.
+
+A thread is addressed as its task and its role: `APP-12/builder`. Wherever a command takes a thread, the task's name alone means its active thread: the one that needs you, or else its builder.
 
 ### Threads
 
-A thread is one agent on a task. It has:
+A thread is one agent on a task. It has its role, its harness and model, kept for the thread's life since a conversation can't move between harnesses, its session on a session host, its state (`working`, `idle`, `asking` or `error`, as **Status** says), its status (`working`, `waiting`, `failed`, `stopped` or `done`), its needs you reasons, and for a builder, the task's branch and clone, which the builder owns.
 
-- its **role**, such as `builder`, or one a flow defines;
-- its **harness** and **model**, from the role, kept for the thread's life, since a conversation can't move between harnesses;
-- its **session**: the session host it runs on and the session's ID there;
-- its **state**: `working`, `idle`, `asking` or `error`, as **Status** says;
-- its **status**: `working`, `waiting` (on review, CI or you), `failed`, `stopped` or `done`;
-- its **needs you** reasons;
-- for a builder, the task's **branch and clone**, which the builder owns.
+A task makes at most one PR, from its builder's branch. Work that needs two PRs is two tasks, and the lead says which comes first.
 
-A task makes at most one PR, from its builder's branch. Work that needs two PRs is two tasks, and the lead says which comes first with `sc tell`.
-
-Reviewers are one-off runs: a fresh agent for each round, with no session and no thread. A review is recorded on the task, as part of its review state.
+Reviewers are one-off runs: a fresh agent for each round, with no session and no thread. A review is recorded on the task.
 
 ### The tracker is a source and a mirror
 
 You plan where you already do. An issue on GitHub shows up in Skelcrew with nothing to write, and the `skelcrew` label starts it. But tasks are Skelcrew's own, so a task can exist with no tracker at all, and Skelcrew's stages stay the same whichever tracker a repository uses.
 
-As a **source**, the tracker gives Skelcrew issues. Every open issue in Skelcrew's copy of the tracker shows as a task in stage `issue`. Skelcrew stores a task of its own once one starts, from the issue's title and body at that moment. Later edits to the issue don't reach a started task: the lead passes on what matters as an update.
+As a **source**, the tracker gives Skelcrew issues. Every open issue in Skelcrew's copy of the tracker shows as a task in stage `issue`. A task that starts is stored from the issue as it is at that moment. Later edits to the issue don't reach a started task: the lead passes on what matters as an update.
 
-As a **mirror**, Skelcrew shows the task's progress in the tracker through the tracker's own signals, never comments. It claims the issue with 👀, assigns it to you, and puts the line that closes it in the PR. A merged PR closes the issue. Closing an issue by hand ends nothing: a task already working carries on until its PR merges or closes, or you remove it, since an issue closed as a duplicate or by mistake must not kill a builder mid-work. A task still in stage `issue` whose issue closes leaves the list. A task with no issue mirrors nothing.
+As a **mirror**, Skelcrew shows the task's progress in the tracker through the tracker's own signals, never comments. It claims the issue, assigns it to you, and puts the line that closes it in the PR. A merged PR closes the issue. Closing an issue by hand ends nothing: a task already working carries on until its PR merges or closes, or you remove it, since an issue closed as a duplicate or by mistake must not kill a builder mid-work. A task still in stage `issue` whose issue closes leaves the list. A task with no issue mirrors nothing.
 
 ## Files
 
-A repository describes how its agents work in files. Skelcrew ships the same files inside itself as its defaults, so a repository with none of them works exactly as one with the defaults written out.
+A repository describes how its agents work in files. Skelcrew ships the same files inside itself as its defaults, so a repository with none of them works exactly as one with the defaults written out. Every setting, its shape and its default is in [files and settings](files.md).
 
 ```
 skelcrew.yaml            the repository's setup
@@ -139,435 +133,235 @@ skelcrew.lock            exact plugin versions, written by Skelcrew
 
 ### `skelcrew.yaml`
 
-The repository's setup, shared with everyone who works on it. It never holds a secret.
+The repository's setup, shared with everyone who works on it. It never holds a secret. It names the repository's tracker, its `setup` and `test` commands, the plugins it needs, and `limits.threads`.
 
-```yaml
-# Shared with everyone who works on this repository. Never put a secret here.
-tracker: github            # or linear, or none. Without a line, the forge's tracker
-setup: [bun install]
-test: [bun run check]
-plugins: [skelcrew/skelcrew-github]   # the plugins this repository needs, pinned in skelcrew.lock
-limits: { threads: 4 }     # at most this many builders at once in this repository
-```
+**Setup and test.** `setup` runs once in each builder's fresh clone. `test` is the whole test suite, which `sc check` runs. An empty list says on purpose that the repository needs none. Skelcrew never guesses them from the repository's files: a guess is often wrong, and agents would use it without anyone seeing it was a guess. They are settled once, with you. While either is missing, the lead's first proposal is a task that finishes the standard setup: it reads what the repository's CI and package files really run, proposes the missing commands to you, and on a yes fills in only those. For a repository you only drop into, it offers to put them in your own settings instead. Builders are told each command, or that it isn't configured. A builder that needs one that isn't configured never makes one up: it asks the lead, and waits.
 
-**Setup and test.** `setup` runs once in each builder's fresh clone. `test` is the whole test suite, which `sc check` runs. An empty list, such as `setup: []`, says on purpose that the repository needs none, so nobody asks for it. Skelcrew never guesses them from the repository's files: a guess is often wrong, and builders and reviewers would use it without anyone seeing it was a guess. They are settled once, with you. A line that is only a comment, as `sc init` writes them, sets nothing. While either of setup and test is missing, set nowhere, a repository's standard setup isn't finished, and the lead's first proposal, before anything else, is a task that finishes it. The lead reads the repository, its CI workflow and package files above all, proposes the missing commands to you in plain words, and on a yes starts that task. It fills in only the missing ones in `skelcrew.yaml` itself, as real lines, leaving a command that is set as it is, from what the repository's CI and package files really run, and anything else `sc init` left as a comment that the repository clearly needs. For a repository you only drop into, with no `skelcrew.yaml` to commit, the lead offers to put them under `repos:` in your `config.yaml` instead. The lead and builders are told them as they start, as neither can read your `config.yaml` from its sandbox. A builder is told each command or that it isn't configured. One that needs a command that isn't configured never makes one up: it asks the lead with `sc tell lead`, and waits.
+**The tracker.** A repository's forge is found on its own: the plugin that claims its remote, if one does. Its tracker is its forge, when the forge can be one, unless `tracker:` names another. `tracker: none` makes the repository work from git alone. When `tracker:` names a plugin that isn't installed, the repository has no tracker, and Skelcrew says which plugin to install. It doesn't fall back to its forge, since its issues are planned elsewhere. A task keeps the issue it started on when the repository's tracker changes.
 
-**The tracker.** A repository's forge is found on its own: the plugin that claims its remote, if one does. Its tracker is its forge, when the forge can be one, as GitHub can, unless `tracker:` names another, such as `linear`. `tracker: none` makes the repository work from git alone, with tasks named like `APP-T100`. It is a word, since a bare `tracker:` reads in YAML as no line at all. Which team or project holds the repository's issues stays in the tracker plugin's own settings. When `tracker:` names a plugin that isn't installed, the repository has no tracker, and `sc repo ls` says which plugin to install. It doesn't fall back to its forge, since its issues are planned elsewhere. A task keeps the issue it started on when the repository's tracker changes.
-
-**`limits.threads`** is the most builder threads running at once in this repository, since that depends on the repository: each builder runs its tests, uses CI minutes and opens a PR its reviewers must read. A start over the limit, from `sc start`, the lead or the `skelcrew` label, isn't refused: its task waits in a queue, first come first served unless you reorder it in the list, in stage `working`, shown as `queued`. The queue survives a restart of the engine. `sc rm` takes a task out of the queue. A labelled issue is claimed as it joins the queue, so another machine doesn't start it meanwhile. Without the line there is no limit.
+**`limits.threads`** is the most builders running at once in this repository, since that depends on the repository: each builder runs its tests, uses CI minutes and opens a PR its reviewers must read. A start over the limit is never refused: its task waits in a queue, first come first served unless you reorder it, in stage `working`. The queue survives a restart of the engine. A labelled issue is claimed as it joins the queue, so another machine doesn't start it meanwhile. Without the line there is no limit.
 
 ### `.agents/roles/`
 
-One Markdown file per role, named after it. Its frontmatter holds only `harness` and `model`, both optional, and the rest is its instructions. Nothing else goes in a role file until a need shows up.
-
-```markdown
----
-harness: codex
-model: gpt-6.1-sol
----
-You are the reviewer of a Skelcrew task. Read the diff against the base branch
-adversarially …
-```
-
-`lead`, `builder` and `reviewer` always exist, from the built-in defaults when the repository has no file for them. A flow names the roles it uses, so a repository that adds a flow can add a role file for it. A role with no `harness` or `model` gets yours, as **Which wins** says.
-
-A model name belongs to its harness, so your top-level `model` applies only to a role on your top-level harness. A role on another harness with no `model` gets that harness's default: `opus` for Claude Code, and Codex's own pick for Codex. Skelcrew passes a model to the harness as written and keeps no list of names. Before it starts a Codex session, it checks the model against `codex debug models`.
+One Markdown file per role, named after it: frontmatter with only an optional `harness` and `model`, then its instructions. `lead`, `builder` and `reviewer` always exist, from the built-in defaults when the repository has no file for them. A model name belongs to its harness, so a role on another harness than yours, with no `model`, gets that harness's default. Skelcrew keeps no list of model names.
 
 ### `.agents/flows/`
 
-A flow is the stages a task goes through and their settings. Skelcrew ships one flow, `default`: build, review, CI and ready, in that order.
+A flow is the stages a task goes through and their settings. Skelcrew ships one flow, `default`: build, review, CI and ready, with the builder and reviewer roles and a round limit of 3. Ready waits for green checks when the repository has a forge.
 
-```yaml
-# .agents/flows/default.yaml. Build, review, CI, ready.
-build:
-  role: builder
-review:
-  role: reviewer
-  rounds: 3              # after this many rounds of changes, the task needs you
-```
+**A flow without a review** goes build, CI and ready, for changes too small to need a reviewer, such as docs or wording. Skelcrew ships none: a repository adds it. Its task is never shown as approved or reviewing, and everywhere says it is not reviewed. Skelcrew's check passes saying so, so branch protection lets it through, and nothing on the PR claims a review. It counts no rounds. A merge when ready waits only for CI, at the commit last submitted, and a merge skipping the review refuses.
 
-CI and ready have no settings: ready waits for green checks when the repository has a forge.
+**Picking a flow.** Every task gets `default` unless the repository has other flows. Then the lead picks one as it starts or proposes a task, and tells you which and why whenever it isn't `default`. A task started from the label gets `default`. The flow can change only until the builder first submits. A flow with no review is only for a change too small to need one, and the lead always tells you, as nobody will review it. The built-in lead's instructions say this, so it holds in every repository.
 
-**A flow without a review.** A flow file with no `review:` goes build, CI and ready, with no reviewer, for changes too small to need one, such as docs, wording or a one-line fix. Skelcrew ships no such flow: a repository that wants one adds it, under the name it chooses. A file that says `review:` with nothing under it still has the stage, with its defaults.
-
-- **Submit.** `sc submit` pushes and opens the PR as in any flow, and queues no reviewer. The submit waits for CI's first check as a review would, a change to docs alone included, as nobody else will look at it, then Skelcrew's check goes green with "not reviewed: this flow has no review stage", so branch protection that requires it lets the PR through.
-- **State.** The task is never shown as approved, nor as reviewing. From its submit on, while it is pushed and waits for CI's first check, and then on CI, it shows `checks`, and once CI is green it is ready with the word `not reviewed` in place of `approved`, in `sc ps`, `sc ls` and `sc show`. The list, its details pane and the sidebar say `ready to merge, not reviewed`, as it waits on you to merge it, and `not reviewed` once a merge is armed, as **The list** says. It counts no rounds, so it never reaches the round limit. A submit that fails says what failed, never `review failed`: `submit failed` when its push or opening its PR failed, with the forge's error in the note to the lead, or `check failed` when Skelcrew couldn't set its check once it was pushed. Like a failed review it doesn't need you, as the lead can run it again with `sc review`, and `sc ps`, `sc ls` and `sc show` still give its review as `not reviewed`, with no round. An armed merge then waits on its submit or Skelcrew's check, which failed, and the lead hears it. Without a forge it is ready at once, as an approved branch is.
-- **Merge when ready.** `sc merge --when-ready` asks `Merge #7 (APP-12 Fix typo) when its checks pass?` and says it merges "as soon as its checks pass", as does the lead's note. It waits only for CI, at the commit last submitted, by the same rules as an approval: the wait for checks, every check passed and no conflict. A newer submit takes the place of the last, as a new approval does, and a push Skelcrew didn't make is never merged. `m` in the list merges it only at that commit too. In a repository with no forge, `sc ps` still shows it as `not reviewed`. A needs-you mark for ready to merge shows as for an approved task. When an armed merge is stuck, such as on a conflict or a refusal, the lead hears it once per submit, as it would once per review round. It posts no record of who asked on the PR, as the forge would show that record as an approval nobody gave: the task's log keeps who asked. A merge skipping the review has nothing to skip, so `sc merge --skip-review` refuses and says to merge it as usual, even while the submit waits for CI's first check.
-- **On the PR.** Skelcrew posts no review and no note. Its check says the PR wasn't reviewed, and the PR stays quiet: a forge's review carries a verdict, such as GitHub's "Approved.", which would contradict it.
-
-**Picking a flow.** Every task gets `default`, unless the repository has other flow files. Then the lead triages: it picks the flow when it starts or proposes a task, with `sc start --flow <name>`, and whenever it picks anything but `default`, it tells you which and why. A task started from the `skelcrew` label gets `default`. The lead can switch a task's flow only until its builder first runs `sc submit`, with `sc start <task> --flow <name>` on the task already working, and it tells you which and why. The builder keeps working, and the first round follows the new flow. After the first submit the flow is fixed, and `sc start --flow` on the task refuses and says so, since rounds already ran under the old one. It picks a flow with no review only for a change too small to need one, such as docs, wording or a trivial config change, and always tells you, as nobody will review it. The built-in lead's instructions say this, so it holds in every repository.
-
-Your own confirmations are never flow settings: you always merge, you always add repositories, and you always say yes before a lead starts work or briefs another lead. No flow can drop them.
+Your own confirmations are never flow settings: you always merge, you always add repositories, and you always say yes before a lead starts work or briefs another lead.
 
 ### `.agents/skills/`
 
-A skill is a folder with a `SKILL.md`, in the format Claude Code reads: a name and a description in the frontmatter, the instructions below, and any files they use beside it. A skill written for Claude Code works unchanged.
-
-Skills come from Skelcrew's clone of the repository, at the `.agents/` you approved, and are copied in as a session starts. They go only into a folder that belongs to one session, never one that sessions share, so an agent that edits its copy changes only its own session.
-
-- **Claude Code.** Into the `skills/` folder of the session's own config folder, in `~/.local/share/skelcrew/claude/`. Every Claude Code session has one, reviews included.
-- **Codex.** A Codex lead or builder has a `CODEX_HOME` of its own, and its skills go into `skills/` there. Reviews share Skelcrew's `CODEX_HOME`, whose `skills/` stays read-only and empty, since anything there would steer every later review in every repository. So a Codex review gets them the third way: they are copied into the review's own folder, and its instructions list those paths. Never the clone's `.agents/skills/`, which is the builder's branch, as a builder must not steer its own reviewer.
-- **Any other harness**, or one with no folder of one session's own: Skelcrew adds one line per skill to the role's instructions, with its name, description and the path of its `SKILL.md`, so the agent reads it when it needs it.
-
-Skills a repository keeps in `.claude/skills/` already reach Claude Code from the clone, and Skelcrew leaves them alone.
+A skill is a folder with a `SKILL.md`, in the format Claude Code reads. Skills come from the `.agents/` you approved and are copied into a folder of each session's own as it starts, so an agent that edits its copy changes only its own session, and a builder can never steer its own reviewer through its branch. A harness with no such folder gets them listed in its instructions. Skills in `.claude/skills/` reach Claude Code from the clone on their own.
 
 ### `skelcrew.lock`
 
 The exact version and commit of every plugin `skelcrew.yaml` names. `sc add` and `sc update` write it, you commit it, and `sc install` installs exactly what it says on every machine, as `package-lock.json` does.
 
-```yaml
-# Written by sc add and sc update. Commit it.
-skelcrew/skelcrew-github:
-  name: github
-  version: 0.3.1
-  commit: 4f9c2e1a7b…
-```
-
 ### Yours, never in a repository
 
-What belongs to you or your machine stays in `~/.config/skelcrew/`:
-
-- every login and token, and each plugin's settings and sign-ins;
-- the session host: `session: tmux`, or a runtime plugin, such as `session: herdr`;
-- your limits: `limits.reviews` and `limits.checks`;
-- your default harness and model, for every role and for each;
-- your default round limit, `rounds`;
-- the reviewer's `fallback`, and a review's time limit;
-- per-repository overrides, under `repos:`;
-- what you declined, such as `github_declined`;
-- whether the lead may arm a merge when ready, or skipping Skelcrew's review, when you ask it to, `lead: { can_merge: true }`, on by default, and turned off with `lead: { can_merge: false }`;
-- your personal plugins, which no repository names, such as every runtime plugin, pinned in `~/.config/skelcrew/skelcrew.lock`.
-
-```yaml
-# ~/.config/skelcrew/config.yaml
-harness: claude
-model: opus
-session: tmux
-rounds: 3
-limits: { reviews: 2, checks: 2 }
-review: { timeout_minutes: 30 }
-needs_you: { grace_minutes: 5 }
-plugins: [skelcrew/skelcrew-herdr]   # named afterwards by its short name, as in session: herdr
-roles:
-  builder:  { harness: codex, model: gpt-6.1-sol }
-  reviewer: { harness: codex, fallback: claude }
-repos:
-  simon/site:
-    setup: [npm ci]
-    roles:
-      builder: { model: sonnet }
-```
-
-`limits.reviews` is how many reviews run at once, by default a quarter of the machine's cores, at least 1. `limits.checks` is how many whole test suites run at once through `sc check`, by default half the machine's cores divided by four, at least 1, as a test suite usually runs about four processes of its own. Both fit your machine, so only you set them.
-
-The reviewer's `fallback` names the harness reviews run on while the reviewer's own waits out its usage limit, on that harness's default model. It is yours alone, as a usage limit belongs to your account. A review's time limit, `review: { timeout_minutes: 30 }`, is 30 minutes by default.
-
-`needs_you: { grace_minutes: 5 }` is how long a builder that stopped without submitting may wait for someone to act before it needs you, as **Needs you** says. It is yours, as it is about how soon you want to hear, and 5 minutes by default.
+What belongs to you or your machine stays in `~/.config/skelcrew/`: every login, token and plugin setting; the session host; your limits on reviews and test suites at once, which fit your machine; your default harness, model and round limit; the reviewer's fallback harness and time limit; how long a stopped builder waits before it needs you; per-repository overrides; what you declined; whether the lead may arm a merge when you ask, on by default; and your personal plugins, such as every runtime plugin, with a lock file of your own.
 
 ### Built-in defaults
 
-Skelcrew ships its defaults as the same files, inside Skelcrew: a `skelcrew.yaml` with no setup or test, the three roles with their instructions, and the `default` flow with three rounds. The defaults are read the same way a repository's files are, and nothing about them is special in the code.
-
-`sc init`, run in a checkout, writes them out there and adds the repository. Every repository gets the same standard setup: `skelcrew.yaml`, `skelcrew.lock` and `.agents/`, with setup and test filled in.
-
-- **setup and test** as commented examples, which the lead fills in with you, as **Setup and test** says;
-- **the forge** from the checkout's remote: its plugin goes in `plugins:`, such as `skelcrew/skelcrew-github` for a remote on github.com, and `skelcrew.lock` pins it, as `sc add` does. A plugin already installed here from the same source, such as one of yours, is pinned at its installed version, asking nothing. One not installed yet is installed after asking. A remote on a host with no plugin gets none. A plugin that can't be added, or that you say no to, is only reported, with the `sc add` command that adds it later;
-- **a commented `limits: { threads: 4 }`**, to show how to limit the builders at once;
-- **your harness and model** for each role, as real lines, so the repository works the same for a teammate;
-- no tracker line, so a repository on GitHub keeps its issues, with a commented `# tracker: none` to show how to work from git alone.
-
-It leaves any file that already exists as it is, with one exception: a `skelcrew.yaml` whose `plugins:` names none still gains the forge's plugin, and `sc init` says so. A `skelcrew.lock` that is there gains the plugin's pin beside its others, or keeps the pin it has for it. Then the plugin is installed at that pin, as `sc install` does. Every other line of either file stays as it was. A file written as one map, such as `{setup: [make]}`, is left as it is, and `sc init` says which line to add to it by hand. In a checkout that already has an `.agents/`, it writes nothing into it, then shows what is in it and asks you to approve it, as **Trust** says. Bringing the repository in says `Adding simon/app to Skelcrew...`, and offering the forge's plugin asks as plain `sc` does. It ends by naming the files it wrote or changed, then asks `Commit and push these files to main now? [Y/n]`, naming the default branch, as Skelcrew reads them only from there. A yes commits only those files, as `Set up Skelcrew`, pushes them, and opens the lead as plain `sc` does, on a clone that has them. It doesn't ask, and shows the git commands, one per line, then `Then run sc.`, when other changes are staged, when the default branch here isn't where the remote has it, as the push would send commits of yours too, when a file it edited had changes of yours already, as the commit would take them too, without a terminal, or after a no. The commit it shows names its files, so staged work stays out of it. On another branch it doesn't ask either: the commands commit and push that branch, then say to merge it into the default branch, such as with a pull request, and run `sc`. Switching to the default branch first could fail, where it tracks a file `sc init` wrote. A commit or push that fails says what git said and shows what is left to run, as the lead only sees pushed files. It stops outside a git repository, and when the repository has no remote. Only you can run it.
+Skelcrew ships its defaults as the same files, inside Skelcrew, read the same way as a repository's, with nothing special about them in the code. `sc init` writes them into a checkout as the standard setup, with the forge's plugin pinned and your harness and model for each role, leaving setup and test to the lead. It leaves existing files as they are, but for adding the forge's plugin, and never writes into an existing `.agents/`. It asks before committing and pushing to the default branch, commits only its own files, and shows the commands instead whenever that could take work of yours. Only you can run it.
 
 ### Which wins
 
 Each setting comes from the first of these that sets it:
 
-1. **Your per-repository overrides**, under `repos:` in your `config.yaml`. They are you, saying what you want for this repository on your machine. They apply to that repository only.
+1. **Your per-repository overrides**, in your `config.yaml`. They are you, saying what you want for this repository on your machine.
 2. **The repository's files**, from Skelcrew's clone of its default branch.
 3. **Your general settings** in `config.yaml`.
 4. **The built-in defaults.**
 
 So the repository decides how its agents work, your general settings fill in what it leaves out, and an override is how you differ from your team on purpose. Settings merge key by key. A role's instructions are one value: a repository's `builder.md` replaces the built-in instructions whole.
 
-Some settings exist only in your files: logins, tokens, the session host, `limits.reviews`, `limits.checks`, the reviewer's fallback, the review time limit, whether the lead may merge, and personal plugins. A repository's files can't set them. Whether the lead may merge is in your general settings only: not under `repos:`, and never from a repository's `skelcrew.yaml` or `.agents/`, so no repository can turn it on.
+Some settings exist only in your files: logins, tokens, the session host, your limits, the reviewer's fallback, the review time limit, whether the lead may merge, and personal plugins. A repository's files can't set them. Whether the lead may merge is in your general settings only, never an override nor a repository's files, so no repository can turn it on.
 
-Settings in their old shape are still read: `lead:`, `builder:` and `reviewer:` at the top level as the roles' harness and model, and `max_rounds` as `rounds`. Where both shapes say something, the new one wins. `sc` says once which old key it read and what replaces it, and changes no file itself.
+Settings in an older shape are still read. Where both shapes say something, the new one wins. `sc` says once which old key it read and what replaces it, and changes no file itself.
 
 ## Trust
 
 Two kinds of thing could reach your machine through the files: plugins, which run as you, and a repository's own files, which steer agents. Each has its rule.
 
-**Plugins run as you, outside the sandbox**, with no sandbox of their own. A plugin can read what you can, your git login and other plugins' tokens included. So `sc install`, `sc add` and `sc update` never install a plugin silently, unlike npm. For a plugin that is new to this machine, or whose version or commit changed, they say what it is for, in its manifest's `about`, then its name, version and source, and that it runs on this machine as you, outside the agents' sandbox, and ask: `Install the fake plugin? [Y/n]`. Typing `d` shows the rest, its kind, what it provides and every command its manifest runs, and asks again. Each answer is a line, so the Enter after a key never answers the next question. A plugin already installed at its locked version asks nothing, as you approved that exact version before. Without a terminal, such as for the engine, nothing is installed: the repository needs you, and its row says to run `sc install`. So a repository's files can make Skelcrew ask you, never make it install. Agents can't run any of these commands.
+**Plugins run as you, outside the sandbox**, with no sandbox of their own, so they can read what you can. So Skelcrew never installs a plugin silently, unlike npm. For a plugin new to this machine, or whose version or commit changed, it says what the plugin is for, where it comes from, and that it runs as you outside the agents' sandbox, offers every detail of what it runs, and asks. A plugin already installed at its locked version asks nothing. Without a terminal, such as for the engine, nothing is installed and the repository needs you. So a repository's files can make Skelcrew ask you, never make it install. Agents can't install plugins.
 
-**A repository's files steer agents, but can't grant anything.** `skelcrew.yaml` and `.agents/` say how agents work. They can't:
+**A repository's files steer agents, but can't grant anything.** They can't widen the sandbox: no file mounts a folder, passes an environment variable, or reaches a socket. They can't skip your confirmations, install anything without asking, or set what is yours.
 
-- **widen the sandbox.** No file mounts a folder, passes an environment variable, or reaches a socket. The harness module draws the boundary;
-- **skip your confirmations.** You merge. You add repositories, in your own terminal. You say yes before a lead starts work or files a public issue;
-- **install anything without asking**;
-- **set what is yours**, such as logins, the session host and your limits.
+**A repository's `.agents/` needs your OK, the first time and after each change**, as it decides what agents are told and how far they go. Skelcrew shows it and asks when a repository comes in, even one you can push to, as being able to push is not the same as having read what a teammate wrote. Until you approve, tasks run on the built-in roles and flows, or on the version you approved before, and the repository needs you. A task keeps the version it started with. Merging a PR that changes `.agents/` approves nothing, since an agent wrote it: the merge confirm says so, and the approval comes after. What you approved is remembered in your own settings, never in the repository. Files `sc init` writes are the built-in defaults, so they count as approved.
 
-**A repository's `.agents/` needs your OK, the first time and after each change.** Role instructions and flows decide what agents are told and how far they go, so a change to them is a change to what runs on your machine. Skelcrew remembers the `.agents/` you approved for each repository in your `~/.config/skelcrew/`, never in the repository.
-
-The first time comes when a repository comes in. Adding a repository whose default branch already has an `.agents/` shows what is in it and asks, even when Skelcrew would trust the repository because you can push to it. Being able to push is not the same as having read what a teammate wrote there. A yes approves it. A no still adds the repository, and its tasks run on the built-in roles and flows until `sc repo trust <repo>` approves its own. `sc init` in a checkout that already has an `.agents/` leaves it as it is and asks the same way. Files `sc init` writes itself are the built-in defaults, so they are approved as it writes them. A repository already in Skelcrew when it first reads `.agents/` asks the same way, at the first `sc` there.
-
-After that, when the default branch brings an `.agents/` different from the one you approved, new tasks keep starting on the version you approved, and the repository needs you. `sc repo trust <repo>` shows what changed and asks, and a yes makes the new version count. A task that already started keeps the version it started with. Merging a PR that changes `.agents/` approves nothing, since an agent wrote it and the merge confirm doesn't show the change. The confirm says the PR changes `.agents/`, and after the merge `sc repo trust` shows the change and asks.
-
-**Plugins aren't agents.** Agents never see a plugin's folders or tokens, which live in your home folder, which the sandbox hides. What a plugin brings in is outside text: its control codes are removed, and typed into the lead, it steers the lead. So each plugin decides who may reach the lead through it.
+**Plugins aren't agents.** Agents never see a plugin's folders or tokens, which the sandbox hides. What a plugin brings in is outside text: its control codes are removed, and typed into the lead, it steers the lead. So each plugin decides who may reach the lead through it.
 
 ## Repositories
 
-Skelcrew keeps its own clone of every repository it works on, in `~/.local/share/skelcrew/repos/<owner>/<repo>/`, at the latest default branch. A repository comes in only when you add it, in your own terminal: with `sc` in a checkout of it, `sc init`, or `sc repo add`, which takes a checkout's path, its full name on its forge, such as `simon/site`, or nothing for the checkout you are in. After that its short name works everywhere. The lead can't bring one in: it asks you to add it and open it. `sc repo ls` lists them and `sc repo rm <name>` removes Skelcrew's clone.
+Skelcrew keeps its own clone of every repository it works on, at the latest default branch. A repository comes in only when you add it, in your own terminal, such as by opening it with `sc` in a checkout. The lead can't bring one in: it asks you to.
 
-**Opening a repository.** The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote: its screen, or its list with `sc --list`, as **The list** says. A repository Skelcrew doesn't have yet is added first, so the first `sc` in any clone goes straight to work. A remote that still uses a repository's old name, such as from before a rename, is matched by asking its forge once. Skelcrew remembers the answer and prints the `git remote set-url` that updates the remote. Outside any repository, `sc` opens the repository you opened last. With no repositories yet, it says `Skelcrew has no repositories yet. Run sc in a checkout of one.` In a repository with no remote, `sc` opens nothing, as opening another repository there would look as if Skelcrew had ignored where you are. It says so as steps to take, with each command bold on a line of its own and a blank line above and below each:
+**Opening a repository.** The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote even after a rename, adding it first if Skelcrew doesn't have it, so the first `sc` in any clone goes straight to work. Outside any repository, `sc` opens the one you opened last. In a repository with no remote, `sc` opens nothing, as opening another one would look as if Skelcrew had ignored where you are, and says what to do.
 
-```
-This git repository has no remote. To add a remote and push it:
+The folder only names the repository: agents never work in your checkout, and Skelcrew never sees changes you haven't pushed. The only files Skelcrew writes there are those of commands you run yourself to change them, such as `sc init` and `sc add`, and the only commit it makes there is the one `sc init` asks you about.
 
-  git remote add origin <url>
+**The GitHub plugin.** `sc` in a checkout on GitHub, in a repository whose files name no forge plugin, offers the GitHub plugin, saying first why Skelcrew needs it, then asking as for any plugin. Yes makes GitHub the repository's tracker and forge, with nothing written into the repository. No is remembered for that repository in your own settings, so every checkout of it stays quiet.
 
-  git push -u origin HEAD
+**Trusting a repository.** Agents will run a repository's setup and test commands, and read its `AGENTS.md` and settings as instructions. So before cloning, Skelcrew trusts a repository on its own only when its forge says your login can push to it and it isn't a fork, and otherwise asks you. Only you can trust one, in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in your own settings, never in the repository.
 
-Then run sc again.
-```
+**A repository with no forge** must take Skelcrew's pushes on your own git login, so Skelcrew checks the engine can push before adding it, and otherwise shows what git said and what to fix.
 
-The folder only names the repository: agents never work in your checkout, and Skelcrew never sees changes you haven't pushed. The only files Skelcrew writes there are those of `sc init`, `sc add` and `sc update`, commands you run yourself, and the only commit it makes there is the one `sc init` asks you about.
+**Each lead, its own repository.** A repository's lead works only in that repository: its clone, read-only, its tasks, and its issues and PRs. The engine knows which lead is calling from its socket. It can also read every other repository Skelcrew has, read-only. It starts the first time you open its repository, with an opening turn so you don't have to know to speak first, and from then on runs. When work belongs in another repository, it briefs that repository's lead itself, as **Messages** says. That lead starts work on a brief only when the brief carries your own words, and otherwise asks you.
 
-**The GitHub plugin.** `sc` in a checkout whose origin is on github.com, in a repository whose files name no forge plugin, offers the GitHub plugin, until it is installed or you say no for that repository. Skelcrew only reads the checkout's remote to decide to offer it, with no call to GitHub. It says why first: `This is a GitHub repository (simon/app). Skelcrew needs its GitHub plugin to read issues, open pull requests and merge them.` Then it fetches the plugin and asks once, as for any plugin: `GitHub plugin 0.8.1, from skelcrew/skelcrew-github. Runs on this machine as you, outside the agents' sandbox. Type d for details.` and `Install the GitHub plugin? [Y/n]`. With GitHub out of reach there is nothing to ask, so nothing is decided, and the next `sc` offers it again. Yes adds `skelcrew/skelcrew-github` as yours, as `sc add -g` does, and says `Installed the GitHub plugin.` Its setup then runs, as **GitHub** says. GitHub becomes the repository's tracker and forge, so its open issues show as tasks, and nothing has to be written into the repository. No is saved under `github_declined` in `config.yaml`, as the repository's full name, such as `simon/app`, so every checkout of it stays quiet and deleting the line undoes it.
-
-**Trusting a repository.** Before cloning, Skelcrew decides whether to trust the repository: agents will run its setup and test commands, and read its `AGENTS.md` and settings as instructions. It trusts it on its own when its forge says your login can push to it, unless it is a fork. For any other repository, one with no forge included, Skelcrew asks you as you add it, and `sc repo trust <name>` trusts one without the question. Only you can do either, in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in `~/.config/skelcrew/`, never in the repository.
-
-**A repository with no forge** must take Skelcrew's pushes on your own git login, so Skelcrew checks that as it comes in. The engine runs `git push --dry-run` of a new branch from Skelcrew's clone, outside your terminal and without your SSH agent. If git refuses, Skelcrew shows what git said and what to fix, such as a key the engine can use or a credential helper, and doesn't add the repository.
-
-**Each lead, its own repository.** A repository's lead works only in that repository: its clone, read-only, its tasks, and its issues and PRs. Its commands work only there, as the engine knows which lead is calling from its socket. It can also read every other repository Skelcrew has, through their clones, read-only, to understand them and review their leads' work. It starts the first time you open its repository, and from then on runs. On that first start, with no earlier conversation, Skelcrew gives it an opening turn, so you don't have to know to speak first: a note marked as Skelcrew's, typed in like every other note once the lead is ready. The lead greets you in a line or two, then proposes the task that finishes the standard setup while setup or test is missing, or else says what it can do and asks what to work on. Once you have typed to the lead, its opening turn is dropped if it hasn't gone in yet, such as while the lead was busy. A lead that starts again or is brought back gets no opening turn. Asked about work in another repository, it says so. When work it found belongs in another repository, it briefs that repository's lead with `sc tell lead <repo>`, as **Messages** says, rather than you copying the brief across. Leads message each other this way by default, with no confirmation from you. That lead starts work on a brief only when the brief carries your own words, as **Messages** says. Otherwise it reports the brief to you and asks.
-
-**Issues in public repositories.** Before the lead files an issue in a public repository's tracker, it asks you, such as "I'll file this as an issue on simon/app, which is public. OK?" A lead that can't tell whether the repository is public asks. For a task that fixes a security hole, it asks each time whether to file it as a plain issue or keep it out of GitHub. Its title and body say only what to change, such as "Sanitise HTML in posts", never what an attacker could do. The lead gives the builder the details with `sc tell`. The builder's PR description and commit messages likewise say what changed, never how the hole could be used.
+**Issues in public repositories.** The lead asks you before filing an issue in a public repository's tracker, or one it can't tell is private. For a security hole, it asks each time whether to file it at all. Issues, PRs and commits say what to change, never how a hole could be used, and the builder gets the details from the lead.
 
 ## Commands
 
-The command line follows npm: files describe what a repository needs, `sc install` makes the machine match, and `sc add`, `sc remove` and `sc update` change the files and the machine together.
+The command line follows npm: files describe what a repository needs, `sc install` makes the machine match, and `sc add`, `sc remove` and `sc update` change the files and the machine together. Each command, what it takes and what it prints is in [commands](commands.md).
 
-Every command that lists or shows something takes `--json`, for tools. Commands that do something print one line or fail with a clear message and a non-zero exit, with or without `--json`.
+Every command that lists or shows something takes `--json`. Commands that do something print one line or fail with a clear message and a non-zero exit. A command Skelcrew shows you to run reads as a step to take, and only a real error looks like one.
 
-### Setting up
-
-| Command | What it does |
-| --- | --- |
-| `sc [--from <owner/repo>]` | Opens the screen on the lead of the repository you are in, as **The list** says. Runs `sc install` first on a machine that isn't set up, and starts the engine in the background first if it isn't running. |
-| `sc --list [--from <owner/repo>]` | Shows the list of the repository you are in, and otherwise does what plain `sc` does. |
-| `sc init` | Writes the standard setup: `skelcrew.yaml`, `skelcrew.lock` with the forge's plugin pinned, and `.agents/` from the built-in defaults. Then adds the repository, offers to commit and push the files to the default branch, and on a yes opens the lead. The lead fills in setup and test. |
-| `sc install` | Makes the machine match the files, as **Installing** says. Safe to run again: with nothing to do, it says so. In a checkout, it covers that repository and your personal files. Outside one, every repository Skelcrew has. |
-| `sc add <plugin>` | Adds a plugin to the repository: `plugins:` in `skelcrew.yaml` and its exact version in `skelcrew.lock`. Then installs it, after asking. A plugin installed here already from the same source, such as one of yours, is pinned at the installed version, asking nothing. Another plugin of the same name is refused, as is one of yours from a folder, which has no version to pin. |
-| `sc add -g <plugin>` | Adds a personal plugin: your `config.yaml` and your own lock file. Then installs it, after asking. |
-| `sc remove [-g] <plugin>` | Takes a plugin out of the files, and removes it from the machine with its settings and tokens once nothing else uses it. Refuses for the tracker or forge of a repository Skelcrew has. |
-| `sc update [-g] [<plugin>]` | Moves a plugin, or all of them, to its newest tag, rewrites the lock, and installs it after asking. |
-| `sc setup <plugin>` | Runs an installed plugin's setup again, such as to sign in when its sign-in lapsed, without fetching or building it again. |
-| `sc plugins` | Lists the plugins the files ask for and the machine has, with their versions, their kind and what each provides, and any that `sc install` would change. |
-| `sc up` | Runs the engine in the foreground, with a readable log, until Ctrl-C. |
-| `sc up --bg` | Runs the engine as the background service, under systemd or launchd, and returns. |
-| `sc restart` | Restarts the engine's service, under systemd or launchd, and prints one line once the new engine answers, such as `Restarted the engine on simon@workbox. Agents kept running.` Agents keep running. An engine run in a terminal with `sc up` isn't restarted: `sc restart` asks you to stop it, and starts no service beside it. |
-| `sc --remote <host> install` | Sends your personal files to the server and runs `sc install` there. On a server with no Skelcrew, asks, then puts Skelcrew there first. |
-| `sc --remote <host> up --bg` | Runs the engine on the server as its background service. |
-| `sc --remote <host> restart` | Restarts the server's engine, with no `ssh` by hand. |
-| `sc --remote <host> [command]` | Runs any command on the server, over `ssh -t`. With no command, opens the server's screen, and with `--list` its list. |
-| `sc repo add [<path> \| <owner/repo>]` | Adds a repository: the checkout at the path, the one named, or the checkout you are in. Asks whether you trust it when it needs to. |
-| `sc repo ls` | Lists the repositories, with their short names, trackers and forges, and a tracker `skelcrew.yaml` names that isn't installed. |
-| `sc repo rm <name>` | Removes Skelcrew's clone of a repository. Refuses while the repository has live threads, and names them. The lead never needs it, and asks you instead. |
-| `sc repo trust <name>` | Trusts a repository your login can't push to, and approves a changed `.agents/` after showing what changed. |
-
-Only you can run these, never an agent.
-
-### Tasks and threads
-
-For you, and for the lead within its own repository:
-
-| Command | What it does |
-| --- | --- |
-| `sc ls [<repo>] [--all]` | The tasks, grouped by stage, each with its name, its short title or title, and its PR, CI and review, such as `#31 · CI failed · changes r3`. `--all` adds merged and closed ones. `--json` gives each task's `stage`, `issue`, its threads' `status`, `needsYou` and `queued`, and its `pr`, `checks` and `review`. |
-| `sc show <task>` | One task: its title, stage, issue with its link, threads with their status, PR with its state and branch, CI and each check, Skelcrew's review, its armed merge with what it waits on, such as `merges without approval · waiting on its checks`, and the PR's link. Then its description and updates as its reviewer gets them, the PR's latest review with its text, the PR's description, and the end of each failed check's log, labelled as from the forge. Earlier attempts are listed after. Text from the tracker or forge has its control characters removed. The lead reads issues and PRs here, never through the tracker's or forge's API, which it has no login for. |
-| `sc ps [<repo>] [--all]` | The threads, one row each, named `APP-12/builder`, newest first: status and what it needs you for, such as `round limit` or the lead's mark, cut to fit, short title, PR, CI (`passed`, `failed`, `running`, `no CI` or `none`), review (`approved`, `changes`, `reviewing`, `failed` or `none`, with its round, such as `changes r3`), `queued for review` while a review waits for a place, a WAITING count while messages wait for an agent, and a MERGE column while any task has an armed merge, `merges when ready` or `merges without approval`. A row fits in 80 columns. Under the table, one line per armed merge says what it waits on, such as `APP-12 merges without approval, waiting on its checks.`, as that can be long. Then one line per check slot taken says who holds it and for how long, such as `APP-12/reviewer holds a check slot, for 32 min.` or `You hold a check slot, for less than a minute.`, so a check that waits in line shows what it waits on. `sc ps <repo>`, as a lead's always is, names a slot held in another repository only as `Another repository holds a check slot`. Done threads only with `--all`. `--json` adds each thread's `branch`, `prUrl`, `needsYouFor` whole, the review's `at`, `waiting`, and `merge` with what it `waits` on and whether it `skipReview`s. |
-| `sc start <issue> [--from <branch>] [--short "<words>"] [--flow <name>]` | Makes a task from the issue and starts its builder, from `main` or the branch `--from` names. Claims the issue, without checking the claim, and assigns it to you. On a task that stopped, starts its threads again, each with `--resume` on its last conversation. On a task past the round limit, lets it go on: counts its rounds from zero again and types the last review's changes into the builder. `--short` sets the short title, and on a task already working changes nothing else. `--flow` names its flow, and on a task already working switches it until the builder's first submit, as **Picking a flow** says. |
-| `sc task add <repo> "<title>" "<description>"` | Files a task in the backlog, such as `APP-T104`, and starts nothing, as **The backlog** says. With no title and description as words, reads them from stdin, as `sc start <repo>` does. Refuses an empty description. Each `sc task add` files a task of its own, the same words twice included. A filing the remote may have taken, though its answer was lost, is noted: it fails, saying to run the same command again once the remote is back. That command then asks the remote whether the earlier try's claim is there. If it is, it names that task and files nothing more. A claim Skelcrew couldn't look up is never taken for another machine's, and filings on one machine run one at a time per repository, each noting its own try. |
-| `sc start <repo> "<title>" "<description>" [--short "<words>"] [--flow <name>]` | Makes a task with no issue, such as `APP-T103`, and starts its builder. Works in any repository. With no title and description as words, reads them from stdin, such as `sc start app < request.md`: the first line is the title, without a markdown `# `, and the rest, from its first line that isn't blank, is the description. Refuses an empty description, and with stdin a terminal shows how to use it. |
-| `sc issue create <repo> "<title>" "<body>" [--asked-file <file>]` | Creates an issue in the repository's tracker and prints its task's name, such as `APP-13`. Starts nothing. Refuses in a repository with no tracker, and refuses an empty body, as a builder sees only the title and body. The lead must give `--asked-file` with your words asking for the issue, exactly, written as for a merge when ready, and the engine logs them. Without them it is refused, and told to use `sc task add`. Yours needs none. |
-| `sc attach <task>[/<role>]` | Attaches full screen to the task's active thread, or the one named, through its session host. `sc attach lead` attaches to the lead. |
-| `sc peek <task>[/<role>]` | Prints what the thread's agent shows now, without attaching. Refuses when the agent isn't running, saying what state the thread is in. |
-| `sc interrupt <task>[/<role>]` | Stops the agent's turn, as Esc does, and keeps its session. Refuses when the agent isn't running. |
-| `sc tell <task>[/<role>] "<text>" \| -` | Types a message into the task's active thread, or the one named, once it is idle, and keeps it as an update to the task. With `-` as its text, reads the message from stdin, which needs no shell quoting, and refuses an empty one. When it can't go in right away, it says why. Only the lead runs it: you type to an agent by attaching. |
-| `sc review <task>` | Reviews the task's last submitted commit again, as a round's review, such as after a review that failed. Refuses while a review of it is waiting or running. |
-| `sc stop <task>[/<role>]` | Ends the task's sessions, or one thread's, and keeps the clone, branch and PR. Stopping the task takes you off its issue if Skelcrew assigned you. |
-| `sc rm <task> ["<reason>"]` | Ends the work on the task, as **Removing a task** says, then prints what stays, such as `Removed APP-12. Issue #12 stays open, and sc start APP-12 starts it over.` At a terminal it first says what it will do and asks, such as `Remove APP-12? This closes PR #7 and deletes its branch and clone. [y/N]`. Without a terminal, as for the lead, it doesn't ask: the lead confirms with you in its conversation first, naming the PR it will close. |
-| `sc merge --when-ready <task> \| <#pr>` | Arms a merge when ready, after asking `y/N` at your terminal, as **Merge when ready** says. Only you can, or the lead when you let it, with `--asked-file <file>` holding your words, and no question. Builders and reviewers never can. A PR's number is in the repository you are in, or the one `--from` names. |
-| `sc merge --skip-review <task> \| <#pr>` | Arms a merge without Skelcrew's approval, after asking `y/N` at your terminal with what the review still asks for, as **Merge skipping the review** says. The same people may run it as `--when-ready`, the same way. |
-| `sc merge --cancel <task> \| <#pr>` | Disarms either. The lead may run it when you ask. |
-| `sc needs-you <task>[/<role>] "<action>"` | Marks the thread as needing you, with the action you must take, written for you, such as `apply the check.yml split in PR #463`. Its word is then that action, wherever it shows. The lead runs it when only you can unblock the thread, and you can too. Builders can't. |
-| `sc needs-you --clear <task>[/<role>]` | Takes the mark off. On a thread past its round limit, it is also the decision that you needn't decide it. The same people may run it. |
-
-For the agents themselves:
-
-| Command | Who | What it does |
-| --- | --- | --- |
-| `sc submit "<summary>"` | Builder | Submits a round for review: Skelcrew pushes, opens the PR if needed and there is a forge, and starts a review |
-| `sc tell lead "<text>"` | Builder | Types a message into its repository's lead, once it is idle |
-| `sc tell lead <repo> "<text>" \| - [--asked-file <file>]` | Lead | Types a brief into another repository's lead, once it is idle, with the text as words, or on stdin with `-`, and your words from the file when you asked for the work |
-| `sc review <task>` | Builder | Reviews its own task's last submitted commit again, such as when you ask for it on the PR. Never another task's |
-| `sc check` | Builder, reviewer, you | Runs the repository's whole test suite in the folder it runs in, once a check slot is free |
+- **Yours only:** opening a repository, setting up the machine, its plugins and repositories, and running the engine, such as `sc`, `sc init`, `sc install`, `sc add`, `sc up` and `sc repo trust`.
+- **Yours, and the lead's in its own repository:** seeing and steering tasks and threads, such as `sc ls`, `sc show`, `sc ps`, `sc start`, `sc task add`, `sc stop`, `sc rm`, `sc merge` and `sc needs-you`. Some need your words or your terminal, such as `sc merge`.
+- **The agents':** `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc review` for a builder's own task, and `sc check`, which reviewers and you can run too.
 
 Every command an agent can run answers quickly, as Claude Code moves a shell command to the background after 2 minutes.
 
-**Check slots.** Many whole test suites at once overload the machine, so the whole suite runs only through `sc check`, and at most `limits.checks` run at once. `sc check` runs the repository's `test:` commands joined with `&&` in one shell, so a `cd` or an `export` holds for the next, in the folder it runs in, and exits with the suite's own code. The engine keeps the queue: a check over the limit waits its turn, first come first served, and prints its place, such as `Waiting for a check slot: number 2 in line.` The suite runs in a process group of its own, which never outlives `sc check`, even killed outright. The slot is freed when `sc check` ends: when the suite's shell ends, or when `sc check` is killed, such as with a cancelled review. `sc check` keeps its connection to the engine to itself, so nothing the suite starts can hold the slot. A process the suite starts that detaches itself into a session or process group of its own, such as a tmux server or a database, is outside the check: it may run on beside the next check, as containing it would take means only Linux has. A check killed while it waits gives its place back. A restarted engine counts slots from none, so a suite running across the restart may briefly overlap new ones. Each task has a second socket, mounted into its reviewer's sandbox, on which only `sc check` is allowed. You run it in a checkout of a repository Skelcrew has. With no `test:`, it fails and says so, and a builder then asks the lead. With `test: []` it runs nothing, takes no slot, and says so. A check that waits for a slot during a review counts toward the review's time limit.
+**Check slots.** Many whole test suites at once overload the machine, so the whole suite runs only through `sc check`, as many at once as your limit allows, first come first served, saying where it is in line. A slot is freed when its check ends, however it ends, and nothing the suite starts can hold it. A suite never outlives its check, but for a process that detaches into a session of its own. A restarted engine forgets the slots, so a suite running across the restart may briefly overlap new ones. A reviewer's socket allows only `sc check`. Without `test:` it fails and says so, and with `test: []` it runs nothing.
 
-## Installing
+### Installing
 
-`sc install` makes the machine match the files:
+`sc install` makes the machine match the files, and is safe to run again:
 
-1. It checks for `tmux`, `bwrap` (0.11 or newer, for reviews, which see a clone through an overlay) or `sandbox-exec`, `git`, and every harness a role uses. If one is missing, it says exactly what to install before it asks anything, as steps to take rather than an error: `Before Skelcrew can start, install:`, then the commands, such as `sudo apt install tmux`, then for a missing harness `a coding agent, one of:` with the command for each, then `Then run sc again.`
-2. On a machine with no harness picked, it saves `harness` in `config.yaml`. With only one installed, it asks nothing: it says which it found and which it didn't, such as `Claude Code detected` and `Codex not found`, then `Agents will run on Claude Code`, and reviews run on it too. With both installed, it asks which agents run on, in a list you move through with the arrow keys and choose from with Enter, each marked `installed`. It then asks the same way which harness reviews run on, offering the other one first, since a second model sees what the builder's misses. It saves that as `roles: { reviewer: { harness: … } }`, and nothing when you pick your own.
-3. It logs in each harness that has no login yet. For Claude Code it asks you to run `claude setup-token` yourself in another terminal, which gives a long-lived token for agents, and to paste it. Over SSH you run that on your laptop, where the browser is. Skelcrew checks that what you paste looks like a token and saves it in `~/.config/skelcrew/`, readable only by you. Nothing renews it, so your own login is never touched. For Codex it runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skelcrew/codex/`, on the terminal's alternate screen, and waits for Enter before switching back if Codex fails. That is a login of Skelcrew's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. Every Codex agent and review shares it, which is safe, as Codex locks it while it renews.
-4. It installs each plugin the files name at its locked version, asking as **Trust** says, into `~/.local/share/skelcrew/plugins/<name>/<version>/`, and runs its `build`. It refuses a plugin that needs a newer Skelcrew, and one named `none`.
-5. It runs each plugin's `setup` that hasn't run on this machine, in your terminal.
-6. It starts the engine as the background service, as `sc up --bg` does.
+1. It checks for the tools Skelcrew needs and every harness a role uses. If one is missing, it says exactly what to install before it asks anything.
+2. On a machine with no harness picked, it picks one, asking only when both are installed, and then which harness reviews run on, offering the other one first, since a second model sees what the builder's misses.
+3. It logs in each harness that has no login yet, with a login of Skelcrew's own, kept readable only by you, so your own login is never touched and a renewal on either side never breaks the other.
+4. It installs each plugin the files name at its locked version, asking as **Trust** says. It refuses a plugin that needs a newer Skelcrew.
+5. It runs each plugin's setup that hasn't run on this machine, in your terminal.
+6. It starts the engine as the background service.
 
-Each step is skipped when it is already done. A tool or login that goes missing later shows up where it is used. A command Skelcrew shows you to run, here and elsewhere, sits on a line of its own, bold, with a blank line above and below, so it reads as a step to take. Only a real error is printed as one.
-
-A plugin you are writing can be added from a folder, such as `sc add -g ./skelcrew-linear`. It is used where it is, with no tag, and asks as any install does. `sc update` then runs its `build` again, so your edits count, and `sc remove` never deletes your folder.
+Each step is skipped when it is already done. A tool or login that goes missing later shows up where it is used. A plugin you are writing can be added from a folder, used where it is, and rebuilt by `sc update`. Skelcrew never deletes your folder.
 
 ## The engine
 
-The engine is Skelcrew's daemon: one per machine, on the machine where its agents run. `sc up` runs it in the foreground, logging as it goes, until Ctrl-C stops it. `sc up --bg` installs or updates the systemd user service, with lingering turned on (`loginctl enable-linger`) so it runs after you log out and after a reboot, or on a Mac the launchd agent. systemd's own lines, such as `Created symlink`, are kept back, and shown only when it fails. It then starts the engine there if none answers, restarts one that runs another release or commit, and returns. Plain `sc`, `sc --list` and `sc attach` do the same before showing anything. The service runs `sc up`. On systemd, the engine reads a changed service file at its next start. launchd keeps the definition it loaded, so on a Mac a changed file is loaded at once, which restarts the engine. An engine run outside the service, such as `sc up` in a terminal, is told apart by its process id. When it runs other code than `sc`, `sc` asks you to stop it rather than restart the service, and starts no service beside it.
+The engine is Skelcrew's daemon: one per machine, on the machine where its agents run. It runs in the foreground in a terminal, or as a background service of your user that keeps running after you log out and after a reboot. Plain `sc` and `sc attach` start it if it isn't running, and restart one that runs another release or commit. An engine run by hand is never replaced behind your back: `sc` asks you to stop it.
 
-1. If an engine is already running, `sc up` says so and exits.
-2. If the machine isn't set up, it exits and tells you to run `sc install`. The engine never asks questions, since systemd has no one to answer them.
-3. It opens the database, and reconnects to the lead of each repository you have opened and to every live thread, through each one's session host. A session that is gone is brought back on its harness, with its conversation.
-4. It opens its socket at `$XDG_RUNTIME_DIR/skelcrew.sock` for the CLI, and one socket per agent, mounted into that agent's sandbox, so Skelcrew knows which thread is calling.
-5. It asks each repository's tracker and forge what changed, and logs to stdout, which systemd sends to the journal.
+- Only one engine runs per machine. It never asks questions, since a service has no one to answer them: on a machine that isn't set up, it exits and says to run `sc install`.
+- At its start, it reconnects to the lead of each repository you have opened and to every live thread. A session that is gone is brought back on its harness, with its conversation.
+- It has one socket for the CLI, and one per agent, mounted into that agent's sandbox, so Skelcrew always knows which thread is calling.
+- Sessions keep running when the engine stops, so agents keep working through a restart or an upgrade. What the engine itself started, such as a clone or a reviewer, ends with it, and the next engine starts that work again, and polling picks up any event it missed. Only `sc stop` and `sc rm` end a session.
 
-Sessions keep running when the engine stops, so agents keep working through a restart or an upgrade. What the engine itself started, such as a clone or a reviewer, ends with it, and the next engine starts that work again: it reruns every review whose `skelcrew/check` is still pending, and polling picks up any event it missed. Only `sc stop` and `sc rm` end a session.
-
-**Updates.** A release installs a newer one in the background and says so in the list, such as `Skelcrew 0.6.2 installed · restart to use it`. The next `sc` restarts the engine on it. A Skelcrew run from a checkout does the same after `git pull`, when the engine started on another commit of that checkout. Changes not committed don't count. Agents keep running through it. `sc --version` prints `Skelcrew 0.6.2`, and a build from a checkout says so and names its commit.
+**Updates.** A newer release installs in the background and says so on the screen. The next `sc` restarts the engine on it, and agents keep running through it. A Skelcrew run from a checkout does the same once the engine runs another commit of it. `sc --version` names the release, or the commit of a build from a checkout.
 
 ## The flow
 
-One task, in the `default` flow, in a repository with GitHub as its tracker and forge.
+One task, in the `default` flow, in a repository with GitHub as its tracker and forge. Each step's detail, with the notes and records Skelcrew writes, is in [the flow in detail](flow.md).
 
-1. **A task is started.** You add the `skelcrew` label to an issue on GitHub, from anywhere. Or you ask the lead, and it runs `sc start APP-12`, or starts a task of the backlog, or files an issue first with `sc issue create` when you ask for one, after asking you when the repository is public. You can run both yourself too.
-2. **Skelcrew sets up the builder.** A clone of its own at `~/.local/share/skelcrew/threads/app-12/`, made from Skelcrew's clone, on branch `skelcrew/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
-3. **The builder starts.** A session of its harness in the sandbox, in the task's clone, with the builder role's instructions and the task's title and description as its first message.
-4. **The builder finishes a round.** The whole test suite runs once per commit that changes code, in CI or in the reviewer, never in the builder, as several builders running it at once overload the machine. While it works, the builder runs only the tests near its change. Before it submits, it runs the tests related to its change and the repository's lint and typecheck. If it ever must run the whole suite, it runs `sc check`. Then it commits and runs `sc submit "<summary>"`. The summary becomes the PR's description, so code, file names, commands and HTML go in backticks. Skelcrew fetches the branch from the task's clone into its own and pushes it from there, never running git inside the task's folder. On the first round Skelcrew opens the PR, with the line that closes its issue in its body, such as `Closes #12`.
+1. **A task is started**: by the `skelcrew` label on an issue, from anywhere, or by the lead once you say yes, on an issue, a task of the backlog, or a task with no issue. You can start one yourself too.
+2. **Skelcrew sets up the builder**: a clone of its own, on a branch of its own, with the repository's setup run once in it.
+3. **The builder starts**, in the sandbox, in that clone, with its role's instructions and the task as its first message.
+4. **The builder finishes a round.** The whole test suite runs once per commit that changes code, in CI or in the reviewer, never in the builder, as many builders running it at once overload the machine. The builder runs the tests near its change, commits and runs `sc submit` with a summary, which becomes the PR's description. Skelcrew pushes the branch from its own clone, never running git in the task's folder, and on the first round opens the PR, which closes its issue.
 5. **The reviewer reviews**, as **The review** says.
-6. **Changes go back to the builder.** Skelcrew types the review into the builder's session. The builder fixes, commits and runs `sc submit` again. Back to step 4.
-7. **After the flow's `rounds` of changes, 3 by default, the builder needs you.** Skelcrew stops sending reviews to the builder until you say go on, with `sc start`. A submit or review past the limit is waited on like any other, without needing you, and the limit needs you again only once a review asks for changes again. A merge you arm, or the lead or you clearing the thread with `sc needs-you --clear`, decides it too, so the thread no longer needs you for it, though the review's changes stay held until `sc start`. An approval answers the round limit: the task no longer needs you for it, and goes on to CI and `ready for review` like any other.
+6. **Changes go back to the builder**, typed into its session. It fixes them and submits again: back to step 4.
+7. **After the flow's round limit, the builder needs you.** Reviews stop reaching the builder until you say go on. A merge you arm, or clearing the thread, decides it too. An approval answers it.
 8. **Approved and CI green: the task is `ready for review`.**
-9. **You merge**, on GitHub, with `m` in the list, or by arming a merge when ready, or one that skips Skelcrew's review. Skelcrew ends the builder's session, removes the clone, marks the thread `done`, the task `merged`, and tells the lead. A PR closed without merging ends it the same way, and the task goes back to `issue` or to `closed`.
+9. **You merge**, on GitHub, from the screen, or by arming a merge. Skelcrew ends the builder's session, removes the clone, marks the task `merged`, and tells the lead. A PR closed without merging ends it the same way, and the task goes back to `issue` or to `closed`.
 
 ### The review
 
-Skelcrew sets the `skelcrew/check` status on the commit to pending and runs a fresh reviewer once, in the sandbox, on the reviewer role's harness, such as with `codex exec` or `claude -p`. It is given the task's description, with the lead's updates after it, under the heading "Changes to the task from the lead, after the thread started", which says they override the description where they differ. A builder's message to the lead never counts, and neither does anything a builder writes, such as its PR's description: a builder must never change what it is reviewed against. The reviewer reads the diff against the base branch and answers in a fixed JSON shape: approve or changes, the review's body, and its findings, one per problem. Changes always name at least one finding, and an approval names none. An answer that breaks this, or names a blank finding, is a review that failed, so nothing reaches the PR and no round counts. Skelcrew sets the check to success or failure, so branch protection can require it.
+Skelcrew sets its own check on the commit to pending and runs a fresh reviewer once, in the sandbox, on the reviewer role's harness. It is given the task's description, with the lead's updates after it, which override it where they differ. Nothing a builder writes counts: a builder must never change what it is reviewed against. The reviewer reads the diff against the base branch and answers in a fixed shape: approve or changes, a body, and its findings, one per problem. Changes name at least one finding, and an approval none. Any other answer is a review that failed: nothing reaches the PR and no round counts. Skelcrew sets its check to the verdict, so branch protection can require it.
 
-**One review per PR.** Skelcrew keeps one review on the PR, a GitHub review that only comments, from `skelcrew[bot]`. The first round posts it, and Skelcrew keeps its ID on the task. Each round after edits it in place, with the latest verdict, findings, round and commit. The round-by-round history stays in the task's log, which keeps each review whole. A forge that can't edit it gets a new review only when the verdict or findings changed since the last one posted, so a round that finds the same again adds nothing to the PR. A review deleted from the PR is posted again, so the PR always shows one. GitHub doesn't let a PR's author approve it, and Skelcrew's app opened the PR, so the check carries the verdict, and approving is yours.
+**One review per PR**, from Skelcrew's GitHub App, kept up to date with the latest verdict, findings, round and commit, and posted again if deleted. A round that finds the same again adds nothing to the PR. The history stays in the task's log. A PR's author can't approve it on GitHub, so the check carries the verdict, and approving is yours.
 
-**The queue.** At most `limits.reviews` run at once. A review over the limit waits in a queue, first come first served, and its task shows `queued for review`. The queue survives a restart: a review that was waiting joins it again with the time it first joined, and one cut short while it ran goes ahead of those. A review covers the commit it started for: a newer `sc submit` cancels a review still waiting or running.
+**The queue.** Only as many reviews as your limit allows run at once. The rest wait, first come first served, through restarts. A newer submit cancels a review of an older commit, waiting or running.
 
-**Failures.** A reviewer that fails or answers outside the shape sets the check to failure with "review failed". It doesn't need you: the lead hears of it, with the error, and can run it again with `sc review`, or mark the thread if only you can fix what stops it. A round that fails before its review answers, such as on a push that fails, is the same. A reviewer that runs past its time limit is ended with all it started, and runs once more. That goes in the task's log, and the lead hears of it, such as "APP-12's review timed out after 30m; retrying". If the second run times out too, the check fails with "review timed out", and the lead hears of it, with the note `APP-12: its review timed out twice (30m). sc review APP-12 runs it again.`. A note says the error the harness itself reported, such as Codex's `ERROR:` line or Claude Code's error result, never the task text a harness echoes as it starts. You, the lead or the builder can rerun a review with `sc review`.
+**Failures** never need you: the lead hears of them, with the error the harness itself reported, and can run the review again or mark the thread if only you can fix it. A reviewer past its time limit is ended with all it started and runs once more, and a second time out fails the check.
 
-**Usage limits.** A reviewer that stops on its harness's usage limit doesn't fail the review. Skelcrew reads the reset time from the error, when the harness gives one, such as Codex's "try again at 1:59 PM" or Claude Code's "resets 2pm". The review is held: its check stays pending, nothing is typed into the builder, and nobody needs you. The task shows `limit · 13:59`, in this machine's time, or just `limit`. Once one review meets the limit, no review starts on that harness until the reset, and every held review runs again then, in its place in the queue. With no reset time, they try again after 15 minutes, then 30, then every hour. With a `fallback`, reviews run on the fallback harness meanwhile, if it isn't limited too, and the review says it ran there. The lead hears once per limit, such as "Codex's usage limit is reached until 13:59; reviews resume then", and once more when a review runs on that harness again.
+**Usage limits.** A reviewer stopped by its harness's usage limit doesn't fail: the review is held, its check stays pending, and nobody needs you. No review starts on that harness until the limit resets, and the held ones then run in their place. With a fallback harness, reviews run there meanwhile. The lead hears once per limit.
 
-**The reviewer and the tests.** CI runs the whole suite on a commit when its forge shows a CI check, besides `skelcrew/check`, on that commit. Only that proves it: a workflow can skip this PR, such as with a branch or paths filter. So while a check may still come, the review waits for it before it joins the queue, holding no place, and its task shows `reviewing`. It waits up to 2 minutes when CI shows on another of the repository's open PRs, or when the PR's commit has GitHub workflows in `.github/workflows`, read in Skelcrew's own clone. Otherwise it waits up to 40 seconds, a little over one poll, for CI outside GitHub, such as Buildkite. Once a review has waited in vain, with CI on none of the repository's PRs, the repository's reviews never wait for a first check again while the engine runs, until a check shows on one of its PRs. Skelcrew asks again as the review starts, not when it was queued.
+**The reviewer and the tests.** The whole suite runs once per commit: in CI when the forge shows a CI check on that commit, or else in the reviewer through `sc check`. So while a CI check may still come, the review briefly waits for one, holding no place in the queue, and a repository whose reviews waited in vain stops waiting until CI shows. With CI, the reviewer reads CI's results, kept current while it runs, and names failing tests as problems, and runs the suite itself when no check runs the tests. CI still running is never a reason to ask for changes, as ready waits on every check. A change to docs and Markdown alone is tested by no one.
 
-With CI on the commit, the reviewer doesn't run the whole suite. Skelcrew writes CI's result in a file the reviewer reads: passed, failed or still running, each check, and the end of each failed check's log. It rewrites the file every 15 seconds while the review runs, skipping a refresh while the one before still waits on the forge. The reviewer reads it as it starts and again before it answers, and names the failing tests of a failed run as problems. Some checks run no tests, such as a deploy preview or a CLA check, so when none of the listed checks runs the tests, the reviewer runs the suite itself. CI still running is never a reason to ask for changes, as ready waits on every check, as **The wait for checks** says. A review that finishes before CI approves clean code and says "CI pending". With no CI on the commit, or no forge, the reviewer runs the whole suite through `sc check`. With no `test:`, it runs no tests and says so. A change that touches only docs and Markdown, every file under `docs/` or ending in `.md`, is tested by no one: the review waits for no CI, and the reviewer runs no tests and says so. The reviewer's instructions say which, on every harness.
+**The wait for checks.** A PR is ready, and an armed merge may merge it, only once the wait for CI's first check on the approved commit has ended and every check on that commit passed. A wait that ends with no CI check leaves Skelcrew's own as the only one, and the commit shows as having no CI rather than as passed. A check that shows later still counts. A required check is the forge's to enforce. A restart starts the wait again, so no PR waits forever.
 
-**The wait for checks.** A PR, docs-only included, is ready, and an armed merge may merge it, only once the wait for CI's first check on the approved commit has ended, and every check on that commit then passed. A merge without approval makes the same wait on the commit it pinned. The wait is the one a review makes before it joins the queue, by the same rules and limits: up to 2 minutes or 40 seconds, or none at all in a repository where a review already waited in vain. A check that shows ends it, and the PR goes by that check's result like any other. A wait that ends with no CI check on the commit, such as one CI skips with a paths filter, or a repository with no CI, leaves Skelcrew's own check as the only one, so the PR is ready once it passed. Skelcrew then decides no CI runs on that commit: its CI counts as passed for ready and for both merges, and `sc ps` and the list say `no CI` rather than `passed`. A check that shows after that still counts, and a failing one stops the merge. A required check under branch protection is the forge's to enforce: a merge the forge refuses says why. A review of any other change makes the wait before it runs. A docs-only review skips it, so the approval makes it instead, as CI can show its first check after the review is done. Until the wait ends, the PR is not ready and an armed merge waits. A restart during the wait starts it again, so no PR waits forever. A failed check is typed into the builder as usual.
-
-**Keeping an approval.** When main moves, an approved PR can fall behind or conflict, and its builder merges main and submits again. A submit that only merges the base branch into the commit last approved keeps that approval, with no reviewer run. The new commit must be exactly what git makes of that merge by itself, with no conflict and nothing else changed, and so must every merge since the approval. The PR's own diff, against where it meets the base branch, must also read the same before and after, as a clean merge can still change it. Skelcrew reads the commits in its own clone. A clean merge can still break things, so the approval is kept only once every CI check on the new commit has passed. It first waits for CI's first check on the commit, as a review does. While the checks run, the task is not ready. When one fails, or no CI shows, the commit gets a normal review. Once they pass, Skelcrew's check is set to success with "approval kept: only merged main", and Skelcrew's review on the PR and the task's log say the same. Any other change to the PR's diff, a conflict resolved, or a rebase gets a normal review. `sc review` always runs the reviewer.
+**Keeping an approval.** When main moves, the builder of an approved PR merges main and submits again. That keeps the approval, with no reviewer run, only when every commit since is exactly git's own clean merge of the base branch, the PR's diff reads the same, and every CI check on the new commit then passed. Anything else gets a normal review, and so does `sc review`.
 
 ### Merge when ready
 
-You can say once that a PR should merge when it is ready, and leave. `sc merge --when-ready APP-12`, or the PR's number, such as `#7`, asks at your terminal: `Merge #7 (APP-12 Add export) when it's approved and green? [y/N]`, with the task's whole title, without control codes. Only `y` arms it, and anything else, `Y` and `yes` included, arms nothing. It arms only the PR you said `y` to: a task removed and started over while the question was open, with another PR, is refused. It refuses a task with no PR yet, and refuses with no terminal. A task already merging when ready isn't asked about again: it says `Already merging #7 as soon as it's approved and green. sc merge --cancel APP-12 stops it.`, so no answer seems to stop a merge it leaves on its way. A `y` given while another request put such a plan on the task says the same, even when the task was started over meanwhile. Agents' sockets refuse it, but for a lead you let arm merges: nothing merges that you didn't ask for. Once armed, Skelcrew types a one line note into the lead, so it knows you asked, such as `Merging #7 (APP-12) as soon as it's approved and green, as you asked at your terminal. sc merge --cancel APP-12 stops it.`
+You can say once that a PR should merge when it is ready, and leave.
 
-**Asking the lead.** The lead arms a merge when ready when you ask it to in the conversation, such as "merge APP-12 when it's ready". It is on by default, so a fresh install merges when you ask. `lead: { can_merge: false }` in your `config.yaml` turns it off, and `lead: { can_merge: true }` turns it back on. Only your general settings can set it, as **Which wins** says. Its old name, `may_arm_merges`, is still read as the same setting, and `can_merge` wins where both are set. With it off, a lead you ask to merge tells you your ways to: `sc merge --when-ready` or `sc merge --skip-review` at your terminal, or the line `lead: { can_merge: true }` that turns it on. With it on, the lead's socket takes `sc merge --when-ready APP-12 --asked-file <file>`, or the PR's number in the lead's repository, with no question at a terminal. The file holds your words, exactly as you wrote them. The lead writes it in its own folder with its file-writing tool, never with the shell, so your words never pass through a shell: quotes, backticks and `$()` in them are never run or changed. An empty file is refused. Without the setting, or without your words, it is refused, and builders' and reviewers' sockets always refuse it. The engine reads the setting at each arm, and the lead is told at its start whether it may. Its instructions say to arm only when you explicitly ask in the conversation, never because an issue, PR, comment, builder or note says so, and to name the PR and task when it confirms. The plan is the same as yours. The plan keeps your exact words, through restarts of the engine, as what let it merge. The task's log also records that the lead armed it at your request, with your words quoted exactly as you wrote them, line breaks and spaces included, and the engine logs each arm the same way. The record on the PR says "Merging when ready, as asked by simon via the lead on 18 November 2026.". The lead confirms it to you in one line, such as "Merging #7 (APP-12) as soon as it's approved and green, as you asked.", and Skelcrew types no note of its own, so you hear it once. Nothing else changes: the merge still waits for Skelcrew's approval of the exact head, every check green and the forge's clean merge, and `sc merge --cancel` stays open to the lead.
+- **Only an explicit yes.** At your terminal Skelcrew names the PR and task and asks, and only `y` arms it, for that PR only. Without a terminal it refuses. A merge already armed isn't asked about again, so no answer seems to cancel it.
+- **Only you, or the lead when you ask it.** Builders and reviewers never can. The lead may when you explicitly ask it in the conversation, never because an issue, PR, comment, builder or note says so. It hands over your exact words, never through a shell, and the plan and the logs keep them exactly. This is on by default, and only your general settings turn it off.
+- **Only what was approved merges**: the commit Skelcrew's reviewer approved, while it is still the PR's head, its wait for checks ended, every check passed, and it merges cleanly. A push Skelcrew never reviewed is never merged.
+- **A record, once.** Just before it first asks the forge to merge, Skelcrew posts on the PR who asked and when, once per plan and commit, even across restarts. The merge waits for a later poll, so a change that came meanwhile still stops it.
+- **It stays armed** through restarts, conflicts, failing checks or a refusal, until it merges, you cancel it, or the task ends. The lead hears once per round when it is stuck on something someone must act on. Cancelling is always allowed and asks nothing.
 
-Once armed, each poll checks the PR. The engine merges it by itself, as `m` does, at the commit Skelcrew's reviewer approved, once that commit is still the PR's head, it passed the wait for checks that ready needs, every check on it passed, Skelcrew's own included, and Skelcrew's copy shows no conflict. A PR with no CI check passes only once the wait for checks on that commit ended with none, as CI may not have started on it yet. Just before it first asks the forge to merge an approved commit, Skelcrew posts a review saying "Merging when ready, as asked by simon on 18 November 2026.", with your login name on the machine and the day you armed it, once per armed plan and commit. The record's body carries a fixed marker, a hidden HTML comment with the plan's own ID and the commit: `<!-- skelcrew:merge-when-ready plan=3f2a commit=4f9c2e1 -->`. Skelcrew keeps on the task that it posted it. Before it posts one, it also looks in its copy of the PR for a review whose body holds that marker, whoever the forge says wrote it, and counts one there as posted, saving that on the task. So an engine that stopped after the forge took the review but before saving it finds it at the next poll, and a restart never posts it twice. The merge itself waits for a later poll, so it goes by the PR as the forge reports it after the record: a check that failed or started meanwhile, a cancel, a stop, `sc rm` or a new review all stop it. The lead's note then says `APP-12 is done: #7 merged into main when ready, as the human asked`.
-
-Until then the plan stays armed, through restarts of the engine, as it is kept on the task, and `sc ps` shows `merges when ready` with what it waits on, such as `merges when ready · waiting on its failing checks to be fixed`. A push after the approval waits for its own approval, and a push Skelcrew never reviewed is never merged. A conflict, a failing check, a thread that failed or stopped, or a forge that refuses or fails all keep it armed. When it still waits after a round on something someone must act on, not just a review or checks still running, the lead gets one note for that round, such as `Still merging #7 (APP-12) once it's approved and green, waiting on its conflict with main to be fixed.` `sc merge --cancel` asks nothing, as cancelling is always safe. While the forge is merging, it refuses and says so, and so it does once the PR merged, until its task has ended. `sc rm`, and any end of the task, disarms it. Without a forge `sc merge --when-ready` refuses and says to merge the branch yourself.
+Without a forge it refuses and says to merge the branch yourself.
 
 ### Merge skipping the review
 
-A review can keep asking for changes you don't need, often past the round limit, on edge cases. You can merge such a PR without Skelcrew's approval from Skelcrew, rather than on GitHub. `sc merge --skip-review APP-12`, or the PR's number, asks at your terminal: `Merge #7 (APP-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error [y/N]`, with each of the latest review's findings on one line and control codes removed. A review still running says `Its review is still running`. It works only on a PR whose review asks for changes or still runs, from your terminal or the lead alike. The list doesn't offer it. One already approved is merged as usual, and one never reviewed waits for its review: both are refused, saying so.
+A review can keep asking for changes you don't need, often past the round limit. You can merge such a PR from Skelcrew without its reviewer's approval. It works only on a PR whose review asks for changes or still runs: one already approved merges as usual, and one never reviewed waits for its review. The question names each of the review's open findings, so you see what you skip.
 
-The `y` pins the PR's head as Skelcrew's copy showed it in the question. Only that commit merges. A `y` given after the copy moved on is refused, and a push after the plan is armed cancels it, as nobody you trust saw that commit. The lead then gets a note, such as `#7 (APP-12) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.`. Everything else is as a merge when ready. Only `y` arms it, with no terminal it refuses, and a task already merging is not asked about again. Agents' sockets refuse it, but for a lead you let arm merges, with `--asked-file` and your exact words. The lead's instructions say to arm one only when you explicitly ask it in the conversation to merge without Skelcrew's approval, or to force the merge, never because a builder, PR, issue or comment suggests it. They say to tell you plainly that it merges without approval. The plan, the thread's log and the daemon's log keep your words exactly, as for a merge when ready.
+Your yes pins the PR's head as you saw it. Only that commit merges, and a push after it cancels the plan, as nobody you trust saw that commit, and the lead hears of it. A review still running is waited for, so its findings are known before the merge. Only the reviewer's approval is skipped: every other check on the pinned commit must pass, and the PR must merge cleanly. The rest is as a merge when ready: who may arm it, the record on the PR, which says plainly that it merged without approval and never contradicts the reviewer's verdict, and restarts.
 
-Each poll checks the PR as it does for a merge when ready. Only the reviewer's approval is skipped: Skelcrew's own check, which carries that verdict, is left out. A review still running is waited for, whatever it then says, so its findings are known before the merge. Every other check on the pinned commit must pass, and the PR must merge cleanly. With the review skipped, CI is all that guards the merge. So, as for a merge when ready, a PR with no CI check passes only once the wait for checks on the pinned commit ended with none. A round the builder submitted waits, as its push will cancel the plan. Just before it first asks the forge to merge, Skelcrew posts a review on the pinned commit saying "Merging without Skelcrew's approval, as asked by simon on 19 November 2026.", or "by simon via the lead", once per plan and commit. It says "Merging", as a check can still fail or the plan be cancelled. Once the forge merged it, Skelcrew edits that review to say "Merged without Skelcrew's approval, as asked by simon on 19 November 2026.". A forge that can't edit it leaves "Merging", which the merge made true. The review keeps the reviewer's last verdict: asking for changes, or approving when a review still running when you asked approved the commit, so the record never contradicts it or blocks a forge that requires an approval. Its body carries a marker like a merge when ready's, `<!-- skelcrew:merge-skip-review plan=3f2a commit=4f9c2e1 -->`, and it is kept on the task and found again the same way, so a restart never posts it twice. The merge waits for a later poll, as for a merge when ready.
-
-Once merged, the latest review's findings, read again after the merge in case a review ended meanwhile, are filed as one issue in the tracker, titled `Follow-ups from #7's review`, listing them and naming the PR, so they aren't lost. It is filed once: the issue is kept on the task, and its body carries a hidden marker, `<!-- skelcrew:follow-ups plan=3f2a -->`. An issue the tracker made just before a restart, before Skelcrew saved it, is found by that marker in Skelcrew's copy, and none is filed again. When the forge merged the PR before Skelcrew could finish, such as across a restart of the engine, the poll that finds it merged still edits the record and files the issue, with the same note. The findings filed are read after the edit, so a review that ended meanwhile counts. The lead's note says `APP-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.`. An issue that can't be filed, such as with no tracker, is said in that note instead, so you can file it. Until then `sc ps` and `sc show` show `merges without approval` with what it waits on, such as `merges without approval · waiting on its checks`. `sc merge --cancel` disarms it, as it does a merge when ready.
+Once merged, the review's open findings are filed as one follow-up issue naming the PR, so they aren't lost, filed once and never twice across a restart. When no issue can be filed, the lead's note says so, so you can file it.
 
 ### Without an issue, without a forge
 
-**Without an issue.** You tell the lead what to do, and it starts a task with `sc start app "<title>" "<description>"`, written from what you said. It does this in any repository, and files no issue unless you ask for one. The task is named `APP-T1`, on branch `skelcrew/t1-<slug>`, and its PR closes no issue. In a repository with no tracker, this is how every task starts.
+**Without an issue.** You tell the lead what to do, and it starts a task written from what you said, with no issue, in any repository. Its PR closes no issue. In a repository with no tracker, this is how every task starts.
 
-**Without a forge.** Skelcrew pushes the builder's branch to the repository's remote with git, on your own git login. It opens no PR and sets no check. The reviewer reviews the branch's diff against the default branch, and the loop runs the same, with each review kept in Skelcrew and typed into the builder. Once approved, the task is `ready for review`: "APP-T1 is ready on branch skelcrew/t1-fix-login". You open a PR or merge it yourself. The task is `merged` when a fetch finds that merging the branch into the default branch would change nothing, which a merge, a squash and a rebase all leave. A branch deleted from the remote ends it too. Nothing from CI or a PR reaches the builder.
+**Without a forge.** Skelcrew pushes the builder's branch to the repository's remote with git, on your own git login. It opens no PR and sets no check. The reviewer reviews the branch's diff against the default branch, and the loop runs the same. Once approved, the task is `ready for review`, and you open a PR or merge it yourself. The task is `merged` once merging the branch into the default branch would change nothing, however it was merged. A branch deleted from the remote ends it too. Nothing from CI or a PR reaches the builder.
 
 ### Removing a task
 
-`sc rm APP-12` ends the work on a task, such as one you want started over. Skelcrew ends its threads, closes the PR as `skelcrew[bot]`, deletes its branch on the forge, removes the clone, takes you off the issue if it assigned you, and marks the threads `done`. With a reason, such as `sc rm APP-12 "started over as APP-14"`, the PR first gets the comment "Closed by Skelcrew: started over as APP-14". The task goes back to `issue`, or to `closed` with no issue. Without a forge, Skelcrew deletes the branch from the remote with git, if it pushed it. The lead can run it, and a builder can't. On a task in the backlog that never started, it only deletes the task, as **The backlog** says, and prints `Removed APP-T104 from the backlog.`
+`sc rm` ends the work on a task, such as one you want started over. Skelcrew ends its threads, closes the PR, with your reason as a comment if you give one, deletes its branch, removes the clone, takes you off the issue if it assigned you, and marks the threads `done`. The task goes back to `issue`, or to `closed` with no issue. At a terminal it says what it will close and delete, and asks. The lead can run it after confirming with you in its conversation, and a builder can't. On a task in the backlog that never started, it only deletes the task.
 
 ### Assigning the issue
 
-Every start of a task on an issue assigns the issue to you, the person the tracker's plugin signed in as, so the tracker shows which issues Skelcrew is on, and for whom. It adds you and never takes another assignee off. The task keeps whether Skelcrew assigned you or you were assigned already. When the task stops, is removed, or its PR closes without merging, Skelcrew takes you off, but only if it put you on. A merge leaves you assigned, as the record of who did it. A task that failed keeps you assigned. An assignment that fails is logged and not tried again, and never stops a task from starting or stopping.
+Every start of a task on an issue assigns the issue to you, so the tracker shows which issues Skelcrew is on, and for whom. It adds you and never takes another assignee off. When the task stops, is removed, or its PR closes without merging, Skelcrew takes you off, but only if it put you on. A merge leaves you assigned, as the record of who did it, and so does a failure. An assignment that fails is logged and never stops a task from starting or stopping.
 
 ### Needs you
 
 **Needs you means you must act to unblock the thread.** Nothing else sets it, and its word always says what the action is. Waiting on a review, CI or a queue never needs you.
 
-**Questions go to the lead.** You talk to the lead, so a builder brings its questions, its decisions and anything else it needs there, never to you in its own session, on every harness and host. It runs `sc tell lead` with what it needs and its options, and ends its turn to wait for the answer. Its instructions say to frame a question for someone who hasn't read the code: the background in plain words, the problem with a concrete example, what each option means for you, and a recommendation with its reason, without file paths or names from the code unless they help. They tell it never to use its harness's question tool, such as `AskUserQuestion`.
+**Questions go to the lead.** You talk to the lead, so a builder brings its questions and decisions there, never to you in its own session, on every harness and host, and never with its harness's question tool. It frames them for someone who hasn't read the code: the background, an example, what each option means for you, and a recommendation.
 
-The lead answers a question itself when the answer follows from what you already decided, such as earlier in its conversation, from the repository's spec or design documents, or from a clear technical call. It then tells you in one line what it answered and why, so you can overrule it. A question that is yours by rule always comes to you, however clear the answer seems: editing a spec, trust or security, the work's scope or direction, and merging. The lead brings it to you in its chat, framed the same way and naming the task, and passes your answer on with `sc tell`. You never need to attach to a builder to answer it. All of this is among the lead's core rules, so a repository's own lead role can't drop it.
+The lead answers a question itself when the answer follows from what you already decided, or from a clear technical call, and tells you in one line, so you can overrule it. A question that is yours by rule always comes to you: editing a spec, trust or security, the work's scope or direction, and merging. You never need to attach to a builder to answer one. These are among the lead's core rules, so a repository's own lead role can't drop them.
 
-**The lead marks what only you can unblock.** When only you can unblock a thread, such as a change to a workflow file that only a person can push, the lead marks it with `sc needs-you APP-12 "<the action>"`, written for you, such as `apply the check.yml split in PR #463`. The thread then needs you, and its word is that action, in the sidebar, `sc --list`, `sc ps`, `sc show` and a host's status, such as herdr's. The lead never marks a thread it can unblock itself, or one that only waits on its review, CI or a queue. `sc needs-you --clear APP-12` takes the mark off. Only you and the lead of the thread's repository can run either, and both are among the lead's core rules. The lead gets no note of a mark it set itself, and gets one of each mark you set, even on a thread that needed you already.
+**Marks.** The lead marks a thread when only you can unblock it, with the action written for you, never one it can unblock itself or one that only waits. Only you and that repository's lead can mark or clear a thread. Skelcrew marks, by the same rule: an approved and green thread with no merge armed, as it waits on you to merge; the round limit, until someone decides it; a question asked with the harness's question tool, until you answer; a harness error it can't get past alone, such as a lapsed login; and a missing session host plugin. A failure of a thread, review or round, and a builder that isn't running, aren't marks: the lead hears of each and can act.
 
-**What Skelcrew marks itself**, by the same rule:
+**Clearing.** A mark clears when you type to the builder, when the lead or you clear it, or when what it is about happens, such as a new submit or the task's end. Stopping the thread doesn't clear it, and nor does what Skelcrew itself types in. The thread's log says who set or cleared each mark, and why.
 
-- **Ready to merge.** An approved thread with green checks and no merge armed waits on you to merge it, as **Merge when ready** says. `sc ps`, `sc show`, a host's status, the list and the sidebar say `ready to merge`, beside its green mark. One with a merge armed merges by itself, so it doesn't.
-- **The round limit**, while nobody has decided, as step 7 of **The flow** says. A merge you armed, `sc start` to go on, or the lead or you marking or clearing the thread decides it, and the thread follows that decision. Decided, it no longer needs you for the limit, so a mark that clears or a merge plan that ends later, such as one you cancel, doesn't bring the limit back. Cleared, it still shows `round limit`, without needing you, until the next review, which asks again.
-- **A question** asked with the harness's question tool, and **a harness error**, as below.
-- **A missing session host plugin**, which only `sc install` brings back, as **Sessions** says. A mark the thread had already follows the instruction, such as `run sc install: its session host herdr is missing, then check the design`, and is all that is left once the engine finds the plugin again. While the plugin is still missing, marking or clearing the thread keeps the instruction first.
+**A turn that ends without submitting** goes to the lead, not to you: its last message goes to the lead, who answers it or brings a question in it to you. A turn that only answered a message, that waits on its own submit, or whose words the lead already has, adds nothing.
 
-A thread that failed, a review that failed, a round that failed and a builder that isn't running aren't among them: the lead hears of each, and can run the review again or bring the builder back.
+**The safety net.** A builder that stopped without submitting, with nothing in flight, and that nobody acted on for a few minutes, needs you, so nothing waits unseen while the lead is busy. A builder the lead just told something gets longer, and one still running a background job hasn't stopped.
 
-**Clearing.** A mark clears when you type to the thread's builder, when the lead or you clear it, and when the thing it is about happens: the builder submits again, the PR merges or closes, the task is removed, or the thread goes on past its round limit. Stopping the thread doesn't clear it, as what you must do still stands. What Skelcrew types into the builder, such as the lead's message or a review's changes, doesn't clear it: the harness's hook gives what was typed, and only text Skelcrew didn't type is yours. The thread's log says each time a mark is set or cleared, who did it and why, and a mark that clears on its own names the mark it cleared.
+**Limits pass by themselves.** A usage or rate limit doesn't need you: once it resets, Skelcrew tells the builder to continue. A lead that stops on an error isn't flagged, as you see it whenever you open it.
 
-A builder that asks with its harness's question tool anyway, such as a custom role's, needs you until you attach and answer. On Claude Code that is `AskUserQuestion`.
-
-**A turn that ends without submitting** goes to the lead, not to you: the builder may have written its question as plain text, be stuck, or have only replied. The thread shows `turn ended`, and doesn't need you. The harness's `Stop` hook tells Skelcrew when a turn ends. A turn whose builder ran `sc submit` or `sc review` in it waits on its review, not on you, but not one in which the lead or you asked for the review. A turn that ends while an `AskUserQuestion` is open, or on an error, adds nothing. A turn typed in by Skelcrew, such as a review's changes or a message, is like any other. One exception: a turn that leaves no new work, nothing uncommitted and no commit after the last one submitted, waits on that submit while it is still reviewed, waits on CI or is approved. Such a turn most likely only answered a message, so it doesn't show `turn ended`. Either way, its last message, up to 2000 characters, goes to the lead as a message from the builder, who answers it or brings a question in it to you. A turn in which the builder told the lead something with `sc tell lead` sends nothing more at its end, as the lead already has its words. Bringing a builder back with `sc start`, or the engine starting, ends no turn. Esc flags nothing, as you are looking at the builder anyway.
-
-**The safety net.** A builder that ended a turn without submitting, and that nobody acted on for `needs_you.grace_minutes`, 5 by default, needs you, with its last message as the mark, cut to one line, so nothing waits unseen while the lead is busy or misses it. It is only for a stopped builder with nothing in flight. A turn that ends while its last submit is still being pushed, under review or waiting on CI doesn't start it then, whatever the builder left in its clone, as waiting on those never needs you, and the builder's words went to the lead, which marks the thread when only you can act. Its wait starts once that is over, such as when the review fails, if nobody acted meanwhile. A thread that already needs you for something else isn't marked by it. The lead gets the note that it needs you, as for any thread. Typing to the builder, the lead telling it something, from the moment the lead sends it, a new submit, or the lead or you marking or clearing the thread is acting on it, and stops the wait. The builder's reply to the lead ends a turn without a submit too, often to wait as the lead said, such as for another thread to land. So a builder the lead told something isn't marked until 30 minutes after the lead's message, then the safety net marks it as usual if nobody acted since. The lead's message counts from when the lead sends it, whether it went in or still waits to, so a builder that stays stopped with the message never going in is still caught. A turn that ends while a background job of the builder's still runs, such as a test run, isn't a stop: the builder goes on once the job ends. It doesn't show `turn ended`, the lead hears nothing yet, and the safety net doesn't wait on it. Only Claude Code's `Stop` hook says what still runs, so on Codex every turn's end is a stop.
-
-The builder's words reach the lead with `<skelcrew` and `</skelcrew>` removed, so they never pass for Skelcrew's. Whatever is typed into the builder next clears `turn ended` or a question: what you type, or a message from the lead.
-
-**Harness errors.** A builder's harness can stop on an error it can't get past alone, such as a lapsed login. On Claude Code, the `StopFailure` hook says so, and the builder needs you, with the word `error`. You attach, fix what it says, such as with `/login`, and type to it, which clears it. A usage limit or rate limit passes by itself, so it doesn't need you: the task shows `limit · 13:59`, and once the limit resets Skelcrew types "continue" into the builder, if it is still idle on that error. It is a limit only when the hook says so. If "continue" can't be typed, the builder needs you. With no reset time, it tries after 15 minutes, then 30, then every hour. Codex runs no hook on an error, so on Codex an error goes unnoticed, except for the model check before a session starts. A lead that stops on an error isn't flagged, as you see it whenever you open its repository.
-
-**Telling you.** When a thread starts needing you, Skelcrew sends a one line note to its repository's lead, so you hear it where you already are. A task's end brings a note too, so the lead never lists a merged PR as ready: `APP-12 is done: #7 merged into main`, or without a forge `APP-12 is done: its branch skelcrew/12-add-export merged into main`. A PR closed without merging brings `APP-12 ended: #7 closed without merging`, and a branch deleted without a forge `APP-12 ended: its branch skelcrew/12-add-export was deleted`. A task you remove brings `APP-12 ended: you removed it, closing #7`, with your reason after it. One the lead removed brings none. Each end brings one note at most. On such a note the lead updates what it holds open and, when useful, says what the end unblocks. A task that starts over while its end note still waits drops that note, as the lead would take it for the new attempt. A thread that fails brings a note too, with why, such as `APP-12 failed: its setup command failed`, so you can start it again. Starting it again drops that note if it still waits, as the lead would ask you to start a thread that already runs.
+**Telling you.** When a thread starts needing you, the lead gets a one line note, so you hear it where you already are. So do a task's end, so the lead never lists a merged PR as ready, and a thread that fails, with why. A note that would mislead once things moved on is dropped.
 
 ## Events
 
-The engine asks each repository's tracker and forge what changed since it last looked, and names the PRs of its live and stopped tasks, which come back whatever changed. GitHub's plugin answers with one GraphQL query per repository, so the number of requests doesn't grow with the number of tasks, and a check that finished still reaches Skelcrew. It polls every 30 seconds while a task is active, and less often while tasks only wait on you. Each event is handled once: Skelcrew records the ID of the last review, comment and check run it acted on.
+The engine asks each repository's tracker and forge what changed since it last looked, and names the PRs of its live and stopped tasks. The number of requests doesn't grow with the number of tasks. It polls often while a task is active, and less often while tasks only wait on you. Each event is handled once.
 
-**Starting from GitHub.** Every minute the engine also looks in its copy for open issues labelled `skelcrew`, and starts a task on each one that hasn't started, as `sc start` does. Before it starts one, it claims the issue with 👀. When two machines run Skelcrew on one repository, only the one whose claim comes first starts it. A claim that fails is tried again on the next poll. Once started, the engine sends the lead a note, such as "started APP-12 from GitHub: Fix the login redirect", and the lead gives it a short title with `sc start APP-12 --short "<words>"`. A label is the signal because Skelcrew's GitHub App can't be assigned an issue, and only people with triage or write access can add one. Removing the label doesn't stop a task; `sc stop` does. A task that failed, stopped or was removed isn't started again by its label, only by `sc start`. GitHub's plugin creates the label in a repository whose tracker it is. Skelcrew never comments on the issue.
+**Starting from GitHub.** The engine starts a task on each open issue labelled `skelcrew` that hasn't started, claiming the issue first, so when two machines run Skelcrew on one repository only the first claim starts it. The lead hears of it and gives the task a short title. The label is the signal because Skelcrew's GitHub App can't be assigned an issue, and only people with triage or write access can add one. Removing the label doesn't stop a task, and a task that failed, stopped or was removed isn't started again by its label. Skelcrew never comments on the issue.
 
 | Event | What Skelcrew does |
 | --- | --- |
 | Reviewer requests changes | Types the review into the builder, unless the round limit is reached |
 | Reviewer approves | Waits on CI, or `ready for review` if CI is already green |
-| A check fails | Types the failing check's name and its log, as the forge's `log` gives it, into the builder |
+| A check fails | Types the failing check's name and what failed into the builder |
 | All checks pass after approval | `ready for review` |
-| A person comments or reviews on the PR | Types it into the builder. Your comments always wake the builder, even past the round limit. Once it is typed in, the forge marks it seen: GitHub reacts with 👀, to a review itself rather than its line comments. One that isn't typed in isn't marked. A mark that fails is logged, and never holds up the builder |
-| Merge conflict with the base branch | Tells the builder to merge and fix it. An approved task leaves `ready for review` at once, until a new round is approved |
+| A person comments or reviews on the PR | Types it into the builder, even past the round limit, and marks it seen on the forge once it is typed in |
+| Merge conflict with the base branch | Tells the builder to merge and fix it. An approved task stops being ready at once, until a new round is approved |
 | PR merged or closed | Ends the task's threads and cleans up |
 | Bot comments | Ignored |
 
-An event changes the task at once, before the builder hears of it: an approved PR that starts conflicting leaves `ready for review` before its message is typed in, and stays out until the builder's next round. Without a forge, only the reviews and the end of the branch happen.
+An event changes the task at once, before the builder hears of it. Without a forge, only the reviews and the end of the branch happen.
 
 ## Plugins
 
-A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at its root. It is one of two kinds, and says in its manifest what it provides within that kind. Skelcrew's flow knows what a plugin provides, never which plugin provides it.
+A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at its root. It is one of two kinds, and says in its manifest what it provides within that kind. Skelcrew's flow knows what a plugin provides, never which plugin provides it. The protocol's every detail is in [plugins and base modules](runtime.md).
 
 | Kind | What it is for | Provides | Examples |
 | --- | --- | --- | --- |
@@ -576,7 +370,7 @@ A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at 
 
 Messages and the sandbox stay in core, between the two. Work comes in through an I/O plugin, becomes a message, and reaches an agent through the runtime. No plugin can provide messages or the sandbox, so the rules about who may reach whom, and what an agent can touch, are Skelcrew's on every setup. Harnesses are never plugins: each is built into Skelcrew, one module per harness, because that module draws the sandbox boundary.
 
-A runtime plugin is always personal, added with `sc add -g`, since how you run and watch your agents is yours. An I/O plugin is usually the repository's, in `plugins:`.
+A runtime plugin is always personal, since how you run and watch your agents is yours. An I/O plugin is usually the repository's.
 
 ### The manifest
 
@@ -593,88 +387,35 @@ call: [bun, call.ts]
 git_credentials: [bun, credentials.ts]
 ```
 
-Each command is a list of words, run in the plugin's folder and never through a shell. `build` runs once, at install. `setup` runs in your terminal and asks for whatever the plugin needs, such as a sign-in. A command whose first word is `bun` runs on the Bun inside Skelcrew, so a plugin written for Bun needs nothing else installed. `about` is one line in plain words saying what the plugin is for, shown first when Skelcrew asks you to install it. A manifest with `jobs:` and no `kind:` is still read: tracker, forge and chat make it I/O, and machine makes it runtime.
-
-Each command gets `SKELCREW_PLUGIN`, its name, and `SKELCREW_PLUGIN_CONFIG`, a folder in `~/.config/skelcrew/plugins/` for its settings and tokens, readable only by you, in a format of its own. `setup` also gets `SKELCREW_REMOTE`, the remote of the checkout `sc` ran in, when there is one.
+Each command is a list of words, run in the plugin's folder and never through a shell. `build` runs once, at install. `setup` runs in your terminal and asks for whatever the plugin needs, such as a sign-in. A command whose first word is `bun` runs on the Bun inside Skelcrew, so a plugin written for Bun needs nothing else installed. `about` says in plain words what the plugin is for, shown first when Skelcrew asks you to install it. Each command gets the plugin's name and a folder of its own for its settings and tokens, readable only by you.
 
 ### I/O plugins
 
-A tracker or forge is asked by running its `call` command with one JSON question on stdin. It prints one JSON answer and exits within 60 seconds. If it exits with an error, its last line of stderr is the error. Exit code 2 means the plugin needs its setup again, such as after its sign-in lapsed, and Skelcrew's error names `sc setup <name>`. When `claims` exits with 2 while Skelcrew brings in a repository in your terminal, Skelcrew runs that plugin's setup there, handed the repository's remote, and then asks again, so the fix happens where you are. Ctrl-C stops it. Every answer is checked before Skelcrew uses it.
+A tracker or forge is asked by running its `call` command with one JSON question on stdin. It prints one JSON answer and exits within 60 seconds, or exits with an error on its last line of stderr. Exit code 2 means the plugin needs its setup again, and Skelcrew says so, or runs it there and then when you are at your terminal. Every answer is checked before Skelcrew uses it, and an older plugin's missing answer is read the safe way.
 
-| Question | Provides | Answer |
-| --- | --- | --- |
-| `claims` with a remote, such as `git@github.com:simon/app.git` | Forge | The repository's key, short name, link and clone URL, whether you can push to it and whether it is a fork. Or `null` if it isn't this plugin's. |
-| `changed` with a repository, whether the plugin is its tracker, its forge or both, the last `next` (or none), and PR numbers to watch | Tracker, forge | `items`, everything updated since, or everything open without a `next`, and the new `next` |
-| `create task` with a repository, title and body | Tracker | The new issue |
-| `took` with a repository and issue, before a labelled issue starts, and at each `sc start` on one | Tracker | `{ "took": true }` if this call took it, or `{ "took": false }` if someone already had. GitHub reacts with 👀, and a reaction already there means it was taken. `null`, from an older plugin, counts as taken. `sc start` doesn't look at the answer. |
-| `assign` with a repository, issue, and on or off | Tracker | With on, `{ "assigned": true }` if this call assigned you, or `{ "assigned": false }` if you were already. With off, nothing. A tracker with no assignees answers `{ "assigned": false }` and does nothing. |
-| `seen` with a repository, PR, kind (comment or review) and ID | Forge | Nothing. GitHub reacts with 👀 |
-| `open pr` with a repository, branch, base, title and body | Forge | Its number, or the number of the PR already open from that branch |
-| `merge pr` with a repository, PR and the commit you saw approved | Forge | Nothing, or why it couldn't merge. GitHub merges only if the PR's head is still that commit, with the first method the repository allows, of a merge commit, squash and rebase |
-| `close pr` with a repository, PR, branch, and a comment or none | Forge | Nothing. GitHub posts the comment, closes the PR, and deletes the branch |
-| `review` with a repository, PR, commit, verdict and body | Forge | The review's ID. The forge posts the body unchanged, HTML comments included, and `changed` gives it back unchanged, so Skelcrew can find its markers, such as the one a merge when ready's record carries |
-| `edit review` with a repository, PR, review ID, verdict and body | Forge | `{ "edited": true }` once the forge changed that review to the new verdict and body, `{ "edited": false, "gone": true }` when the review no longer exists, such as one someone deleted, or `{ "edited": false }` if the forge can't edit it. `null`, from an older plugin, and an error count as can't, so the review still reaches the PR |
-| `status` with a repository, commit, state and description | Forge | Nothing |
-| `log` with a repository and check ID | Forge | What failed: the failing tests and their errors, from the check run's annotations and the failed step, or else the end of the job's log |
+The questions are `claims` (whether a remote is this plugin's, and the repository's names, links, whether you can push and whether it is a fork), `changed` (every item updated since the last answer, or everything open), `create task`, `took` (claiming an issue, saying whether this call took it), `assign`, `seen`, `open pr`, `merge pr` (only if the PR's head is still the approved commit), `close pr`, `review`, `edit review`, `status` and `log` (what failed in a check). Their fields are in [plugins and base modules](runtime.md#io-plugins). A forge posts and gives back a review's body unchanged, so Skelcrew can find its own markers.
 
-Skelcrew asks `changed` once per repository of each plugin that is its tracker or its forge, and keeps issues only from its tracker and PRs only from its forge.
-
-An **item** is an issue or a PR: its kind, ID, title, body, state (`open`, `closed` or `merged`), author, labels, link, and when it was created and updated. An ID is the tracker's own, such as `12` on GitHub or `JOTT-12` on Linear. An issue adds the line a PR's body needs to close it on merge, such as `Closes #12`. A PR adds its branch, base, whether it conflicts with the base, its checks, and its reviews and comments. A check has a name, an ID if it has a log, and a state: `running`, `passed`, `failed`, or `cancelled`, which isn't the builder's to fix. A review or comment has an ID, its text and its author, and a review its verdict and its comments on lines. An author says whether it is a bot, whether it is you, and whether it can push to the repository.
+An **item** is an issue or a PR: its kind, ID, title, body, state, author, labels, link and times. An issue adds the line that closes it on merge. A PR adds its branch, base, whether it conflicts, its checks, and its reviews and comments. A `cancelled` check isn't the builder's to fix. An author says whether it is a bot, whether it is you, and whether it can push.
 
 Skelcrew runs git itself, for clones, fetches and pushes. `git_credentials` is a git credential helper, which Skelcrew hands to git for each command and never saves.
 
-**The copy.** Skelcrew keeps a copy of each repository's open issues, from its tracker, and open PRs, from its forge. At each poll `changed` brings what changed since its last `next`. Each engine start begins with no `next`, so everything open comes again, and anything no longer there leaves the copy. A closed item leaves once no live task points to it. The list, `sc ls`, `sc show` and `sc ps` read the copy, so none of them waits on the tracker or forge. Only `sc show` asks the forge, for the logs of failed checks. `sc start` polls its repository first, so a builder never starts from an old body.
+**The copy.** Skelcrew keeps a copy of each repository's open issues, from its tracker, and open PRs, from its forge, brought up to date at each poll and read whole again at each engine start. The screen and the commands that list or show read the copy, so none of them waits on the tracker or forge. Only `sc show` asks the forge, for the logs of failed checks. A task starts from a fresh poll, so a builder never starts from an old body.
 
 A chat plugin, such as Slack, would be where you hear that a task needs you and talk to a lead. None exists yet, so chat has no commands: they come with the first chat plugin.
 
 ### GitHub
 
-The GitHub plugin, `skelcrew/skelcrew-github`, acts as Skelcrew's GitHub App, `skelcrew`, so every PR, review, comment, reaction and push shows as `skelcrew[bot]`. Skelcrew never acts on GitHub as you, so it is always clear whether you or Skelcrew speaks. Its setup takes two steps, asks you to paste nothing, and skips a step already done:
+The GitHub plugin acts as Skelcrew's GitHub App, so everything Skelcrew does on GitHub shows as `skelcrew[bot]`, and it is always clear whether you or Skelcrew speaks. Skelcrew never acts on GitHub as you. Its setup signs you in on each machine on its own, asking you to paste nothing, and makes sure the app is installed on the repository. Each repository gets a token of its own lasting an hour. The app has no permission for workflows, so a change to `.github/workflows` is one a builder says it needs, and you make.
 
-1. It signs you in with GitHub's device flow for the app. It shows a code, and Enter opens GitHub's page, where you enter it and click Authorize. That tells Skelcrew who you are. The plugin keeps the sign-in in its settings, and renews it through Skelcrew's service, since renewing needs the app's secret. A renewal cancels the sign-in before, so two machines can't share one: each machine signs in on its own.
-2. It makes sure the app is installed on the repository `sc` ran in. If it isn't, Enter opens the app's install page, with the repository picked already when it is public. GitHub picks a repository only by its ID, which no one can read for a private repository before the app is on it, so there you pick it yourself. The plugin sees the install through your sign-in. Outside a checkout, setup waits until the app is installed anywhere.
-
-On a remote, setup prints each link instead of opening it.
-
-For each repository, the plugin asks the service for a token, with your sign-in. The service checks that you can reach the repository and the app is installed there, then makes a token for that repository alone, which lasts an hour. `claims` for a repository the app isn't installed on exits with 2, so `sc` there runs the setup, which goes straight to step 2. The app has contents, pull requests, issues and commit statuses to read and write, checks and actions to read, and metadata. It has no permission for workflows, so it can't push a change to `.github/workflows`. A builder that needs one says so, and you make it.
-
-**Skelcrew's service.** The app is shared by everyone who uses Skelcrew, and its secrets can't ship inside Skelcrew. So a small service holds them, and does only what needs them: it makes GitHub tokens and renews your sign-in. It is open source, in `skelcrew/skelcrew-service`. The plugin's one setting is the service's address, `https://skelcrew.dev` unless you set another, and its setup never asks for it. To depend on no one, you run the service yourself, with a GitHub App of your own, and set its address: the same plugin, the same setup. The service is one small serverless function with no database. It sees who asked for a token for which repository, logs no request bodies, and code and issues never pass through it. While it is down, a token can't be renewed, so within the hour Skelcrew can't read, push or post on GitHub, and tasks wait. Once it is back, the next poll catches up. Skelcrew's core never needs the service.
+**Skelcrew's service.** The app's secrets can't ship inside Skelcrew, so a small open source service holds them, and only makes tokens and renews sign-ins. You can run your own, with an app of your own. It has no database, sees only who asked for which repository, and code and issues never pass through it. While it is down, tasks wait and catch up after. Skelcrew's core never needs it.
 
 ### Runtime plugins
 
-A runtime plugin says what it provides, out of five: the base modules `sessions`, `transport` and `status`, `files`, and `machine`. For the base modules, core uses its built-in for any it leaves out. Skelcrew uses a plugin's transport, status and files only for the sessions it hosts. Each function is a command, run as `call` is: one JSON question on stdin, one JSON answer on stdout. `attach` runs in your terminal, as `setup` does.
+A runtime plugin provides some of the base modules `sessions`, `transport` and `status`, and `files` and `machine`. Core uses its built-in for any base module the plugin leaves out, and uses a plugin's transport, status and files only for the sessions it hosts. Each function is a command, run as `call` is. herdr is the first: its own apps then show Skelcrew's leads and builders on your laptop, desktop and phone.
 
-```yaml
-name: herdr
-version: 0.1.0
-skelcrew: 0.6.0
-about: Runs Skelcrew's agents in herdr-core, so herdr's apps show them
-kind: runtime
-provides: [sessions, transport, status, files]
-session: [bun, session.ts]       # start, paste, keys, read, interrupt, end, list, rename, deliver, idle, status
-attach: [bun, attach.ts]
-```
+**Files.** A file you drop onto an agent in a host's apps, such as a screenshot, is saved in a folder of that session's. A plugin that provides `files` lets its agent read that folder, read-only, and nothing else of the host's. The host may change nothing in the sandboxed command but swap a placeholder Skelcrew made for that folder, and Skelcrew refuses anything else. On a Mac, an agent gets no dropped files yet.
 
-**herdr** (`skelcrew/skelcrew-herdr`, https://github.com/herdrdev/herdr-core) provides sessions, transport, status and files. `start` maps onto `hc run`, `paste` and `keys` onto `hc send`, `read` onto `hc read`, `interrupt` onto `hc interrupt`, `attach` onto herdr-core's client, `end` onto ending the program, `list` onto herdr's labels, `rename` onto the tab's name, `deliver` onto `hc send --if idle`, `idle` onto `hc events`, `status` onto OSC 7501, written by the plugin's relay in the pane, as **Status** says, and `files` onto the folder where herdr saves what you drop on a session. herdr's own apps then show Skelcrew's leads and builders on your laptop, desktop and phone.
-
-**Files.** A file you drop onto an agent in a host's apps, such as a screenshot, is saved by the host in a folder of that session's. The sandbox hides it, so a plugin that provides `files` lets its agents read that folder, and nothing else of the host's. For an agent starting on such a host, Skelcrew makes a placeholder, a path that never exists on the host, such as `/skelcrew-files-3f9c…`, 32 random hex digits long and new for each start. The sandboxed command gets a read-only mount of it at its own path, after every other mount but the agent's socket, and `start` is handed it as `files`, as `{ "ask": "start", …, "files": "/skelcrew-files-3f9c…" }`. The command comes as plain words, so the plugin finds it. Before the command runs, the plugin makes the session's folder and swaps the placeholder for that folder's path wherever it appears. The agent then reads its drops, read-only, at their real path, which is the path the host types when you drop a file, so it resolves inside the sandbox as typed. The placeholder is the only thing a host may change in the command, and the change can only say which folder that one read-only mount shows. So Skelcrew refuses `files` that isn't a placeholder of its own form, such as a real folder, and refuses a command that holds the placeholder anywhere but its mount, such as in a first message. Skelcrew can't see what a host then runs, on any host: a plugin runs as you, outside the sandbox, which is why you approve each plugin before it is installed. These rules are what a plugin that keeps to the protocol is held to. tmux has no files, and on a host without them the command has no such mount. On a Mac, an agent gets no dropped files yet: its sandbox's rules are in a profile Skelcrew writes to a file before the command runs, not in the command's words, so a host has no word to swap, and the rules can't name a folder only the host knows.
-
-**Machines.** A runtime plugin that provides `machine` says how to reach a machine that runs Skelcrew, with three commands:
-
-```yaml
-name: sprite
-kind: runtime
-provides: [machine]
-add: [bun, add.ts]
-exec: [bun, exec.ts]
-push: [bun, push.ts]
-```
-
-- `add <name>` checks that your laptop has what the machine needs, lists what is missing with the command that fixes it, asks before creating the machine, then readies it for Skelcrew.
-- `exec <name> <word>…` runs the words on the machine, as `ssh -t` does, waking it if it sleeps, with your terminal when Skelcrew has one.
-- `push <name> <file> <path>` copies a file to the machine, as `scp` does.
-
-`exec` and `push` never create a machine, so a mistyped name creates nothing. `sc --remote <plugin>:<name>` reaches a machine through the machine plugin of that name, and a host with no plugin in front, such as `simon@workbox`, goes over SSH. A machine plugin is used on the laptop you run `--remote` from, never where the engine runs. With no machine plugin of that name, `--remote` refuses a `<plugin>:<name>` host rather than taking it for an SSH host.
+**Machines.** A plugin that provides `machine` says how to reach a machine that runs Skelcrew: `add` readies one after asking, `exec` runs words there as `ssh -t` does, and `push` copies a file there. Only `add` creates a machine, so a mistyped name creates nothing. It is used on the laptop you run `--remote` from.
 
 ## Base modules
 
@@ -690,26 +431,13 @@ How Skelcrew runs agents is split into five base modules. Each has a built-in de
 
 ### Sessions
 
-Every agent runs in a terminal session of its own: one for each repository's lead and one per builder. The rest of Skelcrew reaches a session only through this module, with plain data in and out.
+Every agent runs in a terminal session of its own: one for each repository's lead and one per builder. The rest of Skelcrew reaches a session only through this module, with plain data in and out. Its functions are `start`, `paste` (one bracketed paste), `keys`, `read` (the screen, and whether someone scrolled back), `interrupt`, `attach`, `end` (once every process it ran has exited), `list`, `rename` and `check` (whether a session exists, whether its agent runs and exited cleanly, and its last screen, so Skelcrew reconnects instead of starting an agent twice). Each is described in [plugins and base modules](runtime.md#sessions).
 
-| Function | What it does |
-| --- | --- |
-| `start` | Starts a session running the command Skelcrew gives, in a folder, with its environment and its labels, and on a host that provides files, the placeholder of its dropped files. Returns the session's ID. Can keep the session when its agent exits cleanly, so a lead you exited can be told from one that crashed. |
-| `paste` | Pastes text into the session as one bracketed paste, in steps: readying the text, pasting it, then forgetting it, so typing can take its last look at the screen just before the paste. |
-| `keys` | Sends keys, such as Enter or Esc. |
-| `read` | Returns what the session shows now, and whether someone has scrolled back in it. Typing, the status screen check and `sc peek` use it. |
-| `interrupt` | Stops the agent's turn, as Esc does. `sc interrupt` uses it. |
-| `attach` | Attaches your terminal full screen to the session. It returns when you detach. |
-| `end` | Ends the session, and waits until every process it ran has exited, so its clone can be removed. |
-| `list` | Lists the host's sessions with Skelcrew's labels and whether each agent still runs, so a starting engine finds the agents still running. |
-| `rename` | Receives a session's ID and its new title, as `{ "ask": "rename", "id": "<ID>", "title": "<title>" }`, each time its thread's title changes, such as when the lead gives it a short title, and names the session by it. Its answer isn't read. A plugin's host only: tmux keeps no title. A host that fails it, such as an older plugin, keeps the old name, and Skelcrew logs it. |
-| `check` | Says whether one session exists, whether its agent still runs, whether it exited cleanly, and the last screen of one that ended, so Skelcrew reconnects instead of starting an agent twice and can say why one ended. |
+Every session carries its repository, task and role as labels for as long as it lives, so a starting engine knows whose each session is, and a host's own apps can group and filter by them.
 
-Every session carries three labels: its repository (`simon/app`), its task (`app-12`, none for a lead) and its role (`builder`, or `lead`). They stay with the session for as long as it lives, so a starting engine knows whose each session is, and a host's own apps can group and filter by them. A builder's session on a plugin's host also carries its title, for the host's own apps to name it by: its task's name in uppercase, then its thread's short title, else its full title, such as `APP-12 Login redirect`. The task label stays lowercase, as Skelcrew finds the session by it. `start` hands them over as `labels`, such as `{ "repository": "simon/app", "role": "builder", "task": "app-12", "title": "APP-12 Login redirect" }`, and `list` gives them back the same way. A host ignores labels it doesn't know. When the title changes, Skelcrew asks the host to `rename` the session. tmux keeps no title, as Skelcrew's list reads titles from its own database.
+The built-in host is tmux, on Skelcrew's own tmux server with its own config, keeping every trap in `docs/learnings.md`. Skelcrew never runs its own terminal emulator. Leaving an agent takes one key, the same on tmux as on herdr. Only this module runs tmux for agents, and a test fails if anything else does.
 
-The built-in host is tmux. Its sessions run on Skelcrew's own tmux server (`tmux -L skelcrew`) with Skelcrew's own config, sent with each new session, and keep every trap in `docs/learnings.md`. The labels are tmux user options on the session. tmux keeps sessions alive, handles attach and detach, and answers the terminal's queries. Skelcrew never runs its own terminal emulator. The config binds Ctrl-\ to detach with no prefix, also in copy mode, where an agent you scrolled back is. It is herdr's key to detach, so an agent is left the same way on either host. Ctrl-4 sends the same key in most terminals, for a keyboard layout where backslash needs AltGr. It hides the status bar, so attaching feels like being inside the harness. tmux reads the key however your terminal sends it: as one byte, as an extended key in the kitty or the xterm form, and in pieces over a slow link. A runtime plugin's host keeps its own key to detach. Only this module runs tmux for agents, and a test fails if anything else does.
-
-Your `session:` setting picks the host for new sessions. Each thread remembers the host it started on, and an agent already running stays there until it ends. A resumed agent, such as after `sc stop` and `sc start`, starts on the current host with its conversation, since the conversation belongs to the harness. If a thread's host plugin is gone when the engine starts, the thread needs you, with the mark `run sc install: its session host herdr is missing`, rather than being moved silently.
+Your session host setting picks the host for new sessions. A running agent stays on the host it started on until it ends, and a resumed one starts on the current host with its conversation. If a thread's host plugin is gone, the thread needs you, rather than being moved silently.
 
 ### Transport
 
@@ -718,37 +446,31 @@ Your `session:` setting picks the host for new sessions. Each thread remembers t
 | `deliver` | Types a message into an agent once it is idle, never into a turn still running and never on top of a person's unsent draft. |
 | `idle` | Says when an agent becomes idle, so a waiting message can go. |
 
-The built-in transport works on any host's sessions, as it uses only `paste`, `keys` and `read`, with the busy and ready marks each harness module gives. It waits until the agent is idle and its screen is quiet, read a moment apart, with a line holding only the harness's bare prompt. It readies the text, reads once more for a person's draft, pastes it as a bracketed paste, and sends Enter on its own a moment later. No hook can see a draft, so this screen check stays whatever the state says, and a turn can start with no hook, such as when a background task ends.
-
-Mid-turn, Claude Code's spinner and Codex's "Working" line show "esc to interrupt" and redraw every second as their timer counts. The agent's own text can hold those words too, such as a reply about Skelcrew's code, but it sits still. So while those words show, Skelcrew watches the screen a second and a half more, long enough to see the timer tick, before it takes them for the agent's own. An agent whose state is `working` gets no message until its turn ends, even right after a message went in.
-
-A host that can do better provides its own. herdr does: `hc send --if idle` waits for a person's draft and types only when the agent is idle, and `hc events` says when it is.
+The built-in transport works on any host's sessions, as it uses only `paste`, `keys` and `read`, with the busy and ready marks each harness module gives. No hook can see a draft, so it always checks the screen before typing, whatever the state says. An agent that is working gets no message until its turn ends. A host that can do better provides its own.
 
 ### Messages
 
-Every message Skelcrew types into an agent goes through this module, on whichever transport is active. It holds the queue and the rules:
+Every message Skelcrew types into an agent goes through this module, on whichever transport is active. The exact wrapping, escaping and order of notes are in [the flow in detail](flow.md#messages).
 
-- **Who may send what to whom.** The lead may tell any thread of its own repository. A builder may tell only its repository's lead, since its socket says which task it is. Skelcrew itself sends event messages to a builder: a review's changes, a failed check, a person's comment, a merge conflict. It sends notes to the lead: a thread that needs you, a task started from a label, a task's end. A reviewer sends nothing. A lead may brief another repository's lead in Skelcrew, but never its own repository's, with `sc tell lead <repo>`. A builder can't. The brief goes in as a note to that lead, so it shows in both leads' chats, and a lead whose tab you closed by exiting it is brought back first. A lead that can't start yet, such as while its clone is missing, is tried again every minute while the brief waits, and the sending lead is told why, once. A lead already running when its Skelcrew learned of briefs is told these rules once, in a note, as it keeps the instructions it started with. A repository not in Skelcrew is refused, with the `sc repo add` that adds it. When you asked for the work the brief hands over, the sending lead gives your words exactly, with `--asked-file`, as for a merge when ready. They go in an `<asked>` element of their own, before the brief's `<brief>` element, each holding its text exactly, and the outer tag says `asked="yes"`, which only Skelcrew can write. Text that holds a `skelcrew`, `asked` or `brief` tag in any form, such as `</asked >`, which would close or fake a tag, or a control character, such as the end of a bracketed paste, which would end the paste and act as typing, has each `<` written as `&lt;`, each `&` as `&amp;` and each control character but a line break or tab as its code, such as `&#x1b;`, rather than anything removed. Its element says `escaped="yes"`, so the receiving lead reads back exactly what was written. Only such a brief lets the receiving lead start threads from it, and only for exactly what your words ask, never for more the brief proposes. Without it, the receiving lead reports the brief to you and asks. Anything else is refused.
-- **The wrapping.** Every message from an agent is wrapped in a tag that says who it is from and the command to answer with: `<skelcrew from="lead" reply="sc tell lead">` into a builder, `<skelcrew from="APP-12" reply="sc tell APP-12">` into the lead, or `<skelcrew from="app:lead" reply="sc tell lead app">` into another repository's lead, then the text on its own lines, then `</skelcrew>`. Skelcrew removes any skelcrew tag from the text, and a brief's `<asked>` and `<brief>` tags, with spaces or in any case, such as `</skelcrew >`, so a message can't end its tag early, and an agent's message never passes for yours or for your words in a brief. Every other note typed into a lead can quote outside text, such as an issue's title, which must never pass for an agent's message or a brief, and the lead still sees all of it: there the `<` that starts any of these tags is written as `&lt;`. Skelcrew does so as each note is typed in, so a note saved before an upgrade is no exception. Only notes Skelcrew writes itself, with no outside text, keep tags they name, such as a note telling a lead how to read a brief. A lead's brief is escaped instead, as **Who may send what to whom** says. Each control character but a line break or tab, in any message from an agent and in every note typed into a lead, is written as its code, such as `&#x1b;`, so nothing can end the paste early and type the rest as if you had.
-- **Order.** Each agent has one queue, first in, first out, kept in the database, so a stop or a restart of the engine loses nothing and reorders nothing. `sc ps` counts what waits.
-- **Waiting until idle.** A message waits until the transport says the agent is idle. A message to a thread that isn't running, or that is asking you a question, is refused, not kept, since typing would answer the question for you. A builder that stopped without submitting can be told, and the message clears its `turn ended`. A note to a lead that hasn't started waits until it starts. When a working or waiting builder isn't running while messages wait for it, the lead hears of it after a few seconds, as nothing else would bring it back, and can bring it back with `sc stop` and `sc start`.
-- **The lead's chat.** The lead's chat is yours too, so its notes and messages wait while you read or type there. Nothing goes into the lead while you have scrolled back in it, as a paste would throw you back to the bottom, nor while you have unsent text at its prompt. A lead you left scrolled back, such as for a builder, waits until you come back to it and leave the scroll. Once the lead can take them, everything that waited goes in as one message, a blank line apart, so the chat moves once. A thread that needs you, such as for a builder's question, comes first, then a thread that failed and the builders' messages, then Skelcrew's other notes. What would be said is looked at again right before the paste, so a question you answered meanwhile isn't announced, and a note that came meanwhile goes in with the rest.
-- **No acknowledgements.** A builder answers the lead only with a result, a question or a disagreement, never just to confirm a message, such as "noted, nothing to do". A message that needs nothing from it gets no reply.
-- **Questions mid-delivery.** A question asked while a message is about to go in stops it, and it goes in once the question is over. Asked after its paste, before its Enter, the message is left at the prompt unsent, and once the question is over Skelcrew presses only Enter, so it is never pasted twice. Skelcrew saves that it left it there, so it knows that draft for its own after a restart.
-- **Never waiting silently.** When `sc tell` can't go in right away, it says why, such as `APP-12's builder can't take it yet: it is mid-turn (it shows esc to interrupt)`, or that earlier messages wait ahead of it. A message from the lead still waiting after 10 minutes brings the lead one note naming the thread and why. When the builder is mid-turn, the note says you can press Esc in it to have the message sooner, and otherwise doesn't suggest it.
-- **Dropping stale event messages.** A new round drops Skelcrew's own waiting notices about the older commit, such as a failed check or a merge conflict, and a conflict still there is told again. A notice still being prepared when the round starts is never saved. People's reviews and comments go in messages of their own, apart from Skelcrew's notices, and are never dropped. Neither are messages from the lead. A task that ends drops what waits for it.
-- **Task updates.** A message from the lead, once typed in, is kept on the task as an update, with who sent it and when, which the reviewer gets after the description. Every message from the lead counts, so the lead has nothing to remember.
+- **Who may send what to whom.** The lead may tell any thread of its own repository, and brief another repository's lead, never its own. A builder may tell only its repository's lead. Skelcrew sends event messages to a builder and notes to the lead. A reviewer sends nothing. A brief carries your exact words, in a form only Skelcrew can write, when you asked for the work, and only then may the receiving lead start threads from it, for exactly what your words ask. Anything else is refused.
+- **Nothing passes for someone else.** Every message from an agent is wrapped in a tag that says who it is from and how to answer. No agent's text, and no outside text such as an issue's title, can end that tag, fake another, pass for your words, or end the paste early and type as if it were you.
+- **Order.** Each agent has one queue, first in, first out, kept in the database, so a restart loses nothing and reorders nothing.
+- **Waiting until idle.** A message waits until the agent is idle. One to a thread that isn't running, or that is asking you a question, is refused, since typing would answer it for you. A builder that should be running but isn't while messages wait is reported to the lead.
+- **The lead's chat is yours too.** Nothing goes into it while you have scrolled back or have unsent text at its prompt. What waited then goes in as one message, most urgent first, checked again so nothing stale is announced.
+- **Never twice, never silently.** A message is never pasted twice, even across a question asked mid-delivery or a restart. When `sc tell` can't go in right away it says why, and one still waiting long after brings the lead a note.
+- **No acknowledgements.** A builder answers the lead only with a result, a question or a disagreement.
+- **Stale notices go.** A new round drops Skelcrew's own waiting notices about the older commit, and a task that ends drops what waits for it. People's reviews and comments, and the lead's messages, are never dropped.
+- **Task updates.** Every message from the lead, once typed in, is kept on the task as an update, which the reviewer gets, so the lead has nothing to remember.
 
-Messages stay in Skelcrew, never on GitHub, and each one goes in the task's log. They stay in core on every host, as Skelcrew's rules and its safety must be the same whichever host runs the agents. A transport only carries text this module already decided to send.
+Messages stay in Skelcrew, never on GitHub, and each goes in the task's log. They stay in core on every host, so Skelcrew's rules and safety are the same whichever host runs the agents.
 
 ### Sandbox
 
-The sandbox stays in core on every host, drawn by the harness module. A host runs the sandboxed command exactly as Skelcrew gives it, and never changes what the agent can reach. The one exception is a host that provides `files`: it swaps the placeholder of the agent's dropped files for their folder, which only says what one read-only mount shows, as **Files** under **Runtime plugins** says.
+The sandbox stays in core on every host, drawn by the harness module. A host runs the sandboxed command exactly as Skelcrew gives it, and never changes what the agent can reach, but for the one swap **Files** under **Runtime plugins** allows.
 
 - **bubblewrap on Linux, `sandbox-exec` on a Mac**, drawing the same boundary: the agent's folder writable, the rest of the system read-only, the home folder and credentials hidden.
-- **Claude Code.** Each session gets its own config folder in `~/.local/share/skelcrew/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from `sc install`. Your `~/.claude` stays hidden. Its own permission prompts and sandbox are turned off, since Skelcrew's draws the boundary. Inherited `CLAUDE_CODE_*` variables are removed. The folder is marked as trusted in the session's copy of its settings, or it waits at a question nobody sees. A lead's settings turn off Claude Code's tips, so they don't crowd the lead's greeting. Its notices that need you, such as a login problem, still show. So do its announcements, such as of a new model, as Anthropic's servers send them and no setting turns them off. The first message goes on the command line.
-- **Codex.** It gets Skelcrew's `CODEX_HOME` and runs with its own sandbox and approvals turned off. A Codex lead or builder gets a folder of its own for its conversation, and shares the login.
-- **The lead** works in its own folder in `~/.local/share/skelcrew/leads/<owner>/<repo>/`. It reads Skelcrew's clone of every repository Skelcrew has, its own included, read-only at `~/.local/share/skelcrew/repos/<owner>/<repo>/`, kept current by the engine's polls. A repository added later shows up in a running lead. It never sees another repository's tasks or conversation. Builders and reviewers see only their own task's clone.
+- **Each harness** gets a config folder and login of Skelcrew's own, never yours, with its own permission prompts and sandbox turned off, since Skelcrew's draws the boundary. Its conversations stay where it can resume them.
+- **The lead** works in its own folder, and reads Skelcrew's clone of every repository Skelcrew has, its own included, read-only, kept current. A repository added later shows up in a running lead. It never sees another repository's tasks or conversation. Builders and reviewers see only their own task's clone.
 - **The reviewer** sees the task's clone through a throwaway layer, so it can run tests but changes nothing.
 - **Priority.** Builders, reviewers and setup commands run at a lower CPU priority than the leads and the engine, so your typing stays quick while their tests pile up.
 
@@ -756,242 +478,47 @@ The sandbox stays in core on every host, drawn by the harness module. A host run
 
 Skelcrew keeps each agent's state on its thread: `working`, `idle`, `asking` or `error`. With the thread's needs you and its task's stage, that gives the status a host shows: working, idle, needs you, ready or error.
 
-The state comes from the harness's hooks wherever a hook fires. The lead gets the same hooks as builders, but a lead's hooks only keep its state: they never flag needs you or bring a note.
+The state comes from the harness's hooks wherever a hook fires: a message going in, a turn ending, a turn ending on an error, a question asked, Esc. A lead's hooks only keep its state: they never flag needs you or bring a note. Where a harness has no hook, such as for Esc on Claude Code or an error on Codex, Skelcrew reads the screen of each working agent, on every host, and never flags needs you from it.
 
-| Happens | Claude Code | Codex |
-| --- | --- | --- |
-| A message goes in | `UserPromptSubmit`: `working` | `UserPromptSubmit`: `working` |
-| A turn ends normally | `Stop`: `idle` | `Stop`: `idle` |
-| A turn ends on an error | `StopFailure`: `error` | No hook |
-| The agent asks a question | `PreToolUse` on `AskUserQuestion`: `asking`, and `PostToolUse` makes it `working` again | No question tool: the agent asks the lead with `sc tell lead`, or ends its turn with the question, so `Stop` marks it `idle` and its last message goes to the lead |
-| You press Esc | No hook | `Interrupt`: `idle` |
+Skelcrew reports every change of status to the host when the host can show it, through a plugin's `status` function, which receives a session's ID, its status word and a short reason. tmux shows no status, and Skelcrew's screen shows it instead. A host's own view never replaces the hooks: needs you always comes from Skelcrew.
 
-The `Stop` hook also tells Skelcrew the commit the builder's clone has checked out, and its last message when nothing in the clone is uncommitted.
+## The screen
 
-Two gaps have no hook: Esc on Claude Code, and an error on Codex, which prints it and sits at its prompt. For these, every two seconds Skelcrew reads the screen of each agent that is `working`, with the sessions' `read`, so this works on every host. One whose busy mark, "esc to interrupt", is gone at two looks in a row, or sits still at a bare prompt, becomes `idle`. Neither gap flags needs you.
+The screen is how you see and steer a repository's work. What it shows, its keys and its layout are in [the screen](screen.md). It guarantees:
 
-Skelcrew reports the status to the host when the host can show it. A plugin that provides status implements one function:
+- **Three ways in.** Plain `sc` shows the repository's list as a sidebar, with the lead or the row you are on beside it. `sc --list` shows the list alone with a details pane. `sc attach` attaches full screen to one agent.
+- **The lead first.** The screen starts on the lead, so what you type first goes to it, and the lead's requests for your yes show under it.
+- **Tasks, not threads**, in sections: everything that waits on you, always open, so one key reaches it; what waits for a builder, in the order it starts; then the stages. Each task shows in exactly one place, decided from its state alone.
+- **Words, not colours.** A task's word always says what is happening. Outside text has its control codes removed first.
+- **Always a way back.** One key brings you back from an agent, and pressing it once too often never leaves the screen. Leaving keeps every agent running, and says so.
+- **Seeing without touching.** A task's details show what `sc show` gives, with its agent live beside them. Nothing typed there reaches the agent, and its session is never resized.
+- **Fast and quiet.** The screen reads only Skelcrew's database and its copy, so it opens at once and never asks the forge, and it redraws only on change, so it works over a slow link. It shows the load of the machine the engine runs on.
+- **Yours to decide.** Merging, starting and the queue's order happen only on your keys or commands, never the lead's. The merge confirm says when the PR changes `.agents/`.
+- **Your terminal stays yours.** The screen never reads your `~/.tmux.conf`, and takes the mouse only while it shows.
 
-| Function | What it does |
-| --- | --- |
-| `status` | Receives a session's ID, its status word (`working`, `idle`, `needs you`, `ready` or `error`) and a short reason, such as `question` or `round limit`, each time the status changes, and shows it on the host. |
+**A lead you exit** ends alone: its repository and tasks stay, and the engine doesn't bring it back until you open the repository again, which resumes its conversation. A lead that crashed is brought back when you look at it. When Skelcrew can't tell which happened, it takes the lead as exited, and says how to start it.
 
-The engine calls `status` for every change, from wherever it came: a hook, the screen check, CI going green, or a review. herdr hears status as OSC 7501, an escape code written by the program running in the pane, which the engine, outside the pane, can't write. So `skelcrew-herdr`'s `start` runs the sandboxed command under a small relay of its own, which passes the agent's terminal through untouched and writes OSC 7501 into it when `status` hands it a new status. The relay runs outside the sandbox, as the plugin does, and the sandboxed command inside it is exactly the one Skelcrew gave, but for the placeholder of the agent's dropped files, swapped for their folder. tmux shows no status, and Skelcrew's list shows it instead. A host's own view never replaces the hooks: needs you always comes from Skelcrew.
-
-## The list
-
-Plain `sc` opens the screen: the repository's list as a sidebar on the left, and on the right the lead or the task you are on, as **The screen** says. `sc --list` shows the list alone, full screen, with a details pane beside it. Both show the same rows, stages, words and marks, which this section describes for the list first. `sc attach` attaches full screen to one agent instead, with neither, as the list's Enter does. On tmux, Ctrl-\ detaches back to your shell. A runtime plugin's host keeps its own key to detach.
-
-`sc --list` shows a list, with a details pane beside it for the row you are on. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-\, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `APP-24 · ctrl+\ back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row where Enter attaches, the bottom line says so before you go, as `⏎ attach`, with `· ctrl+\ back` on tmux. A runtime plugin's host has its own key to come back, and its rows say only `⏎ attach`. Elsewhere Enter says `⏎ open`. The list needs no tmux server of its own.
-
-```
- Skelcrew v0.6.0  [ app ]  [ docs ]  [ site •1 ]
-
-   ● lead    claude                                       │ Rate limit the API
-     asks you                                             │ issue #42  github.com/acme/app/issues/42
-     asks: start a task on #31 "Export as CSV"?   y/n     │ PR #43     github.com/acme/app/pull/43
-                                                          │
- Needs you 1                                            │ Building · question
- ▸ ● APP-T103  Rate limit the API                         │ CI running: test ✓  lint ●  build ●
-     question · #43 · CI running · 14:02                  │ Round 2 · changes asked
-                                                          │   - The limit resets per process, not per user
-   Up next   1  Building 2/2 · 1 queued                   │
-   ○ APP-26  Dark mode                                    │ Add a limit per user to the public API, so one
-     starts next · 14:45                                  │ client can't starve the others. …
-                                                          │
- 1 Backlog   2                                            │ 13:40 submitted · 13:52 reviewed · 14:02 submitted
- 2 Building  2                                            │
-   ○ APP-24  Login redirect                               │
-     working · Editing rows.ts · #40 · CI passed · 14:31  │
-   ○ APP-25  Export as CSV                                │
-     working · #44 · CI running · 14:40                   │
-                                                          │
- 3 Reviewing 1                                            │
- 4 Checks    0                                            │
- 5 Ready     1                                            │
- 6 Done      4                                            │
-
- ↑↓ move  ⏎ open  1-6 stages  y/n answer  ⇥/alt+shift+←→ repository  q quit   cpu 63%  mem 9/32G
-```
-
-The list is one repository's, picked as **Opening a repository** says. The top line has Skelcrew's version, with the host you gave `--remote` after it on a server, then a tab for each repository, together on the left. The open one is highlighted. Each other one has a badge: a dot and how many of its tasks need you, in yellow, or red when one of them went wrong, then a dot and how many are ready to merge, in green. Each shows only when there are any, and both when both apply, such as `site •2 •1`. A task that waits on you only to merge it, under Needs you as `ready to merge`, counts only in green, never also in yellow. Tab or Alt-Shift-Right moves to the next one, Shift-Tab or Alt-Shift-Left to the previous one, each wrapping round, and a click on a tab opens it. The list asks your terminal to report the mouse only while it shows, so an agent you attach to and your shell after you quit get the mouse as usual.
-
-The repository's lead comes first, under the top line, always shown. Its row looks like a task's, so it reads as a row you open: its mark, `lead` and its harness, then under them what it is doing. Requests from the lead that wait for your yes, such as starting a task or adding a repository, show under it, one per line, newest first. Then come the repository's tasks, never its threads on their own, in eight sections: Needs you, Up next, then six stages, in this order:
-
-- **Needs you**: every task that waits on you, whatever its stage, so one row and Enter reach it. Its word is what you must do, such as `question`, `ready to merge` or the action the lead marked it with, as **Needs you** says.
-
-- **Up next**: what waits for a builder. First the tasks queued under `limits.threads`, in the order they will start, numbered, the first marked `starts next`. Then the threads paused with `sc stop`, the newest task first, as they start only when you `sc start` them. A queued or paused task that needs you shows under Needs you instead, and its details still say what it waits on.
-- **Backlog**: not started yet. The tracker's open issues Skelcrew knows of that no thread works on, and the tasks in Skelcrew's backlog. The newest 10, then a row such as `… 24 more`, which Enter opens to show them all until you leave the list.
-- **Building**: a builder is working on it, including after the reviewer asked for changes. A thread that failed is here too, as its builder is what must start again.
-- **Reviewing**: a review is running, or queued for a place under `limits.reviews` or for its harness's usage limit. A review that failed or timed out is here too.
-- **Checks**: Skelcrew's reviewer approved, and the task waits on CI for that commit.
-- **Ready**: approved and green. One that waits for you to merge it shows under Needs you, so Ready holds those with a merge when ready armed, which merge by themselves.
-- **Done**: merged or closed. Those that ended today, or the last 10 when fewer ended today.
-
-Each task is in exactly one stage, decided from its state alone, and shows in exactly one section. Needs you and Up next are sections, not stages: a task that needs you or waits for a builder keeps the stage of its work, which decides what Enter and `m` do on it, and shows under Needs you or Up next instead of under its stage. Once it no longer needs you, such as when its mark clears, it goes back under its stage. The row you are on stays yours as it moves between sections, and a closed section it moves into opens. Needs you and each stage have the task that changed last first. Up next has its tasks in the order they start. Backlog has the newest issue first.
-
-Each stage's heading has the number key that opens and closes it, its name and how many tasks it has, lined up with the other headings' counts, such as `2 Building  4`. The Needs you heading has no number key, and its count is yellow while any task waits on you. The Up next heading has no number key either, and after its count says, dim, how full the builders are: how many run of how many `limits.threads` allows, and how many tasks wait, such as `Building 4/4 · 3 queued`. Without `limits.threads` it says nothing more. On a narrow terminal that goes first. Every heading's count always shows, so a closed section still says what waits in it. An open section's heading sits right above its rows and scrolls with them, so a stage's heading with no rows under it is closed. Needs you or Up next with no task in it is still open: its heading shows alone, with its count `0`. When the sections don't fit, the lead stays and the sections scroll, keeping the row you are on in view. The first and last lines of the sections then say what is hidden past them, such as `↓ 5 more in Building`, with each heading hidden there pinned in short, such as `Checks 2`. On a terminal too narrow for that, the edge says it in fewer letters, then by number keys, with `!` for Needs you and `>` for Up next, such as `↓ 4:2`, so no count is cut off. The sections never end on an open heading whose rows are below them: it is pinned at the edge instead. Opening a section moves you to its first row, so its heading and first rows show. Needs you and Up next are always open: they have no number key, and a click on their heading does nothing, so what waits on you never hides, nor what starts next. Building is open when the list starts, and you start on the first task under Needs you, or on the lead when none waits on you. The sections you open or close stay so until you leave the list, whichever repository you move to.
-
-A task in Needs you, Up next, Building, Reviewing, Checks or Ready takes two lines, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, its PR, its CI and when it last changed, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, with `14:31` today or `12 Nov` before. The step shows only when its harness gives one in words, such as a command's description, never the command itself. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. A task that waits on you only to merge it is the exception: its mark is green, beside `ready to merge`. Its word says what is happening:
-
-| Word | Means |
-| --- | --- |
-| `working` | The builder is working |
-| `starts next`, `2nd in line` | The task waits for a builder under `limits.threads`, at that place in the queue, so it shows under Up next |
-| `paused` | The thread was stopped with `sc stop`, and waits for `sc start`, under Up next |
-| `queued for review` | A review waits for a place under `limits.reviews` |
-| `reviewing` | A review is under way, or waits for CI's first check |
-| `checks` | Approved, or submitted in a flow with no review, and waiting on CI for that commit |
-| `waiting` | The builder waits, with no review under way, no approval and no changes asked for |
-| `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
-| `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
-| `ready to merge` | Approved and green, and waits on you to merge it, so it shows under Needs you |
-| `approved` | Approved and green with a merge armed: it merges by itself, so its mark is hollow, it doesn't count as ready and it stays under Ready |
-| `ready to merge, not reviewed` | Green in a flow with no review, and waits on you to merge it, so it shows under Needs you. The word says nobody reviewed it |
-| `not reviewed` | Green in a flow with no review, with a merge armed: it merges by itself and stays under Ready, as `approved` does |
-| `question` | The builder asked with its harness's question tool |
-| `turn ended` | The builder ended its turn without submitting, and its last message went to the lead |
-| `error` | The builder's harness stopped on an error |
-| `round limit` | Review hit its round limit. It needs you until you or the lead decide, as **Needs you** says |
-| the action, such as `apply the check.yml split in PR #463` | The lead, you or the safety net marked the thread as needing you, with what you must do. It shows on a queued, failed or stopped thread too, and only a question or an error comes before it |
-| `review failed`, `review timed out` | The review couldn't run, or ran past its time limit twice. The lead can run it again, so it doesn't need you |
-| `submit failed`, `check failed` | In a flow with no review, pushing the submit or opening its PR failed, or Skelcrew couldn't set its check. The lead can run it again, so it doesn't need you |
-| `failed` | As the thread's status says. It doesn't need you: the lead hears why a thread failed and can start it again |
-
-The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green is ready, yellow wants you, red is wrong (its harness errored, filled, or the thread, its review, or a submit its flow doesn't review failed, hollow, as the lead can start or run it again), bright is working and dim waits. The word always says what is happening, so nothing is told by colour alone. Text from the tracker has its control codes removed before it reaches your terminal.
-
-| Key | On | What it does |
-| --- | --- | --- |
-| ↑ ↓ | Anywhere | Move one row |
-| `1` to `6` | Anywhere | Open or close Backlog, Building, Reviewing, Checks, Ready or Done |
-| Enter | The lead | Attaches full screen to the lead |
-| Enter | Backlog | Asks `Start APP-31? y/n` in the bottom line, then starts the task, as `sc start` does. When every builder `limits.threads` allows is busy, or tasks already wait, it asks `Queue APP-31? 4 of 4 builders busy, so it starts after the 3 queued. y/n` instead. Either way, the bottom line then says what happened, such as that the task waits in the queue, which it can also do after `Start`, when a builder took the last place while you were asked |
-| `s` | Backlog | The same as Enter there: asks, then starts or queues the issue or the task of the backlog |
-| Shift-↑ Shift-↓ | A queued task in Up next | Moves it one place earlier or later in the queue, which changes the order the tasks start in, and the bottom line says its place, such as `APP-26 starts next`. The engine keeps the order, so a restart keeps it. On a paused task the bottom line says `sc start` brings it back |
-| Enter | Up next | Says in the bottom line what the task waits on, as no builder runs for it yet |
-| Enter | Building, Reviewing, Checks | Attaches full screen to the task's builder, through its session host. Detaching returns to the list, on the same row |
-| Enter | Ready, Done | Opens the PR in your browser, or copies its link, as OSC 52, when Skelcrew runs on a server. Without a forge the bottom line shows the approved branch, such as `APP-T103 is ready on branch skelcrew/t103-fix-login`. A ready task whose builder needs you attaches to the builder instead, so one Enter reaches what it waits on |
-| `o` | A task, while the details pane shows | Shows the agent's whole screen in the pane, or only its last 3 lines again. The bottom line offers it beside Enter, as `⏎ attach · o output` |
-| Page Up, Page Down | A task, while the details pane shows | Scrolls the task's details in the pane a page up or down. The bottom line offers them after `o`, as `o output · pgup/pgdn scroll` |
-| `m` | Ready | Asks `Merge app#41 into main? y/n`, then merges it on the forge. Not offered without a forge, where the line says so, nor while its builder needs you. If the forge refuses, the line says why |
-| `y` `n` | A request from the lead | Answers it |
-| Click | A task | Moves to it. A second click on it, or a double click, does what Enter does |
-| Click | The lead | Attaches full screen to the lead |
-| Click | A heading | Opens or closes its stage. Needs you and Up next stay open |
-| Wheel | The details pane | Scrolls the task's details 3 lines up or down |
-| Wheel | Anywhere else | Moves one row up or down, which scrolls the list |
-| Tab, Alt-Shift-Right | Anywhere | The next repository, after the last the first |
-| Shift-Tab, Alt-Shift-Left | Anywhere | The previous repository, before the first the last |
-| Click | A repository's tab | Opens that repository |
-| `q` | Anywhere | Leaves the list. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc --list to come back.` |
-| Ctrl-\ | Anywhere | Nothing: it comes back from an agent, so pressing it once too often never leaves the list |
-
-The engine does what the keys ask, as only it talks to the tracker and forge. Merging, starting and the order of the queue stay yours: the lead can't press these keys, and the merge confirm says when the PR changes `.agents/`.
-
-The list reads only Skelcrew's database and its copy of the tracker, so it opens at once and never asks GitHub itself. It writes to the terminal only when what it shows changes, so a list sitting open sends almost nothing over a slow link. The machine's load is the exception: the bottom line ends with it, such as `cpu 63%  mem 9/32G`, refreshed every 5 seconds, for the machine the engine runs on. CPU is the busy share of all cores over the last 5 seconds, and memory the system can free counts as free. Each figure is dim, turns yellow from 80% and red from 95%, and gives way before any key on a narrow terminal.
-
-**The details pane.** Beside the list, on its right, a pane shows the row you are on, and follows it as you move. It shows, from the top: the task's full title, the issue's link and the PR's link, its stage and word, what a queued or paused task waits on, wrapped whole, such as `3rd in line: 4 of 4 builders busy`, `2nd in line: APP-21 waits for its issue's claim to reach the tracker` when a claim holds the queue back, or `Paused with sc stop: sc start APP-9 brings it back`, its CI with each check, its review round with the verdict and the latest review's findings in short, its whole description, and its recent events, such as submitted, reviewed and merged. They have the list's look: the title bold, labels dim, each check with its mark, CI's and the review's verdicts in the list's colours, green for passed or approved, yellow for running or changes, red for failed, the links as terminal links, the findings indented, the description dimmer, and the events dim with their times. The description keeps its own line breaks, with each run of blank lines made one. A line wider than the pane wraps at its words, and a list item's lines after its first start under its text, past its marker, so a list still reads as one. A thin rule parts them from the live view. It is what `sc show` gives, read from Skelcrew's copy and database alone, so it never asks the forge, not even for the logs of failed checks. On a row that isn't a task, such as the lead's, the pane is empty. The list takes a little over a quarter of the terminal, 28%, and the pane the rest. The list is never narrower than 40 columns, so a row's name, short title and word fit, with longer ones cut with `…`. It is never wider than 58, which a task's two lines need. The pane shows only on a terminal at least 114 columns wide, so its agent's lines can be read. In a narrower terminal it is hidden, and the list is as it would be without it. The keys do the same with the pane as without it. Under the task's details, under a thin line, the pane shows the row's agent at work, live. By default it is a strip of the agent's last 3 lines of output, blank lines left out, at the bottom of the pane wherever the details end, so the details have the rest of the pane and the strip never moves. `o` makes it the agent's whole screen, filling the rest of the pane's height under the details, which then take half the pane at most, and `o` again makes it the strip. It stays as you move, until you press `o` again. Enter still attaches to the agent. The live view always keeps its room, a line over it and the strip's 3 lines, or a few of the agent's lines while it shows the whole screen. When the details need more than is left, they scroll, and the live view stays where it is, at the bottom of the pane. A dim `↓ more` on their last line says there is more below. Page Up and Page Down scroll them a page, and the mouse's wheel over the pane 3 lines. Moving to another row shows its details from their top. It is the bottom of the agent's screen, without its harness's own input box and status lines, as nobody can type there from the list, and without the harness's notices and tips over the box, which would push the agent's output out of the strip. Each harness knows its input box by its shape, such as Claude Code's `❯` prompt between two rules. For Claude Code these are its effort notice right on its box, such as `◐ medium · /effort`, and its tip under its busy line, such as `⎿  Tip: Use /btw…`, each known by what it says. The busy line stays, as it shows the agent at work. Any other line stays too, whatever its indent or place, as it may be the agent's output. A screen where the box isn't found shows whole. It is read without attaching, as `sc peek` reads it, so it works on any session host. It is read several times a second, only for the row you are on, and only while the list shows. Colours are kept, and a line wider than the pane is cut on the right, not wrapped. The agent's session is never resized, and no key typed in the list reaches it. A row with no agent running says so in one line, such as `Builder not running`.
-
-**A lead you exit.** Exiting a repository's lead, such as with `/exit` or Ctrl-D, ends only the lead. The repository, its clone and its tasks stay, and the engine keeps polling. The engine notices the exit and doesn't bring that lead back at its start. Opening the repository again, by `sc` in a checkout of it or `sc attach lead`, starts the lead again with its conversation. A lead that crashes is brought back with its conversation when you look at it.
-
-With herdr as the session host, its own apps show the same agents, labelled and with their state. Skelcrew's list keeps working beside them, and is the only place that merges and answers the lead's requests.
-
-### The screen
-
-Plain `sc` shows the list as a sidebar, on the left of your terminal, and on the right what the row you are on is. It runs on a tmux server of the screen's own, whatever your session host, with one session per open terminal, ended when you leave. Your own `~/.tmux.conf` never applies to it.
-
-```
- Skelcrew v0.6.0  [ app ]  [ docs ]  [ site •1 ]
-                                                   │ Rate limit the API
-   ● lead    claude                                │ issue #42  github.com/acme/app/issues/42
-     asks you                                      │ PR #43     github.com/acme/app/pull/43
-                                                   │ Building · question
- Needs you 1                                       │ CI running: test ✓  lint ●  build ●
- ▸ ● APP-T103  Rate limit the API                  │ Round 2 · changes asked
-     question · #43 · CI running · 14:02           │ 13:40 submitted · 13:52 reviewed
-                                                   │ ───────────────────────────────────
- 1 Backlog   2                                     │ ● Should the limit be per user or per
- 2 Building  2                                     │   API key?
-   ○ APP-24  Login redirect                        │   1. Per user
-     working · Editing rows.ts · #40 · 14:31       │   2. Per API key
-   ○ APP-25  Export as CSV                         │
-     working · #44 · CI running · 14:40            │
- 3 Reviewing 1                                     │
- 4 Checks    0                                     │
- 5 Ready     1                                     │
- 6 Done      4                                     │
-                                                   │
- alt+↑↓ move  ⏎ open  alt+1-6 stages  alt+q quit   cpu 63%  mem 9/32G
-```
-
-**The sidebar** is the list, as the rest of this section describes it, in a column of its own. It is as wide as the list beside its details pane, by the same rule, and narrower on a terminal where that would leave the right side less than half. Its top line has Skelcrew's version and the repositories' tabs, with their badges, and its bottom line the keys and the machine's load. Under the top line come the lead's row and the requests that wait for your yes, then the list's sections: `Needs you`, `Up next`, then the six stages, Backlog, Building, Reviewing, Checks, Ready and Done, which open and close as in the list. Shift-↑ and Shift-↓ move a queued task in Up next as in the list, and the bottom line says its place. The screen always starts on the lead's row, so what you type first goes to the lead, even while a task waits on you: Alt-Shift-↓ reaches the first task under `Needs you`, past any requests. The sidebar is wide enough that a task's two lines usually fit whole, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, and it keeps that width when the terminal is resized. The right side takes the rest, and always keeps at least half the terminal, so the lead or an agent stays usable there. In a terminal too narrow for both, the sidebar narrows to the other half, and its rows are cut with `…` as the list's are on a narrow terminal.
-
-**The right side** follows the row you are on:
-
-- **On the lead's row**, it is the lead's session, live, and what you type goes to the lead.
-- **On a task's row**, or a request's, it is the details pane, exactly as the list's: the task's details, which scroll as there, with its agent's screen live under them, read-only, as **The details pane** says. On the screen it always shows, however narrow the terminal, since the right side keeps its half: only the full-screen list hides it. A request's row shows the lead's screen live, read-only, with no details. Nothing you type reaches the agent there, so the list's own keys work.
-- **After Enter on a task** whose Enter attaches in the list, its agent's session takes the right side, attached through its session host, and what you type goes to it. Ctrl-\ comes back to the details and live view, on the same row. Moving to another row comes back too, and shows that row.
-
-On the lead's row, Enter goes to the lead, as everything you type there does, and never attaches full screen. Enter on any other task's row or request's row does what it does in the list: on Backlog it asks in the bottom line and starts the task, and on Ready or Done it opens the PR or shows the approved branch.
-
-**A runtime plugin's host** shows its sessions on the screen through its own `attach`, run inside the right side as in any terminal. You get the agent's terminal there, without the host's own sidebars or apps, and you run the host itself, outside `sc`, for all it offers. The screen's tmux takes Ctrl-\ before anything in a pane sees it. So herdr's key to detach, the same key, never reaches herdr's client on the screen, and can never detach it and leave the right side empty. If a host's `attach` ends while its agent still runs, the right side goes back to the task's details and live view, or attaches to the lead again on its row. The screen tells the two apart with the sessions module's `check`: only an attach that ended while the lead's session still runs, as when its client was detached, is attached again. A lead that crashed is brought back with its conversation and attached, as **A lead you exit** says. A lead you exited, such as with `/exit`, stays ended, as it says too. `check` says which of the two it was, by whether the lead exited cleanly. A plugin's host that can't yet say how a session ended leaves that unknown, and the screen then takes the lead as exited: it stays ended, as starting a lead you exited is worse than one line asking you to. The right side then says so, and how to start it again: `The lead ended. Run sc attach lead to start it again.`
-
-**Keys.** On the lead's row and on an agent you attached to, your typing goes to the agent, so the screen's own keys there use Alt. Everywhere else, on a task's row or a request's, your typing goes to the sidebar, and the list's keys work without Alt too. Alt-1 to Alt-6 need Option sent as Alt on a Mac, as Alt-Q does, since Option with a digit otherwise types a character, such as `¡`.
-
-| Key | On | What it does |
-| --- | --- | --- |
-| Alt-↑ Alt-↓ | Anywhere | Move one row. Moving off an agent you attached to comes back from it first |
-| Alt-Shift-↑ Alt-Shift-↓ | Anywhere | Move to the first row of the previous or next section: the lead, `Needs you`, or an open stage |
-| Alt-1 to Alt-6 | Anywhere | Open or close Backlog, Building, Reviewing, Checks, Ready or Done, as `1` to `6` do in the list |
-| Alt-Shift-Left, Alt-Shift-Right | Anywhere | The previous or next repository, each wrapping round |
-| Alt-Q, Ctrl-Q | Anywhere | Leaves the screen. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc to come back.` in place of tmux's own `[exited]`. Ctrl-Q isn't shown. It is for a Mac terminal that doesn't send Option as Alt, which has no other way to leave, so it quits even while you type to an agent |
-| Click | The lead | Moves to it, so the right side shows the lead, ready to type to. It never attaches full screen, as in the list |
-| Click, wheel | Anything else in the sidebar | As in the list, wherever your typing goes |
-| Wheel | A task's details on the right | Scrolls the details 3 lines up or down, as over the list's details pane |
-| Ctrl-\ | An agent you attached to | Comes back to the task's details and live view |
-| Ctrl-\ | Anywhere else | Nothing, so pressing it once too often never leaves the screen, and it never reaches a pane |
-| The list's keys | A task's row or a request's | As in the list: ↑ ↓, `1` to `6`, Enter, `o`, Page Up and Page Down, `s`, `m`, `y` `n`, Tab and Shift-Tab. `q` does nothing, so text meant for an agent never closes the screen |
-
-Only Alt-Left and Alt-Right without Shift stay the agent's, as some terminals send them to move a word while you type.
+A runtime plugin's host shows the same agents in its own apps, and its sessions on the screen through its own `attach`. Skelcrew's screen is the only place that merges and answers the lead's requests.
 
 ## Remote machines
 
-The engine runs on the same machine as its agents. So `--remote` is only "run `sc` on that machine", over plain `ssh -t`. Everything must work over it: no local display, no browser on the same machine, no clipboard. Logins that need a browser use a code and a link you open on your laptop.
+The engine runs on the same machine as its agents. So `--remote` is only "run `sc` on that machine", over plain `ssh -t`. Everything must work over it: no local display, no browser on the same machine, no clipboard. Logins that need a browser use a code and a link you open on your laptop. The steps are in [commands](commands.md#sc---remote).
 
-- `sc --remote <host> install` sets the server up. Your personal setup is one setup for all your machines, so a server feels like your laptop. It sends your personal files first: `config.yaml`, your lock file and the agents' Claude Code token. `session:` goes with them, so herdr on the laptop means herdr on the server. A runtime plugin that provides only `machine` is skipped there, as it is used where you run `--remote`. Then it runs `sc install` there. Each plugin's setup and `codex login` run there once, in your terminal, since a sign-in that renews itself cancels the one before, and two machines sharing it would break each other. On a server with no Skelcrew, it asks, then puts Skelcrew there first: the laptop's release, built for that machine and checked against its checksums, or one built from your checkout when you run Skelcrew from one.
-- `sc --remote <host> up --bg` runs the engine there as its background service.
-- `sc --remote <host> <command>` runs `ssh -t <host> sc --from <owner/repo> <command>`, passing the repository you are in on the laptop, so it acts on that repository there. With no command, it opens the server's screen, and with `--list` its list, where Enter attaches through tmux there.
+- **One setup for all your machines.** `sc --remote <host> install` sends your personal files and runs `sc install` there, putting Skelcrew there first if needed, so a server feels like your laptop. Sign-ins that renew themselves are made on each machine, as two sharing one would break each other.
+- **Commands act where you are.** `sc --remote <host> <command>` acts on the repository you are in on the laptop. With no command, it opens the server's screen.
+- **Nothing without asking.** `--remote` never sets a machine up or updates its Skelcrew without asking, and says when your setup or Skelcrew differs from the server's.
+- **What runs stays where it runs**: tasks, clones, the engine and its state.
+- **Each person their own.** Skelcrew lives in your home folder and runs as your user, so several people can share a server.
 
-You send your setup when you change it, as you would run `npm install` after changing `package.json`. A `sc --remote` whose personal lock differs from the server's says so, and names the `install` that fixes it. What runs stays on the machine that runs it: tasks, their clones, the engine and its state. Nothing comes back to the laptop.
-
-`--remote` never sets a machine up without asking. On a machine where Skelcrew is missing or not set up, it asks `simon@workbox isn't set up. Set it up now? [Y/n]`. Yes runs `sc --remote <host> install`, then goes on. No stops, and prints the command to run later. Without a terminal it only prints the command. An SSH host that doesn't exist fails to connect before anything is asked.
-
-`--remote` also keeps Skelcrew there in step with the laptop. The Skelcrew on a server carries the commit it was built from, and each command passes along the laptop's. When they differ, or either has changes not committed, Skelcrew asks before running the command: "Skelcrew on simon@workbox is from abc1234, yours is def5678. Update it?" Yes replaces it and restarts the engine, and agents keep running. No runs the command on the old Skelcrew. A Skelcrew run from a checkout there is never offered an update: `git pull` there updates it. One SSH connection is shared across commands.
-
-Skelcrew keeps everything in your home folder on a server, and runs its engine as a service of your own user. So several people can each run their own Skelcrew on one server, each as their own user.
-
-Seeing and talking to agents from elsewhere is the session host's job. With herdr, herdr's own machines (`hc machine add`) bring the server's terminals to your laptop, desktop and phone, with no `--remote` involved, and merging stays in Skelcrew's list.
+Seeing agents from elsewhere is the session host's job, such as herdr's own machines, and merging stays in Skelcrew.
 
 ## State
 
-One SQLite file per machine, `~/.local/share/skelcrew/skelcrew.db`, with `bun:sqlite`. It holds:
-
-- **repositories**: the name, owner and name on the forge or remote, its lead's session, when you last opened it, whether you exited its lead;
-- **tasks**: the repository, name, title, description, short title, flow, stage, the lead's updates, the issue and whether Skelcrew assigned you, the PR, CI, round count, review state and when the latest review was asked for or ended, the last handled ID per event kind, and its place in the queue of `limits.threads`, and its armed merge, when ready or over the review: the plan's own ID, who armed it and when, your exact words when the lead armed it, the commit pinned for a merge skipping the review, what it waits on, the round the lead last heard it still waits after, and each approved commit the record was posted on;
-- **threads**: the task, role, harness, model, session host and session ID, state, status, needs you and its mark, branch, when it started and when it last changed;
-- **the copy** of each tracker's open issues and each forge's open PRs;
-- **messages** waiting for each agent, with whether one was left at the prompt unsent;
-- **queues and holds**: the queue of reviews with each one's place and the time it first joined, reviews held on a usage limit with the reset time, and the queue of tasks under `limits.threads`. The queue of check slots is the one kept only in the engine's memory, as **Check slots** says.
-
-Every other armed or queued state is in the database, so the engine's restart and a database migration keep it: an armed merge stays armed with its record, a queued review or task keeps its place, and a held review still waits for its reset.
-
-Every change is also appended to `~/.local/share/skelcrew/threads/<repo>-<task>.log` as one JSON line, so a task's history can be read and replayed, including each review's round, reviewer, verdict and first line. Repository clones live in `~/.local/share/skelcrew/repos/` and task clones in `~/.local/share/skelcrew/threads/`, on one disk, so a task's clone shares its files with the repository's.
-
-A database from an earlier release is moved forward once, when the new engine starts, after saving a copy beside it. An engine refuses to start while another one runs, so a move never happens under one still writing the old way.
+One SQLite file per machine, with `bun:sqlite`, holds the repositories, tasks, threads, the copy, the messages waiting for each agent, and every queue and hold, as [plugins and base modules](runtime.md#state) lists. Every armed or queued state is in it, so a restart or a migration keeps it: an armed merge stays armed, a queued review or task keeps its place, and a held review still waits. Only the queue of check slots lives in the engine's memory. Every change is also logged per task, as one JSON line, so a task's history can be read and replayed. A database from an earlier release is moved forward once, after saving a copy, never while another engine still writes the old way.
 
 **Tokens stay out.** Agents never see a GitHub token, or any plugin's. They don't push or call GitHub. They call `sc` commands, and the engine and its plugins, outside the sandbox, push and post as Skelcrew's GitHub App, or push with your own git login when a repository has no forge. Commits are authored by `skelcrew[bot]`, with you as co-author.
 
-**One seam for harnesses.** Each harness lives in one module: how it starts, resumes and logs in, where its config folder is, what its screen shows when it is busy or ready, how it reports its hooks, and how it draws the sandbox. A small lookup finds it by the name your config uses. The flow never names a harness, so another one, such as opencode or pi, is one more module.
+**One seam for harnesses.** Each harness lives in one module: how it starts, resumes and logs in, where its config folder is, what its screen shows when busy or ready, how it reports its hooks, and how it draws the sandbox. The flow never names a harness, so another one is one more module.
 
 ## Not in this version
 
