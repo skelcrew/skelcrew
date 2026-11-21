@@ -189,7 +189,7 @@ The exact version and commit of every plugin `skelcrew.yaml` names. `sc add` and
 
 ### Yours, never in a repository
 
-What belongs to you or your machine stays in `~/.config/skelcrew/`: every login, token and plugin setting; the session host; your limits on reviews and test suites at once, which fit your machine; your default harness, model and round limit; the reviewer's fallback harness and time limit; how long a stopped builder waits before it needs you; per-repository overrides; what you declined; whether the lead may arm a merge when you ask, on by default; and your personal plugins, such as every runtime plugin, with a lock file of your own.
+What belongs to you or your machine stays in `~/.config/skelcrew/`: every login, token and plugin setting; the session host; your limits on reviews and test suites at once, `limits.reviews` and `limits.checks`, which fit your machine; your default harness, model and round limit; the reviewer's fallback harness and time limit; how long a stopped builder waits before it needs you; per-repository overrides; what you declined; whether the lead may arm a merge when you ask, on by default; and your personal plugins, such as every runtime plugin, with a lock file of your own.
 
 ### Built-in defaults
 
@@ -206,7 +206,7 @@ Each setting comes from the first of these that sets it:
 
 So the repository decides how its agents work, your general settings fill in what it leaves out, and an override is how you differ from your team on purpose. Settings merge key by key. A role's instructions are one value: a repository's `builder.md` replaces the built-in instructions whole.
 
-Some settings exist only in your files: logins, tokens, the session host, your limits, the reviewer's fallback, the review time limit, whether the lead may merge, and personal plugins. A repository's files can't set them. Whether the lead may merge is in your general settings only, never an override nor a repository's files, so no repository can turn it on.
+Some settings exist only in your files: logins, tokens, the session host, `limits.reviews`, `limits.checks`, the reviewer's fallback, the review time limit, whether the lead may merge, and personal plugins. A repository's files can't set them. Whether the lead may merge is in your general settings only, never an override nor a repository's files, so no repository can turn it on.
 
 Settings in an older shape are still read. Where both shapes say something, the new one wins. `sc` says once which old key it read and what replaces it, and changes no file itself.
 
@@ -221,7 +221,7 @@ Two kinds of thing could reach your machine through the files: plugins, which ru
 - **widen the sandbox.** No file mounts a folder, passes an environment variable, or reaches a socket. The harness module draws the boundary;
 - **skip your confirmations.** You merge. You add repositories, in your own terminal. You say yes before a lead starts work or files a public issue;
 - **install anything without asking**;
-- **set what is yours**, such as logins, the session host and your limits.
+- **set what is yours**, such as logins, the session host, `limits.reviews` and `limits.checks`.
 
 **A repository's `.agents/` needs your OK, the first time and after each change.** Role instructions and flows decide what agents are told and how far they go, so a change to them is a change to what runs on your machine. Skelcrew remembers the `.agents/` you approved for each repository in your `~/.config/skelcrew/`, never in the repository.
 
