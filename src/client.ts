@@ -10,24 +10,25 @@ import { capture } from "./run.ts";
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
 export async function ask(request: DaemonRequest, timeout: number): Promise<unknown> {
   const answer = await askInTime(request, timeout);
-  return answer === "absent" || answer === "slow" ? null : answer.reply;
+  return answer === "absent" || answer === "unanswered" ? null : answer.reply;
 }
 
-// Sends a request to the daemon, as ask does, but tells a daemon that took the request and didn't
-// answer in time, which is slow, from one that isn't there, which is absent.
+// Sends a request to the daemon, as ask does, but tells a daemon that isn't there, which is
+// absent, from one that took the request and gave no reply, in time or at all, which is
+// unanswered. An unanswered request may still be under way in the daemon.
 export function askInTime(
   request: DaemonRequest,
   timeout: number,
-): Promise<{ reply: unknown } | "absent" | "slow"> {
+): Promise<{ reply: unknown } | "absent" | "unanswered"> {
   return new Promise((done) => {
     const connection = createConnection(cliSocket());
-    let slow = false;
-    const timer = setTimeout(() => {
-      slow = true;
-      connection.destroy();
-    }, timeout);
+    const timer = setTimeout(() => connection.destroy(), timeout);
+    let taken = false;
     let reply = "";
-    connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
+    connection.on("connect", () => {
+      taken = true;
+      connection.write(`${JSON.stringify(request)}\n`);
+    });
     connection.on("data", (data) => {
       reply += data.toString();
       if (reply.includes("\n")) connection.end();
@@ -36,7 +37,7 @@ export function askInTime(
     connection.on("close", () => {
       clearTimeout(timer);
       if (reply) done({ reply: parseJson(reply) });
-      else done(slow ? "slow" : "absent");
+      else done(taken ? "unanswered" : "absent");
     });
   });
 }
