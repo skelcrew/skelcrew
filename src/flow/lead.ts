@@ -188,38 +188,37 @@ export function approvedFlowsTold(clone: string): string {
 // as builders do. Throws when that host isn't installed, or when the plugin the lead ran on is
 // gone, as the lead may still run there and a second one would share its conversation. A lead
 // running on another .agents/ than the one you approved now starts again on it, keeping its
-// conversation, as a lead reads its instructions only as it starts. While it runs, the look for
-// exited leads leaves this lead alone: the session it replaces may be gone or ended, and would be
-// taken for a lead you exited, which would close the tab and end the new lead.
-export async function startLead(
-  db: Database,
-  sessions: string,
-  repository: Repository,
-): Promise<void> {
-  const key = `${repository.owner}/${repository.repo}`;
-  startingLeads.set(key, (startingLeads.get(key) ?? 0) + 1);
-  leadStarts.set(key, (leadStarts.get(key) ?? 0) + 1);
-  try {
-    // A look for exited leads may be ending this lead's last session, and a host can give the
-    // new one the same ID, so the start waits for that first.
-    await endingLeads.get(key);
-    await startLeadSession(db, sessions, repository);
-  } finally {
-    const left = (startingLeads.get(key) ?? 1) - 1;
-    if (left > 0) startingLeads.set(key, left);
-    else startingLeads.delete(key);
-  }
+// conversation, as a lead reads its instructions only as it starts. It waits its turn in the
+// lead's queue, as closeIfExited says.
+export const startLead = (db: Database, sessions: string, repository: Repository) =>
+  inLeadQueue(`${repository.owner}/${repository.repo}`, () =>
+    startLeadSession(db, sessions, repository),
+  );
+
+// Each lead's generation, by its repository's owner/name, which goes up each time a start or an
+// ending of the lead is asked for. A check for exited leads acts on what the host said only if
+// the generation stayed the same while it waited: otherwise the answer may be about a session
+// that was replaced since, possibly under the same ID.
+const generations = new Map<string, number>();
+
+// The last work in each lead's queue, by its repository's owner/name, while there is any.
+const leadQueues = new Map<string, Promise<unknown>>();
+
+// Runs `work` once everything queued for the lead before it is done, and gives back its result.
+// A lead's starts and endings go through here one at a time, so an ending never overlaps a start
+// and can't end the new session, even one the host gave the old ID. Raises the generation as the
+// work is asked for, not as it runs, so a check waiting on its host sees the change at once.
+function inLeadQueue<T>(key: string, work: () => Promise<T>): Promise<T> {
+  generations.set(key, (generations.get(key) ?? 0) + 1);
+  const run = (leadQueues.get(key) ?? Promise.resolve()).then(work);
+  // The queue goes on after work that failed, and forgets the lead once its last work is done.
+  const tail = run.catch(() => {});
+  leadQueues.set(key, tail);
+  void tail.then(() => {
+    if (leadQueues.get(key) === tail) leadQueues.delete(key);
+  });
+  return run;
 }
-
-// How many starts of each lead are under way, by its repository's owner/name, for the look for
-// exited leads to leave those leads alone.
-const startingLeads = new Map<string, number>();
-
-// How many starts of each lead have begun since the daemon started, by its repository's
-// owner/name. A check for exited leads that saw this change while it waited on the host
-// leaves the lead alone, even if the start is over: the host can give the new lead the old ID,
-// and the answer is then about the old session.
-const leadStarts = new Map<string, number>();
 
 // Does startLead's work: keeps the lead running, or ends what is left of its last session and
 // starts it again.
@@ -403,10 +402,6 @@ export function leadPrompted(db: Database, owner: string, repo: string): void {
   dropLeadNotes(db, { owner, repo }, opening);
 }
 
-// The ending of each lead the look found exited, by its repository's owner/name, while it runs,
-// for a start of that lead to wait for.
-const endingLeads = new Map<string, Promise<void>>();
-
 // The look for exited leads under way, which a look asked for meanwhile shares, so a slow
 // plugin's host never has looks pile up behind it.
 let looking: Promise<void> | null = null;
@@ -444,10 +439,10 @@ export function closeExitedLeads(db: Database, sessions: string, recover = false
 // one you just exited. The tab is marked closed before the session ends, so a sidebar that finds
 // the session gone also finds the tab closed, and doesn't bring the lead back. A plugin's host
 // that can't answer, or a lead still starting there, counts as not exited: a host can fail for a
-// moment, and a lead running there must not lose its tab. A lead starting, or one that starts
-// while its host answers, such as one you opened meanwhile, is left alone and keeps its tab. A
-// check that finds another one ending the lead waits for that one, and closed nothing itself, so
-// a lead has at most one ending at a time.
+// moment, and a lead running there must not lose its tab. The check leaves the lead alone when
+// its queue holds a start or an ending, or when the lead's generation changed while the host
+// answered, such as a start or another check's ending asked for meanwhile: the answer may then
+// be about a session that is gone. The ending itself waits in the lead's queue.
 export async function closeIfExited(
   db: Database,
   sessions: string,
@@ -455,34 +450,24 @@ export async function closeIfExited(
   repo: string,
 ): Promise<boolean> {
   const key = `${owner}/${repo}`;
+  const generation = generations.get(key) ?? 0;
+  const changed = () => leadQueues.has(key) || (generations.get(key) ?? 0) !== generation;
   const lead = leadOf(db, owner, repo);
   const host = hostNamed(db, sessions, lead.host);
-  // Another check ending this lead goes first, and is shared rather than started twice.
-  const other = endingLeads.get(key);
-  if (other) return other.then(() => false);
-  const starts = leadStarts.get(key) ?? 0;
-  const starting = () => startingLeads.has(key) || (leadStarts.get(key) ?? 0) !== starts;
-  if (host === null || (typeof host !== "string" && lead.hostId === null) || starting())
+  if (host === null || (typeof host !== "string" && lead.hostId === null) || changed())
     return false;
   const id = lead.hostId ?? lead.name;
   if (!(await agentExited(host, id).catch(() => false))) return false;
-  // Asked again once the host answered, as another check may have begun ending the lead
-  // meanwhile. From here to setting the ending below, nothing waits, so no other check can.
-  const meanwhile = endingLeads.get(key);
-  if (meanwhile) return meanwhile.then(() => false);
-  const now = leadOf(db, owner, repo);
-  if (now.host !== lead.host || now.hostId !== lead.hostId || starting()) return false;
+  // Nothing waits from this look to the ending being queued, so no start or other check can
+  // come in between.
+  if (changed()) return false;
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
-  // The host may have forgotten the session already, or a look that ran at the same time ended
-  // it, so only a session still there is ended. The tab is closed either way, and opening the
-  // lead again ends whatever is left of it. You can open the repository again while this waits
-  // on the host, so a start of the lead waits for it: one the host gave the same ID would be
-  // ended here otherwise. Only this check removes its ending.
-  const ending = stopSession(host, id).catch((error) =>
-    console.log(`couldn't end ${key}'s exited lead: ${errorText(error)}`),
+  // The host may have forgotten the session already, so only a session still there is ended.
+  // The tab is closed either way, and opening the lead again ends whatever is left of it.
+  await inLeadQueue(key, () =>
+    stopSession(host, id).catch((error) =>
+      console.log(`couldn't end ${key}'s exited lead: ${errorText(error)}`),
+    ),
   );
-  endingLeads.set(key, ending);
-  await ending;
-  endingLeads.delete(key);
   return true;
 }

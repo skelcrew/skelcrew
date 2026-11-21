@@ -700,6 +700,29 @@ console.log(await checking, await agentRuns(host, id), tab());`,
   expect(said).toContain("false true 0\n");
 }, 30_000);
 
+// Two checks ask the host about the lead you exited at the same time, and both get its answer
+// late, one after the other.
+test("two checks waiting on the host at once end an exited lead once", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/late-list", "1");
+const first = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(300);
+const second = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(300);
+fs.rmSync(fake + "/late-list");
+const closed = [await first, await second];
+const ends = fs.readFileSync(fake + "/asked", "utf8").split("\\n").filter((line) => line.includes('"ask":"end"')).length;
+console.log(closed.join(" "), tab(), ends);`,
+  );
+  expect(said).toContain("true false 1 1\n");
+}, 30_000);
+
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
   const lead = { repository: "simon/app", role: "lead" } as const;
   const on = host();
