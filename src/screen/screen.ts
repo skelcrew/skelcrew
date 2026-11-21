@@ -3,7 +3,7 @@
 // second tmux server, one session per open terminal, ended when you leave.
 import type { Database } from "bun:sqlite";
 import { applyConfig, attachCommand } from "../agents/sessions.ts";
-import { envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
+import { envWithoutTmux, screenSocket } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import { listShare, listWidth } from "../list/layout.ts";
@@ -21,26 +21,48 @@ import {
   runWithDrops,
 } from "./drops.ts";
 
-// Returns how wide the sidebar is, with the line it draws at its edge, in a terminal `width`
-// columns wide: as wide as sc --list's list, as both show the same rows. On a terminal too narrow
-// for that beside half the terminal, it narrows to what the right side leaves, as the lead or an
-// agent there must stay usable.
+// The screen's panes, by their place in tmux's list, which runs left to right and then down: a
+// pad of one column at the left edge, the sidebar, the right side, a pad at the right edge, and
+// the footer across the bottom. tmux draws its lines only between panes, so the pads are what
+// give each side a whole box, its outer edges included.
+export const panes = { leftPad: 0, sidebar: 1, right: 2, rightPad: 3, footer: 4 };
+
+// Returns how wide the sidebar's side is in a terminal `width` columns wide, from the left edge
+// of the terminal up to the line the two sides share: as wide as sc --list's list, as both show
+// the same rows. On a terminal too narrow for that beside half the terminal, it narrows to what
+// the right side leaves, as the lead or an agent there must stay usable.
 export const sidebarFor = (width: number) =>
   Math.min(listWidth(width), Math.floor((width - 1) / 2));
 
-// The same width as a tmux format, which tmux works out itself on each resize, from the window's
-// width. Its steps are those of the two functions above, from the narrowest terminal up.
+// The width of the sidebar's own pane as a tmux format, which tmux works out itself on each
+// resize, from the window's width. Its steps are those of the function above, from the narrowest
+// terminal up, less the pad and the line at the sidebar's left.
 const { percent, least, most } = listShare;
 const share = `#{e|/:#{e|*:#{window_width},${percent}},100}`;
 const sidebarFormat = [
+  "#{e|-:",
   `#{?#{e|<:#{window_width},${2 * least + 1}},#{e|/:#{e|-:#{window_width},1},2},`,
   `#{?#{e|<:${share},${least}},${least},`,
   `#{?#{e|>:${share},${most}},${most},${share}}}}`,
+  ",2}",
 ].join("");
+
+// What runs in the pads at the edges: nothing that draws or ends, as a pad only makes room for
+// tmux's line beside it. A pane whose program ended would close and give its column away.
+const padCommand = ["sh", "-c", "exec cat >/dev/null"];
+
+// The colour of the box around the side your typing goes to, and of the other side's lines,
+// which only part the screen. A fixed blue, as it reads on a light theme as on a dark one, and
+// no mark or word uses blue. The dim lines are the theme's own grey.
+export const [lit, dim] = ["colour33", "brightblack"];
 
 // A word in the command of a right side attached to a builder. The screen's tmux finds it there,
 // so Ctrl-\ ends only that attachment, never the lead or a task's details.
 export const attachedMark = "skelcrew-attached";
+
+// The sidebar's pane and the right side's, as tmux targets in the session a command runs in.
+const toSidebar = `:.${panes.sidebar}`;
+const toRight = `:.${panes.right}`;
 
 // Returns the name of the screen's session in one terminal. sc --remote picks the name on your
 // laptop and passes it along, so it can ask which agent shows. Otherwise it is this process's.
@@ -92,10 +114,10 @@ const config = [
     "if",
     "-F",
     "-t",
-    ":.1",
+    toRight,
     `#{m:*${attachedMark}*,#{pane_start_command}}`,
-    "run-shell -t :.1 'pkill -P #{pane_pid}'",
-    "send-keys -t :.0 -H 1c",
+    `run-shell -t ${toRight} 'pkill -P #{pane_pid}'`,
+    `send-keys -t ${toSidebar} -H 1c`,
   ]),
   // Shift-Enter in the sidebar attaches full screen to the agent of the row you are on. tmux reads
   // it from your terminal as a key of its own, by the extended keys below, but hands the sidebar
@@ -108,8 +130,8 @@ const config = [
     "S-Enter",
     "if",
     "-F",
-    "#{==:#{pane_index},0}",
-    "send-keys -t :.0 -H 1b 5b 31 33 3b 32 75",
+    `#{==:#{pane_index},${panes.sidebar}}`,
+    `send-keys -t ${toSidebar} -H 1b 5b 31 33 3b 32 75`,
     "send-keys S-Enter",
   ],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
@@ -122,23 +144,23 @@ const config = [
   // first: a paste start that layer lets go of unfinished is never one tmux still reads as a paste.
   ["set", "-s", "escape-time", String(escapeTime)],
   // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-0 to
-  // Alt-6, which open and close the task queue and the stages, go to the sidebar, in pane 0,
+  // Alt-6, which open and close the task queue and the stages, go to the sidebar, in its own pane,
   // without moving your typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as
   // they move a word in its prompt, and so do Alt-B and Alt-F, which is how tmux reads the Esc b
   // and Esc f a Mac terminal often sends for Option-Left and Option-Right.
-  ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
-  ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
-  ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
-  ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
-  ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
-  ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
+  ["bind", "-n", "M-Up", "send-keys", "-t", toSidebar, "M-Up"],
+  ["bind", "-n", "M-Down", "send-keys", "-t", toSidebar, "M-Down"],
+  ["bind", "-n", "M-S-Up", "send-keys", "-t", toSidebar, "M-S-Up"],
+  ["bind", "-n", "M-S-Down", "send-keys", "-t", toSidebar, "M-S-Down"],
+  ["bind", "-n", "M-S-Left", "send-keys", "-t", toSidebar, "M-S-Left"],
+  ["bind", "-n", "M-S-Right", "send-keys", "-t", toSidebar, "M-S-Right"],
   ...["0", "1", "2", "3", "4", "5", "6"].map((digit) => [
     "bind",
     "-n",
     `M-${digit}`,
     "send-keys",
     "-t",
-    ":.0",
+    toSidebar,
     `M-${digit}`,
   ]),
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
@@ -151,7 +173,7 @@ const config = [
     click,
     "run-shell",
     "-C",
-    'send-keys -t :.0 -l "\x1b]skel-tab;#{mouse_status_range}\x07"',
+    `send-keys -t ${toSidebar} -l "\x1b]skel-tab;#{mouse_status_range}\x07"`,
   ]),
   // A right click on the top row, at a column past the edge of any real terminal, is how a file
   // dropped onto the screen asks the sidebar which agent it goes to, after the keys typed before
@@ -164,7 +186,7 @@ const config = [
     "if",
     "-F",
     `#{==:#{mouse_x},${dropSignalColumn}}`,
-    `send-keys -t :.0 -l "${dropAsk}"`,
+    `send-keys -t ${toSidebar} -l "${dropAsk}"`,
   ]),
   // A click needs its own key: left alone, it reaches only the pane you type to. The wheel
   // goes on to the pane under it, as the agents' server decides what scrolling means.
@@ -179,22 +201,22 @@ const config = [
   ["bind", "-n", "MouseDrag1Pane", "send-keys", "-M"],
   ["bind", "-n", "SecondClick1Pane", "send-keys", "-M"],
   ["bind", "-n", "TripleClick1Pane", "send-keys", "-M"],
-  // A drag over the agent that is let go over the sidebar, the footer or the top row would end
-  // in that other place, and the agents' server would wait for a release that never comes,
-  // copying nothing. So the agent's pane gets the drag's end at its nearest edge: the start of
-  // the same row beside the sidebar, the top left under the top row, the end of its last row
-  // above the footer. It is a move there and a release, as tmux ends a selection where the
-  // last move was, and ignores a place outside its window. Lists and the sidebar act only on
-  // presses, so a stray release there does nothing.
+  // A drag over the agent that is let go over the sidebar, the footer or the top row would end in
+  // that other place, and the agents' server would wait for a release that never comes, copying
+  // nothing. So the agent's pane gets the drag's end at its nearest edge: the start of the same row
+  // beside the sidebar or the pad at its left, the top left under the top row, the end of its last
+  // row above the footer. It is a move there and a release, as tmux ends a selection where the last
+  // move was, and ignores a place outside its window. Lists and the sidebar act only on presses, so
+  // a stray release there does nothing.
   [
     "bind",
     "-n",
     "MouseDragEnd1Pane",
     "if",
     "-F",
-    "#{==:#{pane_index},1}",
+    `#{==:#{pane_index},${panes.right}}`,
     "send-keys -M",
-    `if -F "#{==:#{pane_index},0}" { run-shell -C 'send-keys -t :.1 -l "\x1b[<32;1;#{e|+:#{mouse_y},1}M\x1b[<0;1;#{e|+:#{mouse_y},1}m"' } { run-shell -C -t :.1 'send-keys -t :.1 -l "\x1b[<32;#{pane_width};#{pane_height}M\x1b[<0;#{pane_width};#{pane_height}m"' }`,
+    `if -F "#{e|<:#{pane_index},${panes.right}}" { run-shell -C 'send-keys -t ${toRight} -l "\x1b[<32;1;#{e|+:#{mouse_y},1}M\x1b[<0;1;#{e|+:#{mouse_y},1}m"' } { run-shell -C -t ${toRight} 'send-keys -t ${toRight} -l "\x1b[<32;#{pane_width};#{pane_height}M\x1b[<0;#{pane_width};#{pane_height}m"' }`,
   ],
   [
     "bind",
@@ -202,7 +224,7 @@ const config = [
     "MouseDragEnd1Status",
     "send-keys",
     "-t",
-    ":.1",
+    toRight,
     "-l",
     "\x1b[<32;1;1M\x1b[<0;1;1m",
   ],
@@ -232,14 +254,30 @@ const config = [
   // The footer is a pane of its own. A screen server an older Skelcrew started, still open in
   // another terminal, drew it as tmux's border line, which would add a row under every pane.
   ["set", "-g", "pane-border-status", "off"],
+  // The box that shows where your typing goes is tmux's own lines between the panes, which tmux
+  // draws in the active style all round the pane you type to, corners included, and dim
+  // elsewhere. The top row carries them up, as tmux draws no line above a pane. An older
+  // Skelcrew's screen, still open in another terminal, may have made the lines blank.
+  ["set", "-g", "pane-border-lines", "single"],
+  ["set", "-g", "pane-active-border-style", `fg=${lit}`],
+  ["set", "-g", "pane-border-style", `fg=${dim}`],
   // tmux 3.8 has colour themes of its own, which grey a popup and may change other colours. The
   // screen keeps your terminal's own. An older tmux doesn't know the option, and -q keeps it
   // from refusing the whole screen over it.
   ["set", "-sq", "theme", "terminal"],
-  // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
-  // each, with no process of Skelcrew's to do it. run-shell -C works out the width's format
-  // first, as resize-pane takes only a number.
-  ["set-hook", "-g", "window-resized", `run-shell -C "resize-pane -t :.0 -x ${sidebarFormat}"`],
+  // tmux shares a resize out among panes, so tmux itself sets the pads and the sidebar's width
+  // back after each, with no process of Skelcrew's to do it. run-shell -C works out the width's
+  // format first, as resize-pane takes only a number.
+  [
+    "set-hook",
+    "-g",
+    "window-resized",
+    [
+      `resize-pane -t :.${panes.leftPad} -x 1`,
+      `resize-pane -t :.${panes.rightPad} -x 1`,
+      `run-shell -C "resize-pane -t ${toSidebar} -x ${sidebarFormat}"`,
+    ].join(" ; "),
+  ],
 ];
 
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
@@ -311,13 +349,6 @@ export async function openScreen(
   // The name sc --remote passes along, such as simon@workbox. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
   // The title is the session's own: terminals on this server can come from different laptops.
-  // tmux's border between the panes is blank where it can be: the sidebar draws its own line,
-  // so the border is a gap before the agent. On an older tmux it stays tmux's thin line.
-  // tmux can since 3.6, and an older one refuses the whole screen over it.
-  const border = tmuxIsAtLeast(3, 6) ? [["set", "-g", "pane-border-lines", "spaces"]] : [];
-  // The footer's pane starts as its line and its row, or its row alone where tmux's border above
-  // it is a thin line already, and sizes itself from then on.
-  const footerHeight = border.length > 0 ? "2" : "1";
   // The right side shows the lead. A lead on a runtime plugin's host is reached through the
   // host's own attach, started again whenever it ends, as tmux's attach to the lead is.
   const [owner = "", repo = ""] = repository.split("/");
@@ -329,15 +360,21 @@ export async function openScreen(
   const left = sidebarCommand(agents, name, where, repository, onHost ?? "");
   const open = [
     ...config,
-    ...border,
     ["new-session", "-s", name, "--", ...right],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
+    // The sidebar's side, then its pad split off at its left, which leaves the sidebar's pane
+    // that much narrower and the line the sides share where it was. The right side's pad comes
+    // off the right side in the same way. Each split goes into tmux's list beside the pane it
+    // splits, so the panes keep the places `panes` gives.
     ["split-window", "-hbd", "-l", String(sidebarFor(process.stdout.columns || 80)), "--", ...left],
-    // The footer goes across the whole width, below both, as the screen's third pane.
-    ["split-window", "-vfd", "-l", footerHeight, "--", ...footerCommand(agents, name)],
+    ["split-window", "-hbd", "-l", "1", "-t", ":.0", "--", ...padCommand],
+    ["split-window", "-hd", "-l", "1", "-t", toRight, "--", ...padCommand],
+    // The footer goes across the whole width, below both sides, as the last pane. It is one row,
+    // as tmux's line above it closes both boxes.
+    ["split-window", "-vfd", "-l", "1", "--", ...footerCommand(agents, name)],
     // A pane that ended, such as one Ctrl-C stopped, would give the whole screen to the
     // sidebar. A dead one stays in its place, and moving away starts it again.
-    ["set", "-p", "-t", ":.1", "remain-on-exit", "on"],
+    ["set", "-p", "-t", toRight, "remain-on-exit", "on"],
   ];
   // The lone ";" separates tmux commands.
   const commands = open.flatMap((command) => [...command, ";"]).slice(0, -1);

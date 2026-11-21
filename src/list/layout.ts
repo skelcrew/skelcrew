@@ -239,22 +239,19 @@ const tall = (row: Row) => row.part !== "backlog" && row.part !== "done";
 const marked = (lines: string[], here: boolean, width: number) =>
   here ? lines.map((line) => shaded(line, width)) : lines;
 
-// What starts the first line of the row you are on: ▸ while your typing goes to the list, or the
-// outline ▹ while it goes to the agent beside the screen's sidebar. Other rows start blank.
-const pointers = { lit: " ▸ ", outline: " ▹ ", none: "   " };
-type Pointer = keyof typeof pointers;
+// What starts the first line of a row: ▸ on the row you are on, and blank on the others.
+const pointer = (here: boolean) => (here ? " ▸ " : "   ");
 
 // Returns the start of a row's first line: its pointer, then its mark.
-const markStart = (row: Row, pointer: Pointer) =>
-  `${pointers[pointer]}${tinted(pointer === "lit", markColours[row.mark.colour], row.mark.sign)}`;
+const markStart = (row: Row, here: boolean) =>
+  `${pointer(here)}${tinted(here, markColours[row.mark.colour], row.mark.sign)}`;
 
 // Returns a row in Backlog or Done as one line, in columns from the left: its mark, its name,
 // its title, cut with … when it doesn't fit, then when it changed, dim. The title's column is as
 // wide as the widest title, or what is left, so the times line up. A row whose name and time
 // alone are too wide is cut to fit, without its colours, as a longer line would wrap.
-function shortLine(row: Row, pointer: Pointer, columns: Columns, width: number): string {
-  const here = pointer === "lit";
-  const start = `${pointers[pointer]}${row.mark.sign} `;
+function shortLine(row: Row, here: boolean, columns: Columns, width: number): string {
+  const start = `${pointer(here)}${row.mark.sign} `;
   const name = filled(row.name, columns.name);
   const time = columns.when > 0 ? `  ${filled(row.when, columns.when)}` : "";
   const room = width - Bun.stringWidth(start) - columns.name - 2 - Bun.stringWidth(time);
@@ -265,7 +262,7 @@ function shortLine(row: Row, pointer: Pointer, columns: Columns, width: number):
   // the grey there.
   const shownName = here ? tinted(here, bright, name) : name;
   const shownTitle = here ? tinted(here, bright, title) : title;
-  return `${markStart(row, pointer)} ${shownName}  ${shownTitle}${time && tinted(here, grey, time)}`;
+  return `${markStart(row, here)} ${shownName}  ${shownTitle}${time && tinted(here, grey, time)}`;
 }
 
 // Returns the lead's row, or a task's in Building, Reviewing, Checks or Ready, as its two lines,
@@ -274,9 +271,8 @@ function shortLine(row: Row, pointer: Pointer, columns: Columns, width: number):
 // dim the step its builder is on, its PR, its CI and when it last changed, such as
 // `working · Editing rows.ts · #40 · CI passed · 14:31`, each left out where it has none. Each
 // line is cut with … to fit, and the row you are on is shaded on both its lines.
-function tallLines(row: Row, pointer: Pointer, nameWidth: number, width: number): string[] {
-  const here = pointer === "lit";
-  const plainStart = `${pointers[pointer]}${row.mark.sign} `;
+function tallLines(row: Row, here: boolean, nameWidth: number, width: number): string[] {
+  const plainStart = `${pointer(here)}${row.mark.sign} `;
   const indent = " ".repeat(Bun.stringWidth(plainStart));
   const room = Math.max(width - indent.length, 0);
   // The first line: on a terminal too narrow for the mark, it is cut without its colours.
@@ -285,7 +281,7 @@ function tallLines(row: Row, pointer: Pointer, nameWidth: number, width: number)
   const first =
     width < indent.length
       ? fitted(`${plainStart}${top}`, width)
-      : `${markStart(row, pointer)} ${here ? tinted(here, bright, top) : top}`;
+      : `${markStart(row, here)} ${here ? tinted(here, bright, top) : top}`;
   // The word keeps its colour and the rest is dim, so each is split back out of the cut line.
   const parts = [row.says, row.step, row.pr, row.checks, row.when];
   const doing = fitted(parts.filter(Boolean).join(" · "), room);
@@ -300,14 +296,13 @@ function tallLines(row: Row, pointer: Pointer, nameWidth: number, width: number)
 
 // Returns a request of the lead's as one line, under the lead: its yellow mark, then the request,
 // such as `Start APP-12 Fix login?`, cut with … to fit. Your answer is y or n, which the bottom
-// line says on its row. `pointer` says whether it is the row you are on, lit or only outlined.
-function requestLine(row: Row, pointer: Pointer, width: number): string {
-  const here = pointer === "lit";
-  const start = `${pointers[pointer]}${row.mark.sign} `;
+// line says on its row. `here` says whether it is the row you are on.
+function requestLine(row: Row, here: boolean, width: number): string {
+  const start = `${pointer(here)}${row.mark.sign} `;
   const room = width - Bun.stringWidth(start);
   if (room <= 0) return fitted(start, width);
   const text = fitted(row.title, room);
-  const line = `${markStart(row, pointer)} ${here ? tinted(here, bright, text) : text}`;
+  const line = `${markStart(row, here)} ${here ? tinted(here, bright, text) : text}`;
   return here ? shaded(line, width) : line;
 }
 
@@ -416,9 +411,7 @@ function edgeLine(
 // only when the row you are on would leave the view. A row that is the first of its section brings
 // its heading into view with it, so opening a section shows the heading over its rows. A view too
 // short for those edge lines keeps only the row you are on, or its first line when even it doesn't
-// fit. A heading among `rows` is one you can stand on: on it, its line is shaded. `focused` says
-// whether your typing goes to the list. The screen's sidebar passes false while it goes to the
-// agent beside it, and the row you are on then shows only the outline ▹, unshaded. Gives the lines,
+// fit. A heading among `rows` is one you can stand on: on it, its line is shaded. Gives the lines,
 // each at most `width` columns, what a click on each reaches, and the scroll they were drawn at,
 // which the next draw starts from.
 export function drawRows(
@@ -428,7 +421,6 @@ export function drawRows(
   top: number,
   width: number,
   height: number,
-  focused = true,
 ): { lines: string[]; targets: Target[]; top: number } {
   // The one-line rows' columns, from those rows alone, and the names' width, from every task's
   // and the lead's row. Headings are drawn from `headings`, so they take no column, and the
@@ -446,10 +438,10 @@ export function drawRows(
   const linesOf = (i: number) => {
     const row = rows[i];
     if (!row) return [];
-    const pointer: Pointer = i !== here ? "none" : focused ? "lit" : "outline";
-    if (row.part === "request") return [requestLine(row, pointer, width)];
-    if (tall(row)) return tallLines(row, pointer, columns.name, width);
-    return marked([shortLine(row, pointer, columns, width)], pointer === "lit", width);
+    const on = i === here;
+    if (row.part === "request") return [requestLine(row, on, width)];
+    if (tall(row)) return tallLines(row, on, columns.name, width);
+    return marked([shortLine(row, on, columns, width)], on, width);
   };
   // The section whose heading you are on, if you are on one.
   const onHeading = rows[here]?.part === "heading" ? rows[here]?.section : undefined;
@@ -492,8 +484,9 @@ export function drawRows(
   let body = sections(true);
   let shown = body;
   let start = 0;
-  // Too many to fit: the blank lines go but the task queue's, and the sections scroll between the two edge lines, just
-  // enough to keep the row you are on in view, from where they were last drawn.
+  // Too many to fit: the blank lines go but the task queue's, and the sections scroll between the
+  // two edge lines, just enough to keep the row you are on in view, from where they were last
+  // drawn.
   if (body.length > room) {
     body = sections(false);
     const edges = room >= 3;

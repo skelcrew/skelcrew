@@ -52,7 +52,7 @@ test("a tab for each repository runs across the top, with a badge for what needs
   addSite();
   open("lead");
   await ready("lead");
-  await until(() => /^ {2}Skelcrew .*▕ {3}app {4}site •1$/.test(tabRow()), "the tabs");
+  await until(() => /^─┬─ Skelcrew .* ─*┬ {2}app {4}site •1 {2}─+┬─$/.test(tabRow()), "the tabs");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
   // The open one is on its dark grey, the others on a lighter one.
   expect(colours).toContain("48;5;234");

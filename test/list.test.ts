@@ -1066,9 +1066,6 @@ test("the rows shown have every heading among them, a heading you are on is shad
   expect(keysFor(shown[at], 1)).toBe("↑↓ move  ⏎ open/close  0-6 sections  q/esc quit");
   // Needs you never closes, so Enter offers nothing on its heading.
   expect(keysFor(shown[1], 1)).toBe("↑↓ move  0-6 sections  q/esc quit");
-  const outlined = drawRows(shown, sectionHeadings(all, opened), 0, 0, 60, 20, false).lines;
-  expect(Bun.stripANSI(outlined[0] ?? "")).toStartWith(" ▹ ○ lead");
-  expect(outlined[0]).not.toContain("48;5;238");
 });
 
 // Scrolling down onto a heading can leave it on the last line before the bottom edge, with its
