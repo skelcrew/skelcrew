@@ -671,6 +671,34 @@ console.log(db.query("SELECT text FROM notes").all().map((note) => note.text).jo
   );
 });
 
+// The host alone says whether a builder runs, so a repository whose forge isn't known yet, which
+// no poll asks its tracker and forge about, still has its ended builders found.
+test("polling stops a thread whose builder ended while its repository's forge isn't known", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { pollRepositories } = await import(${JSON.stringify(source("flow/poll.ts"))});
+const { forgeKnown } = await import(${JSON.stringify(source("flow/repo.ts"))});
+db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
+const repository = { owner: "simon", repo: "app" };
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+pollRepositories(db, "unused", 100, async () => {}, new Set());
+await Bun.sleep(500);
+console.log(forgeKnown(db, repository), readThread(db, "app-12").status);
+await endSession(host, "fake-app-12");
+const deadline = Date.now() + 10_000;
+while (readThread(db, "app-12").status !== "stopped" && Date.now() < deadline) await Bun.sleep(50);
+console.log(readThread(db, "app-12").status);
+console.log(db.query("SELECT text FROM notes").all().map((note) => note.text).join("\\n"));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe(
+    "false working\nstopped\nAPP-12's builder ended outside Skelcrew, so the thread is stopped. sc start APP-12 brings it back.\n",
+  );
+}, 30_000);
+
 // Both a stop and an end a poll asks for, such as for a merge, cancel the wake as they start.
 for (const [by, ending] of [
   ["a stop", `stopThread(db, "unused", readThread(db, "app-12"))`],
