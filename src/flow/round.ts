@@ -27,7 +27,7 @@ import {
   whoRunsTheSuite,
 } from "./decide.ts";
 import { stopping } from "./events.ts";
-import { fetchInto, pushCommit } from "./git.ts";
+import { fetchInto, noMaintenance, pushCommit } from "./git.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
@@ -45,9 +45,9 @@ import {
 } from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
-// fails.
+// fails. Never with maintenance in the background, which a fetch could otherwise start.
 async function git(folder: string, ...args: string[]): Promise<string> {
-  const { out, err, ok } = await quietly(["git", "-C", folder, ...args], {
+  const { out, err, ok } = await quietly(["git", ...noMaintenance, "-C", folder, ...args], {
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
   if (!ok) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);

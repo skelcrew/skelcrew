@@ -578,6 +578,12 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   repository you can't push to is trusted only from your own terminal.
 - **A clone stopped halfway must not look like one.** Clone outside the folder the lead
   sees, then move it in.
+- **git maintains a clone in the background, and other git trips over it.** After a fetch,
+  commit or merge, git may start `git maintenance` detached. It holds
+  `objects/maintenance.lock` for a moment. A clone from that folder copies its files and fails
+  when the lock vanishes mid-copy, as a CI run did. Skelcrew runs its git with
+  `maintenance.auto=false` and `gc.auto=0`, and writes both into every clone it makes. A plain
+  `git clone` never starts maintenance; a `git fetch` does.
 
 ## Runtime plugins
 

@@ -7,6 +7,12 @@ import { forgeOf } from "../plugins/ask.ts";
 import { gitCredentials } from "../plugins/plugin.ts";
 import { quietly } from "../run.ts";
 
+// The settings that keep git from starting its maintenance in the background, as a fetch or a
+// commit otherwise may. Maintenance holds lock files in the clone a while, and another clone or
+// fetch copying the clone's files then fails on one that vanished. `maintenance.auto` stops it
+// in today's git, `gc.auto` in git older than 2.29.
+export const noMaintenance = ["-c", "maintenance.auto=false", "-c", "gc.auto=0"];
+
 // Runs git with the repository's login and returns what it printed, throwing what git said
 // when it fails. Nobody may be there to type a password, so git fails rather than asks. `input`
 // is what git reads on stdin, such as a long commit message, which an argument can't hold.
@@ -20,7 +26,7 @@ async function git(
   // With no forge, git uses your own login, as it would in your terminal.
   const forge = forgeOf(db, repository);
   const login = forge === null ? [] : gitCredentials(db, forge);
-  const { out, err, ok } = await quietly(["git", ...login, ...args], {
+  const { out, err, ok } = await quietly(["git", ...noMaintenance, ...login, ...args], {
     env: { ...env, GIT_TERMINAL_PROMPT: "0" },
     ...(input === undefined ? {} : { stdin: new Blob([input]) }),
   });
@@ -28,13 +34,15 @@ async function git(
   return out.trim();
 }
 
-// Clones the repository into Skelcrew's chosen folder, away from your checkout.
+// Clones the repository into Skelcrew's chosen folder, away from your checkout. The clone keeps
+// maintenance off in its own settings, so git that anyone else runs there, such as the lead,
+// never starts it in the background either.
 export async function cloneRepository(
   db: Database,
   repository: Repository,
   folder: string,
 ): Promise<void> {
-  await git(db, repository, ["clone", "--quiet", repository.remote, folder]);
+  await git(db, repository, ["clone", "--quiet", ...noMaintenance, repository.remote, folder]);
 }
 
 // Fetches a ref of the remote, such as HEAD for its default branch, into the folder's
