@@ -4,7 +4,7 @@ import { z } from "zod";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
 import { cliSocket } from "./paths.ts";
-import { quietly } from "./run.ts";
+import { capture } from "./run.ts";
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
@@ -431,14 +431,14 @@ export async function reportTurnEnded(): Promise<void> {
   // sends no commit, so the turn counts as new work. git status would take the clone's
   // index.lock to refresh the index, and the hook runs right after sc submit, as the reviewer
   // checks the commit out in its view of the clone. A lock there makes that checkout refuse.
-  const status = await quietly([
+  const status = await capture([
     "git",
     "--no-optional-locks",
     "status",
     "--porcelain",
     "--untracked-files=all",
   ]);
-  const head = await quietly(["git", "rev-parse", "--verify", "HEAD"]);
+  const head = await capture(["git", "rev-parse", "--verify", "HEAD"]);
   const clean = status.ok && status.out.trim() === "" && head.ok;
   await request({
     command: "turn ended",

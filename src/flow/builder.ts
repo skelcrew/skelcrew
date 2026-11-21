@@ -22,7 +22,7 @@ import { installedPlugins } from "../plugins/plugin.ts";
 import { needsInstall } from "../plugins/repository.ts";
 import { filesFor, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
-import { quietly } from "../run.ts";
+import { capture } from "../run.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
@@ -180,7 +180,7 @@ async function recordThread(
       .query(`SELECT * FROM task_threads ${where} AND status IN ('failed', 'done')`)
       .get(owner, repo, task),
   );
-  const git = (...args: string[]) => quietly(["git", "-C", cloneDir(owner, repo), ...args]);
+  const git = (...args: string[]) => capture(["git", "-C", cloneDir(owner, repo), ...args]);
   if (ended)
     for (const kind of ["threads", "bases", "remote", "approved"]) {
       const ref = `refs/skelcrew/${kind}/${ended.folder}`;
@@ -340,7 +340,7 @@ async function mustRun(
   doing = argv.join(" "),
   env: Record<string, string | undefined> = process.env,
 ) {
-  const { said, ok } = await quietly(argv, { env });
+  const { said, ok } = await capture(argv, { env });
   if (!ok) throw new Error(`${doing} failed: ${said.slice(-2000)}`);
 }
 
