@@ -184,7 +184,7 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     return `${shown}${gap}${paint(markColours[row.mark.colour], stage)}`;
   });
   const top = [...title, paint(grey, "─".repeat(width))];
-  // What it needs of you, as sc show says it, such as `question` or `ready to merge`.
+  // What it needs of you, as sc task says it, such as `question` or `ready to merge`.
   // A task approved and green waits on you to merge it, and shows under Needs you with its word
   // saying so, though its thread may not count as needing you for anything else.
   const needed =
