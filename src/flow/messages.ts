@@ -637,8 +637,13 @@ export function briefLead(
 
 // How long Skelcrew's routine notes collect before they go into a lead together. Each note wakes
 // the lead, and its reply scrolls the chat the human may be reading, so reports that need
-// nothing soon, such as a task's end, arrive at most this often.
-const digestEvery = 10 * 60_000;
+// nothing soon, such as a task's end, arrive at most this often, in milliseconds. Tests of the
+// daemon set SKELCREW_DIGEST_MS to 0, so each note they wait for goes in as it comes.
+const digestEvery = z.coerce
+  .number()
+  .min(0)
+  .catch(10 * 60_000)
+  .parse(process.env.SKELCREW_DIGEST_MS ?? 10 * 60_000);
 
 // How long, after the lead answers the human, nothing more is typed into it, so the human can
 // read the answer without the chat moving on. It needs no look at the screen, so it works on
