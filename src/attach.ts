@@ -8,7 +8,7 @@ import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
 import { builderSession, findThread, taskName } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
-import { upInBackground } from "./machine/service.ts";
+import { ensureDaemon } from "./machine/service.ts";
 import { attachOnHost } from "./plugins/runtime.ts";
 import { openScreen } from "./screen/screen.ts";
 
@@ -92,7 +92,7 @@ export async function attachToThread(
       `${taskName(repository, task)}'s builder isn't running: the thread is ${thread.status}`,
     );
   // Its hooks and sc reach the daemon wherever it runs, so the daemon runs first on any host.
-  await upInBackground();
+  await ensureDaemon();
   if (typeof host !== "string") return attachOnHost(host, id);
   const failed = await attachSession(host, id);
   if (failed) throw new Error(failed);

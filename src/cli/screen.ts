@@ -7,11 +7,11 @@ export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { openDb } = await import("../db.ts");
   const { bringInFrom, checkoutTop, repositories } = await import("../flow/repo.ts");
   const { originHere } = await import("../machine/origin.ts");
-  const { upInBackground } = await import("../machine/service.ts");
+  const { ensureDaemon } = await import("../machine/service.ts");
   const { firstRun, install, installFinished } = await import("../machine/setup.ts");
   if (installFinished()) firstRun(from);
   else install(from, true);
-  await upInBackground();
+  await ensureDaemon();
   const origin = originHere();
   if (from === undefined && origin === null && checkoutTop() !== null) {
     const { toRun } = await import("../say.ts");

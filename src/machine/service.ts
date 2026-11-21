@@ -185,7 +185,7 @@ export function startDaemon(): string {
 // Restarts the daemon's service on this machine, so it runs the Skelcrew installed now, and returns
 // where its log is, for when it doesn't come back. Agents keep running, as their sessions live
 // in tmux and only the daemon restarts. Throws when the service manager refuses.
-export function restartDaemon(): string {
+export function restartService(): string {
   if (process.platform === "darwin") {
     restartLaunchAgent();
     return daemonLog();
@@ -202,7 +202,7 @@ export function restartDaemon(): string {
 // What the daemon says it runs: its release, or for a daemon from a checkout, that checkout's
 // folder and the commit it started on, and its process id. A field an older daemon doesn't
 // report comes back empty.
-const DaemonBuild = z
+const DaemonStatus = z
   .object({
     release: z.string().catch(""),
     folder: z.string().catch(""),
@@ -210,11 +210,12 @@ const DaemonBuild = z
     pid: z.number().catch(0),
   })
   .catch({ release: "", folder: "", commit: "", pid: 0 });
+type DaemonStatus = z.infer<typeof DaemonStatus>;
 
 // Returns what the daemon runs, or null when no daemon answers.
-async function daemonRuns(): Promise<z.infer<typeof DaemonBuild> | null> {
+async function daemonStatus(): Promise<DaemonStatus | null> {
   const reply = await ask({ command: "status" }, 2000);
-  return reply === null ? null : DaemonBuild.parse(reply);
+  return reply === null ? null : DaemonStatus.parse(reply);
 }
 
 // Returns what the daemon should run instead, in words, or null when a restart isn't needed or
@@ -222,7 +223,7 @@ async function daemonRuns(): Promise<z.infer<typeof DaemonBuild> | null> {
 // current commit, but only when the daemon runs from this same checkout. The service always
 // starts one checkout, so restarting your main one's daemon from a worktree would change
 // nothing. Uncommitted changes don't count, so editing doesn't ask for a restart at every sc.
-function daemonShouldRun(running: z.infer<typeof DaemonBuild>): string | null {
+function daemonShouldRun(running: DaemonStatus): string | null {
   if (release) return running.release === release ? null : `Skelcrew ${release}`;
   // A single file that isn't a release has no checkout to compare.
   if (singleFile || running.folder !== checkoutFolder) return null;
@@ -242,8 +243,7 @@ const restartWait = z.coerce
 // Reports whether the daemon that answered runs outside its service, such as sc serve in a
 // terminal. Told by its process id, which every daemon reports, so it holds for a daemon of an
 // older release too. One that reports none can't be told, and counts as the service's.
-const outsideService = (running: z.infer<typeof DaemonBuild>) =>
-  running.pid !== 0 && running.pid !== servicePid();
+const outsideService = (running: DaemonStatus) => running.pid !== 0 && running.pid !== servicePid();
 
 const stopItFirst = (want: string) =>
   new Error(
@@ -254,17 +254,17 @@ const stopItFirst = (want: string) =>
 // checkout. So a release installed in the background, or a git pull, takes over the next time
 // you run sc. Agents keep running, as only the daemon restarts.
 export async function restartStaleDaemon(): Promise<void> {
-  const running = await daemonRuns();
+  const running = await daemonStatus();
   const want = running && daemonShouldRun(running);
   if (!want) return;
   if (outsideService(running)) throw stopItFirst(want);
   console.log(`Restarting the daemon on ${want}. Your agents keep running.`);
-  const log = restartDaemon();
+  const log = restartService();
   // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
   // answer for a moment while it stops.
   const deadline = Date.now() + restartWait;
   while (true) {
-    const now = await daemonRuns();
+    const now = await daemonStatus();
     if (now && !daemonShouldRun(now)) return;
     if (Date.now() > deadline)
       throw new Error(
@@ -274,8 +274,8 @@ export async function restartStaleDaemon(): Promise<void> {
   }
 }
 
-export async function restartEngine(): Promise<void> {
-  const before = await daemonRuns();
+export async function restartDaemon(): Promise<void> {
+  const before = await daemonStatus();
   const terminal =
     before !== null && (before.pid === 0 ? servicePid() === 0 : outsideService(before));
   if (terminal)
@@ -283,11 +283,11 @@ export async function restartEngine(): Promise<void> {
       "Skelcrew's engine runs in a terminal, with sc serve, not as its service. Stop it there, such as with Ctrl-C, then run sc serve again, or sc serve --bg to run it as the service. Your agents keep running.",
     );
   const began = Date.now();
-  const log = restartDaemon();
+  const log = restartService();
   const deadline = began + restartWait;
   while (true) {
     const made = statSync(daemonSocket(), { throwIfNoEntry: false })?.ctimeMs ?? 0;
-    if (made >= began && (await daemonRuns())) break;
+    if (made >= began && (await daemonStatus())) break;
     if (Date.now() > deadline)
       throw new Error(
         `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why. An engine from an older release that you ran with sc serve in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
@@ -303,8 +303,8 @@ export async function restartEngine(): Promise<void> {
 // release or commit is restarted, and one that doesn't answer is started. A daemon outside the
 // service is left running, and true comes back to say so: a service started beside it would
 // fail on the lock, and fail again on each retry until systemd gave up on it.
-export async function upInBackground(): Promise<boolean> {
-  const before = await daemonRuns();
+export async function ensureDaemon(): Promise<boolean> {
+  const before = await daemonStatus();
   if (before && outsideService(before)) {
     const want = daemonShouldRun(before);
     if (want) throw stopItFirst(want);
@@ -312,11 +312,11 @@ export async function upInBackground(): Promise<boolean> {
   }
   installService();
   await restartStaleDaemon();
-  if (await daemonRuns()) return false;
+  if (await daemonStatus()) return false;
   const log = startDaemon();
   // The service manager returns before the daemon listens, so wait until it answers.
   const deadline = Date.now() + 10_000;
-  while (!(await daemonRuns())) {
+  while (!(await daemonStatus())) {
     if (Date.now() > deadline)
       throw new Error(`Skelcrew's daemon didn't answer within 10 seconds: ${log} shows why`);
     await Bun.sleep(100);
