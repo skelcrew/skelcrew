@@ -9,14 +9,16 @@
 // garble-<question> it answers that question with nothing, with down it fails every question
 // alike, with say-<question> it fails it with the file's words, with fail-<question> it fails it
 // once, with unknown-<question> it fails it every time as an older plugin that doesn't know it,
-// with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
-// from a given time on. With a file lose-start, it starts the next session but fails before
-// saying its ID. Its list says how a session ended, unless a file no-ended says it can't tell.
-// With a file late-<question> holding a number of seconds, it gives its answer that much later
-// than it found it, as a slow host whose answer is out of date by the time it arrives. Given
-// `files` as it starts a session, it does as a host that provides files: it makes the session a folder of dropped files, `files` in the
-// session's folder, and swaps the placeholder for it wherever it appears in the command. Its one
-// argument, its settings folder, is only there so a test's clean-up can find its calls with ps.
+// with slow-<question> it takes two seconds over it, with keep-end it answers end but leaves the
+// session running, and with hold-<question> it holds it from a given time on. With a file
+// lose-start, it starts the next session but fails before saying its ID. Its list says how a
+// session ended, unless a file no-ended says it can't tell. With a file late-<question> holding
+// a number of seconds, it gives its answer that much later than it found it, as a slow host
+// whose answer is out of date by the time it arrives. Given `files` as it starts a session, it
+// does as a host that provides files: it makes the session a folder of dropped files, `files`
+// in the session's folder, and swaps the placeholder for it wherever it appears in the command.
+// Its one argument, its settings folder, is only there so a test's clean-up can find its calls
+// with ps.
 import {
   appendFileSync,
   existsSync,
@@ -116,8 +118,10 @@ const answers: Record<string, () => unknown> = {
   keys: () => type(question.id, question.key === "Enter" ? "\n" : "\x1b"),
   interrupt: () => type(question.id, "\x1b"),
   // Ends the session's process group and waits until it has gone. One that exited may wait to
-  // be reaped, so only processes that haven't exited count.
+  // be reaped, so only processes that haven't exited count. With a file keep-end, it answers
+  // as if it had ended the session but leaves it running, as herdr's plugin 0.1.0 once did.
   end: async () => {
+    if (existsSync(join(dir, "keep-end"))) return;
     const pid = Number(readFileSync(join(folder(question.id), "pid"), "utf8"));
     try {
       process.kill(-pid, "SIGKILL");

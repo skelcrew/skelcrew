@@ -90,7 +90,7 @@ async function onApp7(): Promise<void> {
 
 test("a task's row shows only its details, never its builder's screen, and typing never reaches it", async () => {
   await onApp7();
-  expect(right()).toContain("Building · working");
+  expect(right()).toContain("Now      working");
   expect(typingTo()).toBe("sidebar");
   // What app-7 prints shows nowhere on the right while its details show.
   tmux(agents, "send-keys", "-t", "=app-7:", "-l", "first line\r");
@@ -111,7 +111,7 @@ test("a long description scrolls on the right by Page Down, Page Up and the whee
   press("M-S-Down");
   press("M-Down");
   await until(() => right().includes("Login redirect"), "app-7's details");
-  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  1-6 stages");
+  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  0-6 sections");
   // No key shows the builder's screen under the details, o included.
   type("o");
   await Bun.sleep(500);
@@ -144,7 +144,7 @@ test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to it
   type("hi\r");
   await until(() => read("app-7.typed") === "hi\n", "what was typed");
   press("C-\\");
-  await until(() => right().includes("Building · working"), "app-7's details again");
+  await until(() => right().includes("Now      working"), "app-7's details again");
   expect(typingTo()).toBe("sidebar");
   // Ctrl-\ again does nothing, and the builder got none of it.
   press("C-\\");

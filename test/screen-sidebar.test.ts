@@ -1,6 +1,8 @@
 // The screen's sidebar as the list: its stages opening and closing by key and by click, moving
 // between sections, and the list's keys on a task's row, which never reach an agent.
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { panes } from "../src/screen/screen.ts";
 import { itemSql, threadSql } from "./harness.ts";
 import {
@@ -9,6 +11,7 @@ import {
   daemon,
   endTest,
   footer,
+  home,
   onDetails,
   onLead,
   open,
@@ -79,6 +82,41 @@ test("Alt-1 to Alt-6 open and close the stages from the lead's row, and the lead
   expect(read("lead.typed")).toBe("");
 });
 
+// The task queue is no stage, but opens and closes as one does, by 0, with Alt or without.
+test("Alt-0 and plain 0 open and close the task queue, and the lead gets neither", async () => {
+  sql(threadSql({ task: "9", title: "Old work", status: "stopped" }));
+  open("lead");
+  await ready("lead");
+  await until(() => isOpen("0 Task queue"), "the task queue open at the start");
+  press("M-0");
+  await until(() => !isOpen("0 Task queue"), "the task queue to close");
+  press("M-0");
+  await until(() => isOpen("0 Task queue") && selected().includes("APP-9"), "it to open on APP-9");
+  await until(onDetails, "app-9's details");
+  type("0");
+  await until(() => !isOpen("0 Task queue"), "plain 0 to close it");
+  await Bun.sleep(300);
+  expect(read("lead.typed")).toBe("");
+  expect(read("app-9.typed")).toBe("");
+});
+
+// Needs you shows only while a task needs you, and you stay on your row as it comes and goes.
+test("Needs you shows only while a task needs you, and the row you are on stays", async () => {
+  open("lead");
+  await ready("lead");
+  await until(() => isOpen("2 Building"), "the stages");
+  expect(left().some((line) => line.includes("Needs you"))).toBe(false);
+  press("M-S-Down");
+  await until(() => /APP-\d+/.test(selected()), "Building's first row");
+  const [name = ""] = /APP-\d+/.exec(selected()) ?? [];
+  sql(`UPDATE threads SET needs_you = 1 WHERE task = ${name.slice("APP-".length)}`);
+  await until(() => isOpen("Needs you  1"), "it under Needs you");
+  expect(selected()).toContain(name);
+  sql("UPDATE threads SET needs_you = 0");
+  await until(() => !left().some((line) => line.includes("Needs you")), "Needs you to go");
+  expect(selected()).toContain(name);
+});
+
 test("on a task's row plain 1 to 6 open and close the stages, and no agent gets them", async () => {
   open("lead");
   await ready("lead");
@@ -99,11 +137,11 @@ test("a click on a stage's heading opens or closes it, and on Needs you does not
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
   await ready("lead");
-  await until(() => isOpen("Needs you 1"), "app-12 under Needs you");
+  await until(() => isOpen("Needs you  1"), "app-12 under Needs you");
   const at = (heading: string) => left().findIndex((line) => line.includes(heading)) + 1;
-  click(5, at("Needs you 1"));
+  click(5, at("Needs you  1"));
   await Bun.sleep(300);
-  expect(isOpen("Needs you 1")).toBe(true);
+  expect(isOpen("Needs you  1")).toBe(true);
   click(5, at("2 Building"));
   await until(() => !isOpen("2 Building"), "Building to close");
   click(5, at("2 Building"));
@@ -114,7 +152,7 @@ test("Alt-Shift-Down and Alt-Shift-Up move between the lead, Needs you and the o
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
   await ready("lead");
-  await until(() => isOpen("Needs you 1"), "app-12 under Needs you");
+  await until(() => isOpen("Needs you  1"), "app-12 under Needs you");
   press("M-S-Down");
   await until(() => selected().includes("APP-12"), "Needs you's first row");
   press("M-S-Down");
@@ -157,20 +195,44 @@ test("a release installed in the background shows as a notice above the lead", a
   expect(at).toBeLessThan(lines.findIndex((line) => line.includes("lead")));
 });
 
-// A queued task shows under Up next, and Shift-Up there has the daemon move it earlier in the
+// A queued task shows in the task queue, and Shift-Up there has the daemon move it earlier in the
 // queue, with the footer saying its place. No agent gets the key.
-test("Shift-Up on a queued task in Up next moves it in the queue, and the footer says its place", async () => {
+test("Shift-Up on a queued task in the task queue moves it in the queue, and the footer says its place", async () => {
   daemon();
   sql(threadSql({ task: "20", title: "Dark mode", status: "queued", queued_since: 1000 }));
   open("lead");
   await ready("lead");
-  await until(() => left().some((line) => line.includes("Up next")), "Up next");
+  await until(() => left().some((line) => line.includes("Task queue")), "Task queue");
   press("M-S-Down");
   await until(() => selected().includes("APP-20") && onDetails(), "APP-20's details");
   await until(() => footer().includes("⇧↑↓ reorder"), "the key in the footer");
   press("S-Up");
   await until(() => acted.includes("queue move simon/app 20 -1"), "the daemon to move APP-20");
   await until(() => footer().includes("APP-20 starts next"), "its place in the footer");
+  expect(read("lead.typed")).toBe("");
+});
+
+// f on a queued task in the task queue asks first, as it starts the task over the limit, and y has the
+// daemon start it now. No agent gets the keys.
+test("f on a queued task in the task queue asks to start it now over the limit, and y starts it", async () => {
+  daemon();
+  // app's threads 7 and 12 work already, so its one place is taken.
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\nlimits: { threads: 1 }\n");
+  sql(threadSql({ task: "20", title: "Dark mode", status: "queued", queued_since: 1000 }));
+  open("lead");
+  await ready("lead");
+  await until(() => left().some((line) => line.includes("Task queue")), "Task queue");
+  press("M-S-Down");
+  await until(() => selected().includes("APP-20") && onDetails(), "APP-20's details");
+  await until(() => footer().includes("f start now"), "the key in the footer");
+  type("f");
+  await until(
+    () => footer().includes("Start APP-20 now, over the limit of 1? y/n"),
+    "the question",
+  );
+  type("y");
+  await until(() => acted.includes("start simon/app 20 now"), "the daemon to start APP-20");
   expect(read("lead.typed")).toBe("");
 });
 

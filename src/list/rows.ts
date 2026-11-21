@@ -1,6 +1,6 @@
 // The rows of the list: what `sc` shows of one repository, read from Skelcrew's database and its
 // copy of the tracker, never the tracker itself, as the list reads them again each second. Its
-// lead, then its tasks by section: Needs you, Up next, then the stages Backlog, Building,
+// lead, then its tasks by section: Needs you, Task queue, then the stages Backlog, Building,
 // Reviewing, Checks, Ready and Done, with how many each has. Also a tab for each repository, with
 // how many of its threads need you.
 import type { Database } from "bun:sqlite";
@@ -38,29 +38,31 @@ export type Question = { ask: string; working: string; request: DaemonRequest; q
 // forge plugin is too old to merge.
 type Action = Question | { refused: string };
 
-// The sections of the list, in the order it shows them: Needs you, Up next, then each stage. Up
+// The sections of the list, in the order it shows them: Needs you, Task queue, then each stage. Up
 // next holds what waits for a builder: the tasks queued under limits.threads, in the order they
 // start, then the threads paused with sc stop.
-export type Section = "needs you" | "up next" | ListStage;
-export const sections: Section[] = ["needs you", "up next", ...ListStage.options];
+export type Section = "needs you" | "task queue" | ListStage;
+export const sections: Section[] = ["needs you", "task queue", ...ListStage.options];
 
 // One row of the list. `part` is where it is: the lead, the stage of its task, or a section's
-// heading, which you can stand on too, so Enter there opens or closes it. `section` is
-// the section it shows under: Needs you while the task waits on you, Up next while it is queued
-// or paused, its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in, `says` is its short word, in
-// `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then dim its PR,
-// such as `#41`, its CI, such as `CI passed`, and when it last changed, such as `14:31`. Each is
-// empty where it has none. `needsYou` is whether it waits on you for something other than a
-// merge. `session` is the agent's session, which Enter attaches to, `running` whether its agent
-// runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\ comes back, rather than on
-// a runtime plugin's host, which has a key of its own. `start` is what Enter does on an issue,
-// and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
-// `branch` the branch a task that is ready without a forge waits on. Each is null where it
-// doesn't apply. `more` is how many issues the row stands for on the `… more` row at the end of
-// a cut Backlog, which Enter shows, and 0 on every other row. `task` is the task's ID, such as 12,
-// which the details pane reads it by, or null on a row that isn't a task. `place` is a queued
-// task's place in its repository's queue, 1 for the one that starts next, or null. `waits` says
-// what a queued or paused task waits on, such as `3rd in line: 4 of 4 builders busy`, for the
+// heading, which you can stand on too, so Enter there opens or closes it. `section` is the section
+// it shows under: Needs you while the task waits on you, Task queue while it is queued or paused,
+// its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in,
+// `says` is its short word, in `colour`, and `step` what its builder is doing, such as `Editing
+// rows.ts`. Then dim its PR, such as `#41`, its CI, such as `CI passed`, and how long ago it last
+// changed, such as `4m`. Each is empty where it has none. `changed` is that moment in
+// milliseconds, or null, which the details pane gives by the clock, so the two always agree. `needsYou` is whether it waits on you for
+// something other than a merge. `session` is the agent's session, which Enter attaches to,
+// `running` whether its agent runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\
+// comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
+// Enter does on an issue, `startNow` what f does on a queued task, or on an issue while every
+// builder is busy, which starts it at once over limits.threads, and `merge` what m does on a task ready for review. `link` is its PR's,
+// which Enter opens, and `branch` the branch a task that is ready without a forge waits on. Each is
+// null where it doesn't apply. `more` is how many issues the row stands for on the `… more` row at
+// the end of a cut Backlog, which Enter shows, and 0 on every other row. `task` is the task's ID,
+// such as 12, which the details pane reads it by, or null on a row that isn't a task. `place` is a
+// queued task's place in its repository's queue, 1 for the one that starts next, or null. `waits`
+// says what a queued or paused task waits on, such as `3rd in line: 4 of 4 builders busy`, for the
 // details pane, and is empty on every other row. `request` is the ID of the lead's request a row
 // stands for, which y and n answer, or null on every other row. A request's row is in the lead's
 // part of the list, under the lead, so it never scrolls away.
@@ -77,11 +79,13 @@ export type Row = {
   pr: string;
   checks: string;
   when: string;
+  changed: number | null;
   needsYou: boolean;
   session: string | null;
   running: boolean;
   tmux: boolean;
   start: Question | null;
+  startNow: Question | null;
   merge: Action | null;
   link: string | null;
   branch: string | null;
@@ -114,15 +118,40 @@ const roundLimit = (thread: Thread) => {
   }
 };
 
-// Returns when a task last changed as a clock time for a moment today, such as 14:32, and as a
-// date for an earlier one, such as 12 Nov, in this machine's time zone. It changes only when the
-// task does, or at midnight, so a list left open writes nothing.
+// Returns when something happened as a clock time, such as 14:32, with the date before it for a
+// day before today, such as 12 Nov 23:59, in this machine's time zone. The details pane says when
+// a task last changed with it, beside how long ago.
 export function changedAt(at: number, now: number): string {
   const when = new Date(at);
-  if (when.toDateString() === new Date(now).toDateString())
-    return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })}`;
+  const clock = `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  if (when.toDateString() === new Date(now).toDateString()) return clock;
+  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })} ${clock}`;
 }
+
+// Returns how long ago a moment was, before `now`, both in milliseconds, in its largest whole
+// unit, such as `4m ago`, `2h ago` or `3d ago`, or `just now` within a minute. The details pane
+// says when things happened this way, as a clock time makes you work out how long it has been.
+// `short` leaves out the words, as `4m` or `now`, for a row, where room is tight. A moment after
+// `now` counts as just now, as another machine's clock can run ahead.
+export function ago(at: number, now: number, short = false): string {
+  const minutes = Math.floor(Math.max(now - at, 0) / 60_000);
+  if (minutes < 1) return short ? "now" : "just now";
+  const unit =
+    minutes < 60
+      ? `${minutes}m`
+      : minutes < 24 * 60
+        ? `${Math.floor(minutes / 60)}h`
+        : `${Math.floor(minutes / (24 * 60))}d`;
+  return short ? unit : `${unit} ago`;
+}
+
+// Returns the time a row shows: how long ago its task last changed, short, such as 4m, and that
+// moment, which the details pane gives by the clock. Both come from here, so a row and its details
+// always agree. A task with no time, or one that can't be read, shows none.
+const shownTime = (at: number | null, now: number) =>
+  at === null || Number.isNaN(at)
+    ? { when: "", changed: null }
+    : { when: ago(at, now, true), changed: at };
 
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.
@@ -158,11 +187,13 @@ function leadRow(db: Database, open: Open): Row {
     pr: "",
     checks: "",
     when: "",
+    changed: null,
     needsYou: asking,
     session: lead.name,
     running: runs,
     tmux: true,
     start: null,
+    startNow: null,
     merge: null,
     link: null,
     branch: null,
@@ -191,11 +222,13 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     pr: "",
     checks: "",
     when: "",
+    changed: null,
     needsYou: false,
     session: lead.session,
     running: lead.running,
     tmux: false,
     start: null,
+    startNow: null,
     merge: null,
     link: null,
     branch: null,
@@ -250,10 +283,10 @@ function taskRow(
   const stepping = word === "working" || (reviewed && shown.status === "working");
   const step = stepping ? removeControlCodes(builderProgress(thread, now).step ?? "") : "";
   // m merges the PR only at the commit Skelcrew's reviewer approved, or for a flow with no review
-  // stage the one last submitted, and only while it is the
-  // head the forge last sent and CI passed there, as the forge's copy of the PR shows. The thread's own verdict and checks can lag
-  // behind a push, so they never stand for a newer head. A forge too old to send the head
-  // commit can't merge either, as it lacks the call too.
+  // stage the one last submitted, and only while it is the head the forge last sent and CI passed
+  // there, as the forge's copy of the PR shows. The thread's own verdict and checks can lag behind
+  // a push, so they never stand for a newer head. A forge too old to send the head commit can't
+  // merge either, as it lacks the call too.
   let merge: Action | null = null;
   if (ready && thread.pr !== null && copy !== null) {
     const named = `${repoName}#${thread.pr}`;
@@ -304,12 +337,12 @@ function taskRow(
   return {
     part: stage,
     // A filled mark waits on you: a decision, an answer, something gone wrong, or a merge. A
-    // task that waits for a builder, queued or paused, is up next.
+    // task that waits for a builder, queued or paused, is in the task queue.
     section:
       mark.sign === "●"
         ? "needs you"
         : thread.status === "queued" || thread.status === "stopped"
-          ? "up next"
+          ? "task queue"
           : stage,
     name,
     task: thread.task,
@@ -320,13 +353,14 @@ function taskRow(
     step,
     pr,
     checks: thread.checks === null ? (noCi ? "no CI" : "") : ciWords[thread.checks],
-    when: changed === null ? "" : changedAt(changed, now),
+    ...shownTime(changed, now),
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
     // Enter attaches to the builder of a task at work, or of a ready one that needs you.
     tmux: !ended && !ready && (thread.host ?? "tmux") === "tmux",
     start: null,
+    startNow: null,
     merge,
     // The saved link stands in only for this attempt's PR: a task started over has none until
     // it opens one, and must never open the previous attempt's.
@@ -360,7 +394,7 @@ function buildersOf(db: Database, open: Open) {
   return { ...counted(db, open), limit };
 }
 
-// Returns what Up next's heading says of the builders, such as `Building 4/4 · 3 queued`: how
+// Returns what Task queue's heading says of the builders, such as `Building 4/4 · 3 queued`: how
 // many run of how many may, and how many tasks wait. Without limits.threads nothing waits, so it
 // says nothing.
 export function buildersNote(db: Database, open: Open): string {
@@ -371,7 +405,7 @@ export function buildersNote(db: Database, open: Open): string {
 
 // Returns the repository's rows as the database has them now, at a moment in milliseconds: its
 // lead, then its tasks in the order of their sections. Needs you comes first, so the list
-// reaches what waits on you fastest. Up next has the queued tasks in the order they start, each
+// reaches what waits on you fastest. Task queue has the queued tasks in the order they start, each
 // with its place, then the paused ones, the newest task first. Backlog has its open issues
 // no thread works on and the tasks filed in its backlog, newest first. Needs you and each other
 // stage have the one that changed last first. Done has the tasks that ended today, latest first,
@@ -424,20 +458,33 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     : "";
   // Returns what the task at a place in the queue, counted from 0, waits on.
   const waitsOn = (at: number) => (holder && at >= held ? claim : busy);
+  // Returns the question f asks of a task, which starts it now over limits.threads, as sc start
+  // --now does. It says the limit it goes over, as that is what you decide.
+  const over = builders.limit === null ? "limits.threads" : `the limit of ${builders.limit}`;
+  const startNow = (task: string): Question => {
+    const name = taskName(repository.name, task);
+    return {
+      ask: `Start ${name} now, over ${over}? y/n`,
+      working: `Starting ${name}…`,
+      request: { command: "start", repo: `${open.owner}/${open.repo}`, task, now: true },
+      queues: false,
+    };
+  };
   // A queued or paused task says where it is in line, or that it is paused, and the pane says
-  // what it waits on, under Needs you too. Up next's rows say it in their word as well. One
+  // what it waits on, under Needs you too. Task queue's rows say it in their word as well. One
   // under Needs you keeps its word, as it says what you must do.
   for (const row of tasks) {
     const thread = threads.find(({ thread: t }) => taskName(repository.name, t.task) === row.name);
     const at = queue.findIndex((queued) => taskName(repository.name, queued.task) === row.name);
     if (at >= 0) {
       row.place = at + 1;
+      if (row.task !== null) row.startNow = startNow(row.task);
       row.waits = `${at === 0 ? "Starts next" : `${ordinal(at + 1)} in line`}: ${waitsOn(at)}`;
-      if (row.section === "up next")
+      if (row.section === "task queue")
         row.says = at === 0 ? "starts next" : `${ordinal(at + 1)} in line`;
     } else if (thread?.thread.status === "stopped") {
       row.waits = `Paused with sc stop: sc start ${row.name} brings it back`;
-      if (row.section !== "up next") continue;
+      if (row.section !== "task queue") continue;
       row.says = "paused";
       row.colour = "dim";
       row.mark = { sign: "○", colour: "dim" };
@@ -447,6 +494,10 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // of the queue, as the daemon decides, so the question says so, and what the queue waits on.
   const full =
     builders.limit !== null && (builders.queued > 0 || builders.running >= builders.limit);
+  // f offers a start over the limit only while no builder's place is free. Tasks can wait with
+  // a place free, such as behind a claim the tracker hasn't taken, and a start then isn't over
+  // the limit.
+  const noPlace = builders.limit !== null && builders.running >= builders.limit;
   // Returns the row of a task not started yet, which Enter asks to start, as sc start does.
   const notStarted = (task: string, title: string, changed: number): Row => {
     const name = taskName(repository.name, task);
@@ -463,7 +514,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       step: "",
       pr: "",
       checks: "",
-      when: Number.isNaN(changed) ? "" : changedAt(changed, now),
+      ...shownTime(changed, now),
       needsYou: false,
       session: null,
       running: false,
@@ -481,6 +532,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
             request: { command: "start", repo: `${open.owner}/${open.repo}`, task },
             queues: false,
           },
+      startNow: noPlace ? startNow(task) : null,
       merge: null,
       link: null,
       branch: null,
@@ -521,13 +573,13 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // Returns a section's live tasks, the one that changed last first.
   const live = (section: Section) =>
     tasks.filter((row) => row.section === section).sort((a, b) => changedOf(b) - changedOf(a));
-  // Up next has the queued tasks by their place, then the paused ones, the newest task first.
+  // Task queue has the queued tasks by their place, then the paused ones, the newest task first.
   // A paused thread's last change can come from a poll, such as its CI, so it orders nothing.
   const startedOf = (row: Row) =>
     threads.find(({ thread }) => taskName(repository.name, thread.task) === row.name)?.thread
       .started ?? 0;
   const upNext = tasks
-    .filter((row) => row.section === "up next")
+    .filter((row) => row.section === "task queue")
     .sort(
       (a, b) =>
         (a.place ?? Number.POSITIVE_INFINITY) - (b.place ?? Number.POSITIVE_INFINITY) ||
@@ -586,11 +638,13 @@ const emptyRow: Row = {
   pr: "",
   checks: "",
   when: "",
+  changed: null,
   needsYou: false,
   session: null,
   running: false,
   tmux: false,
   start: null,
+  startNow: null,
   merge: null,
   link: null,
   branch: null,
@@ -601,11 +655,13 @@ const emptyRow: Row = {
 };
 
 // Returns the rows the list shows, in the order it shows them: the lead's, then each section's
-// heading, with an open section's rows under it. Backlog is cut as cutBacklog says, unless
+// heading, with an open section's rows under it. Needs you shows only while a task needs you, so
+// an empty heading never asks for a look. Backlog is cut as cutBacklog says, unless
 // `wholeBacklog`. A heading is a row of its own, so the arrows stop on it, and Enter there opens or
 // closes its section, as a click does. Its name is no task's, nor the `… more` row's.
 export function shownRows(all: Row[], opened: Set<Section>, wholeBacklog: boolean): Row[] {
   const cut = cutBacklog(all, wholeBacklog);
+  const needing = cut.some((row) => row.section === "needs you");
   const heading = (section: Section): Row => ({
     ...emptyRow,
     part: "heading",
@@ -615,24 +671,27 @@ export function shownRows(all: Row[], opened: Set<Section>, wholeBacklog: boolea
   return [
     ...cut.filter((row) => row.section === "lead"),
     ...sections.flatMap((section) => [
-      heading(section),
+      ...(section === "needs you" && !needing ? [] : [heading(section)]),
       ...(opened.has(section) ? cut.filter((row) => row.section === section) : []),
     ]),
   ];
 }
 
 // A section's heading: its section, how many tasks it has, whether it is open, which shows its
-// rows, and what it says after its count, dim, which only Up next has: how full the builders are.
+// rows, and what it says after its count, dim, which only Task queue has: how full the builders
+// are.
 export type Heading = { section: Section; count: number; open: boolean; note: string };
 
-// Returns the heading of every section, in order, from all the rows, whether their section is
-// open or not, given the sections that are open. `builders` is what Up next's heading says of
-// the builders, from buildersNote.
+// Returns the heading of every section, in order, from all the rows, whether their section is open
+// or not, given the sections that are open. Needs you has none while no task needs you, as
+// shownRows has it. `builders` is what Task queue's heading says of the builders, from
+// buildersNote.
 export function sectionHeadings(rows: Row[], opened: Set<Section>, builders = ""): Heading[] {
-  return sections.map((section) => {
+  return sections.flatMap((section) => {
     const count = rows.filter((row) => row.section === section).length;
-    const note = section === "up next" ? builders : "";
-    return { section, count, open: opened.has(section), note };
+    if (section === "needs you" && count === 0) return [];
+    const note = section === "task queue" ? builders : "";
+    return [{ section, count, open: opened.has(section), note }];
   });
 }
 

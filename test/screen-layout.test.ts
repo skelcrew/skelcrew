@@ -195,20 +195,22 @@ test("the footer runs across the screen under the boxes' line, with where you ty
   sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
   open("lead");
   await ready("lead");
-  const lead = "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
+  const lead = "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   expect(aboveFooter()).toMatch(/^─┴─+┴─+┴─$/);
   expect(aboveFooter()).toHaveLength(120);
   press("M-S-Down");
   await until(
     () =>
-      footer() === "  ↑↓ move  ⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  1-6 stages  ⌥Q quit",
+      footer() ===
+      "  ↑↓ move  w/⌥W close  ⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  0-6 sections  R restart  ⌥Q quit",
     "a task's footer",
   );
   press("M-Down");
   await attachTo("app-7");
   await until(
-    () => footer() === "  typing to APP-7 · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops codex",
+    () =>
+      footer() === "  typing to APP-7 · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops codex",
     "app-7's footer",
   );
 });
@@ -218,7 +220,7 @@ test("a pinned load sits at the right end of the footer", async () => {
   await ready("lead");
   // The lead's harness reaches the footer a moment after the lead starts, so the load can show
   // before what Esc stops does. Wait for both, then check they sit on the row together.
-  const lead = "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
+  const lead = "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   await until(() => (seen().split("\n")[29] ?? "").trimEnd().endsWith(fixedLoad), "the load");
   expect(footer()).toBe(lead);
@@ -235,7 +237,9 @@ test("the footer ends with the machine's own load, even with no thread working",
     "the load",
   );
   expect(seen()).not.toContain(fixedLoad);
-  expect(footer()).toBe("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
+  expect(footer()).toBe(
+    "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
+  );
 });
 
 test("the header and the tabs share one row, and the agent starts right under it", async () => {
@@ -349,7 +353,7 @@ test("the footer has only the keys you need most, and a click on it does nothing
   open("lead");
   await ready("lead");
   await until(
-    () => footer().startsWith("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit"),
+    () => footer().startsWith("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit"),
     "the footer",
   );
   expect(seen()).not.toContain("⌃Q");
@@ -360,7 +364,7 @@ test("the footer has only the keys you need most, and a click on it does nothing
   click(5, 28);
   await Bun.sleep(200);
   expect(onLead()).toBe(true);
-  expect(footer()).toStartWith("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit");
+  expect(footer()).toStartWith("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit");
 });
 
 // ? is text you type to an agent, so no key of the screen's may take it, and Alt-/ is none of

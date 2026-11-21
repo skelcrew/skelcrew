@@ -397,7 +397,7 @@ export type TaskView = z.infer<typeof TaskView>;
 
 // Returns text from the forge safe to print, line breaks kept. A check's log often colours its
 // lines, and those codes are removed whole, so no stray "[31m" is left behind.
-function safeText(text: string): string {
+export function safeText(text: string): string {
   const colours = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
   return text.replace(colours, "").split(/\r?\n/).map(removeControlCodes).join("\n");
 }

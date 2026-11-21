@@ -303,10 +303,10 @@ export async function endTest(): Promise<void> {
   if (failures.length > 0) throw failures[0];
 }
 
-// Returns whether the right side shows a task's details, which have a line with its stage and
-// word, such as `Building · working`.
+// Returns whether the right side shows a task's details, whose first line ends with its stage,
+// such as `Building`, over a line across the pane.
 export const onDetails = () =>
-  /^\s*(Up next|Backlog|Building|Reviewing|Checks|Ready|Done)( · .*)?$/m.test(right());
+  / (Task queue|Backlog|Building|Reviewing|Checks|Ready|Done)\s*\n\s*─{10,}/.test(right());
 
 // Presses Enter on the task you are on, once its details show, as only then does your typing go
 // to the sidebar, and waits until its builder takes the right side, named by its row.
@@ -352,7 +352,7 @@ export const footer = (row = 29) =>
 // Stands in for the daemon on the test's own socket: it logs each repository asked to open,
 // saying when a tab asked, which must never open a tab you closed, and answers with nothing to
 // say.
-// It also logs each thread started, PR merged and request of the lead's answered, in `acted`, answering a merge with
+// It also logs each thread started, agent restarted, PR merged and request of the lead's answered, in `acted`, answering a merge with
 // `given.mergeAnswer`. While `given.holding`, those wait for `release`, so a test sees what the screen says
 // meanwhile.
 export const asked: string[] = [];
@@ -365,7 +365,7 @@ export const release = () => {
 export function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, id, yes } = z
+      const { command, from, tab, repo, task, pr, commit, by, id, yes, now } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
@@ -377,6 +377,7 @@ export function daemon(): void {
           by: z.number().default(0),
           id: z.number().default(0),
           yes: z.boolean().default(false),
+          now: z.boolean().default(false),
         })
         .parse(JSON.parse(data.toString()));
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
@@ -385,6 +386,12 @@ export function daemon(): void {
         connection.end(
           `${JSON.stringify({ said: yes ? "Started APP-31." : "Told the lead no." })}\n`,
         );
+        return;
+      }
+      if (command === "restart") {
+        acted.push(`restart ${repo} ${task}`.trimEnd());
+        const who = task ? `APP-${task}'s builder` : "app's lead";
+        connection.end(`${JSON.stringify({ said: `Restarted ${who}.` })}\n`);
         return;
       }
       if (command === "queue move") {
@@ -396,7 +403,11 @@ export function daemon(): void {
         connection.end("{}\n");
         return;
       }
-      acted.push(command === "start" ? `start ${repo} ${task}` : `merge ${repo} ${pr} ${commit}`);
+      acted.push(
+        command === "start"
+          ? `start ${repo} ${task}${now ? " now" : ""}`
+          : `merge ${repo} ${pr} ${commit}`,
+      );
       const said = command === "start" ? { started: `Started app-${task}.` } : given.mergeAnswer;
       const reply = () => connection.end(`${JSON.stringify(said)}\n`);
       if (given.holding) waiting.push(reply);

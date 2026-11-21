@@ -2,7 +2,7 @@
 // a picker. Enter attaches you full screen to an agent through its session host, and leaving it
 // comes back here, on the same row. It also starts an issue, merges a task ready for review and
 // opens its PR, each asking first where it can't be taken back. The number keys open and close
-// the stages, under Needs you, which holds every task waiting on you, and Up next, which holds
+// the stages, under Needs you, which holds every task waiting on you, and Task queue, which holds
 // what waits for a builder, in the order it starts. Shift with an arrow reorders that queue.
 import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
@@ -115,29 +115,29 @@ const mousePattern = new RegExp(`^${esc}\\[<\\d+;\\d+;\\d+[Mm]$`);
 const back = new Set(["\x1c", "\x1b[92;5u", "\x1b[27;5;92~"]);
 
 // Runs the list in your terminal for the repository named by its owner/name, until you press q,
-// then says your agents keep running.
-// `agents` is the sessions' tmux server. It looks again each second, and writes only when what
-// shows changed, as over a slow link each write costs. In a terminal wide enough, the details pane
-// beside the list shows the row you are on, and reads its agent's screen several times a second
-// for its live view. The load at the end of the bottom line is read every 5 seconds. Tests pin it with SKELCREW_FIXED_LOAD, which Skelcrew itself never sets,
+// then says your agents keep running. `agents` is the sessions' tmux server. It looks again each
+// second, and writes only when what shows changed, as over a slow link each write costs. In a
+// terminal wide enough, the details pane beside the list shows the row you are on, and reads its
+// agent's screen several times a second for its live view. The load at the end of the bottom line
+// is read every 5 seconds. Tests pin it with SKELCREW_FIXED_LOAD, which Skelcrew itself never sets,
 // so a quiet list writes nothing at all.
 export async function runList(agents: string, repository: string): Promise<void> {
   const db = openDb();
   const where = process.env.SKELCREW_REMOTE_NAME ?? "";
   const [owner = "", repo = ""] = repository.split("/");
   let open: Open = { owner, repo };
-  // What the list keeps between draws: every row, those that show, which are the lead's and
-  // those of the open sections, the row you are on among those and how far it scrolled, the line
-  // at the bottom when it says something other than the keys, the question it asks, and whether
-  // the daemon is at work on an answer. Needs you and Up next are always open, and Building,
-  // Reviewing and Checks are open at first, as that is where the work under way is. The sections
-  // you open or close stay so until you leave the list, whichever repository you move to, and so
-  // does a whole Backlog once you asked for it, which shows its newest issues until then.
+  // What the list keeps between draws: every row, those that show, which are the lead's and those
+  // of the open sections, the row you are on among those and how far it scrolled, the line at the
+  // bottom when it says something other than the keys, the question it asks, and whether the daemon
+  // is at work on an answer. Needs you is always open, and the task queue, Building, Reviewing and
+  // Checks are open at first, as that is where the work under way is, and what starts next. The
+  // sections you open or close stay so until you leave the list, whichever repository you move to,
+  // and so does a whole Backlog once you asked for it, which shows its newest issues until then.
   let all: Row[] = [];
   let rows: Row[] = [];
-  // What Up next's heading says of the builders, read with the rows.
+  // What Task queue's heading says of the builders, read with the rows.
   let builders = "";
-  const opened = new Set<Section>(["needs you", "up next", "building", "reviewing", "checks"]);
+  const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
   let wholeBacklog = false;
   const showing = () => shownRows(all, opened, wholeBacklog);
   let here = -1;
@@ -207,7 +207,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2).lines;
     if (details?.name !== row.name)
-      details = { name: row.name, read: readDetails(db, open, row.task, Date.now()) };
+      details = { name: row.name, read: readDetails(db, open, row.task, Date.now(), row.changed) };
     const note = liveNote(row);
     const shown = note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
     const pane = drawPane(
@@ -381,12 +381,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     refresh();
   };
 
-  // Opens a row with Enter: opens or closes a stage on its heading, attaches to the lead,
-  // starting it first when it isn't running, or to the builder of a task at work. Says what a task
-  // up next waits on, and that a request of the lead's is answered with y or n. Asks before
+  // Opens a row with Enter: opens or closes a stage on its heading, attaches to the lead, starting
+  // it first when it isn't running, or to the builder of a task at work. Says what a task in the
+  // task queue waits on, and that a request of the lead's is answered with y or n. Asks before
   // starting an issue. Opens the PR of a task ready for review or ended, or copies its link, or
-  // without a forge says which branch waits for you. A ready task whose builder needs you, such
-  // as for a question, attaches to the builder, so one Enter reaches what it waits on.
+  // without a forge says which branch waits for you. A ready task whose builder needs you, such as
+  // for a question, attaches to the builder, so one Enter reaches what it waits on.
   const openRow = async (row: Row) => {
     if (row.part === "heading" && row.section !== "lead") return toggleSection(row.section);
     // The daemon starts the lead first if it isn't running, such as one you exited or one that
@@ -407,11 +407,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     if (row.part === "request") return say("Press y to say yes to the lead, or n to say no.");
     if (row.part === "backlog" && row.start) {
-      asking = { question: row.start, row: row.name, merge: false };
+      asking = { question: row.start, row: row.name, offer: "start" };
       return draw();
     }
-    // A task up next has no builder running yet, so Enter says what it waits on.
-    if (row.section === "up next") return say(row.waits);
+    // A task in the task queue has no builder running yet, so Enter says what it waits on.
+    if (row.section === "task queue") return say(row.waits);
     // A builder that exited leaves its last screen behind, which would look like it still runs.
     const atWork = row.part !== "ready" && row.part !== "done";
     if ((atWork || row.needsYou) && row.session) {
@@ -455,10 +455,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Opens or closes a section, as a stage's number key, Enter on its heading or a click on it
   // does. Opening one moves you to its first row, so the list scrolls to show it, rather than open
   // it out of sight. Closing the one you are in moves you to its heading, as your row hides. Needs
-  // you and Up next are always open: they have no key, so once closed nothing but a click would
-  // bring back what waits, so a click on their heading does nothing.
+  // you is always open: it has no key, so once closed nothing but a click would bring back what
+  // waits, so a click on its heading does nothing.
   const toggleSection = (section: Section) => {
-    if (section === "needs you" || section === "up next") return draw();
+    if (section === "needs you") return draw();
     const inside = rows[here]?.section === section;
     const closing = opened.delete(section);
     if (!closing) opened.add(section);
@@ -475,7 +475,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   // again, and the bottom line says its place. A paused task has no place until sc start
   // queues it, so the line says that instead.
   const reorder = async (row: Row, by: -1 | 1) => {
-    if (row.task === null || row.section !== "up next") return draw();
+    if (row.task === null || row.section !== "task queue") return draw();
     if (row.place === null)
       return say(`${row.name} is paused: sc start ${row.name} brings it back`);
     working = true;
@@ -611,7 +611,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (key === "tab") return nextRepository(1);
     if (key === "back tab") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
-    // 1 to 6 open or close the stages, in the order they show.
+    // 0 opens or closes the task queue, and 1 to 6 the stages, in the order they show.
+    if (key === "0") return toggleSection("task queue");
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) return toggleSection(stage);
     if (key === "enter" && row) return openRow(row);
@@ -630,12 +631,18 @@ export async function runList(agents: string, repository: string): Promise<void>
     // s starts a task not started yet, an issue or one of the backlog, as Enter does there. With
     // every builder busy, its question says it queues the task instead.
     if (key === "s" && row?.part === "backlog" && row.start) {
-      asking = { question: row.start, row: row.name, merge: false };
+      asking = { question: row.start, row: row.name, offer: "start" };
+      return draw();
+    }
+    // f starts a queued task now, over limits.threads, or one on Backlog while every builder is
+    // busy, after a question that says it goes over the limit.
+    if (key === "f" && row?.startNow) {
+      asking = { question: row.startNow, row: row.name, offer: "startNow" };
       return draw();
     }
     if (key === "m" && row?.merge) {
       if ("refused" in row.merge) return say(row.merge.refused);
-      asking = { question: row.merge, row: row.name, merge: true };
+      asking = { question: row.merge, row: row.name, offer: "merge" };
       return draw();
     }
     // A ready task whose builder needs you offers no merge until you have seen to it.

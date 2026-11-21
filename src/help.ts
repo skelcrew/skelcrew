@@ -90,6 +90,7 @@ const sections: [string, [string, string][]][] = [
       ["--all", "Done threads too, on ps, and ended tasks, on ls"],
       ['--short "<words>"', "A thread's short title for the sidebar, on start"],
       ["--flow <name>", "The flow a task runs, from .agents/flows/, on start"],
+      ["--now", "Start a task at once, over its repository's limits.threads"],
       ["--issue", "Open the task as an issue in the tracker too, on task add"],
       ["--keep-issue", "Keep its issue open, to start it over, on rm"],
       ["--from <remote>", "The repository you're in"],
@@ -101,23 +102,26 @@ const sections: [string, [string, string][]][] = [
   // character. Those that work anywhere come first, then those for the sidebar, where the list's
   // keys work without Alt. a does what shift + enter does, for a terminal that sends that as
   // plain Enter. Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't
-  // send Option as Alt.
+  // send Option as Alt. alt + w works anywhere, and w only in the sidebar.
   [
     "KEYS",
     [
       ["ctrl + \\", "type to the sidebar, from the lead or an agent"],
       ["alt + ↑/↓", "move one row"],
       ["alt + shift + ↑/↓", "jump to the next or previous section"],
-      ["alt + 1-6", "open or close a stage"],
+      ["alt + 0-6", "open or close the task queue or a stage"],
       ["alt + shift + ←/→", "switch repository"],
+      ["alt + w, w", "close the repository's tab, or remove it from Skelcrew"],
       ["alt + q", "quit, agents run on"],
-      ["↑/↓, 1-6", "in the sidebar: move, open or close a stage"],
+      ["↑/↓, 0-6", "in the sidebar: move, open or close a section"],
       ["enter", "open the row you are on: type to its agent, or open a stage"],
       ["shift + enter, a", "type to the row's agent full screen"],
-      ["shift + ↑/↓", "move a queued task in up next"],
+      ["shift + ↑/↓", "move a queued task in the task queue"],
       ["s", "start or queue a task in the backlog"],
+      ["f", "start a queued task now, over the limit"],
       ["m", "merge a ready task"],
       ["y / n", "answer a request from the lead"],
+      ["shift + r", "restart the row's agent, keeping its conversation"],
     ],
   ],
 ];

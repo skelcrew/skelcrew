@@ -201,6 +201,16 @@ test("stopping a session ends its process and the host forgets it", async () => 
   await stopSession(on, id);
 });
 
+test("a session the host says it ended but still lists isn't taken for stopped", async () => {
+  const on = host();
+  const id = await start(on, ["sleep", "30"]);
+  writeFileSync(join(settings(), "keep-end"), "");
+  await expect(stopSession(on, id, 500)).rejects.toThrow(
+    `${name} said it ended the session ${id}, but it still runs`,
+  );
+  expect(await agentRuns(on, id)).toBe(true);
+});
+
 test("interrupting a session sends its agent Esc", async () => {
   const on = host();
   const id = await start(on, ["sh", "-c", "echo ready; exec cat > keys.txt"]);
@@ -303,11 +313,11 @@ attach: ["true"]
 import { record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
 import { builderSession, readThread, renameBuilders } from ${JSON.stringify(source("flow/thread.ts"))};
-import { endThread, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
+import { endThread, noticeEndedBuilder, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { wakeAfterLimit } from ${JSON.stringify(source("flow/limits.ts"))};
-import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
-import { bringBack, endEarlierBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
+import { endSession, hasSession, listSessions, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
+import { bringBack, endEarlierBuilder, refuseSecondBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
 import { deliverMessages, dropOldEvents, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
 db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(folder)}]);
@@ -442,7 +452,7 @@ fs.writeFileSync(${JSON.stringify(join(fake, "slow-start"))}, "");
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
 const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
 await Bun.sleep(500);
-await removeRepo("app", "unused");
+console.log(await removeRepo("app", "unused"));
 console.log(await starting);
 const sessions = await (await import(${JSON.stringify(source("agents/sessions.ts"))})).listSessions(host);
 console.log(sessions.length);`,
@@ -483,7 +493,7 @@ db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES (
 const host = pluginHost(db, "fake");
 await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
 db.run("DELETE FROM threads");
-await removeRepo("app", "unused");
+console.log(await removeRepo("app", "unused"));
 console.log(await hasSession(host, "fake-lead-app"));`,
     {},
   );
@@ -960,6 +970,122 @@ console.log(after.status, after.host, after.host_id, await hasSession(host, "fak
     "fake answered end in a way Skelcrew doesn't understand\nworking fake fake-app-12 true\n",
   );
 });
+
+// The stop's answer said it stopped, but the builder still ran, and sc start started a second
+// one in the same clone.
+test("a builder its host says it ended but still runs keeps its thread working, with its host", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "60"], env: {}, labels });
+require("node:fs").writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "keep-end"))}, "");
+const error = await stopThread(db, "unused", readThread(db, "app-12")).catch((error) => error.message);
+const after = readThread(db, "app-12");
+console.log(error);
+console.log(after.status, after.host, after.host_id);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe(
+    "fake said it ended the session fake-app-12, but it still runs\nworking fake fake-app-12\n",
+  );
+}, 30_000);
+
+// Your config names tmux, as it does by default, while the last builder still runs on the
+// plugin it started on. The host also still lists an older builder of the thread that ended,
+// before the one that runs.
+test("sc start refuses a stopped thread whose last builder still runs on any host", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", { ...readThread(db, "app-12"), host: "fake" })).host;
+const refused = () => refuseSecondBuilder(db, "unused", readThread(db, "app-12")).then(() => "started", (error) => error.message);
+console.log(await refused());
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+const folder = ${JSON.stringify(home)};
+await startSession(host, "app-11", { folder, command: ["true"], env: {}, labels });
+while ((await listSessions(host)).some(({ running }) => running)) await Bun.sleep(20);
+console.log(await refused());
+await startSession(host, "app-12", { folder, command: ["sleep", "30"], env: {}, labels });
+console.log(await refused());`,
+    { host: null, host_id: null, status: "stopped" },
+  );
+  expect(said).toBe(
+    "started\nstarted\nSIMON/APP-12's last builder still runs on fake, as fake-app-12. End it there, then run sc start SIMON/APP-12 again.\n",
+  );
+});
+
+test("a poll stops a thread whose builder ended outside Skelcrew, and tells its lead", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+// A builder Skelcrew never saw running, such as one whose start failed, is its start's to fail.
+await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
+console.log(readThread(db, "app-12").status);
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
+console.log(readThread(db, "app-12").status);
+// Ended on the host itself, as a person might from its own app.
+await endSession(host, "fake-app-12");
+await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
+const after = readThread(db, "app-12");
+console.log(after.status, after.host, after.host_id);
+console.log(db.query("SELECT text FROM notes").all().map((note) => note.text).join("\\n"));`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe(
+    "working\nworking\nstopped null null\nSIMON/APP-12's builder ended outside Skelcrew, so the thread is stopped. sc start SIMON/APP-12 brings it back.\n",
+  );
+});
+
+// A daemon that stopped partway through the stop, here a note the database refuses, must leave
+// the thread as it was: never working with no host, which it would start a second time, nor
+// stopped with a lead that never hears of it.
+test("a stop for an ended builder that fails partway saves none of it", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
+await endSession(host, "fake-app-12");
+db.run("CREATE TRIGGER refuse BEFORE INSERT ON notes BEGIN SELECT RAISE(ABORT, 'the disk is full'); END");
+console.log(await noticeEndedBuilder(db, "unused", readThread(db, "app-12")).then(() => "stopped", (error) => error.message));
+const after = readThread(db, "app-12");
+console.log(after.status, after.host, after.host_id);
+console.log(db.query("SELECT COUNT(*) AS n FROM notes").get().n);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe("the disk is full\nworking fake fake-app-12\n0\n");
+});
+
+// The host alone says whether a builder runs, so a repository whose forge isn't known yet, which
+// no poll asks its tracker and forge about, still has its ended builders found.
+test("polling stops a thread whose builder ended while its repository's forge isn't known", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { pollRepositories } = await import(${JSON.stringify(source("flow/poll.ts"))});
+const { forgeKnown } = await import(${JSON.stringify(source("flow/repo.ts"))});
+db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
+const repository = { owner: "simon", repo: "app" };
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+pollRepositories(db, "unused", 100, async () => {}, new Set());
+await Bun.sleep(500);
+console.log(forgeKnown(db, repository), readThread(db, "app-12").status);
+await endSession(host, "fake-app-12");
+const deadline = Date.now() + 10_000;
+while (readThread(db, "app-12").status !== "stopped" && Date.now() < deadline) await Bun.sleep(50);
+console.log(readThread(db, "app-12").status);
+console.log(db.query("SELECT text FROM notes").all().map((note) => note.text).join("\\n"));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe(
+    "false working\nstopped\nAPP-12's builder ended outside Skelcrew, so the thread is stopped. sc start APP-12 brings it back.\n",
+  );
+}, 30_000);
 
 // Both a stop and an end a poll asks for, such as for a merge, cancel the wake as they start.
 for (const [by, ending] of [

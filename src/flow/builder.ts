@@ -8,7 +8,6 @@ import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
   agentRuns,
   checkAgentStarted,
-  endSession,
   hasSession,
   type Labels,
   startSession,
@@ -19,8 +18,9 @@ import { agentRole, checkFlow, repositoryCommands, roundLimit, sessionHost } fro
 import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
+import { installedPlugins } from "../plugins/plugin.ts";
 import { needsInstall } from "../plugins/repository.ts";
-import { filesFor, type Host, hostNamed } from "../plugins/runtime.ts";
+import { filesFor, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
@@ -40,6 +40,7 @@ import {
   folderName,
   hostGone,
   hostMissing,
+  labelledBuilders,
   log,
   markBeforeHost,
   readThread,
@@ -89,7 +90,7 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // records the thread as queued, to start once its turn comes in the queue, and the caller starts
 // nothing for it now. A task of the tracker that joins the queue is saved as owing its claim,
 // unless `claimed` says the label's start claimed it already, and leaves the queue only once
-// the claim is made.
+// the claim is made. With `now`, it starts at once over the limit, as sc start --now asks.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
 // just started. One at a time, the second finds that thread and is refused. `recorded` is told
@@ -104,6 +105,7 @@ export function startThread(
         from?: string | undefined;
         short?: string | undefined;
         flow?: string | undefined;
+        now?: boolean | undefined;
       }
     | {
         repo: string;
@@ -259,8 +261,8 @@ async function recordThread(
     if (before && before.status !== "failed" && before.status !== "done")
       throw new Error(`${taskName(name, task)} has a thread already`);
     // Counted in the same transaction as the thread is recorded, so two starts can't both take
-    // the last place.
-    const queued = joinsQueue(db, repository);
+    // the last place. A start with `now` never joins the queue: you chose to go over the limit.
+    const queued = !("now" in given && given.now) && joinsQueue(db, repository);
     const thread: Thread = {
       owner,
       repo,
@@ -631,6 +633,8 @@ export function startOnHost(
 ): Promise<void> {
   return inTurn(thread.folder, async (earlier) => {
     await earlier;
+    // The builder before it, if any, ran: this one hasn't yet.
+    seenRunning.delete(thread.folder);
     const now = readThread(db, thread.folder);
     if (now.status !== "working" && now.status !== "waiting")
       throw new Error(`the thread was ${now.status} while its builder started`);
@@ -655,8 +659,15 @@ export function startOnHost(
     const latest = readThread(db, thread.folder);
     if (sessionTitle(db, latest) !== title) renameOnHost(db, thread.folder);
     await checkAgentStarted(on.host, id, "builder");
+    seenRunning.add(thread.folder);
   });
 }
+
+// The threads whose builder Skelcrew saw running, by folder: one that started, or one found
+// still running, as the daemon started or by a poll. Only such a builder can end outside Skelcrew. One that
+// failed to start never ran, and its start marks the thread failed, a moment after its turn is
+// over: a poll in that moment must not take it for one that ended and mark it stopped.
+export const seenRunning = new Set<string>();
 
 // The starts and ends under way of each thread's builder, by its folder, each settling once it
 // is over.
@@ -754,8 +765,13 @@ export async function bringBack(
       try {
         // A session whose agent ended is ended too, so the new one can take its name.
         const { host, id } = await builderSession(db, sessions, thread);
-        if (await agentRuns(host, id)) return null;
-        if (await hasSession(host, id)) await endSession(host, id);
+        if (await agentRuns(host, id)) {
+          seenRunning.add(thread.folder);
+          return null;
+        }
+        // stopSession checks the host no longer has the session, so a host that says it ended
+        // one it didn't never gets a second builder beside it.
+        if (await hasSession(host, id)) await stopSession(host, id);
         break;
       } catch (error) {
         // tmux failing isn't a host that will come back, and a thread stopped or ended
@@ -773,6 +789,37 @@ export async function bringBack(
   }
   await startBuilder(db, sessions, thread);
   return null;
+}
+
+// Throws when a builder of the thread still runs on any host, though the thread keeps none, for
+// sc start on a stopped thread. Every host is looked on, tmux by the builder's name and each
+// installed plugin by its labels, as the thread doesn't say where its last builder ran, and
+// your config may name another host since. Such a builder outlived a stop, such as on a host
+// that said it ended a session it didn't, and a second one would share its clone. A host that
+// can't be asked fails the start, as nobody can tell whether the builder runs there.
+export async function refuseSecondBuilder(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<void> {
+  const plugins = installedPlugins(db).flatMap(({ name }) => {
+    const host = pluginHost(db, name);
+    return host === null ? [] : [{ name, host }];
+  });
+  for (const { name: hostName, host } of [{ name: "tmux", host: sessions }, ...plugins]) {
+    // One whose agent ended left only its last screen, and works in the clone no more.
+    const id =
+      typeof host === "string"
+        ? (await agentRuns(host, thread.folder))
+          ? thread.folder
+          : undefined
+        : (await labelledBuilders(host, thread)).find(({ running }) => running)?.name;
+    if (id === undefined) continue;
+    const name = threadName(db, thread);
+    throw new Error(
+      `${name}'s last builder still runs on ${hostName}, as ${id}. End it there, then run sc start ${name} again.`,
+    );
+  }
 }
 
 // How long bringBack waits before asking a plugin's host again, in milliseconds.

@@ -13,6 +13,7 @@ import {
   processTree,
   readSession,
   stillRunning,
+  stopSession,
 } from "../agents/sessions.ts";
 import { agentsUnanswered } from "../approved-agents.ts";
 import { checkFlow, graceMinutes, leadCanMerge, repositoryCommands } from "../config.ts";
@@ -30,6 +31,9 @@ import {
   bringBack,
   endEarlierBuilder,
   failThread,
+  inTurn,
+  refuseSecondBuilder,
+  seenRunning,
   setUpThread,
   startBuilder,
   startChoice,
@@ -39,7 +43,7 @@ import {
 import { holdCheckSlot, slotHolders } from "./checks.ts";
 import { openTasks, ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
-import { removalEnded, removeThread, removing, stopThread } from "./events.ts";
+import { removalEnded, removeThread, removing, stopping, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import {
   closeExitedLeads,
@@ -48,6 +52,7 @@ import {
   lastOpened,
   leadOf,
   leadPrompted,
+  leadSession,
   openedRepositories,
   startLead,
 } from "./lead.ts";
@@ -364,7 +369,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
   // keeps the lead running or starts it. One at a time for each repository, so two requests at
   // once can't start two sessions, while a host that hangs holds up no other repository's lead.
-  const ensureLead = (repository: Repository) => {
+  // `first` runs in the same turn, before the start, such as ending the lead to restart it, so
+  // no other start comes between.
+  const ensureLead = (repository: Repository, first?: () => Promise<void>) => {
     const { owner, repo } = repository;
     const key = `${owner}/${repo}`;
     const start = (leadStarts.get(key) ?? Promise.resolve())
@@ -375,6 +382,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           listening.add(socket);
           await open(socket, { lead: { owner, repo } });
         }
+        await first?.();
         await startLead(db, sessions, repository);
       });
     leadStarts.set(key, start);
@@ -668,7 +676,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Starts a task, for sc start: brings back a stopped thread, lets one go on past the round
   // limit, switches the flow or short title of one at work, or records a new thread and starts
-  // its builder. Returns what to say of it. `yes` is the ID of your yes to a lead's request that
+  // its builder. With `now`, from sc start --now or f in the list, a start over limits.threads
+  // goes ahead at once, and a task in the queue leaves it to start. Returns what to say of it. `yes` is the ID of your yes to a lead's request that
   // asked for this start. Whatever the start changes, the request keeps what it said in the same
   // step, so a stop of the daemon before the lead hears never has the yes done again.
   const startTask = async (
@@ -692,6 +701,36 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // Another flow for a thread at work switches it, as switchFlow allows. The flow it runs
     // already is no switch, so sc start goes on as without one, such as past the round limit.
     const switching = before !== null && request.flow !== undefined && request.flow !== before.flow;
+    // Takes a queued task out of the queue and starts it at once, over the limit, for --now.
+    // A claim it still owes is no longer waited for: it is made as a new start makes one, in the
+    // background, whatever the tracker answers, so a tracker that is down can't hold it back.
+    // Its place is let go too, so a start the engine's stop cuts short is taken for any start
+    // cut short, not put back in the queue.
+    const startNowFromQueue = (queued: Thread) => {
+      const name = threadName(db, queued);
+      if (removing.has(queued.folder)) throw new Error(`${name} is being removed`);
+      const { owner, repo, task } = queued;
+      const where = "WHERE owner = ? AND repo = ? AND task = ?";
+      const owed = db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) !== null;
+      const status = queued.session === null ? "working" : statusOnceBack(queued);
+      const short = request.short ? { short: request.short } : {};
+      let starting: Promise<string | null> = Promise.resolve(null);
+      let started = queued;
+      const answer = done(`Started ${name} now, out of the queue, over limits.threads.`, () => {
+        db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+        const change = { status, queued_since: null, ...short };
+        started = record(db, queued.folder, change, "started now, over limits.threads");
+        starting = started.session === null ? setUpAndStart(started) : comeBack(started);
+      });
+      // You are assigned its issue whatever happened to the claim: the start that queued it
+      // assigns you only while it is still queued, and may find it started by now.
+      assignIssue(db, started, owed);
+      return { ...answer, starting };
+    };
+    if (before?.status === "queued" && request.now) {
+      if (switching && request.flow) switchFlow(before, request.flow);
+      return startNowFromQueue(readThread(db, before.folder));
+    }
     if (before && atWork && switching && request.flow) {
       const flow = request.flow;
       return done(`${threadName(db, before)} now runs the flow ${flow}.`, () =>
@@ -712,8 +751,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const choice = startChoice(before);
     if (before && choice === "bring back") {
       const name = threadName(db, before);
-      // Over the limit, it waits its turn in the queue, and comes back then.
-      if (joinsQueue(db, before)) {
+      // A builder that outlived its stop still works in the clone, so none starts beside it.
+      // Another sc start may have brought the thread back while its host was asked, so it
+      // goes on only if the thread is still as it was.
+      await refuseSecondBuilder(db, sessions, before);
+      const now = readThread(db, before.folder);
+      if (now.status !== before.status || now.started !== before.started)
+        throw new Error(`${name} changed while Skelcrew asked its host: run sc start again`);
+      // Over the limit, it waits its turn in the queue, and comes back then, unless --now
+      // brings it back at once.
+      if (!request.now && joinsQueue(db, before)) {
         const change = { status: "queued" as const, queued_since: joinTime(db) };
         const short = request.short ? { short: request.short } : {};
         // What it says names its place in the queue, which only the change gives.
@@ -762,6 +809,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       // short title and flow given here still go on that thread, so they aren't lost, as long
       // as its builder hasn't submitted meanwhile.
       const started = threadOn(db, request.repo, request.task);
+      // One the poll queued still starts now, as --now asked.
+      if (!before && started?.status === "queued" && request.now) {
+        if (request.flow && request.flow !== started.flow) switchFlow(started, request.flow);
+        return startNowFromQueue(readThread(db, started.folder));
+      }
       if (!before && started)
         return done(`Started ${threadName(db, started)}.`, () => {
           if (request.flow && request.flow !== started.flow)
@@ -969,6 +1021,65 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const name = threadName(db, thread);
         await stopThread(db, sessions, thread);
         return { stopped: name };
+      }
+      // A restart ends the agent's session and starts it again, resuming its conversation, as
+      // opening a closed lead or sc stop then sc start does. The tab and the task stay as they
+      // were. Only an agent that runs is restarted: one that ended has its own way back.
+      case "restart": {
+        if (request.task === undefined) {
+          const repository = findRepository(db, request.repo);
+          const { owner, repo } = repository;
+          const lead = await leadSession(db, sessions, owner, repo);
+          if (lead === null || !(await agentRuns(lead.host, lead.id)))
+            throw new Error(`${repository.name}'s lead isn't running`);
+          await ensureLead(repository, () => stopSession(lead.host, lead.id));
+          typeLeadNotes(db, sessions);
+          return { said: `Restarted ${repository.name}'s lead.` };
+        }
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        const { host, id } = await builderSession(db, sessions, thread);
+        const live = thread.status === "working" || thread.status === "waiting";
+        if (!live || !(await agentRuns(host, id)))
+          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        // A stop or removal under way, or one that came while the session ended, wins: the
+        // builder comes back only if its thread is still the same live one, with no stop or
+        // removal under way, so a stopped task never gets a builder again.
+        const unchanged = () => {
+          const now = readThread(db, thread.folder);
+          const same = now.started === thread.started && now.session === thread.session;
+          const live = now.status === "working" || now.status === "waiting";
+          return same && live && !stopping.has(thread.folder) && !removing.has(thread.folder);
+        };
+        if (!unchanged()) throw new Error(`${name} is being stopped, so it isn't restarted`);
+        // The end takes its turn with the builder's starts and ends. A builder started a moment
+        // ago is still watched for exiting at once, and an end in that moment would fail it.
+        // Once ended, it no longer counts as seen running, so a poll that looks before the new
+        // start doesn't take it for one that ended outside Skelcrew and stop the thread. The
+        // new start counts it again.
+        await inTurn(thread.folder, async (earlier) => {
+          await earlier;
+          await stopSession(host, id);
+          seenRunning.delete(thread.folder);
+        });
+        if (!unchanged())
+          return { said: `${name} was stopped or removed meanwhile, so its builder stays ended.` };
+        // Brought back as after the daemon's restart, but its round goes on untouched, as
+        // nothing cut it short. Starting a builder starts the stretch of work the sidebar times,
+        // and a restart is no new stretch, so the time it began is put back.
+        const since = z
+          .object({ working_since: z.number().nullable() })
+          .parse(
+            db.query("SELECT working_since FROM threads WHERE folder = ?").get(thread.folder),
+          ).working_since;
+        try {
+          const gone = await bringBack(db, sessions, readThread(db, thread.folder));
+          db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [since, thread.folder]);
+          return { said: gone === null ? `Restarted ${name}'s builder.` : cantTell(gone) };
+        } catch (error) {
+          failThread(db, sessions, thread, error);
+          return { said: `${name}'s builder couldn't start again: ${errorText(error)}` };
+        }
       }
       case "queue move":
         return { said: moveInQueue(db, findThread(db, request.repo, request.task), request.by) };

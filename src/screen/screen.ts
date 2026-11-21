@@ -143,18 +143,22 @@ const config = [
   // default was 500 ms before tmux 3.5, so it matches the wait of the layer that sees your pastes
   // first: a paste start that layer lets go of unfinished is never one tmux still reads as a paste.
   ["set", "-s", "escape-time", String(escapeTime)],
-  // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-1 to
-  // Alt-6, which open and close the stages, go to the sidebar, in its own pane, without moving your
-  // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as they move a word in
-  // its prompt, and so do Alt-B and Alt-F, which is how tmux reads the Esc b and Esc f a Mac
-  // terminal often sends for Option-Left and Option-Right.
+  // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-0 to
+  // Alt-6, which open and close the task queue and the stages, go to the sidebar, in its own pane,
+  // without moving your typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as
+  // they move a word in its prompt, and so do Alt-B and Alt-F, which is how tmux reads the Esc b
+  // and Esc f a Mac terminal often sends for Option-Left and Option-Right.
   ["bind", "-n", "M-Up", "send-keys", "-t", toSidebar, "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", toSidebar, "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", toSidebar, "M-S-Up"],
   ["bind", "-n", "M-S-Down", "send-keys", "-t", toSidebar, "M-S-Down"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", toSidebar, "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", toSidebar, "M-S-Right"],
-  ...["1", "2", "3", "4", "5", "6"].map((digit) => [
+  // Alt-W asks whether to close or remove the open repository, from anywhere, full screen too.
+  // The sidebar takes your typing for the question, and gives it back on Esc. Like Alt-Q, it never
+  // reaches an agent.
+  ["bind", "-n", "M-w", "send-keys", "-t", toSidebar, "M-w"],
+  ...["0", "1", "2", "3", "4", "5", "6"].map((digit) => [
     "bind",
     "-n",
     `M-${digit}`,
@@ -201,13 +205,13 @@ const config = [
   ["bind", "-n", "MouseDrag1Pane", "send-keys", "-M"],
   ["bind", "-n", "SecondClick1Pane", "send-keys", "-M"],
   ["bind", "-n", "TripleClick1Pane", "send-keys", "-M"],
-  // A drag over the agent that is let go over the sidebar, the footer or the top row would end
-  // in that other place, and the agents' server would wait for a release that never comes,
-  // copying nothing. So the agent's pane gets the drag's end at its nearest edge: the start of
-  // the same row beside the sidebar or the pad at its left, the top left under the top row, the end of its last row
-  // above the footer. It is a move there and a release, as tmux ends a selection where the
-  // last move was, and ignores a place outside its window. Lists and the sidebar act only on
-  // presses, so a stray release there does nothing.
+  // A drag over the agent that is let go over the sidebar, the footer or the top row would end in
+  // that other place, and the agents' server would wait for a release that never comes, copying
+  // nothing. So the agent's pane gets the drag's end at its nearest edge: the start of the same row
+  // beside the sidebar or the pad at its left, the top left under the top row, the end of its last
+  // row above the footer. It is a move there and a release, as tmux ends a selection where the last
+  // move was, and ignores a place outside its window. Lists and the sidebar act only on presses, so
+  // a stray release there does nothing.
   [
     "bind",
     "-n",

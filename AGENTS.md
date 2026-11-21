@@ -98,38 +98,12 @@ command or read the line. An honest partial result beats a made-up complete one.
 
 ## Comments
 
-Comments are for a human reading the code for the first time.
-
-**Every function gets a comment** saying what it does and what it is for, in plain words.
-A reader should understand the function from its comment without reading its body. Say what
-it gives back or changes, and why Skelcrew needs it. Add the reason behind anything surprising:
-a trap, a harness quirk, a limit someone hit before. One to four lines is usually enough.
-
-Inside a function, comment each step: a few lines of code at a time, say what the step does
-and why. Don't restate a single line in words. Say why it is this way when it looks wrong or
-roundabout but is right, or when a reader might "simplify" it and break something.
-
 Each file starts with one or two lines saying what the file is for, in the spec's words.
+Write no other comments. A function or step that needs one needs a clearer name, or a test
+that pins the trap down.
 
-Never write:
-- the name again as a sentence ("parseConfig parses the config")
-- a single line again in words, inside a function ("loop over the threads")
-- history or chat ("fixed after review", "now handles X", "as discussed")
-- references to tasks, plan steps, spec sections or numbers
+Files written before this rule still have comments. Remove them from a file when a change
+already touches it, rather than in a sweep. Until then, update or delete any comment your
+change makes wrong. A wrong comment is worse than none.
 
-Examples:
-
-```
-Bad:  // Brings in from.
-Good: // Brings in the repository you ran sc from, so the lead can work on it. A
-      // repository Skelcrew already has costs no call to GitHub, since Skelcrew must start fast
-      // and the daemon keeps its clone current. A folder that isn't on GitHub, such as
-      // your dotfiles, is skipped without a complaint.
-
-Bad:  // Wait 2 seconds before typing
-Good: // Text typed while Claude Code is still starting can be lost, so wait until its
-      // pane has been quiet.
-```
-
-When you change code, update or delete any comment it makes wrong. A wrong comment is worse
-than none.
+When you change what a file does, update its opening lines to match.

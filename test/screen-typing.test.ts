@@ -81,7 +81,8 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
   expect(selected()).toMatch(/^▸ ○ lead\b/);
   await until(() => litBox() === "right", "the right side's box");
   await until(
-    () => footer() === "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude",
+    () =>
+      footer() === "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
     "the footer under the lead",
   );
   expect(cursorShows()).toBe(true);
@@ -90,7 +91,9 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
   press("C-\\");
   await until(typingToSidebar, "the sidebar to take your typing");
   await until(
-    () => footer() === "  ↑↓ move  ⏎ to lead  ⇧⏎/a full screen  1-6 stages  ⌥Q quit",
+    () =>
+      footer() ===
+      "  ↑↓ move  w/⌥W close  ⏎ to lead  ⇧⏎/a full screen  0-6 sections  R restart  ⌥Q quit",
     "the sidebar's keys",
   );
   expect(selected()).toMatch(/^▸ ○ lead\b/);
@@ -115,7 +118,7 @@ test("in the sidebar plain keys work as in the list, keep your typing there, and
   while (!onLead()) await step("Up");
   await until(() => typingToSidebar() && seen().includes("I am lead"), "the lead on the right");
   type("3");
-  await until(() => seen().includes(" 3 Reviewing 0"), "Reviewing");
+  await until(() => seen().includes(" 3 Reviewing  0"), "Reviewing");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
   press("Enter");
@@ -158,7 +161,7 @@ test("your typing stays in the sidebar on a task's details, and onto the lead's 
   await Bun.sleep(300);
   expect(typingToSidebar()).toBe(true);
   type("3");
-  await until(() => seen().includes(" 3 Reviewing 0"), "Reviewing");
+  await until(() => seen().includes(" 3 Reviewing  0"), "Reviewing");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
 });
@@ -177,7 +180,8 @@ test("Enter on a task gives its builder your typing, and Ctrl-\\ brings it back 
   await until(onDetails, "app-7's details");
   await until(typingToSidebar, "the sidebar to take your typing");
   expect(selected()).toContain("APP-7");
-  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen");
+  // The footer is a pane of its own, told what to say a moment after the sidebar redraws.
+  await until(() => footer().includes("⏎ attach  ⇧⏎/a full screen"), "the sidebar's footer");
 });
 
 for (const [key, how] of [
@@ -270,7 +274,7 @@ test("Enter on a stage's heading closes it, keeping you there, and opens it on i
   await step("Up");
   expect(selected()).toStartWith("2 Building");
   await until(
-    () => footer() === "  ↑↓ move  ⏎ open/close  1-6 stages  ⌥Q quit",
+    () => footer() === "  ↑↓ move  w/⌥W close  ⏎ open/close  0-6 sections  ⌥Q quit",
     "the heading's keys",
   );
   press("Enter");
@@ -295,7 +299,7 @@ test("on a request of the lead's, the focus keys keep your typing in the sidebar
   await step("Down");
   expect(selected()).toContain("Start APP-31");
   await until(
-    () => footer() === "  ↑↓ move  y yes  n no  1-6 stages  ⌥Q quit",
+    () => footer() === "  ↑↓ move  w/⌥W close  y yes  n no  0-6 sections  ⌥Q quit",
     "the request's keys",
   );
   for (const key of ["a", "S-Enter", "C-\\"]) {

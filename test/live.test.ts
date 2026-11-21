@@ -206,12 +206,14 @@ test("what is left fills the live view from the bottom up", async () => {
     step: "",
     pr: "",
     checks: "",
-    when: "14:02",
+    when: "4m",
+    changed: null,
     needsYou: false,
     session: "app-12",
     running: true,
     tmux: true,
     start: null,
+    startNow: null,
     merge: null,
     link: null,
     branch: "skelcrew/12",
@@ -235,7 +237,12 @@ test("what is left fills the live view from the bottom up", async () => {
       filed: null,
     },
     findings: [],
+    updates: [],
     events: [],
+    changed: "",
+    started: "",
+    flow: "",
+    spinner: "",
   };
   const live = { screen: agentOutput("claude", await screen("claude-busy.txt")) };
   const lines = drawPane(row, details, live, 60, 12, true).lines.map((line) =>
