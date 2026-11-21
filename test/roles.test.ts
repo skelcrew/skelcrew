@@ -113,10 +113,6 @@ const leadTasks = [
     "Skelcrew keeps its own copy: sc ls and sc show app-13 show issues, threads and their PRs, with the title and description a builder sees.",
   ],
   [
-    '- sc tell app-13 "<text>" types a message into that thread\'s builder once it is idle,',
-    '- sc tell app-13 "<text>", or sc tell app-13/builder "<text>", types a message into that thread\'s builder once it is idle,',
-  ],
-  [
     "The sidebar shows those words in place of its long title.",
     "The sidebar and sc --list show those words in place of its long title.",
   ],

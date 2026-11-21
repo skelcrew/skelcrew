@@ -1,6 +1,6 @@
 // The commands that act on one thread: starting, stopping, removing, reviewing, peeking at,
 // interrupting and attaching to it, merging its PR, and running the checks.
-import { readAsked, splitTaskName, splitThreadName, usage } from "./input.ts";
+import { readAsked, splitTaskName, usage } from "./input.ts";
 
 export async function mergeCommand(args: string[]): Promise<void> {
   const [, how, named, ...rest] = args;
@@ -25,14 +25,14 @@ export async function mergeCommand(args: string[]): Promise<void> {
   if (!command || named === undefined) usage("merge");
   if (asked !== undefined && command === "merge cancel") usage("merge");
   const number = named.match(/^#?(\d+)$/)?.[1];
-  const task = splitThreadName(named);
+  const task = splitTaskName(named);
   let which: { repo?: string; task?: string; pr?: number; from?: string };
   if (number !== undefined) {
     const { originHere } = await import("../machine/origin.ts");
     const from = given ?? originHere() ?? undefined;
     which = { pr: Number(number), ...(from ? { from } : {}) };
   } else if (task && !given) which = { repo: task[0], task: task[1] };
-  else usage("merge");
+  else usage("merge", named);
   if (asked !== undefined) {
     console.log(await planMerge(command, { ...which, asked: await readAsked(asked) }));
     return;
@@ -193,8 +193,8 @@ export async function threadCommand(args: string[]): Promise<void> {
     );
     return;
   }
-  const thread = splitThreadName(sub);
-  if (!thread || rest.length > 0) return usage(command);
+  const thread = splitTaskName(sub);
+  if (!thread || rest.length > 0) return usage(command, sub);
   const { interruptOn, peekAt, stopOn } = await import("../client.ts");
   if (command === "stop") {
     const name = await stopOn(...thread);
