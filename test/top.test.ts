@@ -175,37 +175,43 @@ test("tabs furthest from the open one give way first, and a dim count says how m
   expect(tabText(tabs, "simon/one", 40)).toBe("  one    two    three    four    +3");
 });
 
-test("an open tab too wide for the right side is cut to fit, so the row ends with its corner", () => {
-  const long = [tab("a-repository-with-a-very-long-name", 2, 1)];
+test("an open tab too wide for the right side loses the count, then its spaces, then is cut with …", () => {
+  const long = tab("a-repository-with-a-very-long-name", 2, 1);
+  const open = "simon/a-repository-with-a-very-long-name";
   const narrow = { sidebar: 27, right: 20 };
-  const line = seen(top({ tabs: long, open: "simon/a-repository-with-a-very-long-name" }, narrow));
-  expect(line).toHaveLength(2 + narrow.sidebar + 1 + narrow.right + 2);
-  expect(line).toEndWith("┬─");
-  // Its badge stays while a letter of the name fits beside it, and the name is cut with …. Too
-  // narrow for that, the badge goes first.
-  expect(line).toContain("  a-reposi… •2 •1  ");
-  const tiny = { sidebar: 27, right: 9 };
-  const cut = seen(top({ tabs: long, open: "simon/a-repository-with-a-very-long-name" }, tiny));
-  expect(cut).toHaveLength(2 + tiny.sidebar + 1 + tiny.right + 2);
-  expect(cut).toContain("  a-r…  ");
+  expect(seen(top({ tabs: [long], open }, narrow))).toContain("┬a-repository-with-…─┬─");
+  expect(seen(top({ tabs: [long, tab("site")], open }, narrow))).toContain(
+    "┬a-repository-with-…─┬─",
+  );
+  // One that fits only without the count shows whole, and the count goes.
+  const fits = [tab("sixteen-letters!"), tab("site")];
+  expect(
+    seen(top({ tabs: fits, open: "simon/sixteen-letters!" }, { sidebar: 27, right: 21 })),
+  ).toContain("┬  sixteen-letters!  ─┬─");
 });
 
-test("an open tab cut to fit leaves room for the count of the tabs it hides", () => {
-  const long = [tab("a-repository-with-a-very-long-name"), tab("site")];
-  const narrow = { sidebar: 27, right: 20 };
-  const line = seen(top({ tabs: long, open: "simon/a-repository-with-a-very-long-name" }, narrow));
-  expect(line).toHaveLength(2 + narrow.sidebar + 1 + narrow.right + 2);
-  expect(line).toContain("  a-reposito…    +1");
-  expect(line).toEndWith("┬─");
-});
+// The tab sets the widths test draws: one short tab, a long one with a badge, several with the
+// open one in the middle, and many that need a count.
+const tabSets: [Tab[], string][] = [
+  [[tab("app")], "simon/app"],
+  [
+    [tab("a-repository-with-a-very-long-name", 12, 3, "red"), tab("site")],
+    "simon/a-repository-with-a-very-long-name",
+  ],
+  [["one", "two", "three", "four", "five"].map((name) => tab(name, 1)), "simon/three"],
+  [Array.from({ length: 12 }, (_, i) => tab(`repo-${i}`)), "simon/repo-0"],
+];
 
-test("an open tab that fits alone but not beside the count of the tab it hides is cut too", () => {
-  const tabs = [tab("sixteen-letters!"), tab("site")];
-  const narrow = { sidebar: 27, right: 21 };
-  const line = seen(top({ tabs, open: "simon/sixteen-letters!" }, narrow));
-  expect(line).toHaveLength(2 + narrow.sidebar + 1 + narrow.right + 2);
-  expect(line).toContain("  sixteen-let…    +1");
-  expect(line).toEndWith("┬─");
+test("at every width the row is exactly as wide as the terminal, so the box's corner always shows", () => {
+  for (const [tabs, open] of tabSets)
+    for (let right = 1; right <= 80; right++)
+      for (const sidebar of [1, 12, 27]) {
+        for (const fullScreen of [false, true]) {
+          const line = seen(top({ tabs, open, fullScreen }, { sidebar, right }));
+          expect(line).toHaveLength(2 + sidebar + 1 + right + 2);
+          expect(line.slice(-2)).toBe(fullScreen ? "──" : "┬─");
+        }
+      }
 });
 
 test("a repository's name is shown, never read as a format", () => {

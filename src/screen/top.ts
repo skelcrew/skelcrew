@@ -60,55 +60,31 @@ function header(where: string, width: number, versions: string[], colour: string
 }
 
 // Returns the tabs as a tmux format, given each repository's tab, the open one's owner/name, and
-// the right side's width, with how many columns it takes. Each tab is the repository's name, with its badge when threads in it
-// need you or are ready, such as site •2 •1, and two spaces on each side, so the open one's grey
-// reads as a tab. The open one is bold white on the grey a picked row
-// has, and the others dim. When they don't fit, those furthest from the open one give way, and a
-// dim count says how many. An open tab wider than the room alone is cut to fit, its name with …
-// and then its badge, so the row never runs past the terminal and clips the box's corner. Each
-// tab is a range of its own, named by its place in the list, so a click on it can say which it
-// was.
+// the room they have, with how many columns they take, which is never more than the room. Each
+// tab is the repository's name, with its badge when threads in it need you or are ready, such as
+// site •2 •1, and two spaces on each side, so the open one's grey reads as a tab. The open one is
+// bold white on the grey a picked row has, and the others dim. When they don't fit, those
+// furthest from the open one give way, and a dim count says how many. Each tab is a range of its
+// own, named by its place in the list, so a click on it can say which it was.
 function drawTabs(tabs: Tab[], open: string, width: number): { text: string; width: number } {
   // Starts from the open tab, or the first when none is open.
   const at = Math.max(
     tabs.findIndex((tab) => tab.fullName === open),
     0,
   );
-  // Returns how many columns a list of dots takes, each after a space.
-  const dotsWidth = (shown: ReturnType<typeof dots>) =>
-    Bun.stringWidth(shown.map(([, text]) => ` ${text}`).join(""));
-  // Returns how wide a tab is whole, with its name, its dots and the four spaces around them.
-  const wholeWidth = (tab: Tab) => 4 + Bun.stringWidth(tab.name) + dotsWidth(dots(tab));
-  // The room the tabs have: all of the width when every tab fits whole, and otherwise what the
-  // count of those left out leaves, kept for the most it can say. The open tab must fit in it,
-  // or the count would push the row past the terminal and clip the box's corner.
-  const others = tabs.length - 1;
-  const allFit = tabs.reduce((sum, tab) => sum + wholeWidth(tab), 0) <= width;
-  const room = allFit || others === 0 ? width : width - `  +${others}`.length;
-  // Whether the open tab fits the room whole.
-  const openWhole = (tab: Tab) => wholeWidth(tab) <= room;
-  // Returns the dots a tab shows: none on an open tab cut so far that they don't fit beside a
-  // letter of its name and the four spaces around it.
-  const dotsOf = (tab: Tab, index: number) => {
-    const all = dots(tab);
-    return index === at && !openWhole(tab) && 4 + 1 + dotsWidth(all) > room ? [] : all;
-  };
-  // Returns the name a tab shows: the open one's cut, when it doesn't fit whole, to what its
-  // spaces and dots leave of the room.
-  const nameOf = (tab: Tab, index: number) => {
-    if (index !== at || openWhole(tab)) return tab.name;
-    return fitted(tab.name, Math.max(room - 4 - dotsWidth(dotsOf(tab, index)), 0));
-  };
-  // Returns a tab's text: its name, with its badge.
-  const label = (tab: Tab, index: number) =>
-    `  ${nameOf(tab, index)}${dotsOf(tab, index)
+  // Returns a tab's name and badge as you read them, such as site •2 •1.
+  const plain = (tab: Tab) =>
+    `${tab.name}${dots(tab)
       .map(([, text]) => ` ${text}`)
-      .join("")}  `;
+      .join("")}`;
   // Returns how many columns the tab at a place in the list takes, or none past either end.
   const tabWidth = (index: number) => {
     const tab = tabs[index];
-    return tab ? Bun.stringWidth(label(tab, index)) : 0;
+    return tab ? 4 + Bun.stringWidth(plain(tab)) : 0;
   };
+  const all = tabs.reduce((sum, _, index) => sum + tabWidth(index), 0);
+  // The count of those left out goes at the end, and needs its room kept.
+  const room = all <= width ? width : width - `  +${tabs.length}`.length;
   // Takes in tabs out from the open one, one on each side at a time, until neither side fits
   // another. The open tab always shows.
   let [first, last, used] = [at, at, tabWidth(at)];
@@ -120,23 +96,34 @@ function drawTabs(tabs: Tab[], open: string, width: number): { text: string; wid
     if (left && first > 0 && used + tabWidth(first - 1) <= room) used += tabWidth(--first);
     else left = false;
   }
+  const out = tabs.length - (last - first + 1);
+  const count = out > 0 ? `  +${out}` : "";
   // Tabs have greys of their own, so they stand apart from the sidebar and the agent: the open
   // one bold white on a dark grey, the others dim on a lighter one. A tab's dots are in the
   // sidebar's fixed colours, as a theme's own can look like another colour. A dim count of
   // those left out ends the row.
+  const openStyle = "#[bg=colour234,fg=colour231,bold]";
   const shown = tabs.slice(first, last + 1).map((tab, offset) => {
-    const here = first + offset === at;
-    const style = here ? "#[bg=colour234,fg=colour231,bold]" : "#[bg=colour237,fg=colour245]";
-    const badge = dotsOf(tab, first + offset)
+    const style = first + offset === at ? openStyle : "#[bg=colour237,fg=colour245]";
+    const badge = dots(tab)
       .map(([colour, text]) => ` #[fg=${tmuxColours[colour]}]${text}`)
       .join("");
-    const name = escaped(nameOf(tab, first + offset));
-    return `#[range=user|${first + offset}]${style}  ${name}${badge}  #[default]#[norange]`;
+    return `#[range=user|${first + offset}]${style}  ${escaped(tab.name)}${badge}  #[default]#[norange]`;
   });
-  const out = tabs.length - shown.length;
-  const count = out > 0 ? `  +${out}` : "";
-  const text = `${shown.join("")}${count && `#[fg=brightblack]${count}#[default]`}`;
-  return { text, width: used + count.length };
+  if (used + count.length <= width)
+    return {
+      text: `${shown.join("")}${count && `#[fg=brightblack]${count}#[default]`}`,
+      width: used + count.length,
+    };
+  // Too little room even for the open tab and the count: the count goes, then the open tab's
+  // spaces, and then its name and badge are cut with …, so the row never runs past the terminal
+  // and clips the box's corner. Cut, its badge loses its colours.
+  const tab = tabs[at];
+  if (!tab) return { text: "", width: 0 };
+  if (used <= width) return { text: shown.join(""), width: used };
+  const cut = fitted(plain(tab), Math.max(width, 0));
+  const text = cut && `#[range=user|${at}]${openStyle}${escaped(cut)}#[default]#[norange]`;
+  return { text, width: Bun.stringWidth(cut) };
 }
 
 // What the top row shows: the tabs and the open one's owner/name, the remote Skelcrew runs on, if
