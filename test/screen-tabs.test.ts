@@ -148,7 +148,7 @@ test("Alt-Shift-Right then Alt-Shift-Down, typed together, lands on the new repo
   await ready("lead");
   type("\x1b[1;4C\x1b[1;4B");
   await until(() => selected().includes("SITE-8"), "the sidebar on SITE-8");
-  await until(() => right().includes("I am site-8"), "site-8's details");
+  await until(onDetails, "site-8's details");
   expect(seen()).not.toContain("APP-12");
 });
 

@@ -20,6 +20,7 @@ import {
   ciState,
   forgetMoves,
   headSeen,
+  nextRound,
   onlyDocs,
   type PullRequest,
   refusedWorkflow,
@@ -563,8 +564,10 @@ async function actOnVerdict(
   const hasForge = forgeOf(db, repository) !== null;
   const maxRounds = roundLimit(thread);
   // Decide what the verdict means for the thread. A kept approval says so on the check and in
-  // the log, in place of the reviewer's.
+  // the log, in place of the reviewer's. The round limit counts rounds of changes, which sc start
+  // sets back to the limit, while the round's own number only goes up.
   const before = thread.rounds;
+  const round = nextRound(thread);
   const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
   const decided = afterReview(before, verdict, maxRounds, ready);
   const keptWhy = `approval kept: only merged ${prBase(db, thread)} into ${kept}`;
@@ -586,7 +589,7 @@ async function actOnVerdict(
       db,
       folder,
       {},
-      `the review said (${verdict.verdict}): ${reviewComment(verdict, before + 1, sha)}`,
+      `the review said (${verdict.verdict}): ${reviewComment(verdict, round, sha)}`,
     );
   // Save the outcome, with what is still to go on the forge, and tell the lead if the thread now
   // needs you or its review failed. A failed or timed out review is Skelcrew's problem, not the
@@ -597,7 +600,7 @@ async function actOnVerdict(
   // the one the PR must show.
   const review =
     (verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null
-      ? { pr, commit: sha, ...verdict, round: before + 1 }
+      ? { pr, commit: sha, ...verdict, round }
       : (thread.posting?.review ?? null);
   const { check, description } = outcome;
   const posting = hasForge ? { commit: sha, check, description, review } : null;
@@ -613,7 +616,8 @@ async function actOnVerdict(
     telling: tell,
     held,
     reviewed_by: by,
-    review_round: before + 1,
+    review_round: round,
+    top_round: failed ? thread.top_round : round,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
     reviewed_commit: sha,
@@ -1368,16 +1372,18 @@ export function resumeRound(
     );
 }
 
-// Lets a thread past the round limit go on, for sc start: counts its rounds of changes from
-// zero again, so it no longer needs you for them, and types the changes of the review that
-// reached the limit into the builder, as a round within the limit would have.
+// Lets a thread past the round limit go on, for sc start: types the changes of the review that
+// reached the limit into the builder, as a round within the limit would have, and stops it
+// needing you for them. Its rounds of changes stand at the limit, so it is no longer past it,
+// but the next review that asks for changes reaches it again and needs a new decision.
 export function goOn(db: Database, sessions: string, folder: string): void {
-  const { held, host, needs_you_for } = readThread(db, folder);
+  const thread = readThread(db, folder);
+  const { held, host, needs_you_for } = thread;
   // Letting it go on is your or the lead's decision, so it ends a mark for you too. But not the
   // instruction to bring back a missing host plugin, which only you can do.
   const hostGone = host !== null && markBeforeHost(host, needs_you_for) !== undefined;
   const change = {
-    rounds: 0,
+    rounds: roundLimit(thread),
     needs_you: false,
     needs_you_for: hostGone ? hostMissing(host) : null,
     review_failed: false,

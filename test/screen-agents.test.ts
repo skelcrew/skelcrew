@@ -822,13 +822,13 @@ test("Enter on a task whose builder isn't running says so on the right, until th
   await ready("lead");
   press("M-S-Down");
   await until(() => selected().includes("APP-12"), "APP-12's row");
-  await until(() => right().includes("Builder not running"), "app-12's details");
+  await until(onDetails, "app-12's details");
   press("Enter");
   const why = "APP-12's builder isn't running: sc start APP-12";
   await until(() => right().includes(why), "the right side to say why");
   expect(tmux(agents, "list-clients").out).toBe("");
   type("q");
-  await until(() => right().includes("Builder not running"), "app-12's details again");
+  await until(onDetails, "app-12's details again");
   expect(right()).not.toContain(why);
 });
 
