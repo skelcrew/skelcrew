@@ -75,20 +75,7 @@ export const sectionNames: Record<Section, string> = {
   done: "Done",
 };
 
-// Returns the keys the bottom line offers on a row: Enter, as attach on a row whose agent it
-// attaches to, with Ctrl-\, which comes back, when that is on tmux, as showing every issue on
-// Backlog's `… more` row, or as open/close on a section's heading, and not at all on the heading of
-// Needs you, which never closes. Then the numbers that open and close the sections, Shift with an
-// arrow only on a queued task in the task queue, which it moves in the queue, s only on a task it
-// can start, f only on one it can start now over limits.threads, m only on a task it can merge, o on a task while the details pane shows, to show its
-// agent's whole screen or only the last lines, and Page Up and Page Down to scroll its details, and
-// Tab and Alt-Shift with an arrow only with another repository to go to. A runtime plugin's host
-// has its own key to come back, so its rows don't offer Ctrl-\. A request of the lead's offers y
-// and n, which answer it, in place of Enter.
 export function keysFor(row: Row | undefined, tabs: number, pane = false): string {
-  const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
-  if (row?.part === "request")
-    return ["↑↓ move", "y yes", "n no", "0-6 sections", ...tab, "q/esc quit"].join("  ");
   const back = row?.tmux ? " · ctrl+\\ back" : "";
   const heading = row?.part === "heading";
   const enter = row?.more
@@ -108,6 +95,7 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const now = row?.startNow ? ["f start now"] : [];
   const reorder = row?.section === "task queue" && row.place !== null ? ["shift+↑↓ reorder"] : [];
+  const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   return [
     "↑↓ move",
     ...open,
@@ -341,18 +329,6 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   return marked(lines, here, width);
 }
 
-// Returns a request of the lead's as one line, under the lead: its yellow mark, then the request,
-// such as `Start APP-12 Fix login?`, cut with … to fit. Your answer is y or n, which the bottom
-// line says on its row. `here` says whether it is the row you are on.
-function requestLine(row: Row, here: boolean, width: number): string {
-  const start = `${pointer(here)}${row.mark.sign} `;
-  const room = width - Bun.stringWidth(start);
-  if (room <= 0) return fitted(start, width);
-  const text = fitted(row.title, room);
-  const line = `${markStart(row, here)} ${here ? tinted(here, bright, text) : text}`;
-  return here ? shaded(line, width) : line;
-}
-
 // What a click on a line of the list reaches: a row, by its place in the rows, which is the
 // lead's or a task's, a section's heading, or nothing, such as on a blank line or an edge.
 // On an edge line, a click reaches the heading pinned at its column: `pinned` has each one's
@@ -446,21 +422,6 @@ function edgeLine(
   return { text, row: null, target: { pinned: spans } };
 }
 
-// Returns the lead's row and the sections under it as lines, exactly `height` of them, on the row
-// at `here`, for the list and for the screen's sidebar alike. The lead comes first, then its
-// requests that wait for your yes, then a blank line, then every section's heading, each open one
-// with its rows under it. `rows` are the rows that show: the lead's, its requests' and those of the
-// open sections, in the order of the sections. The lead never scrolls, and its requests scroll with
-// the sections. When the sections don't all fit, they scroll together, headings and rows, from the
-// line `top`, so an open section's heading is always right above its rows, and a heading with none
-// under it is closed. Then the first and last lines of the sections say what is hidden above and
-// below, with the headings hidden there, so no section's count goes out of sight. The rows move
-// only when the row you are on would leave the view. A row that is the first of its section brings
-// its heading into view with it, so opening a section shows the heading over its rows. A view too
-// short for those edge lines keeps only the row you are on, or its first line when even it doesn't
-// fit. A heading among `rows` is one you can stand on: on it, its line is shaded. Gives the lines,
-// each at most `width` columns, what a click on each reaches, and the scroll they were drawn at,
-// which the next draw starts from.
 export function drawRows(
   rows: Row[],
   headings: Heading[],
@@ -469,10 +430,7 @@ export function drawRows(
   width: number,
   height: number,
 ): { lines: string[]; targets: Target[]; top: number } {
-  // The one-line rows' columns, from those rows alone, and the names' width, from every task's
-  // and the lead's row. Headings are drawn from `headings`, so they take no column, and the
-  // lead's requests show no name.
-  const tasks = rows.filter((row) => row.part !== "heading" && row.part !== "request");
+  const tasks = rows.filter((row) => row.part !== "heading");
   const short = tasks.filter((row) => !tall(row));
   const widest = (of: (row: Row) => string, among = short) =>
     Math.max(...among.map((row) => Bun.stringWidth(of(row))), 0);
@@ -481,40 +439,24 @@ export function drawRows(
     title: widest((row) => row.title),
     when: widest((row) => row.when),
   };
-  // Returns the lines of the row at `i` in `rows`.
   const linesOf = (i: number) => {
     const row = rows[i];
     if (!row) return [];
     const on = i === here;
-    if (row.part === "request") return [requestLine(row, on, width)];
     if (tall(row)) return tallLines(row, on, columns.name, width);
     return marked([shortLine(row, on, columns, width)], on, width);
   };
-  // The section whose heading you are on, if you are on one.
   const onHeading = rows[here]?.part === "heading" ? rows[here]?.section : undefined;
   const countWidth = Math.max(...headings.map((heading) => String(heading.count).length), 1);
-  // The lead is above the sections, and never scrolls. Its requests come right under it, at the
-  // top of the sections' part, so however many wait they scroll with the sections, and the one
-  // you are on stays in view. A blank line parts them from the first heading.
   const leadAt = rows.findIndex((row) => row.part === "lead");
-  const requests = rows.flatMap((row, i) =>
-    row.part === "request" ? linesOf(i).map((text) => ({ text, row: i, target: { row: i } })) : [],
-  );
   const blankLine = { text: "", row: null, target: null };
-  const leadLines = leadAt < 0 ? [] : linesOf(leadAt);
-  const lead = leadAt < 0 ? [] : [...leadLines, ...(requests.length > 0 ? [] : [""])];
+  const lead = leadAt < 0 ? [] : [...linesOf(leadAt), ""];
   const leadTargets: Target[] = lead.map((_, at) =>
-    at < leadLines.length ? { row: leadAt } : null,
+    at < lead.length - 1 ? { row: leadAt } : null,
   );
   const room = Math.max(height - lead.length, 1);
-  // Returns the requests and the sections' lines: each heading, with an open section's rows under
-  // it. With `parted`, an open section with rows has a blank line after them, which parts it from
-  // the next heading. The task queue always has one, open or closed, scrolled or not, as it is no
-  // stage, so the stages under it read as one block.
-  const sections = (parted: boolean): BodyLine[] => [
-    ...requests,
-    ...(requests.length > 0 ? [blankLine] : []),
-    ...headings.flatMap((heading) => {
+  const sections = (parted: boolean): BodyLine[] =>
+    headings.flatMap((heading) => {
       const ours = rows.flatMap((row, i) =>
         row.section === heading.section && row.part !== "heading"
           ? linesOf(i).map((text) => ({ text, row: i, target: { row: i } }))
@@ -526,20 +468,15 @@ export function drawRows(
       const text = onHeading === heading.section ? shaded(plain, width) : plain;
       const line = { text, row: null, target: { section: heading.section } };
       return [line, ...ours, ...after];
-    }),
-  ];
+    });
   let body = sections(true);
   let shown = body;
   let start = 0;
-  // Too many to fit: the blank lines go but the task queue's, and the sections scroll between the
-  // two edge lines, just enough to keep the row you are on in view, from where they were last
-  // drawn.
   if (body.length > room) {
     body = sections(false);
     const edges = room >= 3;
     const view = edges ? room - 2 : room;
     start = Math.min(Math.max(top, 0), Math.max(body.length - view, 0));
-    // The lines of the row you are on, or of the heading you are on.
     const isOwn = (line: BodyLine) =>
       line.row === here ||
       (line.row === null &&
@@ -551,30 +488,19 @@ export function drawRows(
     const first = own[0];
     const last = own.at(-1);
     if (first !== undefined && last !== undefined) {
-      // The heading comes along when the row is its section's first and both fit.
       const above = body[first - 1];
       const from = above && above.row === null && last - first + 2 <= view ? first - 1 : first;
       start = Math.min(start, from);
       start = Math.max(start, last - view + 1);
-      // A row taller than the room left keeps its first line, with its ▸.
       start = Math.min(start, first);
     }
-    // The view never starts on a row's second line, which would show without its title. Going
-    // one line further down keeps the row you are on, unless it is that row.
     const cut = body[start];
     const atRowEnd = cut && cut.row !== null && body[start - 1]?.row === cut.row;
     if (atRowEnd && (first === undefined || start < first)) start += 1;
-    // Nor does it start on a blank line, which the top edge already parts from what is above, when
-    // there is more below to show in its place.
     const blankFirst = body[start]?.row === null && body[start]?.target === null;
     const below = start < body.length - view;
     if (blankFirst && below && (first === undefined || start < first)) start += 1;
-    // Returns a blank line of the body, which a click reaches nothing on.
     const edge = (text: string) => ({ text, row: null, target: null });
-    // The view never ends on a heading whose rows are all below it, which would look closed. When
-    // it is the heading you are on, the view goes down until a row of it shows, so the heading
-    // stays where you see it, past a tall row's second line too. Any other heading goes past the
-    // bottom edge instead, which pins it there, and a blank line takes its place.
     const endsOnHeading = (at: number) =>
       body[at + view - 1]?.row === null && (body[at + view]?.row ?? null) !== null;
     if (onHeading !== undefined && first === start + view - 1 && endsOnHeading(start)) {
@@ -600,7 +526,6 @@ export function drawRows(
       : visible;
   }
   const blank = Array.from({ length: room - shown.length }, () => "");
-  // The blank lines reach nothing.
   return {
     lines: [...lead, ...shown.map((line) => line.text), ...blank],
     targets: [

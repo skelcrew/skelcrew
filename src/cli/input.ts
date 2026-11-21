@@ -61,7 +61,6 @@ const commands = [
   "peek",
   "interrupt",
   "needs-you",
-  "ask",
   "review",
   "submit",
   "hook",

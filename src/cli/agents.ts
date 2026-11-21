@@ -1,8 +1,7 @@
 // The commands agents run: a builder submitting its work, the hooks that tell the daemon what an
-// agent is doing, and what the lead and builders use to ask, tell and mark a thread as needing you.
+// agent is doing, and what the lead and builders use to tell each other and mark a thread as needing you.
 import { runByAgent } from "../agents/sandbox.ts";
 import { readAsked, splitThreadName, usage } from "./input.ts";
-import { startCommand } from "./threads.ts";
 
 const oldHookNames = new Map([
   ["question asked", "question-asked"],
@@ -43,14 +42,6 @@ export async function agentCommand(args: string[]): Promise<void> {
   ]).get(event ?? "");
   if (report && rest.length === 0) return report();
   usage(command);
-}
-
-export async function askCommand(args: string[]): Promise<void> {
-  const [, first, second, repository, ...more] = args;
-  if (first === "start") return startCommand(args.slice(1), true);
-  if (first !== "repo" || second !== "add" || !repository || more.length > 0) usage("ask");
-  const { askHuman } = await import("../client.ts");
-  console.log(await askHuman({ kind: "repo add", repository }));
 }
 
 export async function needsYouCommand(args: string[]): Promise<void> {

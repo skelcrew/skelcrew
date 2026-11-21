@@ -92,10 +92,9 @@ export async function checkCommand(args: string[]): Promise<void> {
   process.exit(await run.exited);
 }
 
-export async function startCommand(args: string[], asking: boolean): Promise<void> {
+export async function startCommand(args: string[]): Promise<void> {
   const [, sub, ...rest] = args;
-  const shown = asking ? "sc ask start" : "sc start";
-  const { askHuman, namesRepository, startNew, startOn } = await import("../client.ts");
+  const { namesRepository, startNew, startOn } = await import("../client.ts");
   const named = sub !== undefined && (await namesRepository(sub));
   const task = named ? undefined : splitTaskName(sub);
   const option = (name: string) => {
@@ -106,7 +105,7 @@ export async function startCommand(args: string[], asking: boolean): Promise<voi
   };
   const { at: shortAt, value: short } = option("--short");
   const { at: flowAt, value: flow } = option("--flow");
-  const nowAt = asking ? -1 : rest.indexOf("--now");
+  const nowAt = rest.indexOf("--now");
   const taken = [
     ...[shortAt, flowAt].flatMap((at) => (at === -1 ? [] : [at, at + 1])),
     ...(nowAt === -1 ? [] : [nowAt]),
@@ -115,17 +114,8 @@ export async function startCommand(args: string[], asking: boolean): Promise<voi
   if (nowAt !== -1 && !task)
     throw new Error("Only sc start <task> takes --now, such as sc start APP-12 --now.");
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
-  const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
   if (task && (words.length === 0 || from)) {
-    if (asking) {
-      const action = {
-        kind: "start" as const,
-        task: task[1],
-        ...(from ? { from } : {}),
-        ...options,
-      };
-      console.log(await askHuman(action, task[0]));
-    } else console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true));
+    console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true));
     return;
   }
   if (sub && !task && words[0] === "--from")
@@ -135,15 +125,11 @@ export async function startCommand(args: string[], asking: boolean): Promise<voi
   const [title, body] = words;
   let given: { title: string; body: string } | undefined;
   if (sub && !task && title && body !== undefined && words.length === 2)
-    given = { title, body: bodyFor(shown, body) };
+    given = { title, body: bodyFor("sc start", body) };
   else if (sub && !task && words.length === 0 && !process.stdin.isTTY)
-    given = parseTask(await Bun.stdin.text(), shown);
-  if (!sub || !given) return usage(asking ? "ask" : "start");
-  console.log(
-    asking
-      ? await askHuman({ kind: "start new", ...given, ...options }, sub)
-      : await startNew(sub, given.title, given.body, short, flow),
-  );
+    given = parseTask(await Bun.stdin.text(), "sc start");
+  if (!sub || !given) return usage("start");
+  console.log(await startNew(sub, given.title, given.body, short, flow));
 }
 
 async function removeCommand(task: [string, string], rest: string[]): Promise<void> {

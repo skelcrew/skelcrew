@@ -151,28 +151,17 @@ function linkLines(id: string, given: string, width: number): string[] {
   return [fitted(id, width), ...folded(link, width).map((piece) => linked(link, piece))];
 }
 
-// Returns the details of a task as lines `width` columns wide at most, from the top. First its
-// name and title, bold, with its stage on the right in the colour of its mark, and a spinner
-// while its builder works, then a line. Then what it needs of you, in yellow, when it does. Then
-// a card of the facts you check, each after a dim label: what it does now, its issue and PR, its
-// CI's checks, its review with the latest findings, its armed merge and when it started. Then its
-// description, the lead's updates to it and what happened to it, each under its name. A line or
-// a part the task has nothing for is left out.
 function detailLines(row: Row, details: Details, width: number): string[] {
   const { view, findings, events, updates } = details;
   const text = Math.min(width, textWidth);
   const value = Math.max(width - labelWidth, 1);
-  // The stage, such as `Building`, on the right of the title's first line. A task in the task queue says
-  // so, as its section says more than its stage.
   const stageName =
-    row.part === "lead" || row.part === "request" || row.part === "heading"
+    row.part === "lead" || row.part === "heading"
       ? ""
       : sectionNames[row.section === "task queue" ? "task queue" : row.part];
-  // A pane too narrow for the stage beside a few letters of the title leaves the stage out.
   const spun = `${details.spinner ? `${details.spinner} ` : ""}${stageName}`;
   const stage = Bun.stringWidth(spun) + 12 <= width ? spun : "";
   const stageWidth = Bun.stringWidth(stage);
-  // The title's first line leaves room for the stage, and the lines after it take the width.
   const named = `${view.task}  ${view.title}`;
   const first = folded(named, Math.max(width - stageWidth - 2, 1))[0] ?? "";
   const after = named.slice(first.length).trim();
@@ -184,17 +173,12 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     return `${shown}${gap}${paint(markColours[row.mark.colour], stage)}`;
   });
   const top = [...title, paint(grey, "─".repeat(width))];
-  // What it needs of you, as sc show says it, such as `question` or `ready to merge`.
-  // A task approved and green waits on you to merge it, and shows under Needs you with its word
-  // saying so, though its thread may not count as needing you for anything else.
   const needed =
     view.threads.find((thread) => thread.needsYouFor !== null)?.needsYouFor ??
     (row.section === "needs you" ? row.says : null);
   const callout = needed
     ? folded(`Needs you: ${needed}`, width).map((line) => paint(`${bright};${yellow}`, line))
     : [];
-  // Now: its word in its colour, such as `working`, or what a queued or paused task waits on,
-  // then its builder's step and how long ago its thread last changed.
   const word = row.waits || row.says;
   const rest = [row.step, details.changed].filter(Boolean).join(" · ");
   const nowPlain = [word, rest].filter(Boolean).join(" · ");
@@ -207,11 +191,8 @@ function detailLines(row: Row, details: Details, width: number): string[] {
           ]
         : folded(nowPlain, value);
   const issue = view.issue ? linkLines(view.issue.id, view.issue.link ?? "", value) : [];
-  // A PR that left the forge's copy, such as a merged one, still has the link saved on its row.
   const prLink = view.prPage?.link ?? row.link ?? "";
   const pr = view.pr === null ? [] : linkLines(`#${view.pr}`, prLink, value);
-  // CI: each check after its mark, going on over as many lines as they need, or with no checks
-  // its verdict as a whole, after the mark a row shows for it, both in its colour.
   const page = view.prPage;
   const ci = !page
     ? []
@@ -220,8 +201,6 @@ function detailLines(row: Row, details: Details, width: number): string[] {
       : page.ci === "none"
         ? []
         : [paint(ciColours[page.ci], `${ciSigns[page.ci]} ${page.ci}`)];
-  // The review: its round as a row shows it, such as r2, and its verdict, both in the verdict's
-  // colour, then what it found, numbered, each finding on one line cut short.
   const review = view.review;
   const said = review && review.state !== "none" ? reviewWords[review.state] : "";
   const round = typeof review?.round === "number" ? `r${review.round} · ` : "";
@@ -256,14 +235,12 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     ...cardLines("Merge", merge),
     ...cardLines("Started", started),
   ];
-  // The description and the lead's updates, drawn as markdown and no wider than `textWidth`.
   const task = section("Task", markdownLines(view.body, text));
   const told =
     updates.length === 0
       ? []
       : section(`Updates from the lead (${updates.length})`, dated(updates, text, markdownLines));
   const activity = events.length === 0 ? [] : section("Activity", dated(events, width, folded));
-  // The parts that have something, with a blank line between each, under the title.
   const parts = [callout, card, task, told, activity].filter((part) => part.length > 0);
   return [...top, ...parts.flatMap((part, i) => (i === 0 ? part : ["", ...part]))];
 }
@@ -326,16 +303,6 @@ const stripLines = 3;
 // and how many lines of them it has room for, so a key can scroll a page.
 export type Pane = { lines: string[]; scroll: number; room: number };
 
-// Returns the pane for the row you are on as exactly `height` lines, each `width` columns wide at
-// most. On a row that isn't a task, such as the lead's, it is empty. Otherwise the task's details
-// come first, then a dim line, then its agent's live screen, or the line that says why there is
-// none. The live screen is a strip of the agent's last few lines, without blank ones, or, when
-// `full`, as much of its screen as fills the rest. The details take what they need, but always
-// leave the live view its lines, and while it shows the whole screen they take half the pane at
-// most. Details taller than their room scroll, `scroll` lines down from their top, and a dim
-// `↓ more` on their last line says there is more below, unless they have only that line. The
-// strip always sits at the bottom of the pane, whatever the details' length, so it never moves
-// as they change or scroll.
 export function drawPane(
   row: Row | undefined,
   details: Details | null,
@@ -346,14 +313,6 @@ export function drawPane(
   scroll = 0,
 ): Pane {
   const blank = (count: number) => Array.from({ length: Math.max(count, 0) }, () => "");
-  // A request of the lead's has no details: the lead's screen fills the pane.
-  if (row?.part === "request" && live !== null) {
-    const shown =
-      "note" in live
-        ? [paint(grey, fitted(live.note, width))]
-        : screenLines(live.screen, width, height, false);
-    return { lines: [...shown, ...blank(height)].slice(0, height), scroll: 0, room: 0 };
-  }
   if (!row || details === null) return { lines: blank(height), scroll: 0, room: 0 };
   const least = full ? liveLeast : stripLines + 1;
   const room = Math.max(
@@ -364,17 +323,13 @@ export function drawPane(
         : height - least,
     0,
   );
-  // The details from `scroll` down, as many as fit, the last line saying when more are below.
   const all = detailLines(row, details, width);
   const farthest = Math.max(all.length - room, 0);
   const at = Math.min(Math.max(scroll, 0), farthest);
-  // With a single line of room, it shows the details rather than say there are more.
   const more = room > 1 && at < farthest ? [paint(grey, fitted("↓ more", width))] : [];
   const top = [...all.slice(at, at + room - more.length), ...more];
   const drawn = (lines: string[]) => ({ lines: lines.slice(0, height), scroll: at, room });
   if (live === null) return drawn([...top, ...blank(height - top.length)]);
-  // Blank lines push the strip down to the bottom. The whole screen fills the rest anyway, so
-  // over it one blank line parts it from the details, when there is room.
   const gap = full ? (height - top.length > least ? [""] : []) : blank(room - top.length);
   const rule = paint(grey, "─".repeat(width));
   const left = height - top.length - gap.length - 1;
