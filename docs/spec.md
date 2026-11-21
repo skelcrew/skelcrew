@@ -173,7 +173,15 @@ Your own confirmations are never flow settings: you always merge, you always add
 
 ### `.agents/skills/`
 
-A skill is a folder with a `SKILL.md`, in the format Claude Code reads. Skills come from the `.agents/` you approved and are copied into a folder of each session's own as it starts, so an agent that edits its copy changes only its own session, and a builder can never steer its own reviewer through its branch. A harness with no such folder gets them listed in its instructions. Skills in `.claude/skills/` reach Claude Code from the clone on their own.
+A skill is a folder with a `SKILL.md`, in the format Claude Code reads: a name and a description in the frontmatter, the instructions below, and any files they use beside it. A skill written for Claude Code works unchanged.
+
+Skills come from Skelcrew's clone of the repository, at the `.agents/` you approved, and are copied in as a session starts. They go only into a folder that belongs to one session, never one that sessions share, so an agent that edits its copy changes only its own session.
+
+- **Claude Code.** Into the `skills/` folder of the session's own config folder, in `~/.local/share/skelcrew/claude/`. Every Claude Code session has one, reviews included.
+- **Codex.** A Codex lead or builder has a `CODEX_HOME` of its own, and its skills go into `skills/` there. Reviews share Skelcrew's `CODEX_HOME`, whose `skills/` stays read-only and empty, since anything there would steer every later review in every repository. So a Codex review gets them the third way: they are copied into the review's own folder, and its instructions list those paths. Never the clone's `.agents/skills/`, which is the builder's branch, as a builder must not steer its own reviewer.
+- **Any other harness**, or one with no folder of one session's own: Skelcrew adds one line per skill to the role's instructions, with its name, description and the path of its `SKILL.md`, so the agent reads it when it needs it.
+
+Skills a repository keeps in `.claude/skills/` already reach Claude Code from the clone, and Skelcrew leaves them alone.
 
 ### `skelcrew.lock`
 
@@ -621,13 +629,19 @@ A runtime plugin's host shows the same agents in its own apps, and its sessions 
 
 The engine runs on the same machine as its agents. So `--remote` is only "run `sc` on that machine", over plain `ssh -t`. Everything must work over it: no local display, no browser on the same machine, no clipboard. Logins that need a browser use a code and a link you open on your laptop.
 
-- **One setup for all your machines.** `sc --remote <host> install` sends your personal files, your session host included, but for plugins that only reach machines, and runs `sc install` there. On a server with no Skelcrew, it asks, then puts the laptop's release there, built for that machine and checked against its checksums, or one built from your checkout, so a server feels like your laptop. Sign-ins that renew themselves are made on each machine, as two sharing one would break each other.
-- **Commands act where you are.** `sc --remote <host> <command>` acts on the repository you are in on the laptop. With no command, it opens the server's screen.
-- **Nothing without asking.** `--remote` never sets a machine up or updates its Skelcrew without asking. It says when your personal setup differs from the server's, naming the command that fixes it. When the server's Skelcrew differs from the laptop's, it offers to update it, with agents running on. A Skelcrew run from a checkout there is updated by `git pull` instead.
-- **What runs stays where it runs**: tasks, clones, the engine and its state.
-- **Each person their own.** Skelcrew lives in your home folder and runs as your user, so several people can share a server.
+- `sc --remote <host> install` sets the server up. Your personal setup is one setup for all your machines, so a server feels like your laptop. It sends your personal files first: `config.yaml`, your lock file and the agents' Claude Code token. `session:` goes with them, so herdr on the laptop means herdr on the server. A runtime plugin that provides only `machine` is skipped there, as it is used where you run `--remote`. Then it runs `sc install` there. Each plugin's setup and `codex login` run there once, in your terminal, since a sign-in that renews itself cancels the one before, and two machines sharing it would break each other. On a server with no Skelcrew, it asks, then puts Skelcrew there first: the laptop's release, built for that machine and checked against its checksums, or one built from your checkout when you run Skelcrew from one.
+- `sc --remote <host> up --bg` runs the engine there as its background service.
+- `sc --remote <host> <command>` runs `ssh -t <host> sc --from <owner/repo> <command>`, passing the repository you are in on the laptop, so it acts on that repository there. With no command, it opens the server's screen, and with `--list` its list, where Enter attaches through tmux there.
 
-Seeing agents from elsewhere is the session host's job, such as herdr's own machines, and merging stays in Skelcrew.
+You send your setup when you change it, as you would run `npm install` after changing `package.json`. A `sc --remote` whose personal lock differs from the server's says so, and names the `install` that fixes it. What runs stays on the machine that runs it: tasks, their clones, the engine and its state. Nothing comes back to the laptop.
+
+`--remote` never sets a machine up without asking. On a machine where Skelcrew is missing or not set up, it asks `simon@workbox isn't set up. Set it up now? [Y/n]`. Yes runs `sc --remote <host> install`, then goes on. No stops, and prints the command to run later. Without a terminal it only prints the command. An SSH host that doesn't exist fails to connect before anything is asked.
+
+`--remote` also keeps Skelcrew there in step with the laptop. The Skelcrew on a server carries the commit it was built from, and each command passes along the laptop's. When they differ, or either has changes not committed, Skelcrew asks before running the command: "Skelcrew on simon@workbox is from abc1234, yours is def5678. Update it?" Yes replaces it and restarts the engine, and agents keep running. No runs the command on the old Skelcrew. A Skelcrew run from a checkout there is never offered an update: `git pull` there updates it. One SSH connection is shared across commands.
+
+Skelcrew keeps everything in your home folder on a server, and runs its engine as a service of your own user. So several people can each run their own Skelcrew on one server, each as their own user.
+
+Seeing and talking to agents from elsewhere is the session host's job. With herdr, herdr's own machines (`hc machine add`) bring the server's terminals to your laptop, desktop and phone, with no `--remote` involved, and merging stays in Skelcrew's list.
 
 ## State
 
