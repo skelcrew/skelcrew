@@ -61,7 +61,7 @@ export const needsYou = (thread: Thread) =>
   (thread.needs_you && !decided(thread));
 
 // Returns why the thread needs you, as its word says, such as "question" or the action a mark
-// asks of you, or null when it doesn't. sc ps and sc task print it, so you read what to do.
+// asks of you, or null when it doesn't. sc ps and sc show print it, so you read what to do.
 export function needsYouFor(thread: Thread): string | null {
   if (!needsYou(thread)) return null;
   return reasonOf(threadWord(thread, limitOf(thread)));

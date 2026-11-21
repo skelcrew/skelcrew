@@ -1,4 +1,4 @@
-// What the list's details pane says of a task: what sc task gives, from Skelcrew's database and its
+// What the list's details pane says of a task: what sc show gives, from Skelcrew's database and its
 // copy of the forge alone, with the latest review's findings, the lead's updates to the task and
 // its recent events, each with how long ago it happened.
 import type { Database } from "bun:sqlite";
@@ -13,7 +13,7 @@ import { threadsDir } from "../paths.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { ago, changedAt, type Open } from "./rows.ts";
 
-// A task's details: sc task's view of it without the logs of failed checks, its description
+// A task's details: sc show's view of it without the logs of failed checks, its description
 // without the lead's updates, which come apart in `updates`, oldest first, what its latest
 // review found, each in a line, and its recent events, oldest first, such as `4m ago` and
 // `submitted`. `changed` says when the task last changed, by the clock and how long ago, such as
@@ -173,7 +173,7 @@ export function readDetails(
       spinner: "",
     };
   // The lead's updates show apart from the description, each with how long ago it came, so the
-  // description is read again without them. sc task leaves them out of a thread that is done or
+  // description is read again without them. sc show leaves them out of a thread that is done or
   // failed, as starting over leaves them behind, but the pane keeps them as the task's history.
   const current = thread.status !== "done" && thread.status !== "failed";
   const body = current ? safeText(threadTask(db, { ...thread, updates: [] }).body) : view.body;

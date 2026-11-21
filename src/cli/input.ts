@@ -42,7 +42,8 @@ const commands = [
   "repo",
   "ps",
   "ls",
-  "task",
+  "show",
+  "add",
   "start",
   "stop",
   "rm",
@@ -68,8 +69,12 @@ function usageMessage(command: string, word?: string): string {
   if (command === "remote")
     return "sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install.";
   if (command === "issue" || command === "pr")
-    return 'issues and PRs are parts of tasks now: sc ls lists them, sc task <task> shows one with its PR, and sc task add <repo> "<title>" "<body>" --issue opens an issue.';
-  if (["add", "remove", "update", "setup", "plugins"].includes(command))
+    return 'issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc add <repo> "<title>" "<body>" --issue opens an issue.';
+  if (command === "task")
+    return 'sc task is gone: sc show <task> shows one, and sc add <repo> "<title>" "<body>" adds one.';
+  if (command === "add" && word)
+    return `plugins are added with sc plugin add now, such as sc plugin add ${word}.`;
+  if (["remove", "update", "setup", "plugins"].includes(command))
     return "plugin commands are under sc plugin now: sc plugin add, rm, update, setup and ls. Run sc --help to see them.";
   if (commands.includes(command))
     return `sc ${command} was given arguments it doesn't take. Run sc --help to see how to use it.`;

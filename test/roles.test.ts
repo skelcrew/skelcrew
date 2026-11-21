@@ -40,6 +40,30 @@ const asking =
 // with no issue were numbered from t100, and about the sidebar before sc --list, each with what
 // it is told now.
 const leadTasks = [
+  // sc task went: sc show shows one task, and sc add files one.
+  [
+    "Run sc start or sc task add --start only once the human says yes. To park work for later, file it in Skelcrew's backlog with sc task add.",
+    "Run sc start or sc add --start only once the human says yes. To park work for later, file it in Skelcrew's backlog with sc add.",
+  ],
+  [
+    '- sc task add <repo> "<title>" "<body>" --start starts',
+    '- sc add <repo> "<title>" "<body>" --start starts',
+  ],
+  ["sc task add <repo> --start with a heredoc", "sc add <repo> --start with a heredoc"],
+  [
+    '- sc task add <repo> "<title>" "<body>" files the work',
+    '- sc add <repo> "<title>" "<body>" files the work',
+  ],
+  [
+    '- sc task add <repo> "<title>" "<body>" --issue --asked-file',
+    '- sc add <repo> "<title>" "<body>" --issue --asked-file',
+  ],
+  [
+    "with sc start or sc task add --start, add --short",
+    "with sc start or sc add --start, add --short",
+  ],
+  ["- sc task app-13 shows one piece of work:", "- sc show app-13 shows one piece of work:"],
+  ["sc ls and sc task app-13 show issues,", "sc ls and sc show app-13 show issues,"],
   // sc start <repo> went: sc task add --start files new work and starts it, with sc start's
   // options.
   [

@@ -693,7 +693,7 @@ echo "Not logged in"; exit 1`,
     serve();
     await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
     const started = Bun.spawnSync(
-      [process.execPath, main, "task", "add", "app", "Add export", "As JSON", "--start"],
+      [process.execPath, main, "add", "app", "Add export", "As JSON", "--start"],
       {
         env: env(),
         stderr: "pipe",
@@ -757,7 +757,7 @@ exec ${bwrap} "$@"`,
       const first = serve();
       await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
       const sc = Bun.spawnSync(
-        [process.execPath, main, "task", "add", "app", "Add export", "As JSON", "--start"],
+        [process.execPath, main, "add", "app", "Add export", "As JSON", "--start"],
         {
           env: env(),
           stderr: "pipe",
