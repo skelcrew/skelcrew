@@ -737,7 +737,8 @@ test("copying while scrolled back keeps your place, and a key returns you to the
   await until(() => seen().includes("I am output"), "the agent");
   tmux(terminal, "set", "-s", "set-clipboard", "on");
   wheel(64);
-  await until(() => seen().includes("line 190"), "the scrollback");
+  const lastLineScrolledOff = () => !seen().includes("I am output");
+  await until(() => lastLineScrolledOff() && seen().includes("line 190"), "the scrollback");
   const [column, row] = placeOf("line 190", "line 190");
   await drag([column, row], [[column + 8, row]]);
   await until(() => clipboard() === "line 190", "the copy");

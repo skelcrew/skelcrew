@@ -43,6 +43,10 @@ const header = () => (seen().split("\n")[0] ?? "").trimEnd();
 // Waits until the screen shows the lead alone, with the sidebar running behind it.
 const leadAlone = () =>
   until(() => showing() === "agent" && header().includes("‹ sidebar · lead"), "the lead alone");
+const tapBackOnceShown = async () => {
+  await until(() => header().includes("‹ sidebar"), "the way back in the header");
+  click(header().indexOf("‹") + 2, 1);
+};
 // The last rows of the screen, where the sidebar alone shows its keys.
 const bottom = () => seen().trimEnd().split("\n").slice(-3).join("\n");
 
@@ -112,21 +116,20 @@ test("on the agent's side q reaches the agent and never leaves", async () => {
 
 test("on a narrow screen a tap on ‹ sidebar shows the sidebar, and a tap on a row shows its agent", async () => {
   open("lead", "one", "xterm-256color", "60");
-  await until(() => header().includes("‹ sidebar"), "the way back in the header");
-  click(header().indexOf("‹") + 2, 1);
+  await tapBackOnceShown();
   await until(() => showing() === "sidebar", "the sidebar alone");
   const row = seen()
     .split("\n")
     .findIndex((line) => line.includes("○ lead"));
   click(10, row + 1);
   await until(() => showing() === "agent" && seen().includes("I am lead"), "the lead alone");
-  click(header().indexOf("‹") + 2, 1);
+  await tapBackOnceShown();
   await until(() => showing() === "sidebar", "the sidebar alone again");
   const task = seen()
     .split("\n")
     .findIndex((line) => line.includes("○ 12"));
   click(10, task + 1);
   await until(() => showing() === "agent" && seen().includes("I am app-12"), "app-12 alone");
-  click(header().indexOf("‹") + 2, 1);
+  await tapBackOnceShown();
   await until(() => showing() === "sidebar", "the sidebar after leaving app-12");
 });
