@@ -108,7 +108,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | `sc task <task>` | Shows one task: its description, threads, PR, checks and review. |
 | `sc ps` | Lists the threads, with their status and which need you. |
 | `sc start <task>` | Starts a task's builder, resumes a stopped one, or lets one go on past the round limit. |
-| `sc task add <repo> "<title>" "<body>"` | Files a task in the backlog. `--issue` files it as an issue in the tracker instead. |
+| `sc task add <repo> "<title>" "<body>"` | Files a task in the backlog. `--start` starts it at once instead. `--issue` files it as an issue in the tracker instead. |
 | `sc stop <task>` | Ends a thread's agent and keeps its clone, branch and PR. |
 | `sc rm <task>` | Ends the work on a task, closing its PR and its issue. `--keep-issue` keeps the issue open, to start over. |
 | `sc merge --when-ready <task>` | Merges the PR once it is approved and green. `--cancel` disarms it. |

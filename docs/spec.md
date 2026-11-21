@@ -69,7 +69,7 @@ A task is Skelcrew's own record of a piece of work, from the first words to the 
 
 | Stage | When |
 | --- | --- |
-| `issue` | Not started: an open issue with no work running on it, never started or started and then removed with `sc rm --keep-issue`, or a task in the backlog. A task started with no issue, by `sc start <repo>`, never has this stage: it starts in `working`. |
+| `issue` | Not started: an open issue with no work running on it, never started or started and then removed with `sc rm --keep-issue`, or a task in the backlog. A task started with no issue, by `sc task add --start`, never has this stage: it starts in `working`. |
 | `working` | Agents are on it: the builder works, a review runs, CI runs, or a thread needs you. A task whose thread stopped or failed stays here too, so it doesn't vanish. A task waiting in the queue of `limits.threads` is here, shown as `queued`. |
 | `ready for review` | Skelcrew's reviewer approved the latest round and CI is green: the wait for CI's first check on the approved commit has ended and every check on it passed, as **The wait for checks** says. It waits for you to review and merge. Without a forge, the branch is approved and waits for you. |
 | `merged` | The PR merged, or without a forge, the branch's changes reached the default branch. |
@@ -83,7 +83,7 @@ Needs you is a flag on a thread, never a stage. A task in `working` can need you
 
 ### The backlog
 
-Work you want done later, but not as an issue in the tracker, is filed in Skelcrew's backlog with `sc task add app "<title>" "<description>"`. It makes a task with no issue and no thread, named as any task with no issue is, such as `APP-T104`, in stage `issue`. The lead parks work there, and creates an issue only when you explicitly ask for one. You can file one too. `sc task add` with `--issue` files the task as an issue in the tracker instead, which becomes a task named after it, such as `APP-13`.
+Work you want done later, but not as an issue in the tracker, is filed in Skelcrew's backlog with `sc task add app "<title>" "<description>"`. It makes a task with no issue and no thread, named as any task with no issue is, such as `APP-T104`, in stage `issue`. The lead parks work there, and creates an issue only when you explicitly ask for one. You can file one too. `sc task add` with `--start` starts the task at once instead of parking it, as **Without an issue** says. With `--issue` it files the task as an issue in the tracker instead, which becomes a task named after it, such as `APP-13`. The two don't go together: the issue starts with `sc start`.
 
 The backlog is shared between machines through the repository's git remote, never through the tracker. Each task is a commit under a hidden ref, `refs/skelcrew/tasks/t104`, holding its title, description, when it was filed and by whom, such as `simon` or `simon via the lead`. It is never a branch or a file in the tree. The same push that claims the task's name files it, so a name is never claimed without its task, nor a task filed without its name. The claim of the name is a commit of its own, which holds none of the task's words, so once the task's ref goes, no ref holds them. Every machine's daemon fetches these refs each time it refreshes its clone of the repository, so the list, `sc ls` and `sc task` on any machine show the same backlog within a poll.
 
@@ -435,7 +435,7 @@ Once merged, the latest review's findings, read again after the merge in case a 
 
 ### Without an issue, without a forge
 
-**Without an issue.** You tell the lead what to do, and it starts a task with `sc start app "<title>" "<description>"`, written from what you said. It does this in any repository, and files no issue unless you ask for one. The task is named `APP-T1`, on branch `skelcrew/t1-<slug>`, and its PR closes no issue. In a repository with no tracker, this is how every task starts.
+**Without an issue.** You tell the lead what to do, and it starts a task with `sc task add app "<title>" "<description>" --start`, written from what you said. It does this in any repository, and files no issue unless you ask for one. The task is named `APP-T1`, on branch `skelcrew/t1-<slug>`, and its PR closes no issue. In a repository with no tracker, this is how every task starts.
 
 **Without a forge.** Skelcrew pushes the builder's branch to the repository's remote with git, on your own git login. It opens no PR and sets no check. The reviewer reviews the branch's diff against the default branch, and the loop runs the same, with each review kept in Skelcrew and typed into the builder. Once approved, the task is `ready for review`: "APP-T1 is ready on branch skelcrew/t1-fix-login". You open a PR or merge it yourself. The task is `merged` when a fetch finds that merging the branch into the default branch would change nothing, which a merge, a squash and a rebase all leave. A branch deleted from the remote ends it too. Nothing from CI or a PR reaches the builder.
 

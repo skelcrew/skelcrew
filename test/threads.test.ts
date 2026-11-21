@@ -397,7 +397,7 @@ test("sc rm on work closes its issue, though the copy doesn't have it open, and 
 
 // A builder sees only the title and body. A heredoc that failed inside $(...) leaves the
 // body empty while the command still runs, and an issue with no body can't be taken back.
-test("sc task add --issue and sc start <repo> refuse an empty body, and ask the tracker nothing", async () => {
+test("sc task add --issue and --start refuse an empty body, and ask the tracker nothing", async () => {
   addApp();
   serve();
   await untilAnswers();
@@ -407,10 +407,10 @@ test("sc task add --issue and sc start <repo> refuse an empty body, and ask the 
     expect(made.err).toBe(
       "Skelcrew: sc task add --issue needs a body, which is all a builder sees besides its title.\n",
     );
-    const started = await skel("start", "app", "Add import", body);
+    const started = await skel("task", "add", "app", "Add import", body, "--start");
     expect(started.code).toBe(1);
     expect(started.err).toBe(
-      "Skelcrew: sc start needs a body, which is all a builder sees besides its title.\n",
+      "Skelcrew: sc task add --start needs a body, which is all a builder sees besides its title.\n",
     );
   }
   // The daemon refuses one too, from a client that doesn't check.
@@ -427,35 +427,46 @@ test("sc task add --issue and sc start <repo> refuse an empty body, and ask the 
   expect(thread()).toEqual({});
 });
 
-test("sc start <repo> says what its stdin left out, and starts nothing", async () => {
+test("sc task add --start says what its stdin left out, and starts nothing", async () => {
   addApp();
   serve();
   await untilAnswers();
-  const empty = await runSkel(["start", "app"], env(), "");
+  const empty = await runSkel(["task", "add", "app", "--start"], env(), "");
   expect(empty.code).toBe(1);
   expect(empty.err).toContain("no title");
-  const titleOnly = await runSkel(["start", "app"], env(), "# Add export\n\n");
+  const titleOnly = await runSkel(["task", "add", "app", "--start"], env(), "# Add export\n\n");
   expect(titleOnly.code).toBe(1);
   expect(titleOnly.err).toContain("no body");
   expect(thread()).toEqual({});
 });
 
 // --from picks the branch an issue's thread starts from. A task with no issue takes none, so
-// sc start refuses it there rather than read it as the title, with words or on stdin.
-test("sc start <repo> refuses --from, with the task as words or on stdin, and starts nothing", async () => {
+// sc task add refuses it rather than read it as the title, with words or on stdin.
+test("sc task add --start refuses --from, with the task as words or on stdin, and starts nothing", async () => {
   addApp();
   serve();
   await untilAnswers();
   const refused =
-    "Skelcrew: sc start <repo> takes no --from. Only sc start <issue> starts from another branch.\n";
-  const words = await skel("start", "app", "--from", "feature");
+    "Skelcrew: sc task add takes no --from. Only sc start <issue> starts from another branch.\n";
+  const words = await skel("task", "add", "app", "--from", "feature", "--start");
   expect(words.code).toBe(1);
   expect(words.err).toBe(refused);
-  const withShort = await skel("start", "app", "--from", "feature", "--short", "x", "T", "B");
+  const withShort = await skel(
+    "task",
+    "add",
+    "app",
+    "T",
+    "B",
+    "--start",
+    "--short",
+    "x",
+    "--from",
+    "feature",
+  );
   expect(withShort.code).toBe(1);
   expect(withShort.err).toBe(refused);
   const stdin = await runSkel(
-    ["start", "app", "--from", "feature", "--short", "x"],
+    ["task", "add", "app", "--start", "--from", "feature", "--short", "x"],
     env(),
     "# Add export\n\nAs JSON\n",
   );
@@ -463,27 +474,45 @@ test("sc start <repo> refuses --from, with the task as words or on stdin, and st
   expect(stdin.err).toBe(refused);
   expect(thread()).toEqual({});
   // A description that says "--from" is the task's own words, so that task starts.
-  const described = await skel("start", "app", "Document the option", "--from");
+  const described = await skel("task", "add", "app", "Document the option", "--from", "--start");
   expect(described.err).toBe("");
   expect(described.out).toBe(`Started APP-T1.\n`);
   expect(thread()).toMatchObject({ title: "Document the option", body: "--from" });
 });
 
 // A repository's name can end like a task's, as skelcrew-herdr-v2 does, even beside one named
-// skelcrew-herdr. sc start reads a word that names a repository as that repository, and only
-// splits the others into a repository and a task.
-test("sc start <repo> takes a repository whose name ends like a task, by any of its names", async () => {
+// skelcrew-herdr. sc task add --start takes it by any of its names, sc start points such a
+// name to it, and sc start only splits the others into a repository and a task.
+test("sc task add --start takes a repository whose name ends like a task, by any of its names", async () => {
   addApp({}, "skelcrew-herdr");
   addApp({}, "skelcrew-herdr-v2");
   serve();
   await untilAnswers();
-  const byName = await runSkel(["start", "skelcrew-herdr-v2"], env(), "# Add export\n\nAs JSON\n");
+  const byName = await runSkel(
+    ["task", "add", "skelcrew-herdr-v2", "--start"],
+    env(),
+    "# Add export\n\nAs JSON\n",
+  );
   expect(byName.err).toBe("");
   expect(byName.out).toBe(`Started SKELCREW-HERDR-V2-T1.\n`);
-  const byFullName = await skel("start", "simon/skelcrew-herdr-v2", "Add import", "From CSV");
+  const byFullName = await skel(
+    "task",
+    "add",
+    "simon/skelcrew-herdr-v2",
+    "Add import",
+    "From CSV",
+    "--start",
+  );
   expect(byFullName.err).toBe("");
   expect(byFullName.out).toBe(`Started SKELCREW-HERDR-V2-T2.\n`);
-  const byUrl = await skel("start", "https://github.com/simon/skelcrew-herdr-v2", "Add a", "B");
+  const byUrl = await skel(
+    "task",
+    "add",
+    "https://github.com/simon/skelcrew-herdr-v2",
+    "Add a",
+    "B",
+    "--start",
+  );
   expect(byUrl.err).toBe("");
   expect(byUrl.out).toBe(`Started SKELCREW-HERDR-V2-T3.\n`);
   // A task of that repository still splits at its last dash.
@@ -494,6 +523,59 @@ test("sc start <repo> takes a repository whose name ends like a task, by any of 
   const other = await skel("start", "skelcrew-herdr-12");
   expect(other.err).toBe("");
   expect(other.out).toBe("Started SKELCREW-HERDR-12.\n");
+  // The repository's own name, given to sc start, points to sc task add --start.
+  const named = await runSkel(["start", "skelcrew-herdr-v2"], env(), "# Add export\n\nAs JSON\n");
+  expect(named.code).toBe(1);
+  expect(named.err).toContain('run sc task add skelcrew-herdr-v2 "<title>" "<body>" --start');
+});
+
+// Leads started before sc task add --start still have sc start <repo> in their instructions,
+// so it names the command that replaced it, and starts nothing.
+test("sc start <repo>, with words or on stdin, names sc task add --start, and starts nothing", async () => {
+  addApp();
+  serve();
+  await untilAnswers();
+  const pointer =
+    'Skelcrew: sc start takes only a task now, such as sc start APP-12. To start new work in app, run sc task add app "<title>" "<body>" --start, or sc task add app --start with the title and body on stdin. It takes --short and --flow as sc start did.\n';
+  const words = await skel("start", "app", "t", "b");
+  expect(words.code).toBe(1);
+  expect(words.err).toBe(pointer);
+  const short = await skel("start", "app", "t", "b", "--short", "x");
+  expect(short.err).toBe(pointer);
+  const stdin = await runSkel(["start", "app"], env(), "# Add export\n\nAs JSON\n");
+  expect(stdin.code).toBe(1);
+  expect(stdin.err).toBe(pointer);
+  expect(thread()).toEqual({});
+});
+
+// Only a start takes a start's options, and a task is either opened as an issue or started.
+test("sc task add refuses --short, --flow and --now that don't fit, and --issue with --start", async () => {
+  addApp();
+  serve();
+  await untilAnswers();
+  const used =
+    "Skelcrew: sc task was given arguments it doesn't take. Run sc --help to see how to use it.\n";
+  for (const args of [
+    ["app", "t", "b", "--short", "x"],
+    ["app", "t", "b", "--flow", "quick"],
+    ["app", "t", "b", "--start", "--short"],
+    ["app", "t", "b", "--start", "--start"],
+  ]) {
+    const run = await skel("task", "add", ...args);
+    expect(run.code).toBe(1);
+    expect(run.err).toBe(used);
+  }
+  const now = await skel("task", "add", "app", "t", "b", "--start", "--now");
+  expect(now.err).toBe(
+    "Skelcrew: Only sc start <task> takes --now, such as sc start APP-12 --now.\n",
+  );
+  const both = await skel("task", "add", "app", "t", "b", "--issue", "--start");
+  expect(both.code).toBe(1);
+  expect(both.err).toBe(
+    "Skelcrew: sc task add takes --issue or --start, not both. Open the issue with --issue, then run sc start on the task it names.\n",
+  );
+  expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+  expect(thread()).toEqual({});
 });
 
 test("more data on a connection doesn't run its request again", async () => {
@@ -537,7 +619,7 @@ test("a repository whose plugins aren't all installed starts no task, and sc ps 
   addApp({ "skelcrew.yaml": "plugins: [simon/skelcrew-other]\n" });
   serve();
   await untilCloned();
-  const start = await skel("start", "app", "Fix typo", "In the README");
+  const start = await skel("task", "add", "app", "Fix typo", "In the README", "--start");
   expect(start.err).toBe(
     "Skelcrew: app's plugins aren't all installed here, so its tasks can't start. Run sc install in your own terminal, then start it again.\n",
   );
@@ -586,10 +668,28 @@ test("sc start --flow runs a task on a flow file of the repository, and refuses 
   addFlows();
   serve();
   await untilCloned();
-  const before = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  const before = await skel(
+    "task",
+    "add",
+    "app",
+    "Fix typo",
+    "In the README",
+    "--start",
+    "--flow",
+    "quick",
+  );
   expect(before.err).toBe("Skelcrew: app has no flow quick. Its flows are default.\n");
   await untilApproved();
-  const quick = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  const quick = await skel(
+    "task",
+    "add",
+    "app",
+    "Fix typo",
+    "In the README",
+    "--start",
+    "--flow",
+    "quick",
+  );
   expect(quick.err).toBe("");
   expect(quick.out).toBe(`Started APP-T1.\n`);
   expect(flows()).toEqual([{ task: `t1`, flow: "quick" }]);
@@ -599,7 +699,9 @@ test("sc start --flow runs a task on a flow file of the repository, and refuses 
   expect((await skel("start", "app-12", "--flow", "../x")).code).not.toBe(0);
   expect((await skel("start", "app-12", "--flow")).code).not.toBe(0);
   // Without --flow, a task runs default.
-  expect((await skel("start", "app", "Add notes", "As text")).out).toBe(`Started APP-T2.\n`);
+  expect((await skel("task", "add", "app", "Add notes", "As text", "--start")).out).toBe(
+    `Started APP-T2.\n`,
+  );
   expect(flows()).toEqual([
     { task: `t1`, flow: "quick" },
     { task: `t2`, flow: "default" },
@@ -616,14 +718,23 @@ test("sc start refuses a task whose round limit isn't valid, from its flow file 
   serve();
   await untilCloned();
   await untilApproved();
-  const bad = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  const bad = await skel(
+    "task",
+    "add",
+    "app",
+    "Fix typo",
+    "In the README",
+    "--start",
+    "--flow",
+    "quick",
+  );
   expect(bad.err).toContain("app's flow quick (.agents/flows/quick.yaml) has no valid round limit");
   expect(bad.err).toContain(".agents/flows/quick.yaml in simon/app");
   const config = join(home, ".config", "skelcrew", "config.yaml");
   writeFileSync(config, "harness: claude\nmax_rounds: 0\n");
   // The flow names no rounds, so your config's bad max_rounds is its round limit.
   const builtIn = "app's flow default (Skelcrew's built-in default flow) has no valid round limit";
-  const yours = await skel("start", "app", "Fix typo", "In the README");
+  const yours = await skel("task", "add", "app", "Fix typo", "In the README", "--start");
   expect(yours.err).toContain(builtIn);
   expect(yours.err).toContain(`${config} isn't valid`);
   const issue = await skel("start", "app-12");
@@ -655,7 +766,7 @@ describe("a clone the daemon makes as it starts", () => {
     serve();
     await untilAnswers();
     await until(() => existsSync(join(home, "held")));
-    const started = skel("start", "site", "Fix typo", "In the README");
+    const started = skel("task", "add", "site", "Fix typo", "In the README", "--start");
     await Bun.sleep(500);
     expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(false);
     writeFileSync(join(home, "go"), "");
@@ -1351,7 +1462,7 @@ nameRepositories(db);`;
     addApp();
     serve();
     await untilAnswers();
-    const run = await skel("start", "app", "Add export", "As JSON");
+    const run = await skel("task", "add", "app", "Add export", "As JSON", "--start");
     expect(run.err).toBe("");
     expect(run.out).toBe(`Started APP-T1.\n`);
     await until(() => read(join(config(`app-t1`), "args")) !== "");
@@ -1366,7 +1477,7 @@ nameRepositories(db);`;
     addApp();
     serve();
     await untilAnswers();
-    const run = await skel("start", "app", "--fast", "Make the build quicker");
+    const run = await skel("task", "add", "app", "--fast", "Make the build quicker", "--start");
     expect(run.err).toBe("");
     await until(() => read(join(config(`app-t1`), "args")) !== "");
     expect(read(join(config(`app-t1`), "args"))).toEndWith(
@@ -1375,12 +1486,12 @@ nameRepositories(db);`;
   }, 60_000);
 
   // A long body needs no shell quoting when the lead gives the task on stdin, from a heredoc.
-  test("sc start <repo> reads the task from stdin, its title on the first line", async () => {
+  test("sc task add --start reads the task from stdin, its title on the first line", async () => {
     addApp();
     serve();
     await untilAnswers();
     const task = '# Add export\n\n\nAs JSON, with "quotes" and $HOME.\nAnd dates.\n';
-    const run = await runSkel(["start", "app"], env(), task);
+    const run = await runSkel(["task", "add", "app", "--start"], env(), task);
     expect(run.err).toBe("");
     expect(run.out).toBe(`Started APP-T1.\n`);
     expect(thread()).toMatchObject({
@@ -1397,7 +1508,7 @@ nameRepositories(db);`;
     git(work, "push", "-q", "origin", `main:refs/skelcrew/names/t1`);
     serve();
     await untilCloned();
-    const run = await skel("start", "app", "Add export", "As JSON");
+    const run = await skel("task", "add", "app", "Add export", "As JSON", "--start");
     expect(run.err).toBe("");
     expect(run.out).toBe(`Started APP-T2.\n`);
     expect(thread()).toMatchObject({ task: `t2`, branch: `skelcrew/t2-add-export` });
@@ -1415,7 +1526,7 @@ nameRepositories(db);`;
     await untilCloned();
     const refused = await skel("start", `app-t1`);
     expect(refused.err).toContain(`there is no open issue t1 in app`);
-    const run = await skel("start", "app", "Add export", "As JSON");
+    const run = await skel("task", "add", "app", "Add export", "As JSON", "--start");
     expect(run.out).toBe(`Started APP-T1.\n`);
     expect(thread()).toMatchObject({ task: `t1`, title: "Add export" });
   }, 60_000);
@@ -1425,12 +1536,21 @@ nameRepositories(db);`;
     addApp();
     serve();
     await untilCloned();
-    const named = await skel("start", "app", "Add export", "As JSON", "--short", "JSON export");
+    const named = await skel(
+      "task",
+      "add",
+      "app",
+      "Add export",
+      "As JSON",
+      "--start",
+      "--short",
+      "JSON export",
+    );
     expect(named.err).toBe("");
     expect(named.out).toBe(`Started APP-T1.\n`);
     expect(thread()).toMatchObject({ task: `t1`, title: "Add export", short: "JSON export" });
     const piped = await runSkel(
-      ["start", "app", "--short", "Notes"],
+      ["task", "add", "app", "--start", "--short", "Notes"],
       env(),
       "Add notes\n\nAs text",
     );
@@ -1633,7 +1753,7 @@ describe("the backlog", () => {
     const filed = await skel("task", "add", "app", "Add export", "As JSON");
     expect(filed.err).toBe("");
     expect(filed.out).toBe("Filed APP-T1 in the backlog. sc start APP-T1 starts it.\n");
-    // Its words and stdin, as sc start <repo> takes them.
+    // Its words and stdin, as sc task add --start takes them.
     const piped = await runSkel(["task", "add", "app"], env(), "# Add notes\n\nAs text\n");
     expect(piped.out).toBe("Filed APP-T2 in the backlog. sc start APP-T2 starts it.\n");
     // The same task filed again on purpose is a task of its own.
@@ -1846,7 +1966,7 @@ describe("the backlog", () => {
   }, 60_000);
 
   // A description given on stdin can be longer than the system lets one argument be, as
-  // sc start <repo> takes it, so filing and starting never pass it as one.
+  // sc task add takes it, so filing and starting never pass it as one.
   test("a task with a description too long for one argument is filed and starts", async () => {
     addApp();
     serve();

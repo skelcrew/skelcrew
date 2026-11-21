@@ -1,5 +1,5 @@
-// The commands that show tasks and threads, and the one that files a task: sc ps, sc ls, sc task
-// and sc task add.
+// The commands that show tasks and threads, and the one that files a task and can start it:
+// sc ps, sc ls, sc task and sc task add.
 import { bodyFor, parseTask, readAsked, splitTaskName, usage } from "./input.ts";
 
 export async function psCommand(args: string[], json: boolean): Promise<void> {
@@ -49,24 +49,43 @@ export async function showCommand(words: string[], json: boolean): Promise<void>
 
 export async function taskCommand(args: string[]): Promise<void> {
   const [command, sub, repository, ...rest] = args;
-  const { createTask, fileTask } = await import("../client.ts");
+  const { createTask, fileTask, startNew } = await import("../client.ts");
   if (sub !== "add" || !repository) usage(command);
-  const onStdin = rest[0] === "--issue" || rest[0] === "--asked-file";
+  const named = ["--issue", "--start", "--asked-file", "--short", "--flow", "--from", "--now"];
+  const onStdin = named.includes(rest[0] ?? "");
   const words = onStdin ? [] : rest.slice(0, 2);
   const options = onStdin ? rest : rest.slice(2);
   const flags = new Map<string, string>();
   for (let at = 0; at < options.length; at++) {
     const [flag = "", value] = [options[at], options[at + 1]];
-    if (flag === "--issue" && !flags.has(flag)) flags.set(flag, "");
-    else if (flag === "--asked-file" && value && !flags.has(flag)) {
+    if (flag === "--from")
+      throw new Error(
+        "sc task add takes no --from. Only sc start <issue> starts from another branch.",
+      );
+    if (flag === "--now")
+      throw new Error("Only sc start <task> takes --now, such as sc start APP-12 --now.");
+    if (flags.has(flag)) usage(command);
+    if (flag === "--issue" || flag === "--start") flags.set(flag, "");
+    else if (flag === "--asked-file" && value) {
       flags.set(flag, value);
+      at++;
+    } else if ((flag === "--short" || flag === "--flow") && value?.trim()) {
+      flags.set(flag, value.trim());
       at++;
     } else usage(command);
   }
   const issue = flags.has("--issue");
+  const start = flags.has("--start");
   const askedFile = flags.get("--asked-file");
+  const short = flags.get("--short");
+  const flow = flags.get("--flow");
   if (askedFile !== undefined && !issue) usage(command);
-  const shown = issue ? "sc task add --issue" : "sc task add";
+  if ((short !== undefined || flow !== undefined) && !start) usage(command);
+  if (issue && start)
+    throw new Error(
+      "sc task add takes --issue or --start, not both. Open the issue with --issue, then run sc start on the task it names.",
+    );
+  const shown = issue ? "sc task add --issue" : start ? "sc task add --start" : "sc task add";
   const [title, body] = words;
   let given: { title: string; body: string } | undefined;
   if (title && body !== undefined && words.length === 2)
@@ -74,6 +93,10 @@ export async function taskCommand(args: string[]): Promise<void> {
   else if (words.length === 0 && !process.stdin.isTTY)
     given = parseTask(await Bun.stdin.text(), shown);
   if (!given) usage(command);
+  if (start) {
+    console.log(await startNew(repository, given.title, given.body, short, flow));
+    return;
+  }
   if (issue) {
     const asked = askedFile === undefined ? undefined : await readAsked(askedFile);
     const task = await createTask(repository, given.title, given.body, asked);
