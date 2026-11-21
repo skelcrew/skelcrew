@@ -234,16 +234,37 @@ export async function endTest(): Promise<void> {
   const tree: number[] = [];
   for (const socket of [terminal, screen, agents]) {
     // A server's panes' processes are found before it goes, as nothing names them after.
+    const panes: number[] = [];
+    let hung = false;
     try {
-      const panes = tmux(socket, "list-panes", "-a", "-F", "#{pane_pid}").out;
-      for (const pid of panes.split("\n").filter(Boolean)) tree.push(...processTree(Number(pid)));
+      const listed = tmux(socket, "list-panes", "-a", "-F", "#{pane_pid}").out;
+      for (const pid of listed.split("\n").filter(Boolean)) panes.push(...processTree(Number(pid)));
     } catch (error) {
       failures.push(error);
+      hung = true;
     }
+    tree.push(...panes);
     try {
       tmux(socket, "kill-server");
     } catch (error) {
       failures.push(error);
+      hung = true;
+    }
+    // A server that doesn't answer is killed, with its panes' processes, before its socket goes,
+    // as nothing could reach it after. It runs as the command that started it, with the test's
+    // own socket after -L, so the match finds only this test's server and clients.
+    if (hung) {
+      const ps = Bun.spawnSync(["ps", "-A", "-o", "pid=,args="], { stdout: "pipe" });
+      const ours = ps.stdout
+        .toString()
+        .split("\n")
+        .filter((line) => ` ${line} `.includes(` -L ${socket} `))
+        .map((line) => Number(line.trim().split(/\s+/)[0]));
+      // A pid of 0 would signal the test run's own process group.
+      for (const pid of [...ours, ...panes].filter((pid) => pid > 0))
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
     }
     // tmux leaves the socket file behind after kill-server.
     const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
