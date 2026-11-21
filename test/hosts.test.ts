@@ -655,6 +655,30 @@ console.log(await agentRuns(host, id), tab());`,
   expect(said).toContain("true 0\n");
 }, 30_000);
 
+// Two checks come for the lead you exited at once, such as the daemon's look and a brief to the
+// lead, while the host is slow to end it, and you open the repository again between them. The
+// host gives the new lead the same ID as the last one.
+test("overlapping checks of an exited lead end it once, and a lead opened between them keeps running", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const first = closeIfExited(db, "unused", "simon", "app");
+for (let i = 0; i < 200 && tab() === 0; i++) await Bun.sleep(25);
+const second = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(300);
+db.run("UPDATE repositories SET tab_closed = 0");
+await startLead(db, "unused", repository);
+const ends = fs.readFileSync(fake + "/asked", "utf8").split("\\n").filter((line) => line.includes('"ask":"end"')).length;
+console.log(await first, await second, await agentRuns(host, id), tab(), ends);`,
+  );
+  expect(said).toContain("true false true 0 1\n");
+}, 30_000);
+
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
   const lead = { repository: "simon/app", role: "lead" } as const;
   const on = host();

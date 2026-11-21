@@ -438,20 +438,30 @@ export function closeExitedLeads(db: Database, sessions: string, recover = false
 // the session gone also finds the tab closed, and doesn't bring the lead back. A plugin's host
 // that can't answer, or a lead still starting there, counts as not exited: a host can fail for a
 // moment, and a lead running there must not lose its tab. A lead starting, or one that starts
-// while its host answers, such as one you opened meanwhile, is left alone and keeps its tab.
+// while its host answers, such as one you opened meanwhile, is left alone and keeps its tab. A
+// check that finds another one ending the lead waits for that one, and closed nothing itself, so
+// a lead has at most one ending at a time.
 export async function closeIfExited(
   db: Database,
   sessions: string,
   owner: string,
   repo: string,
 ): Promise<boolean> {
+  const key = `${owner}/${repo}`;
   const lead = leadOf(db, owner, repo);
   const host = hostNamed(db, sessions, lead.host);
-  const starting = () => startingLeads.has(`${owner}/${repo}`);
+  // Another check ending this lead goes first, and is shared rather than started twice.
+  const other = endingLeads.get(key);
+  if (other) return other.then(() => false);
+  const starting = () => startingLeads.has(key);
   if (host === null || (typeof host !== "string" && lead.hostId === null) || starting())
     return false;
   const id = lead.hostId ?? lead.name;
   if (!(await agentExited(host, id).catch(() => false))) return false;
+  // Asked again once the host answered, as another check may have begun ending the lead
+  // meanwhile. From here to setting the ending below, nothing waits, so no other check can.
+  const meanwhile = endingLeads.get(key);
+  if (meanwhile) return meanwhile.then(() => false);
   const now = leadOf(db, owner, repo);
   if (now.host !== lead.host || now.hostId !== lead.hostId || starting()) return false;
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
@@ -459,13 +469,12 @@ export async function closeIfExited(
   // it, so only a session still there is ended. The tab is closed either way, and opening the
   // lead again ends whatever is left of it. You can open the repository again while this waits
   // on the host, so a start of the lead waits for it: one the host gave the same ID would be
-  // ended here otherwise.
-  const key = `${owner}/${repo}`;
+  // ended here otherwise. Only this check removes its ending.
   const ending = stopSession(host, id).catch((error) =>
     console.log(`couldn't end ${key}'s exited lead: ${errorText(error)}`),
   );
   endingLeads.set(key, ending);
   await ending;
-  if (endingLeads.get(key) === ending) endingLeads.delete(key);
+  endingLeads.delete(key);
   return true;
 }
