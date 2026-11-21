@@ -1320,14 +1320,37 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await open("web");
     expect(leadHost("web")).toMatchObject({ lead_host: "fake" });
     await stop(first);
-    // From here on, the fake host holds every list it is asked for, until the file goes.
-    writeFileSync(join(fakeHostSettings(), "hold-list"), "0");
+    // From here on, the fake host holds every list it is asked for, until the file goes. It
+    // counts from the first, as 0 would hold none.
+    writeFileSync(join(fakeHostSettings(), "hold-list"), "1");
     const started = Date.now();
     serve();
     await untilAnswers();
     expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
     expect(Date.now() - started).toBeLessThan(15_000);
     expect(hasLead(leadName("app"))).toBe(true);
+    rmSync(join(fakeHostSettings(), "hold-list"));
+  });
+
+  // Opening a repository checks whether its own lead just exited, never another's, so a host
+  // that hangs answering about web's lead adds nothing to opening app.
+  test("a host that hangs doesn't hold up opening another repository", async () => {
+    setUp();
+    const app = addRepository("app");
+    const web = addRepository("web");
+    serve();
+    await untilAnswers();
+    await until(() => existsSync(join(app, "README")) && existsSync(join(web, "README")));
+    expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
+    installFakeHost();
+    useSessionHost("fake");
+    await open("web");
+    expect(leadHost("web")).toMatchObject({ lead_host: "fake" });
+    // From here on, the fake host holds every list it is asked for, until the file goes.
+    writeFileSync(join(fakeHostSettings(), "hold-list"), "1");
+    const started = Date.now();
+    expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
+    expect(Date.now() - started).toBeLessThan(3_000);
     rmSync(join(fakeHostSettings(), "hold-list"));
   });
 

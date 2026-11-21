@@ -12,6 +12,7 @@ import {
   listTmuxSessions,
   shownSession,
   showSession,
+  takenAsExited,
 } from "../agents/sessions.ts";
 import { paneTty, paneWidth, respawnPane, screenTmux, showTop } from "../agents/tmux.ts";
 import { moveQueued, openRepository, startOrMerge } from "../client.ts";
@@ -224,14 +225,17 @@ export async function runSidebar(
   // The agents running on a plugin's host, builders by their thread's folder and the open lead by
   // its name, as the last look at the hosts found them. The look runs in the background, one at
   // a time, as a host can be slow, and the sidebar never waits on it.
+  // hostedLeadExited is whether that look found the open lead ended there as one you exited.
   let hosted = new Set<string>();
+  let hostedLeadExited = false;
   let lookingAtHosts = false;
   const lookAtHosts = () => {
     if (lookingAtHosts) return;
     lookingAtHosts = true;
     hostedAgents(db, open)
       .then((found) => {
-        hosted = found;
+        hosted = found.running;
+        hostedLeadExited = found.leadExited;
       })
       .catch(() => {})
       .finally(() => {
@@ -471,13 +475,28 @@ export async function runSidebar(
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
-    // a lead found gone here with its tab still read as open has crashed.
+    // a lead found ended here with its tab still read as open ended by itself.
     const found = doing("asking tmux for the agents' sessions", () => listTmuxSessions(agents));
     running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted];
     lookAtHosts();
-    const exited = doing("asking tmux whether the lead exited", () =>
-      exitedCleanly(agents, open.lead),
-    );
+    // A lead on tmux whose session is gone can't say how it ended, and is taken as exited, as the
+    // daemon takes it, once it has a saved ID: one that never started has none.
+    const savedId = () => {
+      try {
+        const lead = leadOf(db, open.owner, open.repo);
+        return lead.host === "tmux" && lead.hostId !== null;
+      } catch {
+        return false;
+      }
+    };
+    const exited =
+      hostedLeadExited ||
+      doing(
+        "asking tmux whether the lead exited",
+        () =>
+          exitedCleanly(agents, open.lead) ||
+          (!found.some((one) => one.name === open.lead) && savedId()),
+      );
     const before = tabs;
     tabs = doing("reading the tabs", () => repositoryTabs(db, null));
     // A repository you closed or removed, or whose lead you exited, has no tab left. The sidebar
@@ -993,9 +1012,15 @@ function noticeLines(notice: string, width: number): string[] {
 // folder, and the open repository's lead by its name, so a lead there that ends is noticed and
 // brought back, as one on tmux is. Each host is asked once for all its agents. While a host fails
 // to answer, whether its agents run is unknown, and each counts as running: a host can fail for a
-// moment, even before it ever answered, and a lead there must not be taken for crashed.
-async function hostedAgents(db: ReturnType<typeof openDb>, open: Open): Promise<Set<string>> {
+// moment, even before it ever answered, and a lead there must not be taken for crashed. Also says
+// whether the lead ended there as one you exited, which the daemon closes the tab of, so the
+// sidebar doesn't bring it back meanwhile.
+async function hostedAgents(
+  db: ReturnType<typeof openDb>,
+  open: Open,
+): Promise<{ running: Set<string>; leadExited: boolean }> {
   const found = new Set<string>();
+  let leadExited = false;
   // Each agent on a plugin's host: what the sidebar knows it by, its host and its ID there.
   const agents = liveThreads(db).flatMap((thread) =>
     thread.host !== null && thread.host !== "tmux" && thread.host_id !== null
@@ -1013,9 +1038,13 @@ async function hostedAgents(db: ReturnType<typeof openDb>, open: Open): Promise<
     const listed = await listSessions(host).catch(() => null);
     for (const agent of agents) {
       if (agent.host !== name) continue;
-      if (listed === null || listed.some((one) => one.name === agent.id && one.running))
-        found.add(agent.key);
+      const session = listed?.find((one) => one.name === agent.id);
+      if (listed === null || session?.running) found.add(agent.key);
+      // A lead the host answered for but no longer lists can't be told about, and counts as
+      // exited, as the daemon takes it.
+      if (agent.key === open.lead && listed !== null && (!session || takenAsExited(session)))
+        leadExited = true;
     }
   }
-  return found;
+  return { running: found, leadExited };
 }

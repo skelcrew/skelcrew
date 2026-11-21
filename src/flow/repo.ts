@@ -15,7 +15,6 @@ import { dirname, join, resolve } from "node:path";
 import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
-import { endSession, exitedCleanly } from "../agents/sessions.ts";
 import {
   agentsAnswered,
   agentsOnDefaultBranch,
@@ -47,7 +46,7 @@ import { builtInRole } from "../roles.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
-import { endLeadOfClosedTab, leadOf } from "./lead.ts";
+import { closeIfExited, endLeadOfClosedTab, leadOf } from "./lead.ts";
 import { taskName } from "./thread.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
@@ -526,10 +525,8 @@ async function openAgain(db: Database, sessions: string, had: Repository): Promi
     const { ask } = await import("../client.ts");
     const reply = await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
     if (reply === null) {
-      // Only a lead on tmux keeps its session after you exit it.
-      const { name, host, hostId } = leadOf(db, had.owner, had.repo);
-      const id = hostId ?? name;
-      if (host === "tmux" && exitedCleanly(sessions, id)) await endSession(sessions, id);
+      // The lead that exited is ended, and its tab opened again, so the daemon brings it back.
+      await closeIfExited(db, sessions, had.owner, had.repo);
       db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
         had.owner,
         had.repo,

@@ -9,8 +9,6 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import {
   agentRuns,
-  endExitedSession,
-  exitedCleanly,
   interruptSession,
   processTree,
   readSession,
@@ -48,6 +46,8 @@ import { beingRemoved, removalEnded, removeThread, stopThread } from "./events.t
 import { noCommits } from "./git.ts";
 import {
   closeExitedLeads,
+  closeIfExited,
+  closeLeadAtStart,
   endLeadOfClosedTab,
   lastOpened,
   leadAgent,
@@ -345,6 +345,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     await open(socket, thread);
     await open(reviewSocket(thread.folder), { review: thread });
   };
+  // How the daemon's start settles each opened repository's lead, by its owner/name, as
+  // closeLeadAtStart says, and which of those are still settling. A request about a repository
+  // waits for its own, never another's, so a host that hangs holds up only its own leads. The
+  // look each second leaves a lead alone until it is settled.
+  const settling = new Map<string, Promise<void>>();
+  const unsettled = new Set<string>();
+  // Closes a repository's tab and ends its lead when you exited the lead, as closeIfExited does,
+  // once the daemon's start has settled that lead.
+  const checkLead = async ({ owner, repo }: { owner: string; repo: string }) => {
+    await settling.get(`${owner}/${repo}`);
+    return closeIfExited(db, sessions, owner, repo);
+  };
   // Returns how a repository's supervisor reaches its lead. Starting it opens the lead's own
   // socket first, so the daemon knows which lead calls on it, then keeps the lead running or
   // starts it. The supervisor starts one at a time for each repository, so two requests at once
@@ -628,14 +640,25 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { running: true, pid: process.pid, release, ...runningCode, ...thread };
       }
       case "lead": {
-        // A lead you exited this second is closed first, so the daemon's next look can't close
-        // the tab again while the lead starts, and a tab can't bring it back. It comes before
-        // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
-        await closeExitedLeads(db, sessions);
-        // From outside any repository Skelcrew has, the one you opened last.
-        const repository =
-          (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
-          lastOpened(db);
+        // From outside any repository Skelcrew has, the one you opened last. A lead you exited
+        // this second is closed first, so the daemon's next look can't close the tab again while
+        // the lead starts, and a tab can't bring it back. Only the repository asked for is
+        // checked, so a slow host of another repository's lead holds up nothing here. It is
+        // checked even with its tab closed, as an ending of its lead may still be under way, and
+        // the tab mustn't open again before that ending worked. Plain sc picks again when the
+        // one it picked had its tab open and just closed, as it then opens another: each pass
+        // closes an open tab, so this ends.
+        const here = request.from === undefined ? undefined : repositoryAt(db, request.from);
+        let repository = here ?? lastOpened(db);
+        const tabOpen = (one: Repository) =>
+          db
+            .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
+            .get(one.owner, one.repo) !== null;
+        while (repository) {
+          const wasOpen = tabOpen(repository);
+          if (!(await checkLead(repository)) || here || !wasOpen) break;
+          repository = lastOpened(db);
+        }
         if (!repository) throw new Error(noRepositories);
         const { owner, repo } = repository;
         // A tab never brings back a lead you exited, not even from a screen that still shows
@@ -968,20 +991,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // second leaves its ended session behind, which would be kept, and a look for exited
         // leads would close its tab again with the brief waiting. So that session goes first,
         // with its tab closed, as such a look would leave it. Then saving the brief and opening
-        // the tab are one change. Nothing waits between the steps, and a daemon stopped after
-        // any of them finds things as one of its own looks would: the lead closed with no brief,
-        // or open with its brief, which its start brings back and types in. A repository never
-        // opened gets its first time, or its lead would have no tab. One opened before keeps its
-        // time, so plain sc still opens the one you opened last.
-        // Only a lead on tmux keeps its session after you exit it.
-        const { name, host, hostId } = leadOf(db, to.owner, to.repo);
-        const id = hostId ?? name;
-        if (host === "tmux" && exitedCleanly(sessions, id)) {
-          db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
-            to.owner,
-            to.repo,
-          ]);
-          endExitedSession(sessions, id);
+        // the tab are one change. A daemon stopped after any of the steps finds things as one of
+        // its own looks would: the lead closed with no brief, or open with its brief, which its
+        // start brings back and types in. A repository never opened gets its first time, or its
+        // lead would have no tab. One opened before keeps its time, so plain sc still opens the
+        // one you opened last.
+        // A lead whose ending failed may still have the session you exited. Its tab then stays
+        // closed and the brief waits, saved, until you open the repository, and the sender hears
+        // why.
+        try {
+          await checkLead(to);
+        } catch (error) {
+          briefLead(db, sessions, caller, to, request.text, request.asked);
+          throw new Error(
+            `${to.name}'s lead can't open again yet, so your brief waits until the human opens it: ${errorText(error)}`,
+          );
         }
         db.transaction(() => {
           briefLead(db, sessions, caller, to, request.text, request.asked);
@@ -1126,13 +1150,20 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     builderBack.set(thread.folder, back.resolve);
     resumeRound(db, sessions, thread.folder, back.promise);
   }
-  // A lead you exited while the daemon was down closes its tab, before any request could open
-  // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
-  await closeExitedLeads(db, sessions);
+  // A lead you exited while the daemon was down closes its tab, before a request about its
+  // repository could open it, and isn't brought back. Each repository's is settled on its own,
+  // so a host that hangs holds up nothing else. From here on, the daemon looks each second for a
+  // lead you exit.
+  for (const repository of openedRepositories(db)) {
+    const key = `${repository.owner}/${repository.repo}`;
+    unsettled.add(key);
+    const settled = closeLeadAtStart(db, sessions, repository).finally(() => unsettled.delete(key));
+    settling.set(key, settled);
+  }
   setInterval(
     () =>
       doing("closing the tabs of exited leads", () =>
-        closeExitedLeads(db, sessions).catch((error) =>
+        closeExitedLeads(db, sessions, (key) => unsettled.has(key)).catch((error) =>
           console.log(`couldn't close the tabs of exited leads: ${errorText(error)}`),
         ),
       ),
@@ -1172,7 +1203,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // once whatever stopped it clears. The builders and polling wait for them, as before leads
   // could run on other hosts, so a lead's start and the first poll never overlap. Requests are
   // answered meanwhile, as the socket is open.
-  await Promise.all(openedRepositories(db).map((repository) => bringBackLead(repository, null)));
+  // Each waits until its lead is settled, as one whose tab that closed isn't brought back.
+  await Promise.all(
+    [...settling].map(async ([key, settled]) => {
+      await settled;
+      const repository = openedRepositories(db).find((one) => `${one.owner}/${one.repo}` === key);
+      if (repository) await bringBackLead(repository, null);
+    }),
+  );
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.

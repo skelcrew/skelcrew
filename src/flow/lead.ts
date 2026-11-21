@@ -5,9 +5,9 @@ import { existsSync } from "node:fs";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
+  agentExited,
   checkAgentStarted,
   endSession,
-  exitedCleanly,
   failedScreen,
   hasSession,
   keepOnExit,
@@ -189,7 +189,8 @@ export function approvedFlowsTold(clone: string): string {
 // as builders do. Throws when that host isn't installed, or when the plugin the lead ran on is
 // gone, as the lead may still run there and a second one would share its conversation. A lead
 // running on another .agents/ than the one you approved now starts again on it, keeping its
-// conversation, as a lead reads its instructions only as it starts.
+// conversation, as a lead reads its instructions only as it starts. The daemon runs it in the
+// turn of the lead's supervisor.
 export async function startLead(
   db: Database,
   sessions: string,
@@ -297,9 +298,9 @@ export async function startLead(
     files,
     ...(resume ? { resume } : { sessionId: session }),
   });
-  // On tmux the session stays when the lead exits, so closeExitedLeads can tell exiting it from a
-  // crash. The role label tells a plugin's host this is the lead, such as for herdr to give it
-  // its repository's first tab.
+  // The session stays when the lead exits, on tmux and on a plugin's host that can keep it, so
+  // closeExitedLeads can tell exiting it from a crash. The role label tells a plugin's host this
+  // is the lead, such as for herdr to give it its repository's first tab.
   const labels: Labels = { repository: `${owner}/${repo}`, role: "lead" };
   const id = await startSession(host, lead.name, {
     folder: lead.folder,
@@ -340,7 +341,17 @@ export async function startLead(
   console.log(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}${lost}.`,
   );
-  await checkAgentStarted(host, id, "lead");
+  // A lead that couldn't start, such as one whose login is gone, never ran to be exited. Once its
+  // session is known to be gone, it keeps no ID, so the look for exited leads doesn't close its
+  // tab. A host that can't say keeps the ID, as the lead may still run there.
+  await checkAgentStarted(host, id, "lead").catch(async (error) => {
+    if (!(await hasSession(host, id).catch(() => true)))
+      db.run(
+        "UPDATE repositories SET lead_host_id = NULL WHERE owner = ? AND repo = ? AND lead_host_id = ?",
+        [owner, repo, id],
+      );
+    throw error;
+  });
 }
 
 // How the note that gives a lead its opening turn starts, which marks it as Skelcrew's, not the
@@ -369,45 +380,156 @@ export function leadPrompted(db: Database, owner: string, repo: string): void {
   dropLeadNotes(db, { owner, repo }, opening);
 }
 
+// The look for exited leads under way, which a look asked for meanwhile shares, so a slow
+// plugin's host never has looks pile up behind it.
+let looking: Promise<void> | null = null;
+
 // Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
-// session. A lead that crashed exits with another code and keeps its tab. The daemon looks at
-// its start and every second, so a lead that exited while no screen was open, or while the
-// daemon was down, has its tab closed too. Only the lead ends: the repository, its threads and
-// its clone stay, and its conversation is kept for when you open it again. The tab is marked
-// closed before the session ends, so a sidebar that finds the session gone also finds the tab
-// closed, and doesn't bring the lead back. Only a lead on tmux keeps its session on a clean exit,
-// so a lead on a plugin's host is never taken for one you exited: it comes back as one that
-// crashed. Only tmux is asked, which answers at once, so a plugin's host that hangs holds up
-// nothing here. A lead being started or ended is left to that, which ends what it left behind:
-// closed meanwhile, a lead you just opened again would have its tab closed under it. So is a
-// repository you open again before its tab closes: opening it wins, and the lead's start that
-// follows ends the old session.
-export async function closeExitedLeads(db: Database, sessions: string): Promise<void> {
-  for (const { owner, repo } of openedRepositories(db)) {
-    const { name, host, hostId } = leadOf(db, owner, repo);
-    const agent = leadAgent(owner, repo);
-    const id = hostId ?? name;
-    if (host !== "tmux" || agent.state().busy || !exitedCleanly(sessions, id)) continue;
-    const { opened } = z
+// session. A lead that crashed exits with another code and keeps its tab. The daemon looks every
+// second, so a lead that exited while no screen was open has its tab closed too. Only the lead
+// ends: the repository, its threads and its clone stay, and its conversation is kept for when you
+// open it again. Leads on every host are looked at all at once, so a slow host holds up only its
+// own leads, and a look asked for while one runs waits for that one. A lead whose ending failed
+// is looked at again, though its tab is closed, so the ending is tried again. `skip` leaves out
+// the leads the daemon's start hasn't settled yet, by their owner/name.
+export function closeExitedLeads(
+  db: Database,
+  sessions: string,
+  skip: (key: string) => boolean = () => false,
+): Promise<void> {
+  const opened = openedRepositories(db).map(({ owner, repo }) => `${owner}/${repo}`);
+  const keys = [...new Set([...opened, ...unended])].filter((key) => !skip(key));
+  looking ??= Promise.all(
+    keys.map(async (key) => {
+      const [owner = "", repo = ""] = key.split("/");
+      const retry = unended.has(key);
+      try {
+        if ((await closeIfExited(db, sessions, owner, repo)) && !retry)
+          console.log(
+            `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
+          );
+      } catch (error) {
+        console.log(errorText(error));
+      }
+    }),
+  )
+    .then(() => {})
+    .finally(() => {
+      looking = null;
+    });
+  return looking;
+}
+
+// Settles a repository's lead as the daemon starts, before it is brought back. A lead on a
+// plugin's host whose ID never got saved is found by its labels first, so one that exited while
+// the daemon was down closes its tab too. Only now: a lead starting later has no ID either, and
+// the session it replaces would be found and taken for one you exited. A lead whose session is
+// gone is brought back, as after the machine restarted, rather than taken as exited. Its saved ID
+// names nothing now, so it goes: a lead that then can't start, such as one whose clone is
+// missing, would otherwise be taken for one you exited by the next look, and lose its tab.
+export async function closeLeadAtStart(
+  db: Database,
+  sessions: string,
+  { owner, repo }: { owner: string; repo: string },
+): Promise<void> {
+  const found = await leadSession(db, sessions, owner, repo).catch(() => null);
+  try {
+    if (await closeIfExited(db, sessions, owner, repo, true)) {
+      console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
+      return;
+    }
+  } catch (error) {
+    console.log(errorText(error));
+    return;
+  }
+  if (found && !(await hasSession(found.host, found.id).catch(() => true)))
+    db.run(
+      "UPDATE repositories SET lead_host_id = NULL WHERE owner = ? AND repo = ? AND lead_host_id = ?",
+      [owner, repo, found.id],
+    );
+}
+
+// The leads whose ending failed, by their repository's owner/name, which may still have the
+// session you exited. Each look for exited leads tries again, and until one works, every check of
+// the lead fails, so nothing opens its tab again while that session is there.
+const unended = new Set<string>();
+
+// The ending of each lead a check found exited, by its repository's owner/name, while it runs,
+// for other checks of that lead to wait for.
+const endings = new Map<string, Promise<unknown>>();
+
+// Closes a repository's tab and ends its lead's session when you exited the lead, and says
+// whether it did. A lead you exited leaves its session behind, so its host can say how it ended,
+// and that session must go before the lead is opened again, or the next look would take it for
+// one you just exited. The tab is marked closed before the session ends, so a sidebar that finds
+// the session gone also finds the tab closed, and doesn't bring the lead back. A plugin's host
+// that can't answer, or a lead still starting there, counts as not exited: a host can fail for a
+// moment, and a lead running there must not lose its tab. The host is asked outside the lead's
+// turn, so a slow host never holds up a start. So the check leaves the lead alone when its
+// supervisor has work queued, or was asked for any while the host answered, such as a start or
+// another check's ending: the answer may then be about a session that is gone. So is a repository
+// opened again meanwhile: opening it wins, and the lead's start that follows ends the old
+// session. The ending itself takes the lead's turn. A lead whose session is gone is one Skelcrew
+// can't tell about, and is taken as exited, unless `atStart`, or unless it has no saved ID, such
+// as one that never started, or one an older release started.
+export async function closeIfExited(
+  db: Database,
+  sessions: string,
+  owner: string,
+  repo: string,
+  atStart = false,
+): Promise<boolean> {
+  const key = `${owner}/${repo}`;
+  const agent = leadAgent(owner, repo);
+  const asks = agent.asks();
+  const changed = () => agent.state().busy || agent.asks() !== asks;
+  const failed = (error: unknown) =>
+    new Error(`couldn't end ${key}'s exited lead: ${errorText(error)}`);
+  const settled = async () => {
+    await endings.get(key)?.catch((error) => {
+      throw failed(error);
+    });
+    if (unended.has(key)) throw failed("its last ending failed, and is tried again each second");
+    return false;
+  };
+  if (endings.has(key)) return settled();
+  const lead = leadOf(db, owner, repo);
+  const host = hostNamed(db, sessions, lead.host);
+  if (host === null || (typeof host !== "string" && lead.hostId === null) || changed())
+    return false;
+  const id = lead.hostId ?? lead.name;
+  const goneIsExited = !atStart && lead.hostId !== null;
+  const openedNow = () =>
+    z
       .object({ opened: z.number().nullable() })
       .parse(
         db.query("SELECT opened FROM repositories WHERE owner = ? AND repo = ?").get(owner, repo),
-      );
-    await agent.end({
-      stop: async () => {
-        if (!exitedCleanly(sessions, id)) return;
-        const closed = db.run(
-          "UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ? AND tab_closed = 0 AND opened IS ?",
-          [owner, repo, opened],
-        );
-        if (closed.changes === 0) return;
-        await endSession(sessions, id);
-        console.log(
-          `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
-        );
-      },
-    });
+      ).opened;
+  const opened = openedNow();
+  let exited: boolean;
+  try {
+    exited = await agentExited(host, id, goneIsExited);
+  } catch {
+    return settled();
   }
+  if (!exited) {
+    if (!changed()) unended.delete(key);
+    return settled();
+  }
+  if (changed() || openedNow() !== opened) return settled();
+  db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
+  const ending = agent.end({ stop: () => stopSession(host, id) });
+  endings.set(key, ending);
+  try {
+    await ending;
+    unended.delete(key);
+  } catch (error) {
+    unended.add(key);
+    throw failed(error);
+  } finally {
+    endings.delete(key);
+  }
+  return true;
 }
 
 // Ends a repository's lead and waits for it, once you closed its tab, for closing or removing the

@@ -79,16 +79,19 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead again");
 });
 
-test("a lead on a plugin's host shows through that host from its tab, and comes back once it ends", async () => {
+// Opens site's lead on a fake plugin's host from its tab, then has the host list it as ended with
+// exit code `code`, and returns how many times the daemon was asked to open site, and how.
+async function leadOnHostEnds(code: number) {
   daemon();
   sql(`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')`);
-  // The host lists site's lead as running while its file running says true.
+  // The host lists site's lead as running while its file running says true, and else as ended
+  // with that code.
   const plugin = join(home, "plugin-fake");
   mkdirSync(plugin, { recursive: true });
   writeFileSync(join(plugin, "running"), "true");
   writeFileSync(
     join(plugin, "session.sh"),
-    `read -r question; echo >> listed; echo "{\\"sessions\\":[{\\"id\\":\\"fake-site-lead\\",\\"running\\":$(cat running),\\"labels\\":null}]}"\n`,
+    `read -r question; echo >> listed; echo "{\\"sessions\\":[{\\"id\\":\\"fake-site-lead\\",\\"running\\":$(cat running),\\"labels\\":null,\\"ended\\":{\\"code\\":${code}}}]}"\n`,
   );
   writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
   writeFileSync(
@@ -104,13 +107,27 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-site-lead' WHER
   await until(() => onLead(), "the sidebar on site's lead");
   const opened = () => asked.filter((one) => one === "open simon/site from a tab").length;
   await until(() => opened() === 1, "the daemon to open site");
-  // Once the sidebar has seen the lead run on its host, a lead that ends there is brought back.
+  // Once the sidebar has seen the lead run on its host, the lead ends there, and the sidebar
+  // looks at the host a few more times.
   const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
   await until(() => looks() > 2, "the sidebar to ask the host");
   writeFileSync(join(plugin, "running"), "false");
+  const ended = looks();
+  await until(() => looks() > ended + 3 || opened() === 2, "the sidebar to look again");
+  return opened;
+}
+
+test("a lead on a plugin's host shows through that host from its tab, and comes back once it crashes", async () => {
+  const opened = await leadOnHostEnds(1);
   await until(() => opened() === 2, "the daemon to bring site's lead back");
   press("M-S-Left");
   await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
+});
+
+// The daemon closes its tab instead, as it does for a lead you exit on tmux.
+test("a lead you exit on a plugin's host isn't brought back", async () => {
+  const opened = await leadOnHostEnds(0);
+  expect(opened()).toBe(1);
 });
 
 test("a click on a tab switches to its repository", async () => {
@@ -184,7 +201,8 @@ test("the last tab closing moves the screen to the tab before it", async () => {
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   closeTab("site");
   await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
-  expect(tabRow()).not.toContain("site");
+  // The top row is drawn after the right side has moved, so it can show site a moment longer.
+  await until(() => !tabRow().includes("site"), "site's tab to go");
 });
 
 test("with no tab left, the screen stays, saying how to open a repository", async () => {
@@ -197,6 +215,8 @@ test("with no tab left, the screen stays, saying how to open a repository", asyn
   expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
 });
 
+// The lead has no saved ID, as one an older release started, so a session that went can't be
+// told from one that never started, and the lead is brought back.
 test("a lead that stops while you look at it is brought back, once", async () => {
   daemon();
   open("lead");
@@ -244,6 +264,30 @@ test("a lead you exited isn't brought back, as its tab closes", async () => {
   );
   await Bun.sleep(2000);
   expect(asked).toEqual([]);
+});
+
+// With its ID saved, a lead whose session went can't say how it ended, and is taken as exited.
+test("a lead whose session goes while you look at it isn't brought back", async () => {
+  sql("UPDATE repositories SET lead_host_id = 'lead' WHERE repo = 'app'");
+  daemon();
+  open("lead");
+  await ready("lead");
+  tmux(agents, "kill-session", "-t", "=lead");
+  await until(() => right().includes("Waiting for the lead to start."), "the waiting line");
+  await Bun.sleep(2000);
+  expect(asked).toEqual([]);
+});
+
+test("a lead that crashes while you look at it is brought back, its ID saved", async () => {
+  sql("UPDATE repositories SET lead_host_id = 'lead' WHERE repo = 'app'");
+  daemon();
+  open("lead");
+  await ready("lead");
+  tmux(agents, "respawn-pane", "-k", "-t", "=lead:", "sh", "-c", "exit 3");
+  await until(
+    () => asked.includes("open simon/app from a tab"),
+    "the daemon to bring the lead back",
+  );
 });
 
 test("a repository removed while the screen shows it loses its tab, and the screen moves on", async () => {

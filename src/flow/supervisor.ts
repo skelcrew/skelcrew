@@ -22,6 +22,7 @@ const hostRetryMs = 5000;
 class Supervisor {
   #turn: Promise<void> = Promise.resolve();
   #asked = 0;
+  #asks = 0;
   #seen = false;
   #stopping: Promise<void> | null = null;
   #removalEnded: Promise<void> | null = null;
@@ -35,9 +36,14 @@ class Supervisor {
     };
   }
 
+  asks(): number {
+    return this.#asks;
+  }
+
   #inTurn<T>(work: (earlier: Promise<void>) => Promise<T>): Promise<T> {
     const earlier = this.#turn;
     this.#asked++;
+    this.#asks++;
     const done = work(earlier).finally(() => this.#asked--);
     this.#turn = done.then(
       () => {},

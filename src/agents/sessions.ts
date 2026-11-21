@@ -156,11 +156,11 @@ function startServer(socket: string): void {
 // Starts a named agent session with only its supplied environment, its labels and Skelcrew's
 // terminal settings, starting Skelcrew's tmux server first if it isn't up, and returns the
 // session's ID on its host. On tmux the ID is the name. A plugin's host gives its own, and is
-// handed the name and labels to show, with a colour terminal added to the environment. With `keepOnExit`, the session stays when its agent exits
-// cleanly too, so Skelcrew can tell a lead you exited from one that crashed: the first closes its
-// tab, the second doesn't. Only leads ask for that, and only tmux keeps it: a plugin's host isn't
-// asked to. A plugin's host that provides files is handed `files`, the placeholder in the
-// command that it swaps for the session's folder of dropped files.
+// handed the name and labels to show, with a colour terminal added to the environment. With
+// `keepOnExit`, the session stays when its agent exits cleanly too, so Skelcrew can tell a lead
+// you exited from one that crashed: the first closes its tab, the second doesn't. Only leads ask
+// for that, and a plugin's host is asked it too. A plugin's host that provides files is handed
+// `files`, the placeholder in the command that it swaps for the session's folder of dropped files.
 export async function startSession(
   host: Host,
   name: string,
@@ -174,13 +174,22 @@ export async function startSession(
   },
 ): Promise<string> {
   if (typeof host !== "string") {
-    const { folder, command, labels, files } = session;
+    const { folder, command, labels, files, keepOnExit } = session;
     // A plugin's host hands the agent exactly this environment, with no terminal of its own,
     // as tmux sets in its panes. The daemon's own terminal is no guide: under systemd it has
     // none, and Claude Code then draws without colour. One started from your terminal has that
     // terminal's, not the host's. So the agent always gets a colour terminal.
     const env = { ...session.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
-    const question = { ask: "start", name, folder, command, env, labels, ...(files && { files }) };
+    const question = {
+      ask: "start",
+      name,
+      folder,
+      command,
+      env,
+      labels,
+      ...(files && { files }),
+      ...(keepOnExit && { keepOnExit }),
+    };
     return (await askHost(host, question, z.object({ id: z.string().min(1) }))).id;
   }
   const socket = host;
@@ -305,13 +314,31 @@ export function exitedCleanly(socket: string, name: string): boolean {
   return tmux(socket, target).out.trim() === "1 0";
 }
 
-// Ends the named tmux session at once when its agent exited cleanly, and says whether it did. A
-// lead you exited leaves its session behind, and the daemon must clear it before anything else
-// runs, or its next look for exited leads would take it for one you just exited.
-export function endExitedSession(socket: string, name: string): boolean {
-  if (!exitedCleanly(socket, name)) return false;
-  mustTmux(socket, ["kill-session", "-t", `=${name}`]);
-  return true;
+// Reports whether a session a plugin's host lists ended as one you exited: its agent no longer
+// runs, and the host says it exited with code 0, or can't say how it ended, as Skelcrew then takes
+// it. A session that still runs was at most detached from, and one with another code, or killed,
+// crashed. A host's attach can't tell these apart, as herdr's exits 0 for both, so its list does.
+export const takenAsExited = (session: { running: boolean; ended?: { code: number | null } }) =>
+  !session.running && (session.ended === undefined || session.ended.code === 0);
+
+// Reports whether the agent in the named session ended as one you exited, on any host, so
+// Skelcrew closes a lead's tab rather than bring it back. False while it runs and after it
+// crashed. A session that is gone can't say how it ended, and counts as exited with
+// `goneIsExited`, else as not: as the daemon starts, a gone session is brought back, as after
+// the machine restarted. Throws when a plugin's host can't answer within 5 seconds: this is
+// asked every second, and a host that hangs must not hold up the next look for long.
+export async function agentExited(
+  host: Host,
+  name: string,
+  goneIsExited: boolean,
+): Promise<boolean> {
+  if (typeof host === "string")
+    return (
+      exitedCleanly(host, name) ||
+      (goneIsExited && !tmux(host, ["has-session", "-t", `=${name}`]).ok)
+    );
+  const session = (await listSessions(host, 5_000)).find((one) => one.name === name);
+  return session === undefined ? goneIsExited : takenAsExited(session);
 }
 
 // Reports whether the agent in the named session is still running, so Skelcrew only types into
@@ -439,17 +466,32 @@ export async function stopSession(host: Host, name: string, timeout = 10_000): P
 // Lists the sessions on a host, each with its labels and whether its agent is running, so a
 // starting daemon can find them. A builder that exited keeps its session and last screen, which
 // would look like it still runs. A plugin's host lists its own, each named by its ID there,
-// with null labels for a session started without them. Labels Skelcrew can't read make the whole
+// with null labels for a session started without them, and for one whose agent ended, its exit
+// code when the host knows it, null when it was killed. Labels Skelcrew can't read make the whole
 // answer an error: taken for none, they would hide a builder the daemon started but stopped
-// before saving its ID, and the thread would start a second builder in the same clone.
+// before saving its ID, and the thread would start a second builder in the same clone. A
+// plugin's host gets `timeout` milliseconds to answer, 30 seconds unless given.
 export async function listSessions(
   host: Host,
-): Promise<{ name: string; running: boolean; labels: Labels | null }[]> {
+  timeout?: number,
+): Promise<
+  { name: string; running: boolean; labels: Labels | null; ended?: { code: number | null } }[]
+> {
   if (typeof host === "string") return listTmuxSessions(host);
-  const Listed = z.object({ id: z.string(), running: z.boolean(), labels: Labels.nullable() });
+  const Listed = z.object({
+    id: z.string(),
+    running: z.boolean(),
+    labels: Labels.nullable(),
+    ended: z.object({ code: z.number().int().nullable() }).optional(),
+  });
   const answer = z.object({ sessions: z.array(Listed) });
-  const { sessions } = await askHost(host, { ask: "list" }, answer);
-  return sessions.map(({ id, running, labels }) => ({ name: id, running, labels }));
+  const { sessions } = await askHost(host, { ask: "list" }, answer, { timeout });
+  return sessions.map(({ id, running, labels, ended }) => ({
+    name: id,
+    running,
+    labels,
+    ...(ended && { ended }),
+  }));
 }
 
 // Lists the sessions on Skelcrew's tmux server as listSessions does, at once, for the sidebar,

@@ -501,6 +501,117 @@ console.log(await hasSession(host, "fake-lead-app"));`,
   expect(readFileSync(join(fake, "asked"), "utf8")).toContain('"ask":"end"');
 });
 
+// Runs simon/app's lead on the fake host with `command`, waits for it to end unless it runs on,
+// then has you attach and detach through the host's attach, and lets the daemon look for leads
+// you exited. Returns whether the tab closed, then whether the lead's session is still there.
+// With `files`, those files are in the host's settings folder first, such as no-ended. With
+// `gone`, the host forgets the session once it ended, as an older plugin may. With `unsaved`,
+// the lead's ID never got saved, and the look is the one the daemon makes as it starts. With
+// `hung`, the host never answers the look.
+function afterLeadLook(
+  command: string[],
+  { ends = true, files = [] as string[], gone = false, unsaved = false, hung = false } = {},
+): string {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  return runWithFakeHost(
+    "sessions",
+    `const { closeExitedLeads, closeLeadAtStart } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { attachOnHost, pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+for (const file of ${JSON.stringify(files)}) fs.writeFileSync(${JSON.stringify(fake)} + "/" + file, "");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 1, 'fake', ${unsaved ? "NULL" : "'fake-lead-app'"})");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ${JSON.stringify(command)}, env: {}, labels: { repository: "simon/app", role: "lead" }, keepOnExit: true });
+const exit = ${JSON.stringify(join(fake, "sessions", "fake-lead-app", "exit"))};
+for (let i = 0; ${ends} && i < 200 && !fs.existsSync(exit); i++) await Bun.sleep(25);
+if (${gone}) fs.rmSync(${JSON.stringify(join(fake, "sessions", "fake-lead-app"))}, { recursive: true });
+attachOnHost(host, "fake-lead-app");
+const hold = ${JSON.stringify(join(fake, "hold-list"))};
+if (${hung}) fs.writeFileSync(hold, "1");
+if (${unsaved}) await closeLeadAtStart(db, "unused", { owner: "simon", repo: "app" });
+else await closeExitedLeads(db, "unused");
+fs.rmSync(hold, { force: true });
+const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
+console.log(row.tab_closed, await hasSession(host, "fake-lead-app"));`,
+    {},
+  );
+}
+
+// What the daemon says as it closes the tab of a lead you exited.
+const closed = "simon/app's lead exited, so its tab is closed until you open it again.\n";
+
+// A host's attach returns alike when you detach and when the agent ends, as herdr's exits 0 for
+// both, so only what the host lists says which it was.
+test("detaching from a lead on a plugin's host keeps the lead and its tab", () => {
+  expect(afterLeadLook(["sleep", "30"], { ends: false })).toBe("0 true\n");
+});
+
+test("a lead you exited on a plugin's host closes its tab and ends its session", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 0"])).toBe(`${closed}1 false\n`);
+});
+
+test("a lead that crashed on a plugin's host keeps its tab, to be brought back", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 3"])).toBe("0 true\n");
+});
+
+// Skelcrew can't tell how it ended, and takes such a lead as exited.
+test("a lead that ended on a host that can't say how is taken as exited", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 3"], { files: ["no-ended"] })).toBe(`${closed}1 false\n`);
+});
+
+test("a lead whose session a host forgot once it ended is taken as exited", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 3"], { gone: true })).toBe(`${closed}1 false\n`);
+});
+
+// The daemon stopped after the lead started but before it saved the lead's ID, and the lead
+// exited while it was down.
+test("a lead whose ID never got saved that exited while the daemon was down closes its tab", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 0"], { unsaved: true })).toBe(`${closed}1 false\n`);
+});
+
+// A host that never answers keeps the lead and its tab, and holds up the look only a moment.
+test("a host that doesn't answer holds up the look for exited leads only a few seconds", () => {
+  const started = Date.now();
+  expect(afterLeadLook(["sleep", "30"], { ends: false, hung: true })).toBe("0 true\n");
+  expect(Date.now() - started).toBeLessThan(15_000);
+}, 30_000);
+
+// Runs `code` with simon/app opened, its lead on the fake host as `row` says, and a stand-in for
+// the sandbox on PATH that keeps a lead running. `startLead`, which starts the lead in its
+// supervisor's turn as the daemon does, `closeExitedLeads`, `leadOf`, the host, `fake`, its
+// settings folder, `repository` and `tab()`, whether the tab is closed, are at hand.
+function leadRace(row: string, code: string): string {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  mkdirSync(join(home, "bin"), { recursive: true });
+  for (const sandbox of ["bwrap", "sandbox-exec"])
+    writeFileSync(join(home, "bin", sandbox), "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+  return runWithFakeHost(
+    "sessions",
+    `const lead = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { closeExitedLeads, leadOf } = lead;
+const startLead = (db, sessions, repository) => lead.leadAgent("simon", "app").start({ start: () => lead.startLead(db, sessions, repository) });
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const { agentRuns } = await import(${JSON.stringify(source("agents/sessions.ts"))});
+const fs = require("node:fs");
+const fake = ${JSON.stringify(fake)};
+fs.mkdirSync(fake, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "config.yaml"))}, "harness: claude\\nsession: fake\\n");
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "claude-token"))}, "sk-ant-oat01-good\\n");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 1, ${row})");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+const host = pluginHost(db, "fake");
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+const tab = () => db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get().tab_closed;
+${code}
+process.exit(0);`,
+    {},
+  );
+}
+
 // Closing a repository ends its lead in the lead's turn. A host slow to end it can see you open
 // the repository again meanwhile. The start that opening asks for then comes after the end, so it
 // never finds the old lead still running and keeps it, only for the end to take it away.
@@ -526,6 +637,264 @@ process.exit(0);`,
     {},
   );
 }
+
+// The host forgot the lead's last session, and is slow to say so. A look for exited leads is
+// waiting on it as the lead starts again in that session's place.
+test("a lead starting in place of a session its host forgot keeps its tab", () => {
+  const said = leadRace(
+    "'fake', 'fake-forgotten'",
+    `fs.writeFileSync(fake + "/slow-list", "");
+const looking = closeExitedLeads(db, "unused");
+await Bun.sleep(300);
+const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
+await looking;
+console.log(await starting, tab());`,
+  );
+  expect(said).toContain("started 0\n");
+}, 30_000);
+
+// The lead's last session ended with code 0 and the lead starts again in its place, slowly
+// ending that session first. Meanwhile, typing a note finds the old session by its labels, and a
+// look for exited leads comes.
+test("a lead starting in place of an ended session keeps its tab, whatever finds that session", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { leadSession } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
+await Bun.sleep(1000);
+await leadSession(db, "unused", "simon", "app");
+await closeExitedLeads(db, "unused");
+console.log(await starting, tab(), await agentRuns(host, id));`,
+  );
+  expect(said).toContain("started 0 true\n");
+}, 30_000);
+
+// The look takes a while to end the lead you exited, and you open the repository meanwhile. The
+// host gives the new lead the same ID as the last one.
+test("a lead opened again while its exited session is being ended keeps running", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const looking = closeExitedLeads(db, "unused");
+for (let i = 0; i < 200 && tab() === 0; i++) await Bun.sleep(25);
+db.run("UPDATE repositories SET tab_closed = 0");
+await startLead(db, "unused", repository);
+await looking;
+console.log(await agentRuns(host, id), tab());`,
+  );
+  expect(said).toContain("true 0\n");
+}, 30_000);
+
+// Two checks come for the lead you exited at once, such as the daemon's look and a brief to the
+// lead, while the host is slow to end it, and you open the repository again between them. The
+// host gives the new lead the same ID as the last one.
+test("overlapping checks of an exited lead end it once, and a lead opened between them keeps running", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const first = closeIfExited(db, "unused", "simon", "app");
+for (let i = 0; i < 200 && tab() === 0; i++) await Bun.sleep(25);
+const second = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(300);
+db.run("UPDATE repositories SET tab_closed = 0");
+await startLead(db, "unused", repository);
+const ends = fs.readFileSync(fake + "/asked", "utf8").split("\\n").filter((line) => line.includes('"ask":"end"')).length;
+console.log(await first, await second, await agentRuns(host, id), tab(), ends);`,
+  );
+  expect(said).toContain("true false true 0 1\n");
+}, 30_000);
+
+// A check for exited leads asks the host about the lead you exited, and the host answers late.
+// Meanwhile you open the repository again, and the lead starts on the same ID as before. The
+// answer that comes then is about the old session.
+test("a host's late answer about an exited lead leaves the lead started meanwhile running", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/late-list", "4");
+const checking = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(500);
+fs.rmSync(fake + "/late-list");
+await startLead(db, "unused", repository);
+console.log(await checking, await agentRuns(host, id), tab());`,
+  );
+  expect(said).toContain("false true 0\n");
+}, 30_000);
+
+// Two checks ask the host about the lead you exited at the same time, and both get its answer
+// late, one after the other.
+test("two checks waiting on the host at once end an exited lead once", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/late-list", "1");
+const first = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(300);
+const second = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(300);
+fs.rmSync(fake + "/late-list");
+const closed = [await first, await second];
+const ends = fs.readFileSync(fake + "/asked", "utf8").split("\\n").filter((line) => line.includes('"ask":"end"')).length;
+console.log(closed.join(" "), tab(), ends);`,
+  );
+  expect(said).toContain("true false 1 1\n");
+}, 30_000);
+
+// The lead starts and runs, but the host fails a moment as Skelcrew checks that it started. The
+// lead may still run there, so it keeps its ID, and the look for exited leads keeps reaching it.
+test("a lead whose host fails as its start is checked keeps its ID", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
+const asked = () => (fs.existsSync(fake + "/asked") ? fs.readFileSync(fake + "/asked", "utf8") : "");
+for (let i = 0; i < 400 && !asked().includes('"ask":"start"'); i++) await Bun.sleep(25);
+// The check comes a second after the start, after the lead's notes and status went in.
+await Bun.sleep(700);
+fs.writeFileSync(fake + "/fail-list", "");
+console.log(await starting);
+const { hostId } = leadOf(db, "simon", "app");
+console.log(hostId, await agentRuns(host, hostId));`,
+  );
+  expect(said).toContain("fake couldn't list");
+  expect(said).toMatch(/fake-lead-app\S* true\n$/);
+}, 30_000);
+
+// A brief to the lead checks it while the daemon's look is still ending it, slowly. The brief
+// opens the tab again once its check returns, which must be after the old session is gone, or a
+// daemon stopped then would find it and close the tab with the brief waiting.
+test("a check of a lead already being ended returns once its session is gone", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const first = closeIfExited(db, "unused", "simon", "app");
+for (let i = 0; i < 200 && tab() === 0; i++) await Bun.sleep(25);
+const second = await closeIfExited(db, "unused", "simon", "app");
+fs.rmSync(fake + "/slow-end");
+console.log(second, await hasSession(host, id), await first);`,
+  );
+  expect(said).toContain("false false true\n");
+}, 30_000);
+
+// A brief checks the lead while it still runs, and the host is slow to say so. The lead exits
+// meanwhile, and the daemon's look begins ending it, slowly. The brief's answer, that the lead
+// runs, comes while that ending is still under way.
+test("a check whose host said the lead runs waits for an ending begun meanwhile", () => {
+  const stop = join(home, "stop-lead");
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const command = ["sh", "-c", "while [ ! -e ${stop} ]; do sleep 0.05; done"];
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command, env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+fs.writeFileSync(fake + "/late-list", "2");
+const brief = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(300);
+fs.rmSync(fake + "/late-list");
+fs.writeFileSync(${JSON.stringify(stop)}, "");
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const look = closeIfExited(db, "unused", "simon", "app");
+console.log(await brief, await hasSession(host, id), await look);`,
+  );
+  expect(said).toContain("false false true\n");
+}, 30_000);
+
+// The daemon's look can't end the lead you exited, and a brief that waited for it must not go on
+// as if the old session were gone. Once the host can end it, the next look does, though the tab
+// is closed by then.
+test("a check waiting for an ending that failed fails too, and the next look ends the lead", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+fs.writeFileSync(fake + "/say-end", "the host can't end it");
+const look = closeIfExited(db, "unused", "simon", "app");
+for (let i = 0; i < 200 && tab() === 0; i++) await Bun.sleep(25);
+const brief = await closeIfExited(db, "unused", "simon", "app").then(String, (error) => error.message);
+console.log(brief);
+console.log(await look.then(String, (error) => error.message), tab());
+fs.rmSync(fake + "/say-end");
+fs.rmSync(fake + "/slow-end");
+await closeExitedLeads(db, "unused");
+console.log(await hasSession(host, id), tab());`,
+  );
+  const failed = "couldn't end simon/app's exited lead: fake couldn't end: the host can't end it";
+  expect(said).toContain(`${failed}\n${failed} 1\nfalse 1\n`);
+}, 30_000);
+
+// A brief checks the lead while it still runs, and the host is slow to say so. The lead exits
+// meanwhile, and the daemon's look fails to end it. The brief's late answer, that the lead runs,
+// must not count as the old session being gone.
+test("a late answer that the lead runs doesn't undo an ending that failed meanwhile", () => {
+  const stop = join(home, "stop-lead");
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const command = ["sh", "-c", "while [ ! -e ${stop} ]; do sleep 0.05; done"];
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command, env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+fs.writeFileSync(fake + "/late-list", "2");
+const brief = closeIfExited(db, "unused", "simon", "app").then(String, (error) => error.message);
+await Bun.sleep(300);
+fs.rmSync(fake + "/late-list");
+fs.writeFileSync(${JSON.stringify(stop)}, "");
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/say-end", "the host can't end it");
+console.log(await closeIfExited(db, "unused", "simon", "app").then(String, (error) => error.message));
+console.log(await brief);
+console.log(await hasSession(host, id), tab());`,
+  );
+  const failed = "couldn't end simon/app's exited lead: fake couldn't end: the host can't end it";
+  expect(said).toContain(
+    `${failed}\ncouldn't end simon/app's exited lead: its last ending failed, and is tried again each second\ntrue 1\n`,
+  );
+}, 30_000);
+
+test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
+  const lead = { repository: "simon/app", role: "lead" } as const;
+  const on = host();
+  const session = { folder: home, command: ["sleep", "30"], env: {}, labels: lead };
+  await startSession(on, "lead-app", { ...session, keepOnExit: true });
+  await startSession(on, "app-12", { ...session, labels });
+  const starts = readFileSync(join(settings(), "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).keepOnExit);
+  expect(starts).toEqual([true, undefined]);
+});
 
 test("a repository opened again while its lead's host is slow to end it starts the lead only after the end", () => {
   const said = closingLead(`const ending = endLeadOfClosedTab(db, "unused", repository, "close");
