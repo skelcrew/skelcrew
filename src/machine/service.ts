@@ -280,7 +280,7 @@ export async function restartDaemon(): Promise<void> {
     before !== null && (before.pid === 0 ? servicePid() === 0 : outsideService(before));
   if (terminal)
     throw new Error(
-      "Skelcrew's engine runs in a terminal, with sc serve, not as its service. Stop it there, such as with Ctrl-C, then run sc serve again, or sc serve --bg to run it as the service. Your agents keep running.",
+      "Skelcrew's daemon runs in a terminal, with sc serve, not as its service. Stop it there, such as with Ctrl-C, then run sc serve again, or sc serve --bg to run it as the service. Your agents keep running.",
     );
   const began = Date.now();
   const log = restartService();
@@ -290,11 +290,11 @@ export async function restartDaemon(): Promise<void> {
     if (made >= began && (await daemonStatus())) break;
     if (Date.now() > deadline)
       throw new Error(
-        `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why. An engine from an older release that you ran with sc serve in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
+        `Skelcrew's daemon didn't come back within ${restartWait / 1000} seconds: ${log} shows why. A daemon from an older release that you ran with sc serve in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
       );
     await Bun.sleep(100);
   }
-  console.log(`Restarted the engine on ${userInfo().username}@${hostname()}. Agents kept running.`);
+  console.log(`Restarted the daemon on ${userInfo().username}@${hostname()}. Agents kept running.`);
 }
 
 // Runs the daemon as the background service on this Skelcrew's code, and returns once it

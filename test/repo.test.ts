@@ -532,9 +532,9 @@ test("names two repositories that share a name with their owners", async () => {
 
 // A builder's title on its plugin's host starts with its task's name, which gains its owner once
 // another repository shares its name, and loses it once none does. The host keeps the title
-// while the builder runs, so adding and removing a repository has the engine rename them. The
-// engine does it, so a host that fails says so in its log, not in sc repo's output.
-test("adding or removing a repository asks the engine to rename the running builders", async () => {
+// while the builder runs, so adding and removing a repository has the daemon rename them. The
+// daemon does it, so a host that fails says so in its log, not in sc repo's output.
+test("adding or removing a repository asks the daemon to rename the running builders", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
   writeFileSync(join(home, "calls"), "");
   await skel([], "", onGitHub("other/app", "WRITE"));
@@ -596,7 +596,7 @@ test("repo ls lists each repository with its tracker and forge, as text and for 
   expect((await skel(["repo", "ls"])).out).toContain("linear, not installed");
 });
 
-// The engine can't install a plugin, as only a yes at your terminal can, so the row says to.
+// The daemon can't install a plugin, as only a yes at your terminal can, so the row says to.
 test("repo ls says to run sc install while a repository's files name a plugin this machine lacks", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
   const waiting = async () =>

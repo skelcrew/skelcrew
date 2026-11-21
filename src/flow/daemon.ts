@@ -681,7 +681,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const own = leadRepository && `${leadRepository.owner}/${leadRepository.repo}`;
         return { repositories: own ? all.filter((r) => r.repository === own) : all };
       }
-      // Done here, not by sc repo itself, so a host that fails says so in the engine's log, never
+      // Done here, not by sc repo itself, so a host that fails says so in the daemon's log, never
       // in your terminal about a thread you didn't ask about. It answers at once, as a slow host
       // could take a minute over its builders, which sc repo has no reason to wait for.
       case "rename builders":

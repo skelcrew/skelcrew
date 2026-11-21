@@ -2505,7 +2505,7 @@ test("a click on a stage's heading opens or closes it, and the wheel moves a row
   expect(here()).toStartWith("▸ ○ 7 ");
 });
 
-// A Skelcrew run from a checkout names its commit, read from git as the engine reads it, and says
+// A Skelcrew run from a checkout names its commit, read from git as the daemon reads it, and says
 // when it has changes not committed. A stand-in git names the commit, and passes the rest on.
 test("from a checkout, the top line names its commit and its uncommitted changes", async () => {
   const bin = join(home, "bin");

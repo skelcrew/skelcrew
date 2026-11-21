@@ -17,7 +17,7 @@ import { versionLine } from "./version.ts";
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   "--list": "showing the list",
-  restart: "restarting the engine",
+  restart: "restarting the daemon",
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",

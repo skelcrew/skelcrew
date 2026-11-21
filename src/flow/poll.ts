@@ -55,7 +55,7 @@ const startLabel = "skelcrew";
 // this daemon won't start by its label: someone else claimed it, or its claim was this
 // daemon's but the thread failed to start. Kept in memory, so the tracker isn't asked about it
 // on every poll. Nothing starts until Skelcrew's clone has a commit. Each claim is saved before
-// it is asked for, until its outcome is known. A claim whose ask failed, or that the engine's
+// it is asked for, until its outcome is known. A claim whose ask failed, or that the daemon's
 // stop cut short, may have been granted to this machine, so when the tracker then says the issue
 // is taken, Skelcrew can't tell by whom: it starts nothing, so no task starts twice, and tells
 // the lead, so none is lost without a word. So does one whose label is gone since.
@@ -88,7 +88,7 @@ async function startLabeled(
     (!existsSync(cloneDir(owner, repo)) || (await hasNoCommits(db, repository)))
   )
     return;
-  // A claim saved for a task that has a thread at work now was granted, and the engine stopped
+  // A claim saved for a task that has a thread at work now was granted, and the daemon stopped
   // before it was forgotten. One for a queued task is the claim it still owes, which the queue
   // makes. One for a task sc rm removed, as done, is left to the step below.
   db.run(
@@ -99,7 +99,7 @@ async function startLabeled(
   );
   const claimWhere = "WHERE owner = ? AND repo = ? AND task = ?";
   const forget = (id: string) => db.run(`DELETE FROM claims ${claimWhere}`, [owner, repo, id]);
-  // A claim saved for a task nothing asks to start now was cut short by the engine's stop: one
+  // A claim saved for a task nothing asks to start now was cut short by the daemon's stop: one
   // with no thread whose label was removed or whose issue was closed since, or one for a task
   // sc rm removed while it was asked. It may be this machine's, so the lead hears of it, and
   // Skelcrew doesn't ask the tracker again, as that would claim an issue nobody asks for now. The

@@ -79,7 +79,7 @@ function checkoutLabels(build: string | null): string[] {
 // Returns which Skelcrew this is, as the screen's header and the list's top line show it after
 // "Skelcrew": the release, such as v0.4.2, or a checkout's commit, so a screenshot always says
 // which Skelcrew it came from. The longest name comes first, then any shorter ones. The checkout
-// is read once, with the same git commands the engine uses to decide when to restart, as the
+// is read once, with the same git commands the daemon uses to decide when to restart, as the
 // code that runs doesn't change after it starts. Only when asked, so commands that never draw,
 // such as an agent's sc submit, don't run git for it.
 let shown: string[] = [];

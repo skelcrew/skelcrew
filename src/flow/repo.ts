@@ -494,11 +494,11 @@ function oldRemoteOf(
   return { old, current, url: url.slice(0, at) + current + url.slice(at + old.length) };
 }
 
-// Asks the engine to rename each running builder on a plugin's host by its title as it is now, as
-// adding or removing a repository can give another's name its owner or take it away. The engine
-// does it, so a host that fails says so in the engine's log, not here among sc repo's output. The
-// engine answers before renaming, so a slow host never holds sc repo up. With no engine running,
-// nothing is renamed now, and the engine renames them all as it starts.
+// Asks the daemon to rename each running builder on a plugin's host by its title as it is now, as
+// adding or removing a repository can give another's name its owner or take it away. The daemon
+// does it, so a host that fails says so in the daemon's log, not here among sc repo's output. The
+// daemon answers before renaming, so a slow host never holds sc repo up. With no daemon running,
+// nothing is renamed now, and the daemon renames them all as it starts.
 async function renameBuilders(): Promise<void> {
   // Imported here, as the client's replies are checked with what sc repo ls lists, which
   // imports this file, and a loop of imports leaves one of them unset as the other loads.

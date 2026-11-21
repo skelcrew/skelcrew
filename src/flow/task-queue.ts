@@ -1,6 +1,6 @@
 // The queue of tasks under limits.threads: a start over its repository's limit waits there as
 // queued, and leaves it, first come first served, once one of the repository's builders ends. It
-// is kept in the database, so a restart of the engine keeps each task's place.
+// is kept in the database, so a restart of the daemon keeps each task's place.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { threadLimit } from "../config.ts";
@@ -96,7 +96,7 @@ const Owes = z.object({ owes: z.coerce.boolean() });
 // repository's limit allows now, and returns their threads. Each leaves the queue working, or a
 // stopped one coming back as statusOnceBack says, and the caller starts its builder. Each keeps
 // when it joined until its builder's session is saved, so backToQueue can put it back should
-// the engine stop before then. It all happens at once, with nothing waited on, so no task leaves
+// the daemon stop before then. It all happens at once, with nothing waited on, so no task leaves
 // the queue twice. A thread in `skip`, such as one sc rm is removing, stays in the queue, as does
 // one that still owes its claim. Each also holds back every task of its repository that joined
 // after it, so the queue stays first come first served, even when sc rm then fails. A repository whose limit can't be read keeps its queue
@@ -133,7 +133,7 @@ export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
   return leaving;
 }
 
-// Puts back in the queue each task that left it but whose builder's start the engine's stop cut
+// Puts back in the queue each task that left it but whose builder's start the daemon's stop cut
 // short, before its session was saved. Such a thread can't be brought back, and would otherwise
 // fail and leave the queue for good. It goes back in its place, by when it first joined, ahead
 // of the tasks that joined after it. For the daemon's start, before it brings back builders.
@@ -148,7 +148,7 @@ export function backToQueue(db: Database): void {
       db,
       thread.folder,
       { status: "queued" },
-      "back in the queue: the engine stopped as it started",
+      "back in the queue: the daemon stopped as it started",
     );
 }
 
@@ -217,13 +217,13 @@ const claiming = new Map<string, Promise<void>>();
 const claimKey = (thread: Thread) => `${thread.folder}@${thread.started}`;
 
 // Returns whether the claim this start of the thread owes is being asked for now, so a claim
-// whose answer is still coming isn't taken for one the engine's stop cut short.
+// whose answer is still coming isn't taken for one the daemon's stop cut short.
 export function claimUnderWay(thread: Thread): boolean {
   return claiming.has(claimKey(thread));
 }
 
 // Asks again for each claim a queued task still owes, such as one whose ask failed or that a
-// restart of the engine cut short, without waiting. A claim that fails again is logged, and
+// restart of the daemon cut short, without waiting. A claim that fails again is logged, and
 // asked for once more the next time.
 export function claimOwed(db: Database, sessions: string): void {
   const owing = db

@@ -414,7 +414,7 @@ export function checkoutNames(source: string): boolean {
 // Reports whether the repository Skelcrew keeps in `folder` needs you to run sc install: its files
 // name a plugin this machine lacks at the version and commit its skelcrew.lock pins, one with no
 // pin, one sc install refuses, such as a runtime plugin, or can't be read, which sc install then
-// says. The engine can't install anything itself, as
+// says. The daemon can't install anything itself, as
 // only a yes at your terminal can, so the repository's row in sc repo ls says to.
 export function needsInstall(folder: string): boolean {
   try {
