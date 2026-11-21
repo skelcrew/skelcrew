@@ -250,6 +250,10 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
     // The fake builder merged it from its origin, as it was told.
     await untilMerged();
+    // Maintenance stays off in the thread's clone, so the builder's fetch and merge never start
+    // it while the daemon fetches the round from there.
+    expect(git(clone(), "config", "--get", "maintenance.auto")).toBe("false");
+    expect(git(clone(), "config", "--get", "gc.auto")).toBe("0");
     submitRound2();
     await until(() => thread().submitting === null);
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("the round failed");

@@ -28,7 +28,6 @@ afterEach(endTest);
 
 const skelcrew = () => join(home, ".local", "share", "skelcrew");
 
-// Drops a file onto the terminal, as a terminal pastes its path, and sends it to the agent.
 // Drops a file onto the terminal, as a terminal pastes its path, and presses Enter right after.
 // Enter waits for the paste, so the agent gets the path.
 function drop(path: string): void {
@@ -63,6 +62,27 @@ test("a file dropped onto a builder you attached to reaches it in its clone", as
   await ready("lead");
   press("M-S-Down");
   await attachTo("app-12");
+  drop(notes);
+  const line = await got("app-12");
+  expect(line.startsWith(`${join(skelcrew(), "threads", "app-12", ".skelcrew-drops")}/`)).toBe(
+    true,
+  );
+  expect(readFileSync(line, "utf8")).toBe("notes");
+});
+
+test("a file dropped onto a builder you opened full screen reaches it in its clone", async () => {
+  daemon();
+  const notes = join(home, "notes.txt");
+  writeFileSync(notes, "notes");
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onDetails, "APP-12's details");
+  type("a");
+  // tmux zooms the right side, so it fills the terminal.
+  const zoomed = () =>
+    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
+  await until(() => zoomed().trim() === "1", "app-12 full screen");
   drop(notes);
   const line = await got("app-12");
   expect(line.startsWith(`${join(skelcrew(), "threads", "app-12", ".skelcrew-drops")}/`)).toBe(

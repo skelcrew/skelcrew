@@ -63,7 +63,7 @@ const agents = ${JSON.stringify(agents)};
 const session = ${JSON.stringify(session())};
 const name = ${JSON.stringify(name)};
 if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", name, true);
-else console.log((await attachTask(agents, session, "simon/app", name, true)) ?? "");`;
+else console.log((await attachTask(agents, session, "simon/app", name, true, () => true, false)) ?? "");`;
 }
 
 // Does what onRow does without waiting for it, and gives what it printed once it ends.
@@ -106,7 +106,7 @@ test("o on a task's row shows its builder's whole screen and back, and Enter sti
   press("M-Down");
   await until(() => right().includes("Login redirect"), "app-7's details");
   await until(() => right().includes("I am app-7"), "app-7's screen");
-  expect(footer()).toContain("⏎ attach · o output");
+  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen · o output");
   for (const line of ["one", "two", "three", "four"])
     tmux(agents, "send-keys", "-t", "=app-7:", "-l", `${line}\r`);
   // By default only the last three lines of the builder's screen show.
@@ -220,17 +220,23 @@ test("moving to another row while attached comes back from the builder, and show
   expect(tmux(agents, "list-clients").out).not.toContain("app-7");
 });
 
-test("Ctrl-\\ on the lead or a task's details does nothing", async () => {
+// Ctrl-\\ moves your typing to the sidebar, and on a task's details it is there already, so the
+// details stay.
+test("Ctrl-\\ on the lead moves your typing to the sidebar, and on a task's details keeps it there", async () => {
   open("lead");
   await ready("lead");
+  expect(typingTo()).toBe("1");
   press("C-\\");
-  type("on the lead\r");
-  await until(() => read("lead.typed") === "on the lead\n", "what reached the lead");
+  await until(() => typingTo() === "0", "your typing to move to the sidebar");
+  type("x");
+  await Bun.sleep(300);
+  expect(read("lead.typed")).toBe("");
   onRow("show", "APP-7");
   await until(() => right().includes("I am app-7"), "app-7's details");
   press("C-\\");
   await Bun.sleep(500);
   expect(right()).toContain("I am app-7");
+  expect(typingTo()).toBe("0");
 });
 
 test("Enter on a task whose builder isn't running, or that went, says so, and attaches to nothing", async () => {

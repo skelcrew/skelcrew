@@ -106,16 +106,24 @@ function drawTabs(tabs: Tab[], open: string, width: number): string {
 }
 
 // What the top row shows: the tabs and the open one's owner/name, the remote Skelcrew runs on, if
-// any, and the names of the version of the Skelcrew running here, longest first, such as v0.4.2.
-export type Top = { tabs: Tab[]; open: string; where: string; versions: string[] };
+// any, the names of the version of the Skelcrew running here, longest first, such as v0.4.2, and
+// whether your typing goes to the right side, which the sidebar's edge leans to.
+export type Top = {
+  tabs: Tab[];
+  open: string;
+  where: string;
+  versions: string[];
+  typingRight: boolean;
+};
 
 // Returns the top row of the screen as a tmux format, given what it shows and where the right
 // side's pane is, `left` columns in and `width` wide. tmux's one status line spans the whole
 // terminal. Above the sidebar is the header, with the sidebar's edge carried up through the row,
-// so the edge runs from top to bottom. Above the right side are the tabs. It reads nothing, so
-// what you see can be tested without a terminal.
+// so the edge runs from top to bottom, leaning to the side your typing goes to, as the sidebar
+// draws it. Above the right side are the tabs. It reads nothing, so what you see can be tested
+// without a terminal.
 export function drawTop(top: Top, size: Size): string {
   const { left, width } = size;
-  const edge = "#[fg=colour237]│#[default] ";
+  const edge = `#[fg=colour250]${top.typingRight ? "▕" : "▏"}#[default] `;
   return `${header(top.where, left, top.versions)}${edge}${drawTabs(top.tabs, top.open, width)}`;
 }
