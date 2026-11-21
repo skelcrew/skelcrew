@@ -17,7 +17,7 @@ import {
   unknownQuestion,
 } from "../plugins/runtime.ts";
 import { threadTask } from "./copy.ts";
-import { Posting, ReviewPost, RoundEvent } from "./ledger.ts";
+import { Posting, ReviewPost, RoundEvent, reviewPending } from "./ledger.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -340,8 +340,7 @@ export const hostGone = (thread: Thread) =>
 // wait either, as the queued time left from its older round's review isn't about it.
 export const queuedForReview = (thread: Thread) =>
   (thread.status === "working" || thread.status === "waiting") &&
-  thread.submitting === null &&
-  thread.reviewing !== null &&
+  reviewPending(thread) &&
   thread.queued !== null;
 
 // Returns the thread's repository as owner/name.

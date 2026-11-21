@@ -771,8 +771,8 @@ function postVerdict(db: Database, sessions: string, folder: string): Promise<st
 
 // Saves the note telling the lead the round limit holds the thread's changes, as its review went
 // on the PR, or with the verdict without a forge, so the note never names a review the PR doesn't
-// show yet. Only while the thread still holds them and needs you: a submit or a decision since
-// ends that. A thread with a note still to type for another reason keeps it, and the lead gets
+// show yet. The ledger gives the note only while the changes are still held, and it is saved only
+// while the thread needs you. A thread with a note still to type for another reason keeps it, and the lead gets
 // this one apart. The caller saves it with the change that brought it, and types the notes.
 export function noteLimit(
   db: Database,
@@ -782,7 +782,7 @@ export function noteLimit(
 ): void {
   if (note === null) return;
   const thread = readThread(db, folder);
-  if (roundOf(thread).held === null || !neededYou(thread)) return;
+  if (!neededYou(thread)) return;
   if (thread.noting === null) record(db, folder, { noting: note }, "its review is posted");
   else {
     const line = `${threadName(db, thread)} needs you: ${note}`;

@@ -368,12 +368,22 @@ const moving = new Set([
 ]);
 
 // Returns whether the thread's round moved on between two reads of it, from the events added to
-// its record since. What the forge said in between is then about an older round.
-export function roundMoved(before: Thread, after: Thread): boolean {
-  const count = (thread: Thread) => recordOf(thread).filter((e) => moving.has(e.kind)).length;
+// its record since. What the forge said in between is then about an older round. `posted` counts
+// a verdict that went on the forge too, as a merge goes by what the PR shows.
+export function roundMoved(before: Thread, after: Thread, posted = false): boolean {
+  const counts = (event: RoundEvent) =>
+    moving.has(event.kind) || (posted && event.kind === "posted");
+  const count = (thread: Thread) => recordOf(thread).filter(counts).length;
   return before.round_log === null
     ? after.round_log !== null && count(after) > 0
     : count(after) !== count(before);
+}
+
+// Returns whether the thread's pushed commit waits on its review or is being reviewed, with no
+// newer submit still pushing.
+export function reviewPending(thread: Thread): boolean {
+  const { submitting, reviewing } = roundOf(thread);
+  return submitting === null && reviewing !== null;
 }
 
 // The builder submitted, which drops what the older review asked for. A flow with no review stage

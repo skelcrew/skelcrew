@@ -277,10 +277,7 @@ export async function mergeIfReady(
   // `pr` is what the forge said while this poll ran. A round that moved on meanwhile, such as
   // a review that started or ended, or a saved verdict this poll just posted, makes it stale: the checks of the new round may not be in
   // it yet. The next poll acts on the PR as it is after the round.
-  const moved =
-    thread.started !== before.started ||
-    roundMoved(before, thread) ||
-    JSON.stringify(roundOf(thread).posting) !== JSON.stringify(roundOf(before).posting);
+  const moved = thread.started !== before.started || roundMoved(before, thread, true);
   if (moved) return;
   const name = threadName(db, thread);
   const pinned = thread.merge_pinned;
