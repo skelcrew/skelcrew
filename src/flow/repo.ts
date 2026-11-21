@@ -594,15 +594,6 @@ const starterConfig = [
   "",
 ].join("\n");
 
-// Names the forge's plugin under plugins: in the checkout's skelcrew.yaml and pins it in its
-// skelcrew.lock, as sc add does, so every repository has the same standard setup. The forge is
-// found from the remote alone: GitHub's plugin for github.com, and none for a host Skelcrew has
-// no plugin for. A skelcrew.yaml that names any plugin already chose them, so it is left alone.
-// A skelcrew.lock that pins the plugin already keeps its pin, which sc add would move to the
-// version installed here: only skelcrew.yaml gains its name, and the plugin is installed at that
-// pin as sc install does, after asking, so the repository comes in with its forge. A plugin that
-// can't be added, or that you say no to, is only reported, as the rest of sc init still counts. Returns what it
-// changed: "named" for skelcrew.yaml alone, "pinned" for both files, or null for neither.
 function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
   const onGitHub = parseRemote(remote);
   if (onGitHub?.host !== "github.com") return null;
@@ -617,11 +608,10 @@ function addForgePlugin(root: string, remote: string): "named" | "pinned" | null
     const shown = gitHubShown(`${onGitHub.owner}/${onGitHub.repo}`);
     if (addRepositoryPlugin(githubPlugin, shown) !== null) return "pinned";
   } catch (error) {
-    // The error says what to do, such as which line to add by hand.
     console.log(`Skelcrew couldn't add ${githubPlugin}: ${errorText(error)}.`);
     return null;
   }
-  console.log(`skelcrew.yaml names no forge plugin yet. sc add ${githubPlugin} adds it.`);
+  console.log(`skelcrew.yaml names no forge plugin yet. sc plugin add ${githubPlugin} adds it.`);
   return null;
 }
 

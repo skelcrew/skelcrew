@@ -1,6 +1,6 @@
-// Your personal plugins: sc install, sc add -g, sc remove -g, sc update -g, sc setup and sc
-// plugins. A plugin comes from a version tag on GitHub, pinned in your own lock, or from a folder
-// of yours. Only you run these, in your own terminal.
+// Your personal plugins: sc install, and sc plugin add -g, rm -g, update -g, setup and ls. A
+// plugin comes from a version tag on GitHub, pinned in your own lock, or from a folder of yours.
+// Only you run these, in your own terminal.
 import type { Database } from "bun:sqlite";
 import {
   existsSync,
@@ -74,23 +74,15 @@ function newestTag(source: string): string {
   return `v${newest}`;
 }
 
-// Fetches a GitHub repository into a temporary folder beside the installed plugins: at `commit`
-// when your lock pins one, or else at the version tag. Returns that folder, its manifest and its
-// commit, once the manifest's version matches the tag. The caller moves the folder into place
-// only after you agree, so a fetch stopped halfway never looks like a plugin.
 function cloneTag(
   source: string,
   tag: string,
   commit?: string,
 ): { staged: string; manifest: Manifest; commit: string } {
-  // Staged beside the plugins, so a rename moves it into place. A name starting with a dot
-  // can't be a plugin's.
   const staged = join(pluginsDir(), `.cloning-${process.pid}`);
   mkdirSync(pluginsDir(), { recursive: true });
   rmSync(staged, { recursive: true, force: true });
   const url = `https://github.com/${source}`;
-  // With no terminal prompt, a repository that doesn't exist fails at once, where git would
-  // otherwise ask for a login.
   const git = (args: string[]) =>
     Bun.spawnSync(["git", "-c", "advice.detachedHead=false", ...args], {
       stdout: "pipe",
@@ -102,11 +94,7 @@ function cloneTag(
     if (!cloned.success)
       throw new Error(`git couldn't clone ${source} at ${tag}: ${cloned.stderr.toString().trim()}`);
   } else {
-    // The pinned commit is fetched by itself, so a tag moved since it was locked still installs
-    // exactly the code you approved. git can't clone a commit, only a branch or a tag, so the
-    // folder starts empty and fetches it.
     const said = (run: { stderr: Buffer }) => run.stderr.toString().trim();
-    // Whatever fails here is the machine's own git, not the forge.
     const local = (run: { stderr: Buffer }) => {
       rmSync(staged, { recursive: true, force: true });
       return new Error(`git failed in ${staged}: ${said(run)}`);
@@ -118,31 +106,23 @@ function cloneTag(
       const checkedOut = git(["-C", staged, "checkout", "--quiet", "FETCH_HEAD"]);
       if (!checkedOut.success) throw local(checkedOut);
     } else {
-      // A forge can refuse to serve a commit by its id. Then the tag is cloned, which is only
-      // the locked code while the tag still points at that commit.
       rmSync(staged, { recursive: true, force: true });
       const cloned = git(["clone", "--quiet", "--depth", "1", "--branch", tag, url, staged]);
-      // With the tag out of reach too, the repository can't be reached, such as with no
-      // network or no login, which says nothing of whether the commit is still there.
       if (!cloned.success) {
         rmSync(staged, { recursive: true, force: true });
         throw new Error(
           `git couldn't reach commit ${commit.slice(0, 12)} of ${source}, which your lock pins: ${said(fetched)}. Nor its tag ${tag}: ${said(cloned)}`,
         );
       }
-      // The repository answered, refused the commit and moved the tag, so it doesn't serve that
-      // commit any more. Only sc update -g can move your lock past it.
       const at = commitOf(staged);
       if (at !== commit) {
         rmSync(staged, { recursive: true, force: true });
         throw new Error(
-          `${source} no longer serves commit ${commit.slice(0, 12)}, which your lock pins: git couldn't fetch it (${said(fetched)}), and its tag ${tag} is at ${at.slice(0, 12)} now. sc update -g moves it to its newest version, after showing what it runs`,
+          `${source} no longer serves commit ${commit.slice(0, 12)}, which your lock pins: git couldn't fetch it (${said(fetched)}), and its tag ${tag} is at ${at.slice(0, 12)} now. sc plugin update -g moves it to its newest version, after showing what it runs`,
         );
       }
     }
   }
-  // A tag or commit that disagrees with its manifest is refused, so the version you were told
-  // is the one that runs.
   try {
     const manifest = readManifest(staged);
     if (`v${manifest.version}` !== tag)
@@ -263,9 +243,9 @@ function confirmPlugin(
   }
 }
 
-// The error for a plugin's commands that would run with no terminal to answer whether they may.
-// It fails the command, so a script that runs sc install can tell the machine doesn't match your
-// files yet. A class of its own lets sc install and sc update -g go on to the other plugins and
+// The error for a plugin's commands that would run with no terminal to answer whether they may. It
+// fails the command, so a script that runs sc install can tell the machine doesn't match your files
+// yet. A class of its own lets sc install and sc plugin update -g go on to the other plugins and
 // name every one left out.
 class Unanswered extends Error {}
 
@@ -334,8 +314,8 @@ function buildAndSetUp(
 
 // Runs an installed plugin's setup again in your terminal, such as to sign in again once its
 // sign-in has lapsed, handing it `remote`, the repository to set itself up for. Reinstalling
-// would do it too, but would fetch and build the plugin again for nothing. sc setup
-// runs it for the checkout you are in, and plain sc for a repository whose forge needs it.
+// would do it too, but would fetch and build the plugin again for nothing. sc plugin
+// setup runs it for the checkout you are in, and plain sc for a repository whose forge needs it.
 export function setUpPlugin(name: string, remote: string | null): void {
   const { folder } = findPlugin(openDb(), name);
   const manifest = readManifest(folder);
@@ -350,14 +330,10 @@ function markUnclaimed(db: Database, manifest: Manifest): void {
     db.run("UPDATE repositories SET claimed = 0 WHERE forge IS NULL");
 }
 
-// Throws when a plugin of that name is installed already, as one name can't be two plugins. For a
-// repository's plugin, `io`, the one installed is never from the same source, as sc add pins that
-// one without installing. So it says what holds the name rather than pointing to sc update -g,
-// which would only update your own copy.
 function refuseInstalled(db: Database, name: string, io: boolean | undefined): void {
   const here = installedPlugins(db).find((plugin) => plugin.name === name);
   if (!here) return;
-  if (!io) throw new Error(`${name} is installed already: run sc update -g ${name}`);
+  if (!io) throw new Error(`${name} is installed already: run sc plugin update -g ${name}`);
   if (here.source === null)
     throw new Error(
       `${name} is installed here from the folder ${here.folder}, which has no version a repository could pin`,
@@ -398,13 +374,10 @@ export function refuseOtherName(manifest: Manifest, called: string | undefined):
     );
 }
 
-// Throws when `io` is true and the plugin is a runtime plugin, before anything of it runs. How you
-// run and watch your agents is yours, so only you add a runtime plugin, and a repository's files
-// can't name one.
 export function refuseRuntime(manifest: Manifest, io: boolean | undefined): void {
   if (io && manifest.kind === "runtime")
     throw new Error(
-      `${manifest.name} is a runtime plugin, which is always yours and never a repository's. sc add -g adds it as yours`,
+      `${manifest.name} is a runtime plugin, which is always yours and never a repository's. sc plugin add -g adds it as yours`,
     );
 }
 
@@ -517,7 +490,7 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
   // A folder of yours gets only its build again. When its commands differ from those you
-  // approved, it shows what it runs now and asks first. Its setup is for sc setup.
+  // approved, it shows what it runs now and asks first. Its setup is for sc plugin setup.
   if (source === null) {
     const commands = approvalOf(current);
     const row = db.query("SELECT approved FROM plugins WHERE name = ?").get(name);
@@ -585,15 +558,10 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   }
 }
 
-// Updates the named plugin, or every one of yours, for sc update -g. A plugin your files name
-// that isn't installed here is installed at its newest version instead, after asking, so its lock
-// moves too. `name` is a plugin's name or its owner/repo. A plugin only a repository's files name
-// isn't yours, so it is left at the version that repository's skelcrew.lock pins.
 export function updatePlugins(name?: string): void {
   const db = openDb();
   const lock = yourLock();
   const named = yourPlugins();
-  // A plugin from a folder is yours, as no repository can name one.
   const installed = installedPlugins(db).filter(
     (plugin) => plugin.source === null || named.includes(plugin.source),
   );
@@ -605,7 +573,7 @@ export function updatePlugins(name?: string): void {
     (source) => name === undefined || source === name || lock[source]?.name === name,
   );
   if (name !== undefined && chosen.length + toInstall.length === 0)
-    throw new Error(`there is no plugin named ${name}: sc plugins lists them`);
+    throw new Error(`there is no plugin named ${name}: sc plugin ls lists them`);
   if (chosen.length + toInstall.length === 0) console.log("No plugins installed.");
   const plugins = [...chosen, ...toInstall];
   eachAsked(
@@ -654,12 +622,13 @@ export function removePlugin(name: string, named = false): void {
   console.log(`Removed ${name}, with its settings and tokens.`);
 }
 
-// Adds a personal plugin, for sc add -g: installs it after asking, then names it under plugins:
-// in your config.yaml, beside the version your lock now pins. A folder of yours is installed on
-// this machine only: its path means nothing on another machine, and it has no version to pin, so
-// it stays out of your files and says so. A plugin a repository had installed here becomes yours at
-// the version installed, asking nothing, as you approved that exact version before. Returns
-// whether it was installed. `shown` is how its question names the plugin and starts.
+// Adds a personal plugin, for sc plugin add -g: installs it after asking, then names it under
+// plugins: in your config.yaml, beside the version your lock now pins. A folder of yours is
+// installed on this machine only: its path means nothing on another machine, and it has no version
+// to pin, so it stays out of your files and says so. A plugin a repository had installed here
+// becomes yours at the version installed, asking nothing, as you approved that exact version
+// before. Returns whether it was installed. `shown` is how its question names the plugin and
+// starts.
 export function addPlugin(given: string, remote = originHere(), shown: Shown = {}): boolean {
   const db = openDb();
   const here = installedPlugins(db).find((plugin) => plugin.source === given);
@@ -682,31 +651,23 @@ export function addPlugin(given: string, remote = originHere(), shown: Shown = {
   return true;
 }
 
-// Removes a personal plugin, for sc remove -g: from plugins: in your config.yaml, from your lock
-// and from this machine, with its settings and tokens. `given` is its name or its owner/repo. A
-// plugin a repository still needs, as `needs` from repositoryNeeds says, leaves your files only,
-// and stays installed with its settings and tokens, such as its login. It refuses while the plugin
-// is the tracker or forge of a repository Skelcrew has, and for a plugin only a repository names,
-// and then changes nothing.
 export function removeYourPlugin(given: string, needs: Need[]): void {
   const db = openDb();
   const lock = yourLock();
   const named = yourPlugins();
   const plugin = installedPlugins(db).find((one) => one.name === given || one.source === given);
-  // A plugin only a repository names isn't yours, so its settings and tokens stay.
   const yours = plugin && (plugin.source === null || named.includes(plugin.source));
   if (plugin && !yours)
     throw new Error(
       `${given} isn't one of your plugins, as only a repository's skelcrew.yaml names it, so Skelcrew keeps it`,
     );
   const installed = yours ? plugin : undefined;
-  // A plugin your files name may not be installed here yet, so the lock names it too.
   const source =
     installed?.source ??
     yourPlugins().find((one) => one === given || lock[one]?.name === given) ??
     null;
   if (!installed && source === null)
-    throw new Error(`there is no plugin named ${given}: sc plugins lists them`);
+    throw new Error(`there is no plugin named ${given}: sc plugin ls lists them`);
   const needed = needs.find((need) => need.source === source);
   if (installed && !needed) {
     removePlugin(installed.name, true);
@@ -835,7 +796,7 @@ export function installYourPlugins(
   return { changed, left };
 }
 
-// One row of sc plugins: a plugin your files name or this machine has. The version, kind and
+// One row of sc plugin ls: a plugin your files name or this machine has. The version, kind and
 // what it provides are the installed one's, or with none installed, the version locked. `from`
 // is where it comes from, and `change` what sc install would do to it, or null for nothing.
 type Row = {
