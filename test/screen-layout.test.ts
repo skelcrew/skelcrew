@@ -45,12 +45,12 @@ test("resizing the terminal resizes the agent, and the sidebar with the list's r
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "27 77\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "26 77\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "37 105\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "36 105\n",
     "the agent to resize",
   );
   expect(widths()).toEqual(["1", "40", "105", "1", "150"]);
@@ -74,29 +74,32 @@ test("on a narrow terminal the sidebar narrows, so the right side keeps half of 
 
 // Returns whether the boxes round the two sides are whole on a screen `height` rows high and
 // `width` wide: on each row, the lines at the sidebar's left, between the two sides and at the
-// right side's right, ┬ on the top row and ┴ on tmux's line above the footer. The sidebar is as
+// right side's right, ┬ on the row under the header and ┴ on tmux's line above the footer. The sidebar is as
 // wide as the list on a terminal `width` columns wide, or narrower, so the right side keeps half
 // of it, and the line the sides share is right after it.
 const boxesWhole = (height: number, width = 120) => {
   const lines = seen()
     .split("\n")
-    .slice(0, height - 1);
+    .slice(1, height - 1);
   const at = (line: string) => `${line[1]}${line[sidebarFor(width)]}${line[width - 2]}`;
   return lines.every((line, row) => {
     const shown = at(line);
     if (row === 0) return shown === "┬┬┬";
-    if (row === height - 2) return shown === "┴┴┴";
+    if (row === height - 3) return shown === "┴┴┴";
     return shown === "│││";
   });
 };
 
-test("each side has a whole box, from the top row to the line above the footer, and the agent starts right inside its own", async () => {
+test("each side has a whole box, from under the header to the line above the footer, and the agent starts right inside its own", async () => {
   open("lead");
   await ready("lead");
   await until(() => boxesWhole(30), "the boxes");
-  expect(seen().split("\n")[1]?.indexOf("I am lead")).toBe(sidebar + 1);
-  // Past the corners, the top row and the line above the footer reach the terminal's edges.
-  for (const row of [0, 28]) {
+  expect(seen().split("\n")[2]?.indexOf("I am lead")).toBe(sidebar + 1);
+  // The header is a row of its own, with no line of the boxes in it.
+  expect(seen().split("\n")[0]).not.toMatch(/[─┬│]/);
+  // Past the corners, the top of the boxes and the line above the footer reach the terminal's
+  // edges.
+  for (const row of [1, 28]) {
     const line = seen().split("\n")[row] ?? "";
     expect(`${line[0]}${line[119]}`).toBe("──");
   }
@@ -242,17 +245,17 @@ test("the footer ends with the machine's own load, even with no thread working",
   );
 });
 
-test("the header and the tabs share one row, and the agent starts right under it", async () => {
+test("the header and the tabs share a row of their own, and the boxes start right under it", async () => {
   open("lead");
   await ready("lead");
   await toSecondThread();
   const lines = seen().split("\n");
-  // Skelcrew in the top of the sidebar's box, and the tab in the top of the agent's, with only
-  // line after it.
-  expect(lines[0]?.trimEnd()).toMatch(/^─┬─ Skelcrew .* ─*┬ {2}app {2}─+┬─$/);
+  // Skelcrew and the tab on the top row, with no line of the boxes, then the boxes' whole top.
+  expect(lines[0]?.trimEnd()).toMatch(/^ {4}Skelcrew \S.* {2}app$/);
+  expect(lines[1]).toBe(`─┬${"─".repeat(sidebar - 2)}┬${"─".repeat(120 - sidebar - 3)}┬─`);
   // The open tab's grey starts where the agent's text does, with its name two columns in.
-  expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
-  expect(lines[1]).toContain("I am app-7");
+  expect(lines[0]?.indexOf("app")).toBe((lines[2]?.indexOf("I am") ?? 0) + 2);
+  expect(lines[2]).toContain("I am app-7");
 });
 
 // Puts a git ahead of the real one that says the checkout is at `commit`, with `changes` not
@@ -265,13 +268,9 @@ function checkoutAt(commit: string, changes = ""): void {
   given.before = `PATH=${join(home, "checkout")}:$PATH `;
 }
 
-// The header, as it reads in the top of the sidebar's box, without the box's line around it, in a
-// terminal `width` columns wide.
+// The header on the top row, as it reads before the tabs, in a terminal `width` columns wide.
 const header = (window = "one", width = 120) =>
-  (seen(window).split("\n")[0] ?? "")
-    .slice(2, sidebarFor(width))
-    .replace(/^─ /, "")
-    .replace(/ ─*$/, "");
+  (seen(window).split("\n")[0] ?? "").slice(0, sidebarFor(width) + 1).trim();
 
 test("above the sidebar it says Skelcrew, in white, and the checkout's commit when no laptop sent you here", async () => {
   checkoutAt("6f1c2ab");
@@ -316,7 +315,7 @@ test("each terminal says where it came from, as they can come from different lap
   await until(() => header("two") === "Skelcrew 6f1c2ab (checkout)", "the second header", "two");
 });
 
-test("the line the sides share runs from the top row down to the footer's line, at every width", async () => {
+test("the line the sides share runs from under the header down to the footer's line, at every width", async () => {
   open("lead");
   await ready("lead");
   // The sidebar narrows on a terminal too narrow for it beside half the terminal.
@@ -324,10 +323,10 @@ test("the line the sides share runs from the top row down to the footer's line, 
   const column = () =>
     seen()
       .split("\n")
-      .slice(0, 29)
+      .slice(1, 29)
       .map((line) => line[lineAt])
       .join("");
-  const whole = `┬${"│".repeat(27)}┴`;
+  const whole = `┬${"│".repeat(26)}┴`;
   await until(() => column() === whole, "the line");
   for (const width of [150, 90, 120]) {
     lineAt = sidebarFor(width);
@@ -337,11 +336,13 @@ test("the line the sides share runs from the top row down to the footer's line, 
   }
 });
 
-test("clicking the top row past the tabs, or turning the wheel over it, does nothing", async () => {
+test("clicking the top rows past the tabs, or turning the wheel over them, does nothing", async () => {
   open("lead");
   await ready("lead");
   click(100, 1);
+  click(100, 2);
   type("\x1b[<64;100;1M");
+  type("\x1b[<64;100;2M");
   await Bun.sleep(200);
   const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
   expect(modes).toEqual(["0", "0", "0", "0", "0"]);

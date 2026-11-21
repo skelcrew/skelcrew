@@ -60,21 +60,21 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   // The lead is at the top of the sidebar, below a blank line, then a blank line, the task queue,
   // a blank line and the six stages, with only Building open. Nothing needs you, so Needs you
   // has no heading.
-  expect(left(1)).toBe("");
-  expect(lines[1]).toContain("I am lead");
-  expect(left(2)).toMatch(/^ ▸ ○ lead\b/);
-  expect(left(3)).toBe("     running");
-  expect(left(4)).toBe("");
-  expect(left(5)).toBe(" 0 Task queue 0");
-  expect(left(6)).toBe("");
-  expect(left(7)).toBe(" 1 Backlog    0");
-  expect(left(8)).toBe(" 2 Building   2");
-  expect(left(9)).toMatch(/^ {3}○ APP-12/);
-  expect(left(10)).toMatch(/^ {5}working/);
-  expect(left(11)).toMatch(/^ {3}○ APP-7/);
-  expect(left(13)).toBe("");
-  expect(left(14)).toBe(" 3 Reviewing  0");
-  expect(left(17)).toBe(" 6 Done       1");
+  expect(left(2)).toBe("");
+  expect(lines[2]).toContain("I am lead");
+  expect(left(3)).toMatch(/^ ▸ ○ lead\b/);
+  expect(left(4)).toBe("     running");
+  expect(left(5)).toBe("");
+  expect(left(6)).toBe(" 0 Task queue 0");
+  expect(left(7)).toBe("");
+  expect(left(8)).toBe(" 1 Backlog    0");
+  expect(left(9)).toBe(" 2 Building   2");
+  expect(left(10)).toMatch(/^ {3}○ APP-12/);
+  expect(left(11)).toMatch(/^ {5}working/);
+  expect(left(12)).toMatch(/^ {3}○ APP-7/);
+  expect(left(14)).toBe("");
+  expect(left(15)).toBe(" 3 Reviewing  0");
+  expect(left(18)).toBe(" 6 Done       1");
   expect(selected()).toMatch(/^▸ ○ lead\b/);
   await until(() => litBox() === "right", "the right side's box to light up");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
@@ -327,7 +327,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("● APP-12");
   expect(seen()).toContain("Needs you  1");
   // Its tab says so too, as other repositories' tabs would.
-  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^─┬─ Skelcrew .* ─*┬ {2}app •1 {2}─+┬─$/);
+  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {4}Skelcrew .* {2}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => !seen().includes("APP-7"), "the done thread to go");
 });
@@ -584,7 +584,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;21;4M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;21;3M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -752,8 +752,8 @@ test("an agent that asked for the mouse gets a drag itself", async () => {
   open("drawn");
   await until(() => seen().includes("I am drawn"), "the agent");
   await drag([agentColumn, 5], [[agentColumn + 4, 5]], false);
-  await until(() => read("drawn.bytes").includes("\x1b[<0;25;4m"), "the release");
-  expect(read("drawn.bytes")).toBe("\x1b[<0;21;4M\x1b[<32;25;4M\x1b[<0;25;4m");
+  await until(() => read("drawn.bytes").includes("\x1b[<0;25;3m"), "the release");
+  expect(read("drawn.bytes")).toBe("\x1b[<0;21;3M\x1b[<32;25;3M\x1b[<0;25;3m");
   expect(scrolledBack()).not.toContain("1");
 });
 

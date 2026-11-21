@@ -50,12 +50,12 @@ const fullScreen = () =>
     `=${screenSessions()[0]}:`,
     "#{window_zoomed_flag}",
   ).out.trim() === "1";
-// Returns whether the top row is lit end to end, with no corner, which is how it shows that your
-// typing goes to an agent that fills the terminal.
+// Returns whether the top of the boxes, under the header, is lit end to end, with no corner, which
+// is how it shows that your typing goes to an agent that fills the terminal.
 const topLit = () => {
-  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0] ?? "";
-  const plain = Bun.stripANSI(row);
-  return plain.startsWith("─── Skelcrew") && !plain.includes("┬") && !row.includes("\x1b[90m─");
+  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[1] ?? "";
+  const plain = Bun.stripANSI(row).trimEnd();
+  return /^─+$/.test(plain) && plain.length === 120 && !row.includes("\x1b[90m─");
 };
 // Returns whether a stage's heading shows with rows under it, so it is open.
 const isOpen = (heading: string) => {
@@ -197,12 +197,12 @@ for (const [key, how] of [
     press(key);
     await until(fullScreen, "the lead to fill the terminal");
     await until(() => !seen().includes("Needs you"), "the sidebar to hide");
-    await until(topLit, "the top row to light up");
+    await until(topLit, "the top of the boxes to light up");
     type("hi\r");
     await until(() => read("lead.typed") === "hi\n", "the typing to reach the lead");
     press("C-\\");
     await until(() => !fullScreen() && typingToSidebar(), "the sidebar again");
-    await until(() => !topLit(), "the top row's corners again");
+    await until(() => !topLit(), "the corners again");
     expect(read("lead.typed")).toBe("hi\n");
   });
 
@@ -214,7 +214,7 @@ test("a on a task's row attaches full screen to its builder, and Ctrl-\\ comes b
   await until(() => selected().includes("APP-7") && onDetails(), "APP-7's details");
   type("a");
   await until(() => fullScreen() && seen().includes("I am app-7"), "app-7 full screen");
-  await until(topLit, "the top row to light up");
+  await until(topLit, "the top of the boxes to light up");
   type("go\r");
   await until(() => read("app-7.typed") === "go\n", "the typing to reach the builder");
   press("C-\\");
