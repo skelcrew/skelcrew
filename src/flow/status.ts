@@ -7,11 +7,11 @@ import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
-import { roundLimit } from "../config.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
-import { passedReviewStage, pastRoundLimit, waitsOnFirstCheck } from "./decide.ts";
+import { waitsOnFirstCheck } from "./decide.ts";
 import { leadOf } from "./lead.ts";
+import { atRoundLimit, limitDecided, limitOf, passedReviewStage } from "./ledger.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
 import {
   messageLead,
@@ -54,30 +54,16 @@ export const needsYou = (thread: Thread) =>
   (thread.needs_you && !decided(thread));
 
 // Returns why the thread needs you, as its word says, such as "question" or the action a mark
-// asks of you, or null when it doesn't. sc ps and sc task print it, so you read what to do. A
-// round limit that can't be read, from settings that aren't valid, counts as none, as on the list.
+// asks of you, or null when it doesn't. sc ps and sc task print it, so you read what to do.
 export function needsYouFor(thread: Thread): string | null {
   if (!needsYou(thread)) return null;
-  let maxRounds = Number.POSITIVE_INFINITY;
-  try {
-    maxRounds = roundLimit(thread);
-  } catch {}
-  return reasonOf(threadWord(thread, maxRounds));
+  return reasonOf(threadWord(thread, limitOf(thread)));
 }
 
 // Returns why a thread needs you from its word, as an action where the word says only what
 // happened: an approved thread with green checks waits on you to merge it. The list keeps the
 // word `approved`, beside the green mark that says the rest.
 const reasonOf = (word: string) => (word === "approved" ? "ready to merge" : word);
-
-// Returns whether the thread is past its round limit with nobody having decided yet, so marking,
-// clearing or arming a merge on it is that decision. The round limit's word shows only once a
-// mark, a question and an error are gone, and only while no merge is armed, so it is asked of
-// the thread without them.
-export function limitWaits(thread: Thread): boolean {
-  const without = { ...thread, needs_you_for: null, asking: false, erred: false, merge_plan: null };
-  return needsYouFor(without) === "round limit";
-}
 
 // Returns whether the lead or you decided what the thread's flag waits on: the round limit was
 // decided since its latest review, or a merge is armed on a thread ready to merge, which then
@@ -323,7 +309,7 @@ export function reportStatus(db: Database, thread: Thread): void {
   if (host === null || !host.status) return;
   let said: { status: Status; reason: string };
   try {
-    const maxRounds = roundLimit(thread);
+    const maxRounds = limitOf(thread);
     const status = statusOf(thread, maxRounds);
     const word = threadWord(thread, maxRounds);
     said = { status, reason: status === "ready" ? reasonOf(word) : word };
@@ -464,8 +450,7 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // reason the thread needs you. Changes held past the limit say so too after something else,
   // such as a conflict, cleared the thread's need of you: the task still waits on sc start, and
   // its CI passing must not read as waiting on checks.
-  const past = thread.held !== null || (thread.needs_you && pastRoundLimit(thread, maxRounds));
-  if (past) return "round limit";
+  if (atRoundLimit(thread, maxRounds)) return "round limit";
   // A task whose flow has no review stage is never called approved, as nobody reviewed it.
   if (readyToMerge(thread)) return verdict === "not reviewed" ? "not reviewed" : "approved";
   // A round on a flow with no review stage fails on its submit, pushing it or opening its PR,
@@ -653,7 +638,7 @@ export function markNeedsYou(
   if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   const acted = { ended_at: null, ended_said: null };
   // Marking or clearing a thread past its round limit is a decision about it.
-  const decision = limitWaits(thread) ? { limit_decided: true } : {};
+  const decision = limitDecided(thread);
   // While the builder's host plugin is still missing, only you can bring it back, so its
   // instruction stays first, whatever the mark becomes.
   const host = thread.host;

@@ -14,6 +14,7 @@ import { nextSequence } from "../db.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { leadOf, leadSession } from "./lead.ts";
+import { changesTyped } from "./ledger.ts";
 import { repositories } from "./repo.ts";
 import type { Caller } from "./requests.ts";
 import {
@@ -188,7 +189,7 @@ function afterTyped(db: Database, folder: string, message: Message): void {
   const thread = readThread(db, folder);
   if (message.sender === "review") {
     if (thread.telling !== null && tagsEscaped(thread.telling) === message.text)
-      record(db, folder, { telling: null }, "typed the review into the builder");
+      record(db, folder, changesTyped, "typed the review into the builder");
     return;
   }
   if (message.sender === "lead") {

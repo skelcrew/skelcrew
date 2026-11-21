@@ -27,8 +27,8 @@ import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";
-import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
+import { freshRounds, pastRoundLimit } from "./ledger.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus, needsYou } from "./status.ts";
@@ -199,6 +199,7 @@ async function recordThread(
       throw new Error(`${taskName(name, task)} has a thread already`);
     const queued = !("now" in given && given.now) && joinsQueue(db, repository);
     const thread: Thread = {
+      ...freshRounds,
       owner,
       repo,
       task,
@@ -207,14 +208,11 @@ async function recordThread(
       base: "from" in given ? (given.from ?? null) : null,
       status: queued ? "queued" : "working",
       session: null,
-      rounds: 0,
       pr: null,
       needs_you: false,
       submitting: null,
       reviewing: null,
       queued: null,
-      telling: null,
-      held: null,
       seen: [],
       last_review: null,
       last_comment: null,
@@ -236,15 +234,8 @@ async function recordThread(
       conflicts: null,
       ci_passed: false,
       reviewer: null,
-      reviewed_by: null,
-      review_round: null,
-      top_round: null,
-      verdict: null,
-      review_line: null,
-      reviewed_commit: null,
       no_ci: null,
       ci_shown: [],
-      review_at: null,
       harness: null,
       short: given.short ?? null,
       assigned: before?.assigned ?? false,
@@ -269,15 +260,10 @@ async function recordThread(
       merge_record_id: null,
       merge_followup: null,
       needs_you_for: null,
-      limit_decided: false,
       ended_at: null,
       ended_said: null,
-      review_failed: false,
       agents,
       flow,
-      review_post: null,
-      posting: null,
-      review_findings: null,
       queued_since: queued ? joinTime(db) : null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);

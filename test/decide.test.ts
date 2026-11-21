@@ -3,7 +3,6 @@
 // builder's turn ending means, from the thread's row alone.
 import { expect, test } from "bun:test";
 import {
-  afterReview,
   allGreen,
   branchMoved,
   type Check,
@@ -16,7 +15,6 @@ import {
   labeledToStart,
   mergeNoteFor,
   mergeWaitsOn,
-  nextRound,
   onlyDocs,
   type PullRequest,
   refusedWorkflow,
@@ -772,77 +770,6 @@ test("gives the reviewer the end of each failed check's log, which names the fai
   );
 });
 
-const approval = { verdict: "approve" as const, body: "Ready.", findings: [] };
-
-test("with a forge, an approved review waits on CI", () => {
-  const outcome = afterReview(0, approval, 3, null);
-  expect(outcome).toMatchObject({ check: "success", needsYou: false, status: "waiting" });
-});
-
-// Without a forge there is no CI to wait on, and no PR: the branch is what is ready.
-test("without a forge, an approved review needs you at once, saying where the branch is", () => {
-  const ready = "app-t1 is ready on branch skelcrew/t1-fix-login";
-  const outcome = afterReview(0, approval, 3, ready);
-  expect(outcome).toMatchObject({ needsYou: true, status: "waiting", why: ready });
-});
-
-// The builder gets each finding numbered after the body, so none hides in a paragraph.
-test("changes asked for type the body and each finding into the builder, and count a round", () => {
-  const changes = {
-    verdict: "changes" as const,
-    body: "Ran the export tests.",
-    findings: ["The export has no test.", "The flag is misspelled."],
-  };
-  const outcome = afterReview(1, changes, 3, null);
-  expect(outcome.rounds).toBe(2);
-  expect(outcome.tell).toContain(
-    "Ran the export tests.\n\n1. The export has no test.\n2. The flag is misspelled.",
-  );
-});
-
-// Past the round limit only a review that asks for changes needs you again. One that failed is
-// the lead's to run again.
-test("past the round limit, changes need you again, and a failed review doesn't", () => {
-  const changes = { verdict: "changes" as const, body: "Again.", findings: ["No test."] };
-  expect(afterReview(4, changes, 3, null)).toMatchObject({ needsYou: true, tell: null });
-  const failed = { verdict: "failed" as const, body: "no verdict", findings: [] };
-  expect(afterReview(4, failed, 3, null)).toMatchObject({ needsYou: false, rounds: 4 });
-});
-
-// A round's number goes up with every review that gave a verdict, an approval kept after a merge
-// of main included, whatever sc start does to the count of rounds of changes. A review that
-// failed is run again under the same number.
-test("a thread's round numbers only go up, through sc start past the limit and a merge of main", () => {
-  const changes = { verdict: "changes" as const, body: "Again.", findings: ["No test."] };
-  const failed = { verdict: "failed" as const, body: "no verdict" };
-  let saved = thread();
-  const numbers: number[] = [];
-  // Saves a review's outcome on the thread as a finished round does.
-  const reviewed = (review: typeof changes | typeof failed | typeof approval) => {
-    const round = nextRound(saved);
-    const { rounds } = afterReview(saved.rounds, review, 1, null);
-    const counted = review.verdict !== "failed";
-    const top_round = counted ? round : saved.top_round;
-    saved = { ...saved, rounds, review_round: round, top_round, verdict: review.verdict };
-    numbers.push(round);
-  };
-  // sc start past the limit sets the rounds of changes back to the limit.
-  const goOn = () => {
-    saved = { ...saved, rounds: 1 };
-  };
-  reviewed(changes);
-  reviewed(changes);
-  goOn();
-  reviewed(failed);
-  reviewed(changes);
-  reviewed(changes);
-  goOn();
-  reviewed(approval);
-  // A submit that only merged main keeps the approval, as a round of its own.
-  reviewed(approval);
-  expect(numbers).toEqual([1, 2, 3, 3, 4, 5, 6]);
-});
-
 // One comment is edited each round, so it says which round and commit it now holds.
 test("Skelcrew's review comment names its round and commit, then the body and findings", () => {
   const review = { body: "CI pending.", findings: ["The export has no test."] };
@@ -997,6 +924,7 @@ test("a merge without approval waits on everything but the reviewer's approval",
     check: "failure" as const,
     description: "Skelcrew's reviewer asked for changes",
     review: null,
+    note: null,
   };
   expect(skipReviewWaitsOn({ ...changes, posting }, green)).toBe("its review");
   // A round on its way brings a new commit, which the human never saw.

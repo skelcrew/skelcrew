@@ -5,11 +5,12 @@
 // how many of its threads need you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { roundLimit as roundLimitOf, threadLimit } from "../config.ts";
+import { threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
-import { nextRound, passedReviewStage, reviewCheck } from "../flow/decide.ts";
+import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
+import { limitOf, nextRound, passedReviewStage } from "../flow/ledger.ts";
 import {
   type Badge,
   badgeOf,
@@ -104,23 +105,6 @@ export type Open = { owner: string; repo: string };
 
 // A repository's tab: its name in Skelcrew, its owner/name, and its badge.
 export type Tab = Badge & { name: string; fullName: string };
-
-// Returns the round limit the list judges a thread's word by. A thread holding the changes of a
-// review past the limit says so by itself. Past the limit, sc submit and sc review drop those
-// changes but keep the thread needing you while its round runs, and so can other reasons, such
-// as a message that couldn't be typed in. Only the thread's real round limit tells them apart,
-// so for such a thread alone the list reads its settings. Settings that aren't valid already stop
-// rounds, with the reason, and mustn't also take the list away, so they read as no limit. Any
-// other thread reads none, so drawing the list stays fast.
-const roundLimit = (thread: Thread) => {
-  const underWay = thread.submitting !== null || thread.reviewing !== null;
-  if (!thread.needs_you || !underWay) return Number.POSITIVE_INFINITY;
-  try {
-    return roundLimitOf(thread);
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
-};
 
 // Returns when something happened as a clock time, such as 14:32, with the date before it for a
 // day before today, such as 12 Nov 23:59, in this machine's time zone. The details pane says when
@@ -230,7 +214,7 @@ function taskRow(
   now: number,
 ): Row {
   const name = taskName(repoName, thread.task);
-  const shown = shownOf(thread, roundLimit(thread), now);
+  const shown = shownOf(thread, limitOf(thread), now);
   // An ended thread shows no state: its word is whether it merged, and its mark is quiet.
   // A task approved and green, with no merge armed, waits on you to merge it, so its word says
   // that action, as every word under Needs you does. One its flow didn't review says so after
@@ -716,7 +700,7 @@ export function repositoryTabs(db: Database, keep: Open | null): Tab[] {
     .all()
     .map((row) => {
       const thread = Thread.parse(row);
-      return { thread, mark: shownOf(thread, roundLimit(thread)).mark };
+      return { thread, mark: shownOf(thread, limitOf(thread)).mark };
     });
   return repositories.map(({ name, owner, repo }) => {
     const ours = marked.filter((m) => m.thread.owner === owner && m.thread.repo === repo);

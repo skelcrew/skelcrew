@@ -18,10 +18,11 @@ import {
   skipReviewWaitsOn,
 } from "./decide.ts";
 import { endThread, removing } from "./events.ts";
+import { limitDecided, roundMoved } from "./ledger.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
-import { limitWaits, openFindings } from "./status.ts";
+import { openFindings } from "./status.ts";
 import {
   readThread,
   record,
@@ -195,8 +196,7 @@ export function armMerge(
       : `the lead asked to ${what}, as the human asked: ${JSON.stringify(asked)}`;
   // Arming it past the round limit is your decision about the limit, which stays made though the
   // plan later ends, such as when a push cancels it, until the next review asks again.
-  const decided = limitWaits(thread) ? { limit_decided: true } : {};
-  record(db, thread.folder, { ...plan, ...decided }, why);
+  record(db, thread.folder, { ...plan, ...limitDecided(thread) }, why);
   console.log(`${name}: ${why}`);
   // The lead can't see your terminal, so it hears of a merge you asked for there. One it asked
   // for itself it already told you about.
@@ -279,12 +279,7 @@ export async function mergeIfReady(
   // it yet. The next poll acts on the PR as it is after the round.
   const moved =
     thread.started !== before.started ||
-    thread.submitting !== before.submitting ||
-    thread.reviewing !== before.reviewing ||
-    thread.rounds !== before.rounds ||
-    thread.review_round !== before.review_round ||
-    thread.review_at !== before.review_at ||
-    thread.verdict !== before.verdict ||
+    roundMoved(before, thread) ||
     JSON.stringify(thread.posting) !== JSON.stringify(before.posting);
   if (moved) return;
   const name = threadName(db, thread);

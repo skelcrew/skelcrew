@@ -34,6 +34,7 @@ import {
 import { endThread, noticeEndedBuilder, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadSession } from "./lead.ts";
+import { roundMoved } from "./ledger.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
@@ -293,10 +294,7 @@ async function actOnPr(
   // The decision is pure; what follows carries it out. The poll is stale when a round
   // changed the thread since it began.
   const decision = decide(thread, pr, { maxRounds, moved });
-  const stale =
-    thread.submitting !== before.submitting ||
-    thread.reviewing !== before.reviewing ||
-    thread.rounds !== before.rounds;
+  const stale = roundMoved(before, thread);
   // Saved ahead of what the decision does, so a thread never needs you for an approval while
   // its saved checks still say otherwise. A commit on its way has no checks to speak of yet.
   // Whether every check is green, Skelcrew's own included, is saved on each poll too, even while
@@ -603,7 +601,7 @@ async function pollRepository(
     if (!hasForge) await actOnBranch(db, sessions, repository, readThread(db, before.folder));
     else {
       // A verdict whose post failed goes on the PR first, so the merge goes by it.
-      await retryPost(db, before.folder);
+      await retryPost(db, sessions, before.folder);
       // From the copy, just brought up to date, rather than from the answer: a forge answers
       // only what changed, and events held back for a thread, such as one stopped, were left
       // out of its `seen`, so its PR is acted on again until they are handed over.

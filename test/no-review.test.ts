@@ -9,10 +9,10 @@ import {
   mergeNoteFor,
   mergeWaitsOn,
   type PullRequest,
-  pastRoundLimit,
   readyWhen,
   reviewCheck,
 } from "../src/flow/decide.ts";
+import { pastRoundLimit } from "../src/flow/ledger.ts";
 import { shownOf } from "../src/flow/marks.ts";
 import { listStage, taskStage } from "../src/flow/stage.ts";
 import { readyToMerge, threadWord } from "../src/flow/status.ts";

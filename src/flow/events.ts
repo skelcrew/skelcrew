@@ -11,6 +11,7 @@ import { unassignIssue } from "./assign.ts";
 import { baseOf, inTurn, seenRunning } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
+import { roundMoved } from "./ledger.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
 import {
   noteForLead,
@@ -513,11 +514,7 @@ export async function tellBuilder(
     const now = readThread(db, thread.folder);
     if (now.status !== "working" && now.status !== "waiting") return;
     const moved =
-      now.status !== before.status ||
-      now.needs_you !== before.needs_you ||
-      now.rounds !== before.rounds ||
-      now.submitting !== before.submitting ||
-      now.reviewing !== before.reviewing;
+      now.status !== before.status || now.needs_you !== before.needs_you || roundMoved(before, now);
     // A round submitted meanwhile is a new commit, so the notices of the older one would send
     // the builder after a problem it may have fixed, even once that round's push is done and
     // its review runs. People's words still hold.

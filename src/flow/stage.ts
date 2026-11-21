@@ -1,7 +1,8 @@
 // A task's stage: where it is, from an open issue to the merge. Every command that shows a
 // task reads its stage from here.
 import { z } from "zod";
-import { passedReviewStage, waitsOnFirstCheck } from "./decide.ts";
+import { waitsOnFirstCheck } from "./decide.ts";
+import { passedReviewStage } from "./ledger.ts";
 import { readyToMerge } from "./status.ts";
 import type { Thread } from "./thread.ts";
 

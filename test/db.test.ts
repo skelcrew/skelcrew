@@ -944,7 +944,7 @@ test("a thread whose round went back before the upgrade goes on above the highes
   const folders = rows.map((row) => `app-${row.task}`);
   const code = `import { finishUpgrade, openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
-import { nextRound } from ${JSON.stringify(source("flow/decide.ts"))};
+import { nextRound } from ${JSON.stringify(source("flow/ledger.ts"))};
 // The earlier release's database: the same, without the new column.
 const old = openDb();
 old.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
