@@ -5,6 +5,7 @@
 // how many of its threads need you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
@@ -28,7 +29,7 @@ import { counted, ordinal } from "../flow/task-queue.ts";
 import { Thread, taskName } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { removeControlCodes } from "../screen/look.ts";
-import { builderProgress } from "../screen/progress.ts";
+import { agentProgress, builderProgress } from "../screen/progress.ts";
 
 // What y does on a row once its question is answered: the question the bottom line asks, what it
 // says while the daemon works, and the request the daemon gets. `queues` says a yes is expected
@@ -56,8 +57,9 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // that moment in milliseconds, or null, which the details pane gives by the clock, so the two
 // always agree. `needsYou` is whether it waits on you for
 // something other than a merge. `session` is the agent's session, which Enter attaches to,
-// `running` whether its agent runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\
-// comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
+// `running` whether its agent runs, `working` whether an agent of its is at work this moment,
+// a builder, its reviewer or the lead, and `tmux` whether Enter attaches to it on tmux, where
+// Ctrl-\ comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
 // Enter does on an issue, `startNow` what f does on a queued task, or on an issue while every
 // builder is busy, which starts it at once over limits.threads, and `merge` what m does on a task ready for review. `link` is its PR's,
 // which Enter opens, and `branch` the branch a task that is ready without a forge waits on. Each is
@@ -86,6 +88,7 @@ export type Row = {
   needsYou: boolean;
   session: string | null;
   running: boolean;
+  working: boolean;
   tmux: boolean;
   start: Question | null;
   startNow: Question | null;
@@ -145,12 +148,14 @@ const shownTime = (at: number | null, now: number) =>
 // closed its tab by exiting it.
 const LeadState = z.object({ lead_state: z.string().nullable(), tab_closed: z.coerce.boolean() });
 
-// Returns the lead's row, drawn as a task's is, so it reads as a row you can open. It says
-// whether the lead runs, and when it does, what its hooks last said it is doing, and its title is
-// its harness. Its mark is filled and yellow while it asks you something, bright while it runs
-// and dim once you exited it. The daemon keeps the lead of every open tab running, so a
-// lead runs unless you exited it, which closed its tab. Enter has the daemon start it either way.
-function leadRow(db: Database, open: Open): Row {
+// Returns the lead's row, which heads the list. It says whether the lead runs, and when it does,
+// what its hooks last said it is doing, or that it is starting before they said anything, and
+// what it is doing while it works. Its title is its harness. A lead you exited asks nothing,
+// whatever its hooks last said. Its mark is filled and
+// yellow while it asks you something, red on an error, bright while it works and dim otherwise.
+// The daemon keeps the lead of every open tab running, so a lead runs unless you exited it, which
+// closed its tab. Enter has the daemon start it either way.
+function leadRow(db: Database, open: Open, now: number): Row {
   const lead = leadOf(db, open.owner, open.repo);
   const { lead_state: state, tab_closed: closed } = LeadState.parse(
     db
@@ -158,38 +163,38 @@ function leadRow(db: Database, open: Open): Row {
       .get(open.owner, open.repo),
   );
   const runs = !closed;
-  // The hooks say asking while a question waits on you, and nothing before the first one ran.
-  // A lead you exited asks nothing, whatever its hooks last said.
-  const asking = runs && state === "asking";
-  const word = !runs ? "stopped" : asking ? "asks you" : (state ?? "running");
+  const said = runs ? state : null;
+  const word = !runs ? "stopped" : said === "asking" ? "waiting on you" : (said ?? "starting");
+  const working = said === "working";
+  const harness = HarnessName.safeParse(lead.harness);
+  const step =
+    working && harness.success
+      ? agentProgress(
+          {
+            name: lead.name,
+            harness: harness.data,
+            folder: () => lead.folder,
+            session: lead.session,
+          },
+          now,
+        ).step
+      : null;
+  const colour: Colour =
+    said === "asking" ? "yellow" : said === "error" ? "red" : working ? "bright" : "dim";
   return {
-    part: "lead",
-    section: "lead",
+    ...emptyRow,
     name: "lead",
     label: "lead",
-    task: null,
-    title: lead.harness ?? "",
-    mark: asking ? { sign: "●", colour: "yellow" } : { sign: "○", colour: runs ? "bright" : "dim" },
+    title: harness.success ? harnessNamed(harness.data).title : "",
+    mark: { sign: said === "asking" || said === "error" ? "●" : "○", colour },
     says: word,
-    colour: asking ? "yellow" : "dim",
-    step: "",
-    pr: "",
-    ci: null,
-    review: null,
-    when: "",
-    changed: null,
-    needsYou: asking,
+    colour,
+    step: removeControlCodes(step ?? ""),
+    needsYou: said === "asking",
     session: lead.name,
     running: runs,
+    working,
     tmux: true,
-    start: null,
-    startNow: null,
-    merge: null,
-    link: null,
-    branch: null,
-    more: 0,
-    place: null,
-    waits: "",
   };
 }
 
@@ -287,6 +292,7 @@ function taskRow(
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
+    working: !ended && (shown.status === "working" || word === "reviewing"),
     tmux: !ended && !ready && (thread.host ?? "tmux") === "tmux",
     start: null,
     startNow: null,
@@ -469,6 +475,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       needsYou: false,
       session: null,
       running: false,
+      working: false,
       tmux: false,
       start: full
         ? {
@@ -536,7 +543,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         startedOf(b) - startedOf(a),
     );
   return [
-    leadRow(db, open),
+    leadRow(db, open, now),
     ...live("needs you"),
     ...upNext,
     ...waiting,
@@ -593,6 +600,7 @@ const emptyRow: Row = {
   needsYou: false,
   session: null,
   running: false,
+  working: false,
   tmux: false,
   start: null,
   startNow: null,

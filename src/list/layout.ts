@@ -1,9 +1,11 @@
 // The list as lines for your terminal: the top line with Skelcrew and every repository's tab, the
-// lead's row, each section's heading with the rows of those that are open, and
-// the bottom line with the keys and the machine's load. It reads nothing, so what you see can be
-// tested without a terminal.
+// lead's block that heads the repository, each section's heading in its colour with the rows of
+// those that are open, and the bottom line with the keys and the machine's load. It reads
+// nothing, so what you see can be tested without a terminal.
 import { ListStage } from "../flow/stage.ts";
 import {
+  amber,
+  blue,
   bright,
   filled,
   fitted,
@@ -12,7 +14,9 @@ import {
   lightGrey,
   markColours,
   paint,
+  purple,
   red,
+  shade,
   shaded,
   tinted,
   white,
@@ -119,6 +123,23 @@ export function enterAttaches(row: Row): boolean {
   return (atWork || row.needsYou) && row.session !== null;
 }
 
+// The colour of each section that has one, which its heading and its tasks' marks share, so the
+// stages sort at a glance. Needs you is the yellow of its marks. The task queue and Backlog only
+// wait, so they keep the theme's own text. Every heading and mark reads without colour too.
+const sectionColours: Partial<Record<Section, string>> = {
+  "needs you": yellow,
+  building: blue,
+  reviewing: purple,
+  checks: amber,
+  ready: green,
+  done: grey,
+};
+
+// The spinner on the mark of an agent at work, one frame after another. The list draws its first
+// frame, and the screen's sidebar turns it.
+export const spinner = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+const still = spinner.slice(0, 1);
+
 // The widest section name, so every heading's count starts in the same column.
 const sectionNameWidth = Math.max(...Object.values(sectionNames).map((name) => name.length));
 
@@ -133,8 +154,8 @@ const keyOf = (section: Section) =>
       : String(ListStage.options.indexOf(section) + 1);
 
 // Returns a section's heading as a line: the number key that opens and closes it, dim, then its
-// name, bright while open and dim while closed, then how many tasks it has, lined up under the
-// other headings' counts, such as `2 Building  4`. Needs you's count is yellow, as it shows only
+// name, bold in its section's colour while open and dim while closed, then how many tasks it
+// has, lined up under the other headings' counts, such as `2 Building  4`. Needs you's count is yellow, as it shows only
 // while a task waits on you. Task queue then says dim how full the builders are, such as `Building
 // 4/4 · 3 queued`, which goes first on a narrow terminal. Cut to fit, without its colours, on a
 // terminal narrower still.
@@ -144,7 +165,8 @@ function headingLine(heading: Heading, countWidth: number, width: number): strin
   const count = String(heading.count).padStart(countWidth);
   const plain = ` ${key} ${name} ${count}`;
   if (Bun.stringWidth(plain) > width) return fitted(plain, width);
-  const shown = paint(heading.open ? bright : grey, name);
+  const colour = sectionColours[heading.section];
+  const shown = paint(heading.open ? (colour ? `1;${colour}` : bright) : grey, name);
   const waits = heading.section === "needs you";
   const fits = heading.note && Bun.stringWidth(`${plain}  ${heading.note}`) <= width;
   const note = fits ? `  ${paint(grey, heading.note)}` : "";
@@ -234,9 +256,20 @@ const marked = (lines: string[], here: boolean, width: number) =>
 // What starts the first line of a row: ▸ on the row you are on, and blank on the others.
 const pointer = (here: boolean) => (here ? " ▸ " : "   ");
 
+// Returns the colour of a task's mark: yellow, red or green as its state says, or else the
+// colour of the stage it shows under.
+function markColour(row: Row): string {
+  const { colour } = row.mark;
+  const stage = row.section === row.part && row.section !== "lead" ? row.section : null;
+  const own = stage === null ? undefined : sectionColours[stage];
+  return colour === "bright" || colour === "dim"
+    ? (own ?? markColours[colour])
+    : markColours[colour];
+}
+
 // Returns the start of a row's first line: its pointer, then its mark.
 const markStart = (row: Row, here: boolean) =>
-  `${pointer(here)}${tinted(here, markColours[row.mark.colour], row.mark.sign)}`;
+  `${pointer(here)}${tinted(here, markColour(row), row.mark.sign)}`;
 
 // Returns a row in Backlog or Done as one line, in columns from the left: its mark, its name,
 // its title, cut with … when it doesn't fit, then when it changed, dim. The title's column is as
@@ -422,15 +455,77 @@ function edgeLine(
   return { text, row: null, target: { pinned: spans } };
 }
 
+// Where a spinner is drawn: its line and column, counted from 0, and the cell as drawn, its frame
+// the spinner's first, in its colours and the row's background.
+export type Spin = { line: number; column: number; cell: string };
+
+// Returns the lead's block, which heads the list as the repository's header. Its first line is
+// `◆ Lead · Claude Code`, its harness, with its mark and state on the right, such as `○ idle`.
+// Its title is cut first to fit. The second says what the lead is doing while it works. Then a
+// line across, a line of how many tasks are where, such as `9 running · 2 ready · 1 needs you`,
+// with only those that have any, and a blank line. Gives the lines, and where its mark is.
+function leadBlock(
+  row: Row,
+  here: boolean,
+  headings: Heading[],
+  width: number,
+): { lines: string[]; mark: Spin | null } {
+  const start = pointer(here);
+  const colour = markColours[row.mark.colour];
+  const state = `${row.mark.sign} ${row.says}`;
+  const room = width - Bun.stringWidth(start) - Bun.stringWidth(state) - 2;
+  const title = fitted(row.title ? ` · ${row.title}` : "", room - "◆ Lead".length);
+  let first = fitted(`${start}◆ Lead  ${state}`, width);
+  let mark: Spin | null = null;
+  if (room >= "◆ Lead".length) {
+    const gap = " ".repeat(room + 2 - "◆ Lead".length - Bun.stringWidth(title));
+    const sign = tinted(here, colour, row.mark.sign);
+    const column = width - Bun.stringWidth(state);
+    mark = { line: 0, column, cell: here ? `\x1b[${shade}m${sign}\x1b[49m` : sign };
+    first = `${start}${tinted(here, bright, "◆ Lead")}${tinted(here, grey, title)}${gap}${sign} ${tinted(here, colour, row.says)}`;
+  }
+  const indent = " ".repeat(Bun.stringWidth(start) + 2);
+  const step = fitted(row.step, width - indent.length);
+  const second = step ? `${indent}${tinted(here, colour, step)}` : "";
+  const count = (section: Section) =>
+    headings.find((heading) => heading.section === section)?.count ?? 0;
+  const parts = [
+    { count: count("building") + count("reviewing") + count("checks"), word: "running", code: "" },
+    { count: count("task queue"), word: "queued", code: grey },
+    { count: count("ready"), word: "ready", code: green },
+    { count: count("needs you"), word: "needs you", code: yellow },
+  ].filter((part) => part.count > 0);
+  const said = parts.map((part) => `${part.count} ${part.word}`);
+  const plain = `   ${said.join(" · ") || "nothing under way"}`;
+  const summary =
+    Bun.stringWidth(plain) > width || parts.length === 0
+      ? paint(grey, fitted(plain, width))
+      : `   ${parts
+          .map(({ code }, at) => (code ? paint(code, said[at] ?? "") : (said[at] ?? "")))
+          .join(paint(grey, " · "))}`;
+  return {
+    lines: [...marked([first, second], here, width), paint(grey, "─".repeat(width)), summary, ""],
+    mark: row.working ? mark : null,
+  };
+}
+
+// Returns the lead and the rows as lines for a place `width` columns wide and `height` tall,
+// scrolled from `top`, on the row at `here`. With `spin`, the mark of an agent at work is the
+// spinner's first frame, and `spins` says where each is, so the screen's sidebar can turn them
+// alone.
 export function drawRows(
-  rows: Row[],
+  shownRows: Row[],
   headings: Heading[],
   here: number,
   top: number,
   width: number,
   height: number,
-): { lines: string[]; targets: Target[]; top: number } {
-  const tasks = rows.filter((row) => row.part !== "heading");
+  spin = false,
+): { lines: string[]; targets: Target[]; top: number; spins: Spin[] } {
+  const rows = spin
+    ? shownRows.map((row) => (row.working ? { ...row, mark: { ...row.mark, sign: still } } : row))
+    : shownRows;
+  const tasks = rows.filter((row) => row.part !== "heading" && row.part !== "lead");
   const short = tasks.filter((row) => !tall(row));
   const widest = (of: (row: Row) => string, among = short) =>
     Math.max(...among.map((row) => Bun.stringWidth(of(row))), 0);
@@ -450,10 +545,10 @@ export function drawRows(
   const countWidth = Math.max(...headings.map((heading) => String(heading.count).length), 1);
   const leadAt = rows.findIndex((row) => row.part === "lead");
   const blankLine = { text: "", row: null, target: null };
-  const lead = leadAt < 0 ? [] : [...linesOf(leadAt), ""];
-  const leadTargets: Target[] = lead.map((_, at) =>
-    at < lead.length - 1 ? { row: leadAt } : null,
-  );
+  const leadRow = rows[leadAt];
+  const block = leadRow ? leadBlock(leadRow, leadAt === here, headings, width) : null;
+  const lead = block?.lines ?? [];
+  const leadTargets: Target[] = lead.map((_, at) => (at < 2 ? { row: leadAt } : null));
   const room = Math.max(height - lead.length, 1);
   const sections = (parted: boolean): BodyLine[] =>
     headings.flatMap((heading) => {
@@ -526,7 +621,15 @@ export function drawRows(
       : visible;
   }
   const blank = Array.from({ length: room - shown.length }, () => "");
+  const spins = shown.flatMap((line, at): Spin[] => {
+    const row = line.row === null ? undefined : rows[line.row];
+    if (!spin || !row?.working || [...Bun.stripANSI(line.text)][3] !== still) return [];
+    const sign = tinted(line.row === here, markColour(row), still);
+    const cell = line.row === here ? `\x1b[${shade}m${sign}\x1b[49m` : sign;
+    return [{ line: lead.length + at, column: 3, cell }];
+  });
   return {
+    spins: [...(spin && block?.mark ? [block.mark] : []), ...spins],
     lines: [...lead, ...shown.map((line) => line.text), ...blank],
     targets: [
       ...leadTargets,

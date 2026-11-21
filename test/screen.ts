@@ -329,8 +329,8 @@ export async function toSecondThread(): Promise<void> {
   await attachTo("app-7");
 }
 
-// Returns whether the row you are on is the lead's, which alone starts with its mark and lead.
-export const onLead = (window = "one") => /^▸ \S lead\b/.test(selected(window));
+// Returns whether the row you are on is the lead's, which alone starts with ◆ Lead.
+export const onLead = (window = "one") => /^▸ ◆ Lead\b/.test(selected(window));
 
 // Waits until the screen shows the agent you opened it on, and the sidebar has drawn, on the
 // lead's row, where the screen starts whichever agent it opened on.

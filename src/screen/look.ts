@@ -7,6 +7,9 @@ import type { Colour } from "../flow/marks.ts";
 // close to the yellow of needs you. They are the same on the row you are looking at, so a mark
 // never changes colour as you move onto it.
 export const [green, yellow, red] = ["38;5;120", "38;5;221", "38;5;210"];
+// The colours of the stages at work, mid tones that read on a light theme as on a dark one, and
+// apart from the yellow of needs you and the red of what went wrong.
+export const [blue, purple, amber] = ["38;5;69", "38;5;134", "38;5;172"];
 // Bright text, for the mark of a builder at work. It is the theme's own text in bold, not a fixed
 // white, so it reads on a light theme too. On the row you are looking at it is white, as there
 // the theme's own text can be dark on the grey.

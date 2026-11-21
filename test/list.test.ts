@@ -139,7 +139,7 @@ test("the lead comes first, then what needs you, then what is in the task queue,
     "needs you | ready | APP-14 | Fix the export header | ready to merge | #41 | ",
   );
   expect(shown).toEqual([
-    ["lead", "lead", "lead", "claude", "running", "", ""],
+    ["lead", "lead", "lead", "Claude Code", "starting", "", ""],
     ["needs you", "building", "APP-12", "Rate limit the API", "question", "", "2m"],
     ["needs you", "ready", "APP-14", "Fix the export header", "ready to merge", "#41", ""],
     ["task queue", "building", "APP-9", "Old work", "paused", "", "1m"],
@@ -493,8 +493,8 @@ test("Done shows the tasks that ended today, or the last ten when fewer ended to
   expect(done().every((row) => /^\d+h$/.test(row.when))).toBe(true);
   // Each takes one line: its mark, name and title, then when it ended, lined up.
   const lines = drawn(0, 40, 80, ["done"]).map((line) => line.trimEnd());
-  expect(lines).toContain("   ○ 100   Ended 100  1h");
-  expect(lines).toContain("   ○ 308   Ended 308  12h");
+  expect(lines).toContain("   ○ 100  Ended 100  1h");
+  expect(lines).toContain("   ○ 308  Ended 308  12h");
 });
 
 test("a row says how long ago its task changed, in minutes, hours or days, never a clock time", () => {
@@ -785,16 +785,29 @@ test("sc show says a task's armed merge and what it waits on", () => {
 });
 
 // The list reads only the database: a builder runs while its thread works or waits, and a lead
-// while its tab is open, as the daemon keeps it running.
+// while its tab is open, as the daemon keeps it running. Only an agent at work this moment spins.
 test("a row knows whether its agent runs, and the lead says what its hooks last said", () => {
   sql("UPDATE repositories SET lead_state = 'asking' WHERE repo = 'app';");
   const running = rows();
   expect(running.find((row) => row.name === "lead")).toMatchObject({
-    says: "asks you",
-    title: "claude",
+    says: "waiting on you",
+    title: "Claude Code",
     mark: { sign: "●", colour: "yellow" },
     colour: "yellow",
     running: true,
+    working: false,
+  });
+  sql("UPDATE repositories SET lead_state = 'working' WHERE repo = 'app';");
+  expect(rows().find((row) => row.name === "lead")).toMatchObject({
+    says: "working",
+    mark: { sign: "○", colour: "bright" },
+    working: true,
+  });
+  sql("UPDATE repositories SET lead_state = 'idle' WHERE repo = 'app';");
+  expect(rows().find((row) => row.name === "lead")).toMatchObject({
+    says: "idle",
+    mark: { sign: "○", colour: "dim" },
+    working: false,
   });
   expect(running.find((row) => row.name === "APP-7")?.running).toBe(true);
   expect(running.find((row) => row.name === "APP-9")?.running).toBe(false);
@@ -839,9 +852,9 @@ test("the list printed without a terminal has every task, however many are at wo
 await runList("skel-test-${process.pid}-none", "simon/app");`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   const printed = run.stdout.toString();
-  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`${task}    Task ${task}`);
-  expect(printed).toContain("14    Fix the export header");
-  expect(printed).toContain("31    Export as CSV");
+  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`${task}  Task ${task}`);
+  expect(printed).toContain("14  Fix the export header");
+  expect(printed).toContain("31  Export as CSV");
 });
 
 // The list reads no settings file, so it knows a thread is past its round limit from the changes
@@ -969,27 +982,30 @@ const drawn = (here: number, height = 20, width = 80, open?: Section[]) =>
   drawnWith(here, frame, { width, height }, open).map((line) => Bun.stripANSI(line));
 
 test("every section has its heading with its count, only open ones show rows, and every line fits", () => {
-  const lines = drawn(1, 26);
+  const lines = drawn(1, 29);
   expect(lines[0]).toBe(" Skelcrew v0.6.0   app    site •1 ");
-  // The lead and each task at work take two lines: mark, name and title, then the word with a
-  // task's PR, CI and when it changed. So what it does sits under its title.
-  expect(lines.slice(2, 24).map((line) => line.trimEnd())).toEqual([
-    "   ○ lead  claude",
-    "     running",
+  // The lead heads the list with its harness and its state, then what it does, a line across and
+  // how many tasks are where. Each task at work takes two lines: mark, name and title, then the
+  // word with its PR, CI and when it changed. So what it does sits under its title.
+  expect(lines.slice(2, 26).map((line) => line.trimEnd())).toEqual([
+    "   ◆ Lead · Claude Code                                              ○ starting",
+    "",
+    "─".repeat(79),
+    "   1 running · 1 queued · 2 needs you",
     "",
     "   Needs you  2",
-    " ▸ ● 12    Rate limit the API",
+    " ▸ ● 12  Rate limit the API",
     "     question · 2m",
-    "   ● 14    Fix the export header",
+    "   ● 14  Fix the export header",
     "     ready to merge · #41 ✓ r1",
     "",
     " 0 Task queue 1",
-    "   ○ 9     Old work",
+    "   ○ 9   Old work",
     "     paused · 1m",
     "",
     " 1 Backlog    1",
     " 2 Building   1",
-    "   ○ 7     Login redirect",
+    "   ○ 7   Login redirect",
     "     5m",
     "",
     " 3 Reviewing  0",
@@ -1001,18 +1017,18 @@ test("every section has its heading with its count, only open ones show rows, an
   expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  0-6 sections  q/esc quit${" ".repeat(30)}cpu 12%`);
   // Nothing reaches the last column, where a terminal would wait to wrap.
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(79);
-  expect(lines).toHaveLength(26);
+  expect(lines).toHaveLength(29);
 });
 
 test("an open section shows its rows, and its heading is bright while a closed one is dim", () => {
-  const lines = drawn(1, 24, 80, ["backlog", "ready"]);
+  const lines = drawn(1, 26, 80, ["backlog", "ready"]);
   // A task in Backlog or Done takes one line, in columns: mark, name, title, when it changed.
-  expect(lines.slice(5, 16).map((line) => line.trimEnd())).toEqual([
+  expect(lines.slice(7, 18).map((line) => line.trimEnd())).toEqual([
     "   Needs you  2",
     " 0 Task queue 1",
     "",
     " 1 Backlog    1",
-    " ▸ ○ 31    Export as CSV  14d",
+    " ▸ ○ 31  Export as CSV  14d",
     "",
     " 2 Building   1",
     " 3 Reviewing  0",
@@ -1035,15 +1051,15 @@ test("an open section shows its rows, and its heading is bright while a closed o
 // heading, so the task queue comes first.
 test("the task queue shows its key 0 and is parted from the stages, and an empty Needs you shows no heading", () => {
   sql("UPDATE threads SET asking = 0, needs_you = 0; DELETE FROM threads WHERE folder = 'app-14';");
-  const lines = drawn(1, 24, 80, ["building"]);
-  expect(lines.slice(5, 12).map((line) => line.trimEnd())).toEqual([
+  const lines = drawn(1, 26, 80, ["building"]);
+  expect(lines.slice(7, 14).map((line) => line.trimEnd())).toEqual([
     " 0 Task queue 1",
     "",
     " 1 Backlog    1",
     " 2 Building   2",
-    " ▸ ○ 12    Rate limit the API",
+    " ▸ ○ 12  Rate limit the API",
     "     2m",
-    "   ○ 7     Login redirect",
+    "   ○ 7   Login redirect",
   ]);
   expect(lines.some((line) => line.includes("Needs you"))).toBe(false);
   const shown = shownRows(rows(), new Set<Section>(["task queue"]), false);
@@ -1098,8 +1114,8 @@ test("the heading you are on never hides at the bottom edge, as the view goes do
   const opened = new Set<Section>(["needs you", "task queue", "building"]);
   const shown = shownRows(all, opened, false);
   const at = shown.findIndex((row) => row.part === "heading" && row.section === "building");
-  // The lead's 3 lines, then 10 lines of sections between the edges, end on Building's heading.
-  const { lines } = drawRows(shown, sectionHeadings(all, opened), at, 0, 60, 15);
+  // The lead's 5 lines, then 10 lines of sections between the edges, end on Building's heading.
+  const { lines } = drawRows(shown, sectionHeadings(all, opened), at, 0, 60, 17);
   const plain = lines.map((line) => Bun.stripANSI(line).trimEnd());
   const heading = plain.findIndex((line) => line.startsWith(" 2 Building"));
   expect(heading).toBeGreaterThan(0);
@@ -1167,12 +1183,12 @@ test("no open heading ends the view without its rows, and every count shows, at 
 test("an edge too wide for the terminal says its counts in fewer letters", () => {
   sql(fourStagesSql());
   const open: Section[] = ["needs you", "task queue", "backlog", "building", "reviewing", "checks"];
-  const lines = drawn(14, 16, 48, open).map((line) => line.trimEnd());
-  expect(lines[5]).toBe(" ↑ +11  Need 2  Queue 1  Back 1  Build 7  Rev 1");
-  expect(lines[13]).toBe(" ↓ Ready 0   Done 0");
+  const lines = drawn(14, 18, 48, open).map((line) => line.trimEnd());
+  expect(lines[7]).toBe(" ↑ +11  Need 2  Queue 1  Back 1  Build 7  Rev 1");
+  expect(lines[15]).toBe(" ↓ Ready 0   Done 0");
   // Narrower still, each stage goes by its number key, and how many rows are hidden stays.
-  const narrow = drawn(14, 16, 28, open).map((line) => line.trimEnd());
-  expect(narrow[5]).toBe(" ↑ +11 !:2 0:1 1:1 2:7 3:1");
+  const narrow = drawn(14, 18, 28, open).map((line) => line.trimEnd());
+  expect(narrow[7]).toBe(" ↑ +11 !:2 0:1 1:1 2:7 3:1");
 });
 
 // A heading pinned at an edge is clicked as the heading itself, by the columns it was drawn at.
@@ -1227,8 +1243,9 @@ test("each line drawn says what a click on it reaches", () => {
   // Returns what a click reaches on the first line that shows `text`.
   const at = (text: string) =>
     targets[lines.findIndex((line) => Bun.stripANSI(line).includes(text))];
-  expect(at("○ lead")).toEqual({ row: 0 });
-  expect(at("running")).toEqual({ row: 0 });
+  expect(at("◆ Lead")).toEqual({ row: 0 });
+  expect(at("─")).toBeNull();
+  expect(at("2 needs you")).toBeNull();
   expect(at("Backlog")).toEqual({ section: "backlog" });
   expect(at("Ready")).toEqual({ section: "ready" });
   expect(at("Login redirect")).toEqual({ row: shown.findIndex((row) => row.name === "APP-7") });
@@ -1253,14 +1270,129 @@ test("a row's word is in its colour, then its step and PR dim, its CI's mark and
   );
   const shown = all.filter((row) => row.part === "lead" || row.part === "building");
   const headings = sectionHeadings(all, new Set<Section>(["building"]));
-  const size = { width: 80, height: 24 };
+  const size = { width: 80, height: 26 };
   const { lines } = drawList(shown, headings, 1, 0, frame, size);
   const at = lines.findIndex((line) => line.includes("Login redirect"));
   expect(lines.slice(at, at + 3)).toEqual([
-    "   \x1b[1m○\x1b[22;39m 7     Login redirect",
+    "   \x1b[38;5;69m○\x1b[22;39m 7   Login redirect",
     "     \x1b[1mchanges\x1b[22;39m\x1b[90m · Editing rows.ts · #40 \x1b[22;39m\x1b[38;5;221m●\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;221mr2\x1b[22;39m\x1b[90m · 5m\x1b[22;39m",
     "",
   ]);
+});
+
+// The lead heads the list as the repository's header, not as a task: its harness and its state,
+// then what it is doing, a line across, and how many tasks are where, with only those that have
+// any. Its state is cut last, so a narrow terminal still says it.
+test("the lead heads the list with its state and step, then a line across and the counts", () => {
+  sql("UPDATE repositories SET lead_state = 'working' WHERE repo = 'app';");
+  const all = rows().map((row) =>
+    row.name === "lead" ? { ...row, step: "Reading rows.ts" } : row,
+  );
+  const opened = new Set<Section>(["needs you", "building"]);
+  const shown = shownRows(all, opened, false);
+  const { lines, targets } = drawRows(shown, sectionHeadings(all, opened), 1, 0, 50, 30);
+  expect(lines.slice(0, 6).map((line) => Bun.stripANSI(line).trimEnd())).toEqual([
+    `${"   ◆ Lead · Claude Code".padEnd(41)}○ working`,
+    "     Reading rows.ts",
+    "─".repeat(50),
+    "   1 running · 1 queued · 2 needs you",
+    "",
+    "   Needs you  2",
+  ]);
+  expect(targets.slice(0, 5)).toEqual([{ row: 0 }, { row: 0 }, null, null, null]);
+  // Each count is in the colour of what it counts, and the line across is dim.
+  expect(lines[2]).toStartWith("\x1b[90m─");
+  expect(lines[3]).toContain("\x1b[90m1 queued");
+  expect(lines[3]).not.toContain("ready");
+  expect(lines[3]).toContain("\x1b[38;5;221m2 needs you");
+  // On the lead's row, both its lines are shaded. Narrow, its title gives way to its state.
+  const narrow = drawRows(shown, sectionHeadings(all, opened), 0, 0, 30, 30).lines;
+  expect(narrow[0]).toContain("\x1b[48;5;238m");
+  expect(narrow[1]).toContain("\x1b[48;5;238m");
+  expect(Bun.stripANSI(narrow[0] ?? "").trimEnd()).toBe(" ▸ ◆ Lead · Claude…  ○ working");
+  // An idle lead says nothing under its name, as it is doing nothing.
+  sql("UPDATE repositories SET lead_state = 'idle' WHERE repo = 'app';");
+  const idle = rows();
+  const still = drawRows(
+    shownRows(idle, opened, false),
+    sectionHeadings(idle, opened),
+    1,
+    0,
+    50,
+    30,
+  );
+  expect(still.lines.slice(0, 2).map((line) => Bun.stripANSI(line).trimEnd())).toEqual([
+    `${"   ◆ Lead · Claude Code".padEnd(44)}○ idle`,
+    "",
+  ]);
+});
+
+// A spinner shows which agents are at work this moment: the lead's and each working builder's
+// mark is its first frame, and the list says where each is, so the screen's sidebar can turn
+// them alone. Without the spinner, as over a slow link, every mark stays still.
+test("with the spinner, the marks of agents at work are its first frame, and the list says where", () => {
+  sql("UPDATE repositories SET lead_state = 'working' WHERE repo = 'app';");
+  const all = rows();
+  expect(all.find((row) => row.name === "APP-7")?.working).toBe(true);
+  expect(all.find((row) => row.name === "APP-9")?.working).toBe(false);
+  const opened = new Set<Section>(["needs you", "task queue", "building"]);
+  const shown = shownRows(all, opened, false);
+  const at = shown.findIndex((row) => row.name === "APP-7");
+  const headings = sectionHeadings(all, opened);
+  const { lines, spins } = drawRows(shown, headings, at, 0, 60, 40, true);
+  const plain = lines.map((line) => Bun.stripANSI(line));
+  expect(spins.map(({ line, column }) => plain[line]?.slice(column, column + 1))).toEqual([
+    "⠋",
+    "⠋",
+  ]);
+  expect(spins.map(({ line }) => plain[line]?.trim())).toEqual([
+    "◆ Lead · Claude Code                            ⠋ working",
+    "▸ ⠋ 7   Login redirect",
+  ]);
+  // Each cell is drawn in its colours: Building's blue, on the grey of the row you are on.
+  expect(spins[1]?.cell).toBe("\x1b[48;5;238m\x1b[38;5;69m⠋\x1b[22;39m\x1b[49m");
+  expect(lines[spins[1]?.line ?? 0]).toContain("\x1b[48;5;238m ▸ \x1b[38;5;69m⠋\x1b[22;39m");
+  // Paused and waiting tasks never spin, and without the spinner nothing does.
+  expect(plain.join("\n")).toContain("○ 9 ");
+  const still = drawRows(shown, headings, at, 0, 60, 40);
+  expect(still.spins).toEqual([]);
+  expect(still.lines.join("\n")).not.toContain("⠋");
+});
+
+// Each stage has a colour, which its heading and its tasks' marks share, so the stages sort at a
+// glance. Needs you stays yellow and what went wrong red, whatever the stage. The task queue and
+// Backlog keep the theme's own text, and a closed heading is dim.
+test("each stage's heading and its tasks' marks share its colour, and needs you and failures keep theirs", () => {
+  sql(`${fourStagesSql()}
+${threadSql({ task: "18", title: "Failed", status: "failed", pr: 48 })}
+${threadSql({ task: "19", title: "Merged", status: "done", merged: 1, pr: 49 })}`);
+  const all = rows();
+  const opened = new Set<Section>(["needs you", "building", "reviewing", "checks", "done"]);
+  const { lines } = drawRows(
+    shownRows(all, opened, false),
+    sectionHeadings(all, opened),
+    0,
+    0,
+    80,
+    80,
+  );
+  const line = (text: string) => lines.find((one) => Bun.stripANSI(one).includes(text)) ?? "";
+  expect(line(" 2 Building")).toContain("\x1b[1;38;5;69mBuilding");
+  expect(line(" 3 Reviewing")).toContain("\x1b[1;38;5;134mReviewing");
+  expect(line(" 4 Checks")).toContain("\x1b[1;38;5;172mChecks");
+  expect(line(" 6 Done")).toContain("\x1b[1;90mDone");
+  expect(line("Needs you")).toContain("\x1b[1;38;5;221mNeeds you");
+  expect(line(" 5 Ready")).toContain("\x1b[90mReady");
+  expect(line(" 0 Task queue")).toContain("\x1b[90mTask queue");
+  expect(line("Login redirect")).toContain("\x1b[38;5;69m○");
+  expect(line("Under review")).toContain("\x1b[38;5;134m○");
+  expect(line("Approved too")).toContain("\x1b[38;5;172m○");
+  expect(line("Merged")).toContain("\x1b[90m○");
+  expect(line("Rate limit the API")).toContain("\x1b[38;5;221m●");
+  expect(line("Fix the export header")).toContain("\x1b[38;5;120m●");
+  expect(line("Failed")).toContain("\x1b[38;5;210m○");
+  // Without colour, the shape still says it: filled needs you, hollow doesn't.
+  expect(Bun.stripANSI(line("Rate limit the API"))).toContain("● 12");
 });
 
 // Building already says the task works, so the row doesn't say working again. The step its
@@ -1289,8 +1421,8 @@ test("a task's row shows its ID without the repository, which its tab names", ()
   expect(all.find((row) => row.name === "APP-T5")?.label).toBe("T5");
   expect(all.find((row) => row.name === "lead")?.label).toBe("lead");
   const lines = drawn(1, 30).map((line) => line.trimEnd());
-  expect(lines).toContain(" ▸ ● 12    Rate limit the API");
-  expect(lines).toContain("   ○ T5    From the backlog");
+  expect(lines).toContain(" ▸ ● 12  Rate limit the API");
+  expect(lines).toContain("   ○ T5  From the backlog");
   expect(lines.join("\n")).not.toContain("APP-");
 });
 
@@ -1330,7 +1462,7 @@ test("a row as wide as the terminal stops short of its last column, cutting only
     const lines = drawnWith(1, frame, { width, height: 24 }).map((line) => Bun.stripANSI(line));
     const row = lines.find((line) => line.includes("○ 7 ")) ?? "";
     expect(Bun.stringWidth(row)).toBe(width - 1);
-    expect(row).toContain("7     A title");
+    expect(row).toContain("7   A title");
     expect(row).toEndWith("…");
   }
 });
@@ -1409,32 +1541,34 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
   sql(more.join("\n"));
   // Needs you has app-12 and app-14. Building has by latest change app-9, app-7, then app-50 to
   // app-59. The last of them is the 14th task, at 14 among the rows after the lead.
-  const lines = drawn(14, 16, 80, ["needs you", "task queue", "building"]);
+  const lines = drawn(14, 18, 80, ["needs you", "task queue", "building"]);
   // The lead stays. The headings scroll with their rows, and those out of sight are pinned
   // at the edge they went past, with their counts, so none goes out of sight.
-  expect(lines.slice(2, 14).map((line) => line.trimEnd())).toEqual([
-    "   ○ lead  claude",
-    "     running",
+  expect(lines.slice(2, 16).map((line) => line.trimEnd())).toEqual([
+    "   ◆ Lead · Claude Code                                              ○ starting",
+    "",
+    "─".repeat(79),
+    "   11 running · 1 queued · 2 needs you",
     "",
     " ↑ 11 more   Needs you 2   Task queue 1   Backlog 1   Building 11",
-    "   ○ 57    Task 57",
+    "   ○ 57  Task 57",
     "     17m",
-    "   ○ 58    Task 58",
+    "   ○ 58  Task 58",
     "     18m",
-    " ▸ ○ 59    Task 59",
+    " ▸ ○ 59  Task 59",
     "     19m",
     " 3 Reviewing   0",
     " ↓ Checks 0   Ready 0   Done 0",
   ]);
-  expect(lines).toHaveLength(16);
+  expect(lines).toHaveLength(18);
   // Scrolled too, a blank line parts the task queue from the stages, as it is no stage.
-  const queued = drawn(3, 20, 80, ["needs you", "task queue", "building"]).map((line) =>
+  const queued = drawn(3, 22, 80, ["needs you", "task queue", "building"]).map((line) =>
     line.trimEnd(),
   );
   const queue = queued.indexOf(" 0 Task queue  1");
   expect(queued.slice(queue, queue + 5)).toEqual([
     " 0 Task queue  1",
-    " ▸ ○ 9     Old work",
+    " ▸ ○ 9   Old work",
     "     paused · 1m",
     "",
     " 1 Backlog     1",
@@ -1444,13 +1578,13 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
 });
 
 test("on the lead, the list starts at Needs you, with what is below at the bottom edge", () => {
-  const lines = drawn(0, 13, 80).map((line) => line.trimEnd());
-  expect(lines.slice(5, 11)).toEqual([
+  const lines = drawn(0, 15, 80).map((line) => line.trimEnd());
+  expect(lines.slice(7, 13)).toEqual([
     "",
     "   Needs you  2",
-    "   ● 12    Rate limit the API",
+    "   ● 12  Rate limit the API",
     "     question · 2m",
-    "   ● 14    Fix the export header",
+    "   ● 14  Fix the export header",
     " ↓ +3  Queue 1  Back 1  Build 1  Rev 0  Chk 0  Ready 0  Done 0",
   ]);
 });
@@ -1469,34 +1603,34 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   const at = (height: number, here: number) =>
     drawn(here, height, 80, open).map((line) => line.trimEnd());
   // On the first task in Building, the stages below it are pinned at the bottom edge.
-  const top = at(16, 5);
-  expect(top.slice(5, 14)).toEqual([
+  const top = at(18, 5);
+  expect(top.slice(7, 16)).toEqual([
     " ↑ 3 more   Needs you 2   Task queue 1",
     " 1 Backlog    1",
-    "   ○ 31    Export as CSV  14d",
+    "   ○ 31  Export as CSV  14d",
     " 2 Building   7",
-    " ▸ ○ 7     Login redirect",
+    " ▸ ○ 7   Login redirect",
     "     5m",
-    "   ○ 50    Task 50",
+    "   ○ 50  Task 50",
     "     10m",
     " ↓ 8 more   Reviewing 1   Checks 2   Ready 0   Done 0",
   ]);
   // On the last task in Checks, its heading and both its rows show, and the stages above it are
   // pinned at the top edge.
-  const bottom = at(16, 14);
-  expect(bottom.slice(5, 14)).toEqual([
+  const bottom = at(18, 14);
+  expect(bottom.slice(7, 16)).toEqual([
     " ↑ 11 more   Needs you 2   Task queue 1   Backlog 1   Building 7   Reviewing 1",
-    "   ○ 15    Under review",
+    "   ○ 15  Under review",
     "     #45 r1",
     " 4 Checks     2",
-    "   ○ 17    Approved too",
+    "   ○ 17  Approved too",
     "     #47 ●",
-    " ▸ ○ 16    Approved",
+    " ▸ ○ 16  Approved",
     "     #46 ●",
     " ↓ Ready 0   Done 0",
   ]);
   // The edges' counts keep their colours: what needs you is yellow.
-  const coloured = drawnWith(14, frame, { width: 80, height: 16 }, open);
+  const coloured = drawnWith(14, frame, { width: 80, height: 18 }, open);
   expect(coloured).toContain(
     ` \x1b[90m↑\x1b[22;39m \x1b[90m11 more\x1b[22;39m   \x1b[38;5;221mNeeds you 2\x1b[22;39m   \x1b[90mTask queue 1\x1b[22;39m   \x1b[90mBacklog 1\x1b[22;39m   \x1b[90mBuilding 7\x1b[22;39m   \x1b[90mReviewing 1\x1b[22;39m`,
   );
@@ -1507,13 +1641,13 @@ test("a terminal too short for every heading still shows the row you are on", ()
     threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
   );
   sql(more.join("\n"));
-  // Nine lines leave two for the stages: the row you are on, whole, and no heading.
-  const lines = drawn(14, 9, 80, ["needs you", "task queue", "building"]);
-  expect(lines).toHaveLength(9);
-  expect(lines[2]).toMatch(/^ {3}○ lead/);
-  expect(lines.slice(5, 7).map((line) => line.trim())).toEqual(["▸ ○ 59    Task 59", "19m"]);
-  // Eight leave one: the first line of the row you are on, with its ▸.
-  const fewer = drawn(14, 8, 80, ["needs you", "task queue", "building"]);
+  // Eleven lines leave two for the stages: the row you are on, whole, and no heading.
+  const lines = drawn(14, 11, 80, ["needs you", "task queue", "building"]);
+  expect(lines).toHaveLength(11);
+  expect(lines[2]).toMatch(/^ {3}◆ Lead/);
+  expect(lines.slice(7, 9).map((line) => line.trim())).toEqual(["▸ ○ 59  Task 59", "19m"]);
+  // Ten leave one: the first line of the row you are on, with its ▸.
+  const fewer = drawn(14, 10, 80, ["needs you", "task queue", "building"]);
   expect(fewer.filter((line) => line.includes("▸"))).toEqual([
     expect.stringMatching(/^ ▸ ○ 59 +Task 59 *$/),
   ]);
@@ -1785,7 +1919,7 @@ const sendBytes = async (bytes: string[], split: boolean) => {
 for (const [form, bytes] of Object.entries(back))
   for (const [agent, shown, arrows, mark] of [
     ["app-7", "7 ", ["Down", "Down", "Down", "Down", "Down", "Down"], "○"],
-    ["lead", "lead", ["Up", "Up", "Up"], "○"],
+    ["lead", "Lead", ["Up", "Up", "Up"], "◆"],
   ] as const)
     test(`Ctrl-\\ as ${form} comes back from ${agent} on its row, in pieces or scrolled back`, async () => {
       await open();
@@ -2060,7 +2194,7 @@ test("with nothing needing you, the list opens on the lead, with no Needs you", 
   sql(`UPDATE threads SET asking = 0, needs_you = 0 WHERE folder = 'app-12';
 UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
   await open();
-  expect(here()).toStartWith("▸ ○ lead");
+  expect(here()).toStartWith("▸ ◆ Lead");
   expect(seen()).not.toContain("Needs you");
   expect(seen()).toContain(" 5 Ready      1");
   await arrowTo("▸ ○ 7 ");
@@ -2160,7 +2294,10 @@ test("Enter on a lead that can't start says why, and attaches to nothing", async
   await open();
   Bun.spawnSync(["tmux", "-L", agents, "kill-session", "-t", "=lead"]);
   for (const _ of [1, 2, 3]) press("Up");
-  await until(() => here().startsWith("▸ ○ lead") && below() === "stopped", "the lead stopped");
+  await until(
+    () => here().startsWith("▸ ◆ Lead") && here().endsWith("○ stopped"),
+    "the lead stopped",
+  );
   press("Enter");
   await until(
     () => seen().includes("The lead didn't start: Claude Code's login for agents is gone"),
@@ -2183,11 +2320,11 @@ DELETE FROM items WHERE kind = 'pr';`);
 test("Enter on the lead attaches to it", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Up");
-  await until(() => here().startsWith("▸ ○ lead"), "the lead's row");
+  await until(() => here().startsWith("▸ ◆ Lead"), "the lead's row");
   press("Enter");
   await until(() => seen().includes("I am lead"), "the lead");
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ lead"), "the list on the lead's row");
+  await until(() => here().startsWith("▸ ◆ Lead"), "the list on the lead's row");
 });
 
 // A builder on a runtime plugin's host isn't in tmux, so Enter runs the host's own attach on its
@@ -2317,7 +2454,7 @@ test("m on a task ready for review asks first, and y merges it at the commit you
 test("Tab moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
   await open();
   press("Tab");
-  await until(() => seen().includes("● 3     Docs"), "site's list");
+  await until(() => seen().includes("● 3  Docs"), "site's list");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });
 
@@ -2470,10 +2607,10 @@ UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
 
 test("a click on the lead's row opens the lead at once", async () => {
   await open();
-  clickOn(lineOf("lead  claude"));
+  clickOn(lineOf("◆ Lead · Claude Code"));
   await until(() => seen().includes("I am lead"), "the lead");
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ lead"), "the list on the lead's row");
+  await until(() => here().startsWith("▸ ◆ Lead"), "the list on the lead's row");
 });
 
 test("a click on a stage's heading opens or closes it, and the wheel moves a row", async () => {
@@ -2526,7 +2663,7 @@ test("a click on a repository's tab opens it, and a click elsewhere does nothing
   expect(top).toMatch(/^ Skelcrew .+? {3}app {4}site •1$/);
   type(`\x1b[<0;${top.indexOf("site") + 1};2M`);
   type(`\x1b[<0;${top.indexOf("site") + 1};1M\x1b[<0;${top.indexOf("site") + 1};1m`);
-  await until(() => seen().includes("● 3     Docs"), "site's list");
+  await until(() => seen().includes("● 3  Docs"), "site's list");
   // It opens on site's task that needs you, as the list does on any repository.
   expect(here()).toStartWith("▸ ● 3 ");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
@@ -2582,7 +2719,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   // The lead's row isn't a task, so the pane is empty, its edge alone showing. It is five stops
   // up, past the headings of Task queue and Needs you.
   for (const _ of [1, 2, 3, 4, 5]) press("Up");
-  await until(() => here().startsWith("▸ ○ lead"), "the lead's row");
+  await until(() => here().startsWith("▸ ◆ Lead"), "the lead's row");
   await until(() => paneSeen().every((line) => line === ""), "an empty pane");
   // Past Needs you's heading and APP-12.
   for (const _ of [1, 2, 3]) press("Down");

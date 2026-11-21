@@ -213,6 +213,7 @@ test("what is left fills the live view from the bottom up", async () => {
     needsYou: false,
     session: "app-12",
     running: true,
+    working: false,
     tmux: true,
     start: null,
     startNow: null,

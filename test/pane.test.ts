@@ -27,6 +27,7 @@ const row: Row = {
   needsYou: true,
   session: "app-12",
   running: true,
+  working: false,
   tmux: true,
   start: null,
   startNow: null,
