@@ -147,7 +147,9 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   // Then what it waits on, such as `3rd in line: 4 of 4 builders busy`, wrapped whole, as the
   // reason the queue is held, or the command that brings a paused task back, comes last.
   const stage =
-    row.part === "lead" ? "" : sectionNames[row.section === "up next" ? "up next" : row.part];
+    row.part === "lead" || row.part === "request"
+      ? ""
+      : sectionNames[row.section === "up next" ? "up next" : row.part];
   const word = row.says ? ` · ${row.says}` : "";
   const staged =
     Bun.stringWidth(`${stage}${word}`) <= width
@@ -275,6 +277,14 @@ export function drawPane(
   scroll = 0,
 ): Pane {
   const blank = (count: number) => Array.from({ length: Math.max(count, 0) }, () => "");
+  // A request of the lead's has no details: the lead's screen fills the pane.
+  if (row?.part === "request" && live !== null) {
+    const shown =
+      "note" in live
+        ? [paint(grey, fitted(live.note, width))]
+        : screenLines(live.screen, width, height, false);
+    return { lines: [...shown, ...blank(height)].slice(0, height), scroll: 0, room: 0 };
+  }
   if (!row || details === null) return { lines: blank(height), scroll: 0, room: 0 };
   const least = full ? liveLeast : stripLines + 1;
   const room = Math.max(

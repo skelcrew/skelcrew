@@ -654,6 +654,10 @@ function prepareTables(db: Database): void {
     body TEXT NOT NULL,
     PRIMARY KEY (owner, repo, claim_commit)
   )`);
+  // A try made for your yes to a lead's request names the request, so only that request's yes,
+  // done again, finds it, never another filing of the same words.
+  if (!db.query("SELECT 1 FROM pragma_table_info('filing_tries') WHERE name = 'request'").get())
+    db.run("ALTER TABLE filing_tries ADD COLUMN request INTEGER");
   // The starts of backlog tasks this machine claimed on the remote and hasn't recorded a thread
   // for yet, each by the commit of its claim. A start a stop cut short is put back in the
   // backlog from here, while another machine's claim, which this table never holds, is left be.
@@ -670,6 +674,22 @@ function prepareTables(db: Database): void {
   // new note the ID of the last one deleted. Typing a note deletes it by its ID once it is in,
   // and a note dropped while it was typed, such as a thread's end once the thread starts over,
   // must not hand its ID to a note saved meanwhile, which would then be deleted unheard.
+  // The lead's requests that wait for your yes, each with what y does, as JSON, the line the
+  // list shows for it, when the lead made it, so the newest shows first, and when you said yes to
+  // it, null until then, and what that yes's start said once it changed the task, null until
+  // then. A request you said yes to stays until what the yes does is done and the lead's note saved, so a stop of the daemon in
+  // between loses neither. AUTOINCREMENT keeps an answered request's ID from going to a new one,
+  // which a y meant for the old one would answer.
+  db.run(`CREATE TABLE IF NOT EXISTS lead_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    action TEXT NOT NULL,
+    says TEXT NOT NULL,
+    made INTEGER NOT NULL,
+    answered INTEGER,
+    outcome TEXT
+  )`);
   // The release the daemon installed in the background, for the list's notice, until it runs
   // on it. At most one row.
   db.run("CREATE TABLE IF NOT EXISTS installed (release TEXT NOT NULL)");
