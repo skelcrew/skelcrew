@@ -2596,7 +2596,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   await until(() => titled("APP-14  Fix the export header"), "app-14's details");
   expect(paneSeen()).toContain("PR       #41  https://github.com/simon/app/pull/41");
   expect(paneSeen()).toContain("CI       ✓ test  ✗ build");
-  expect(paneSeen()).toContain("Review   Round 1 · approved");
+  expect(paneSeen()).toContain("Review   r1 · approved");
   expect(paneSeen()).toContain("         1. Name the limit");
   // Nothing in the pane asked the forge, not even for the failed check's log.
   expect(pluginAsked(join(home, ".config", "skelcrew", "plugins", "github"))).toEqual([]);
@@ -2609,7 +2609,7 @@ test("the pane shows the latest review's findings though it was never posted", a
   review_findings = '["Name the limit","Test the header"]' WHERE task = '12'`);
   await open({ width: wide });
   await until(() => titled("APP-12  Rate limit the API"), "app-12's details");
-  expect(paneSeen()).toContain("Review   Round 1 · changes asked");
+  expect(paneSeen()).toContain("Review   r1 · changes asked");
   expect(paneSeen()).toContain("         1. Name the limit");
   expect(paneSeen()).toContain("         2. Test the header");
 });

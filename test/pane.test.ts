@@ -102,7 +102,7 @@ test("the pane shows a summary card, then the task, then what happened, and the 
     "         https://github.com/acme/app/issues/42",
     "PR       #43  https://github.com/acme/app/pull/43",
     "CI       ✓ test  ● lint  ✗ build",
-    "Review   Round 2 · changes asked",
+    "Review   r2 · changes asked",
     "         1. The limit resets per process, not per…",
     "         2. No test covers the header",
     "         3. The 429 has no body",
@@ -152,12 +152,13 @@ test("the details take the list's look: bold title, stage and verdicts in colour
   expect(line(`PR       #43  ${pr}`)).toBe(
     `${esc}[90mPR       ${esc}[22;39m#43  ${esc}]8;;${pr}${esc}\\${pr}${esc}]8;;${esc}\\`,
   );
-  // Each check has its mark in its colour, and the review its verdict.
+  // Each check has its mark in its colour, and the review its round and verdict, as a row shows
+  // its round, in the verdict's colour.
   expect(line("CI       ✓ test  ● lint  ✗ build")).toBe(
     `${esc}[90mCI       ${esc}[22;39m${esc}[38;5;120m✓${esc}[22;39m test  ${yellow}●${esc}[22;39m lint  ${esc}[38;5;210m✗${esc}[22;39m build`,
   );
-  expect(line("Review   Round 2 · changes asked")).toBe(
-    `${esc}[90mReview   ${esc}[22;39m${esc}[90mRound 2 · ${esc}[22;39m${yellow}changes asked${esc}[22;39m`,
+  expect(line("Review   r2 · changes asked")).toBe(
+    `${esc}[90mReview   ${esc}[22;39m${yellow}r2 · changes asked${esc}[22;39m`,
   );
   // What the task does now takes the row's word in its colour.
   expect(line("Now      question · 2m ago")).toContain(`${yellow}question${esc}[22;39m`);
@@ -237,7 +238,7 @@ test("the card shows only the lines a task has something for", () => {
   const stepping: Row = { ...row, says: "working", step: "Editing rows.ts" };
   const lines = plain(drawPane(stepping, armed, null, 50, 40).lines);
   expect(lines).toContain("Now      working · Editing rows.ts · 2m ago");
-  expect(lines).toContain("CI       passed");
+  expect(lines).toContain("CI       ✓ passed");
   expect(lines).toContain("Merge    merges when ready · waiting on its review");
   // CI with no checks and no verdict says nothing.
   const none: Details = {
@@ -279,6 +280,7 @@ test("a link with control characters in it never reaches your terminal as codes"
   expect(text).not.toContain("\x1b]2;");
 });
 
+// CI with no checks to list shows the mark a row shows, then its word, so it reads without colour.
 test("an approved review and passed CI show green, a failed one red", () => {
   const page = details.view.prPage;
   if (!page) throw new Error("the details have a PR");
@@ -293,8 +295,8 @@ test("an approved review and passed CI show green, a failed one red", () => {
     },
   };
   const drawn = drawPane(row, passed, null, 50, 40).lines;
-  expect(drawn).toContain(`\x1b[90mCI       \x1b[22;39m${green}passed\x1b[22;39m`);
-  expect(drawn.find((line) => line.includes("approved"))).toContain(`${green}approved`);
+  expect(drawn).toContain(`\x1b[90mCI       \x1b[22;39m${green}✓ passed\x1b[22;39m`);
+  expect(drawn.find((line) => line.includes("approved"))).toContain(`${green}r3 · approved`);
   const failed: Details = {
     ...details,
     view: {
@@ -304,8 +306,16 @@ test("an approved review and passed CI show green, a failed one red", () => {
     },
   };
   const redLines = drawPane(row, failed, null, 50, 40).lines;
-  expect(redLines).toContain(`\x1b[90mCI       \x1b[22;39m${red}failed\x1b[22;39m`);
-  expect(redLines.find((line) => line.includes("review failed"))).toContain(`${red}review failed`);
+  expect(redLines).toContain(`\x1b[90mCI       \x1b[22;39m${red}✗ failed\x1b[22;39m`);
+  expect(redLines.find((line) => line.includes("review failed"))).toContain(
+    `${red}r3 · review failed`,
+  );
+  // CI still running is yellow, with the mark a row shows while it runs.
+  const running: Details = {
+    ...details,
+    view: { ...details.view, prPage: { ...page, ci: "running", checks: [] } },
+  };
+  expect(plain(drawPane(row, running, null, 50, 40).lines)).toContain("CI       ● running");
 });
 
 test("by default the live view is a strip of the agent's last three lines, the details above it", () => {
