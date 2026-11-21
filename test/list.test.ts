@@ -717,7 +717,7 @@ test("an approval with no saved commit can't be merged here, and says so", () =>
 test("a ready task whose forge sent no head commit can't be merged here, and says why", () => {
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z"));
   expect(rows().find((row) => row.name === "APP-14")?.merge).toEqual({
-    refused: "app#41 needs a newer forge plugin to merge here: run sc plugin update",
+    refused: "app#41 needs a newer forge plugin to merge here: run sc plugin update -g",
   });
 });
 

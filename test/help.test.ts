@@ -54,11 +54,12 @@ test("the help names every command", () => {
     "interrupt",
     "review",
     "install",
-    "add -g",
-    "update -g",
-    "setup",
-    "remove -g",
-    "plugins",
+    "plugin add",
+    "plugin add -g",
+    "plugin update -g",
+    "plugin setup",
+    "plugin rm -g",
+    "plugin ls",
   ])
     expect(out).toContain(`  ${command} `);
 });
@@ -74,7 +75,9 @@ test("the help names sc serve for the daemon, and never sc up", () => {
 test("the help names no update command for Skelcrew, and says --remote keeps it up to date", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("update --remote");
-  expect(out.match(/^ {2}update.*/gm)).toEqual([expect.stringContaining("update -g [<name>]")]);
+  expect(out.match(/^ {2}(plugin )?update.*/gm)).toEqual([
+    expect.stringContaining("plugin update -g [<name>]"),
+  ]);
   expect(out).toContain("up to date");
 });
 

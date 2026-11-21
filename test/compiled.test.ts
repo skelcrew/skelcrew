@@ -93,7 +93,7 @@ test("runs a plugin's bun commands on the Bun inside it", async () => {
     join(folder, "build.ts"),
     'await Bun.write("built", process.env.SKELCREW_PLUGIN ?? "");\n',
   );
-  const installed = await run(["plugin", "install", folder], skel, "y\n");
+  const installed = await run(["plugin", "add", "-g", folder], skel, "y\n");
   expect(installed.err).toBe("");
   expect(readFileSync(join(folder, "built"), "utf8")).toBe("fake");
   expect((await run(["plugin", "ls"])).out).toBe("fake 0.1.0 io: tracker\n");
