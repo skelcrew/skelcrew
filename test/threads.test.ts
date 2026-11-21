@@ -1453,7 +1453,7 @@ nameRepositories(db);`;
     // Its builder already runs as builder, so a flow that builds as another role is refused, and
     // the builder keeps the instructions it started with.
     expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
-      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12, then sc start APP-12 --flow careful.\n",
+      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12 --keep-issue, then sc start APP-12 --flow careful.\n",
     );
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     expect(read(join(config("app-12"), "args"))).not.toContain("Write the test first.");
@@ -1468,7 +1468,7 @@ nameRepositories(db);`;
     // A stopped thread whose builder hasn't submitted switches too, and comes back on that flow.
     expect((await skel("stop", "app-12")).code).toBe(0);
     expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
-      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12, then sc start APP-12 --flow careful.\n",
+      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12 --keep-issue, then sc start APP-12 --flow careful.\n",
     );
     expect(thread().status).toBe("stopped");
     const back = await skel("start", "app-12", "--flow", "default");
