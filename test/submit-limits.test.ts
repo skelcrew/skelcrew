@@ -167,8 +167,9 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(notes()).toBe(1);
     expect(thread().posting).not.toBeNull();
     // Once the forge answers again, a poll reads the PR back, and the lead hears. The forge's
-    // first answer is from before it took the review, with only round 2's, yet the copy shows
-    // round 3's review, as the forge said it took it.
+    // first answer is from before it took the review, with only round 2's. The retry posts
+    // nothing, as the review is on the PR and this forge can't edit it, yet the copy shows round
+    // 3's review, as the forge said it took it.
     const stale = {
       id: "1002",
       text: "Round 2 · commit 0000000\n\nSecond problem.",

@@ -31,11 +31,14 @@ const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.s
 
 // Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict and findings it
 // last said, so each round edits that one review, or posts again only when what it says changed.
+// `text` is the whole review as the forge took it, for Skelcrew's copy of the PR, or null in a row
+// saved before Skelcrew kept it.
 const ReviewPost = z.object({
   pr: z.number(),
   id: z.string(),
   verdict: z.enum(["approve", "changes"]),
   findings: z.array(z.string()),
+  text: z.string().nullable().default(null),
 });
 export type ReviewPost = z.infer<typeof ReviewPost>;
 

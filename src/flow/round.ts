@@ -794,19 +794,22 @@ function postVerdict(db: Database, sessions: string, folder: string): Promise<st
     try {
       const repository = repositoryOf(db, thread);
       if (review !== null) {
-        const posted = await postOrEdit(db, folder, review.pr, review.commit, review);
+        await postOrEdit(db, folder, review.pr, review.commit, review);
         // sc show and the list read the PR's review from Skelcrew's copy, which a poll brings up
         // to date only later. So the copy reads the PR back, and the review counts as on the
         // forge only once it has. A forge that fails here leaves it saved, to try again: the
         // review saved as posted is edited or left as it is then, never posted twice. A forge
-        // can answer with data from before it took the review, so what it took goes in the copy
-        // on top. A round that said the same as the last, which a forge that can't edit gets no
-        // new review for, leaves the review the PR has.
+        // can answer with data from before it took the review, so the review saved as posted
+        // goes in the copy on top, on a retry too, when this round's post is long done. A round
+        // that said the same as the last, which a forge that can't edit gets no new review for,
+        // puts back the review the PR has.
         await refreshPr(db, repository, review.pr);
-        if (posted !== null)
+        const post = readThread(db, folder).review_post;
+        if (post !== null && post.pr === review.pr && post.text !== null)
           saveOwnReview(db, thread.owner, thread.repo, review.pr, {
-            ...posted,
-            verdict: review.verdict,
+            id: post.id,
+            text: post.text,
+            verdict: post.verdict,
           });
         // The review's note goes to the lead as the review stops being saved as posting, in one
         // step, so a stop of the daemon can neither lose it nor say it twice. It goes only while
@@ -862,15 +865,14 @@ export async function retryPost(db: Database, sessions: string, folder: string):
 // What it posted is saved on the thread at once, so a later round edits it though this one is
 // cancelled. Two rounds of a thread never post at once: a round's review starts only once the
 // round before has ended, posting included, so the later round always reads what the earlier
-// one saved, and its verdict is the one left on the PR. Returns the ID and text of the review it
-// put on the PR, or null when it left the PR's review as it was.
+// one saved, and its verdict is the one left on the PR.
 async function postOrEdit(
   db: Database,
   folder: string,
   pr: number,
   commit: string,
   review: { verdict: "approve" | "changes"; body: string; findings: string[]; round: number },
-): Promise<{ id: string; text: string } | null> {
+): Promise<void> {
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const { verdict, findings } = review;
@@ -895,9 +897,9 @@ async function postOrEdit(
       : [];
   const already = marked.find((posted) => posted.text.trim() === body.trim());
   if (already) {
-    const saved = { review_post: { pr, id: already.id, verdict, findings } };
+    const saved = { review_post: { pr, id: already.id, verdict, findings, text: body } };
     record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
-    return { id: already.id, text: body };
+    return;
   }
   const editing = earlier?.id ?? marked.at(-1)?.id ?? null;
   // A forge that fails to edit, such as a plugin that doesn't know the question yet, is treated
@@ -915,14 +917,14 @@ async function postOrEdit(
     earlier !== null &&
     earlier.verdict === verdict &&
     JSON.stringify(earlier.findings) === JSON.stringify(findings);
-  if (edit === "can't" && same) return null;
+  if (edit === "can't" && same) return;
   const id =
     edited && editing !== null
       ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
-  record(db, folder, { review_post: { pr, id, verdict, findings } }, `${how} on PR #${pr}`);
-  return { id, text: body };
+  const post = { pr, id, verdict, findings, text: body };
+  record(db, folder, { review_post: post }, `${how} on PR #${pr}`);
 }
 
 // Brings Skelcrew's copy of the PR up to date with its forge, for a review the thread saved no
