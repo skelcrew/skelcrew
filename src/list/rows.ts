@@ -143,6 +143,14 @@ export function ago(at: number, now: number, short = false): string {
   return short ? unit : `${unit} ago`;
 }
 
+// Returns the time a row shows: how long ago its task last changed, short, such as 4m, and that
+// moment, which the details pane gives by the clock. Both come from here, so a row and its details
+// always agree. A task with no time, or one that can't be read, shows none.
+const shownTime = (at: number | null, now: number) =>
+  at === null || Number.isNaN(at)
+    ? { when: "", changed: null }
+    : { when: ago(at, now, true), changed: at };
+
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.
 const LeadState = z.object({ lead_state: z.string().nullable(), tab_closed: z.coerce.boolean() });
@@ -341,8 +349,7 @@ function taskRow(
     step,
     pr,
     checks: thread.checks === null ? (noCi ? "no CI" : "") : ciWords[thread.checks],
-    when: changed === null ? "" : ago(changed, now, true),
-    changed,
+    ...shownTime(changed, now),
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
@@ -485,8 +492,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       step: "",
       pr: "",
       checks: "",
-      when: Number.isNaN(changed) ? "" : ago(changed, now, true),
-      changed: Number.isNaN(changed) ? null : changed,
+      ...shownTime(changed, now),
       needsYou: false,
       session: null,
       running: false,
