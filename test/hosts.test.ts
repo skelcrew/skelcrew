@@ -483,10 +483,13 @@ console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
   expect(said).toBe("refused\ntrue 0\n");
 });
 
-test("a clone that can't be deleted keeps its repository, so removing it can be tried again", () => {
-  const said = runWithFakeHost(
+// Removing a repository whose clone is moved aside but whose dropped files can't be, as their
+// folder is read-only.
+function removingStuck(body: string): string {
+  return runWithFakeHost(
     "sessions",
     `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
 const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
 const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
 const fs = require("node:fs");
@@ -498,14 +501,32 @@ db.run("DELETE FROM threads");
 const clone = cloneDir("simon", "app");
 fs.mkdirSync(path.join(clone, "src"), { recursive: true });
 fs.writeFileSync(path.join(clone, "src", "app.ts"), "");
-fs.chmodSync(clone, 0o500);
-console.log(await removeRepo("app", "unused").then(() => "removed", () => "refused"));
-fs.chmodSync(clone, 0o700);
-console.log(db.query("SELECT 1 FROM repositories WHERE repo = 'app'").get() !== null);
-console.log(await removeRepo("app", "unused"));`,
+const lead = leadOf(db, "simon", "app").folder;
+fs.mkdirSync(path.join(lead, ".skelcrew-drops"), { recursive: true });
+${body}`,
     {},
   );
-  expect(said).toBe("refused\ntrue\nRemoved app and Skelcrew's clone of it.\n");
+}
+
+test("a repository whose dropped files can't be moved keeps its whole clone, so removing it can be tried again", () => {
+  const said = removingStuck(`fs.chmodSync(lead, 0o500);
+console.log(await removeRepo("app", "unused").then(() => "removed", () => "refused"));
+fs.chmodSync(lead, 0o700);
+console.log(db.query("SELECT 1 FROM repositories WHERE repo = 'app'").get() !== null, fs.existsSync(path.join(clone, "src", "app.ts")));
+console.log(await removeRepo("app", "unused"));
+console.log(fs.existsSync(clone), fs.existsSync(clone + ".removing"));`);
+  expect(said).toBe("refused\ntrue true\nRemoved app and Skelcrew's clone of it.\nfalse false\n");
+});
+
+test("a removed repository's clone that can't be deleted is named, for you to delete", () => {
+  const said = removingStuck(`fs.chmodSync(path.join(clone, "src"), 0o500);
+console.log(await removeRepo("app", "unused"));
+fs.chmodSync(clone + ".removing/src", 0o700);
+console.log(db.query("SELECT 1 FROM repositories WHERE repo = 'app'").get());`);
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  expect(said).toBe(
+    `Removed app, but Skelcrew couldn't delete ${clone}.removing. Delete it yourself.\nnull\n`,
+  );
 });
 
 test("removing a repository ends its lead on a plugin's host, found by its labels", () => {

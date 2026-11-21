@@ -909,15 +909,21 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   );
   if (removed.changes === 0)
     throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
+  const moved: string[] = [];
   try {
-    rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
-    rmSync(join(folder, dropsFolder), { recursive: true, force: true });
+    for (const place of [cloneDir(found.owner, found.repo), join(folder, dropsFolder)]) {
+      rmSync(`${place}.removing`, { recursive: true, force: true });
+      if (!existsSync(place)) continue;
+      renameSync(place, `${place}.removing`);
+      moved.push(place);
+    }
   } catch (error) {
     const columns = Object.keys(row);
     db.run(
       `INSERT INTO repositories (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
       Object.values(row),
     );
+    for (const place of moved) renameSync(`${place}.removing`, place);
     throw error;
   }
   forgetAgents(found);
@@ -926,6 +932,16 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   const trusted = trustLines().filter((line) => line !== "" && line !== fullName);
   if (existsSync(trustFile()))
     writeFileSync(trustFile(), trusted.map((line) => `${line}\n`).join(""));
+  const left = moved.filter((place) => {
+    try {
+      rmSync(`${place}.removing`, { recursive: true, force: true });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  if (left.length > 0)
+    return `Removed ${name}, but Skelcrew couldn't delete ${left.map((place) => `${place}.removing`).join(" and ")}. Delete it yourself.`;
   return `Removed ${name} and Skelcrew's clone of it.`;
 }
 
