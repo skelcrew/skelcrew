@@ -203,7 +203,7 @@ const wholeCsi = /^\x1b\[[0-?]*[ -/]*[@-~]/;
 // Returns the escape sequence the bytes sent so far end inside, or "" when they end between
 // sequences. `last` is what this returned for the bytes before `sent`. A lone Esc counts as
 // unfinished, as more of a sequence may follow it.
-function unfinished(last: string, sent: string): string {
+export function unfinished(last: string, sent: string): string {
   const text = last + sent;
   const at = text.lastIndexOf("\x1b");
   if (at < 0) return "";

@@ -143,6 +143,53 @@ test("a file dropped while your typing goes to the sidebar presses none of its k
   expect(existsSync(join(skelcrew(), "threads", "app-12", ".skelcrew-drops"))).toBe(false);
 });
 
+// Writes `text` straight into the sidebar's input, as one read of its own.
+function intoSidebar(text: string): void {
+  const hex = [...Buffer.from(text)].map((byte) => byte.toString(16).padStart(2, "0"));
+  tmux(screen, "send-keys", "-t", `=${screenSessions()[0] ?? ""}:.0`, "-H", ...hex);
+}
+
+// Opens the screen on APP-12's details, where your typing goes to the sidebar, and returns a
+// paste of a path whose letters and digits would press its keys: 2 closes Building and a
+// attaches full screen.
+async function onAppDetails(): Promise<string> {
+  const dir = join(home, "2a");
+  mkdirSync(dir);
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onDetails, "APP-12's details");
+  return `\x1b[200~${join(dir, "notes.txt")}\x1b[201~`;
+}
+
+// Everything on the screen but the last line, whose load changes on its own.
+const shown = () => seen().trimEnd().split("\n").slice(0, -1).join("\n");
+
+// A terminal's read can end anywhere, so a paste's start can come cut in two.
+test("a paste whose start comes cut in two presses none of the sidebar's keys", async () => {
+  const pasted = await onAppDetails();
+  const before = shown();
+  for (let at = 1; at < "\x1b[200~".length; at++) {
+    intoSidebar(pasted.slice(0, at));
+    intoSidebar(pasted.slice(at));
+    await Bun.sleep(300);
+    expect(shown()).toBe(before);
+  }
+});
+
+test("a paste whose end comes cut in two still ends, so the key after it acts", async () => {
+  const pasted = await onAppDetails();
+  const end = pasted.length - "\x1b[201~".length;
+  for (let at = end + 1; at < pasted.length; at++) {
+    const open = seen().includes("APP-12");
+    intoSidebar(pasted.slice(0, at));
+    intoSidebar(pasted.slice(at));
+    // 2 opens or closes Building, so the paste ended and nothing in it acted.
+    intoSidebar("2");
+    await until(() => seen().includes("APP-12") !== open, "Building to open or close");
+  }
+});
+
 test("a right click on the top row does what it did before a drop could ask there", async () => {
   open("lead");
   await ready("lead");

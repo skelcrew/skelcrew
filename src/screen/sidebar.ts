@@ -37,7 +37,7 @@ import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
-import { dropAnswerOption, dropAsk } from "./drops.ts";
+import { dropAnswerOption, dropAsk, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, lightGrey, pad, paint, removeControlCodes } from "./look.ts";
 import { attachedMark, leadOnHost } from "./screen.ts";
@@ -777,12 +777,31 @@ export async function runSidebar(
   // onto your terminal, is skipped whole rather than pressing the keys its letters and digits are.
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?2004h");
   let pasting = false;
-  // Acts on each key and click that came together, then redraws.
-  process.stdin.on("data", (bytes) => {
-    for (const [key] of bytes.toString().matchAll(keyPattern)) {
+  // Acts on each key and click in `text`, but none inside a paste.
+  const act = (text: string) => {
+    for (const [key] of text.matchAll(keyPattern)) {
       if (key === "\x1b[200~" || key === "\x1b[201~") pasting = key === "\x1b[200~";
       else if (!pasting) doing("acting on a key", () => press(key));
     }
+  };
+  // A sequence a read ends inside, such as a paste's start or end cut in two, waits for its rest
+  // in the next read, so it is still seen whole. One whose rest never comes goes on after a
+  // second. That holds a lone Esc too, which the sidebar has no use for.
+  let cut = "";
+  let rest: ReturnType<typeof setTimeout> | null = null;
+  // Acts on each key and click that came together, then redraws.
+  process.stdin.on("data", (bytes) => {
+    if (rest) clearTimeout(rest);
+    rest = null;
+    const text = cut + bytes.toString();
+    cut = unfinished("", text);
+    act(text.slice(0, text.length - cut.length));
+    if (cut !== "")
+      rest = setTimeout(() => {
+        act(cut);
+        cut = "";
+        refresh();
+      }, 1000);
     refresh();
   });
   // Draws now, on each resize and each second, until the pane goes and its input closes.
