@@ -592,8 +592,8 @@ function prepareTables(db: Database): void {
   // when Skelcrew's routine notes last went into the lead, so the next digest waits its turn,
   // across a restart too. `reading_until` is when the lead's reading window ends: after the lead
   // answers the human, nothing is typed into it until then, so the human can read the answer.
-  // `reading_flush` says what that window held goes in once the lead is idle, as the human wrote
-  // to the lead before it ended.
+  // `reading_released` is when the human last ended a window early by writing to the lead: the
+  // notes saved before then go in once the lead is idle, though its answer opens a new window.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -615,7 +615,7 @@ function prepareTables(db: Database): void {
     lead_agents: "TEXT",
     digest_at: "INTEGER NOT NULL DEFAULT 0",
     reading_until: "INTEGER NOT NULL DEFAULT 0",
-    reading_flush: "INTEGER NOT NULL DEFAULT 0",
+    reading_released: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
@@ -788,8 +788,12 @@ function prepareTables(db: Database): void {
     db.run("DROP TABLE notes");
     db.run("ALTER TABLE notes_new RENAME TO notes");
   }
+  // `at` is when a note was saved, so a reading window that ends releases exactly the notes it
+  // held. A note from before has none, and counts as saved before any window.
+  if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'at'").get())
+    db.run("ALTER TABLE notes ADD COLUMN at INTEGER");
   // `urgent` marks a note the human may need soon, such as a builder's message, which goes
-  // ahead of Skelcrew's routine notes when several wait for the lead.
+  // at once rather than in the next digest of Skelcrew's routine notes.
   if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'urgent'").get())
     db.run("ALTER TABLE notes ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0");
   // `wrapped` marks a builder's message or a brief, which Skelcrew wraps in its own tags, apart

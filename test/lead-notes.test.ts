@@ -124,8 +124,9 @@ console.log(JSON.stringify({
 });
 
 // A paste while the human reads further up would throw them back to the bottom. Back at the
-// bottom, everything that waited goes in as one message, once. Skelcrew's routine note goes
-// first, in its digest, as it came first, then the thread needing you, then the builder's message.
+// bottom, everything that waited goes in as one message, once. A thread needing you goes first,
+// though it came last, then Skelcrew's routine note in its digest, then the builder's message,
+// so the notes keep the order they came in.
 test("messages for a lead the human has scrolled back in wait, then go in together", () => {
   const seen = JSON.parse(
     run(`
@@ -146,9 +147,9 @@ console.log(JSON.stringify({ during, after: received(), noting: readThread(db, "
   expect(typed.split("\x1b[201~")).toHaveLength(2);
   const needs = typed.indexOf("APP-12 needs you: its builder asked a question");
   const started = typed.indexOf("Skelcrew digest:\nstarted app-13 from github: Add import");
-  expect(started).toBeGreaterThan(-1);
-  expect(started).toBeLessThan(needs);
-  expect(needs).toBeLessThan(typed.indexOf("First part done."));
+  expect(needs).toBeGreaterThan(-1);
+  expect(needs).toBeLessThan(started);
+  expect(started).toBeLessThan(typed.indexOf("First part done."));
   expect(seen.noting).toBeNull();
 });
 
@@ -585,9 +586,13 @@ console.log(JSON.stringify({ during, after: received() }));`,
   expect(seen.after).toContain("Skelcrew digest:\nAPP-12 is done: #7 merged");
 });
 
+// Ends the lead's reading window now, as waiting 2 minutes would.
+const windowEnded = `db.run("UPDATE repositories SET reading_until = ?", [Date.now()]);
+typeLeadNotes(db, tmux);`;
+
 // After the lead answers the human, nothing goes in for 2 minutes, urgent or not, so the human
-// can read the answer without the chat moving. The test ends the window early by moving its end
-// back in time, as waiting 2 minutes would. What it held then goes in together.
+// can read the answer without the chat moving. What it held then goes in together, needs you
+// first.
 test("nothing goes into the lead while the human reads its answer, then it all goes in together", () => {
   const seen = JSON.parse(
     run(`
@@ -599,8 +604,7 @@ noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
 record(db, "app-12", { asking: true }, "its builder asked a question");
 await Bun.sleep(3000);
 const during = { received: received(), waiting: waiting() };
-db.run("UPDATE repositories SET reading_until = 1");
-typeLeadNotes(db, tmux);
+${windowEnded}
 await until(() => waiting() === 0 && received().includes("First part done."));
 await Bun.sleep(500);
 console.log(JSON.stringify({ during, after: received() }));`),
@@ -608,8 +612,46 @@ console.log(JSON.stringify({ during, after: received() }));`),
   expect(seen.during).toEqual({ received: "", waiting: 2 });
   const typed: string = seen.after;
   expect(typed.split("\x1b[201~")).toHaveLength(2);
-  expect(typed).toContain("Skelcrew digest:\nAPP-11 is done: #6 merged");
-  expect(typed).toContain("APP-12 needs you: its builder asked a question");
+  const needs = typed.indexOf("APP-12 needs you: its builder asked a question");
+  expect(needs).toBeGreaterThan(-1);
+  expect(needs).toBeLessThan(typed.indexOf("Skelcrew digest:\nAPP-11 is done: #6 merged"));
+});
+
+// A digest went in a moment ago, so a routine note alone would wait for the next. One the
+// reading window held goes in as the window ends all the same.
+test("a reading window that ends lets its routine notes in, though a digest just went in", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+noteForLead(db, tmux, app, "APP-10 is done: #5 merged");
+await until(() => waiting() === 0 && received().includes("APP-10"));
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+await Bun.sleep(1000);
+${windowEnded}
+await until(() => waiting() === 0 && received().includes("APP-11"));
+console.log(JSON.stringify({ sent: true }));`),
+  );
+  expect(seen.sent).toBe(true);
+});
+
+// The human writing when nothing waits ends the window with nothing to let in. The lead's
+// answer then opens a new one, which holds even a builder's message.
+test("the window after the human's next answer holds, though the last one ended early with nothing in it", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+await Bun.sleep(200);
+leadTurnStarted(db, tmux, app, "And now?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await Bun.sleep(3000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
+  );
+  expect(seen).toEqual({ received: "", waiting: 1 });
 });
 
 // The human writing to the lead ends its window: what the window held goes in once the lead is
