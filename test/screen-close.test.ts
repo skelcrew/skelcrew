@@ -25,6 +25,7 @@ import {
   screen,
   screenSessions,
   seen,
+  sidebar,
   sql,
   startTest,
   tabRow,
@@ -70,7 +71,7 @@ const zoomed = () =>
 const flat = () =>
   seen()
     .split("\n")
-    .map((line) => (line.split("▏")[0] ?? "").trim())
+    .map((line) => line.slice(0, sidebar).trim())
     .filter(Boolean)
     .join(" ");
 const question =

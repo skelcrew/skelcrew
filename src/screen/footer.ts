@@ -1,10 +1,11 @@
-// The footer: the bottom row of the screen, across the sidebar and the right side, under a thin
-// line. It has the keys you need most, then those for what the right side shows, and the machine's
-// load at its right end. It runs in the screen's third pane, across the bottom.
+// The footer: the bottom row of the screen, across the sidebar and the right side, under the line
+// that closes their boxes. It has the keys you need most, then those for what the right side shows, and the machine's
+// load at its right end. It runs in the screen's last pane, across the bottom.
 import { cpus } from "node:os";
-import { screenTmux, tmuxIsAtLeast } from "../agents/tmux.ts";
+import { screenTmux } from "../agents/tmux.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "./load.ts";
-import { edge, fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
+import { fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
+import { panes } from "./screen.ts";
 
 // The keys you need most, which the footer always starts with.
 const always = "⌥↑↓ move  ⌥W close  ⌥Q quit";
@@ -18,20 +19,17 @@ export function agentFooter(name: string, harness: string): string {
   return harness ? `${keys}  Esc stops ${harness}` : keys;
 }
 
-// Returns the footer's pane as lines, from the top, for a screen `width` columns wide: a thin
-// line, then the footer's text, dim and two columns in. `load` is the machine's load, already
-// coloured, or empty while it isn't known. It goes at the right end, two columns in, and is left
-// out when the text and it don't both fit, so it gives way before any key. `ruled` says whether
-// the top line is drawn: on tmux before 3.6 the border above the pane is tmux's thin line
-// already. It reads nothing, so what you see can be tested without a terminal.
-export function drawFooter(said: string, width: number, ruled: boolean, load: string): string[] {
-  const rule = paint(edge, "─".repeat(Math.max(width, 0)));
+// Returns the footer's row for a screen `width` columns wide: the footer's text, dim and two
+// columns in. `load` is the machine's load, already coloured, or empty while it isn't known. It
+// goes at the right end, two columns in, and is left out when the text and it don't both fit, so
+// it gives way before any key. It reads nothing, so what you see can be tested without a terminal.
+export function drawFooter(said: string, width: number, load: string): string {
   const room = Math.max(width - 2 * pad.length, 0);
   const text = fitted(removeControlCodes(said), room);
   // The load needs two columns between it and the text, and the rest of the room is the gap.
   const gap = room - Bun.stringWidth(text) - Bun.stringWidth(load);
   const right = load && gap >= 2 ? `${" ".repeat(gap)}${load}${pad}` : "";
-  return [...(ruled ? [rule] : []), `${paint(grey, `${pad}${text}`)}${right}`];
+  return `${paint(grey, `${pad}${text}`)}${right}`;
 }
 
 // Tells the footer of the screen's session what it says now, as text typed into its pane, which
@@ -39,36 +37,35 @@ export function drawFooter(said: string, width: number, ruled: boolean, load: st
 // control codes go, as one could end the message.
 export function tellFooter(agents: string, session: string, said: string): void {
   const message = `\x1b]skel-footer;${removeControlCodes(said)}\x07`;
-  screenTmux(agents, ["send-keys", "-t", `=${session}:.2`, "-l", message]);
+  screenTmux(agents, ["send-keys", "-t", `=${session}:.${panes.footer}`, "-l", message]);
 }
 
 // What the footer reads: what the sidebar tells it to say.
 const input = new RegExp(`${"\x1b"}\\]skel-footer;([^\x07]*)\x07`, "g");
 
 // Runs the footer until its pane goes. `agents` names the agents' tmux server and `session` the
-// screen's session, whose third pane this is. It shows what it was last told, and reads the
+// screen's session, whose last pane this is. It shows what it was last told, and reads the
 // machine's load every 5 seconds. It writes only when what shows changed, so between changes of
 // the load it sends nothing over a slow link. Tests pin the load with SKELCREW_FIXED_LOAD, which
 // Skelcrew itself never sets: it is shown as the load, dim, and nothing is measured, so a test
 // can check that a quiet screen writes nothing at all.
 export async function runFooter(agents: string, session: string): Promise<void> {
-  const self = `=${session}:.2`;
-  const ruled = tmuxIsAtLeast(3, 6);
+  const self = `=${session}:.${panes.footer}`;
   let said = always;
   let lastFrame = "";
   // The machine's load, which shows from the second sample on, as the CPU figure needs two.
   const fixed = process.env.SKELCREW_FIXED_LOAD;
   let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
   let sample = cpuSample(cpus());
-  // Draws what shows, after sizing the pane to it. tmux shares a resize of the screen out among
-  // its panes, which can make this one taller, so it takes its own height back each time.
+  // Draws what shows, after sizing the pane to its one row. tmux shares a resize of the screen
+  // out among its panes, which can make this one taller, so it takes its own height back each
+  // time.
   const draw = () => {
-    const lines = drawFooter(said, process.stdout.columns || 80, ruled, load);
-    if ((process.stdout.rows || 0) !== lines.length)
-      screenTmux(agents, ["resize-pane", "-t", self, "-y", String(lines.length)]);
-    // Each line is cleared before it is written, not after: a line as wide as the pane leaves
-    // the cursor on its last letter, which clearing after would take away.
-    const frame = lines.map((line) => `\x1b[K${line}`).join("\r\n");
+    if ((process.stdout.rows || 0) !== 1)
+      screenTmux(agents, ["resize-pane", "-t", self, "-y", "1"]);
+    // The row is cleared before it is written, not after: a row as wide as the pane leaves the
+    // cursor on its last letter, which clearing after would take away.
+    const frame = `\x1b[K${drawFooter(said, process.stdout.columns || 80, load)}`;
     if (frame === lastFrame) return;
     lastFrame = frame;
     process.stdout.write(`\x1b[H${frame}\x1b[J`);
