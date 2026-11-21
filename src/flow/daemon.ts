@@ -411,15 +411,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Sets up a new thread's clone, opens its socket and starts its builder, after sc start
   // has had its answer, once any builder a failed start left running has ended. Marks the
-  // thread failed, with the reason, when any of it fails.
-  const setUpAndStart = async (thread: Thread) => {
+  // thread failed, with the reason, when any of it fails. Gives back why it failed, or null once
+  // the builder started, for your yes to a lead's request, which waits on it to tell the lead.
+  const setUpAndStart = async (thread: Thread): Promise<string | null> => {
     try {
       await endEarlierBuilder(db, sessions, thread);
       await setUpThread(db, thread);
       await listenFor(thread);
       await startBuilder(db, sessions, thread);
+      return null;
     } catch (error) {
       failThread(db, sessions, thread, error);
+      return errorText(error);
     }
   };
   // Switches a thread at work, or a stopped one about to come back, to another flow, and gives it a short title too when one comes
@@ -529,9 +532,22 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         ...(short ? { short } : {}),
         ...(flow ? { flow } : {}),
       };
-      // The start marks this request as started as it records the thread.
-      const { started } = await startTask(start, taken.id);
-      settle(repository, taken.id, `${yes} ${started}`);
+      // The start marks this request as started as it changes the task, except for a new
+      // thread, whose setup takes a while. Its request waits for its builder to start, so a stop
+      // of the daemon during the setup has the yes done again, and the lead then hears whether
+      // the builder started. The bottom line says what the start said meanwhile.
+      const { started, starting } = await startTask(start, taken.id);
+      if (!starting) {
+        settle(repository, taken.id, `${yes} ${started}`);
+        return started;
+      }
+      void starting.then((failed) =>
+        settle(
+          repository,
+          taken.id,
+          failed === null ? `${yes} ${started}` : `${yes} It failed: ${failed}`,
+        ),
+      );
       return started;
     } catch (error) {
       // A filing that may have reached the remote keeps the request, answered, as its try's
@@ -549,8 +565,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Does again each yes to a lead's request that the last stop of the daemon cut short, or whose
   // filing's outcome it couldn't learn. One whose start changed the task already is only
   // reported, with what that start said. Doing any other again never starts a task twice, and the
-  // lead hears what doing it again said.
-  const finishAnswers = async () => {
+  // lead hears what doing it again said. `cutShort` settles once the daemon has marked failed
+  // each thread whose setup the stop cut short, so a yes that started one starts it over.
+  const finishAnswers = async (cutShort: Promise<unknown>) => {
+    await cutShort;
     for (const taken of answeredRequests(db)) {
       try {
         const repository = findRepository(db, `${taken.owner}/${taken.repo}`);
@@ -573,7 +591,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const startTask = async (
     request: Extract<DaemonRequest, { command: "start" }>,
     yes?: number,
-  ): Promise<{ started: string }> => {
+  ): Promise<{ started: string; starting?: Promise<string | null> }> => {
     // Makes the change and keeps what it said on the yes's request, in one step, then says it.
     const done = (said: string, change: () => void = () => {}) => {
       db.transaction(() => {
@@ -668,14 +686,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             record(db, started.folder, { short: request.short }, "given a short title");
         });
       if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
-      // Your yes to a lead's request keeps what the start said in the step that records the
-      // thread: queued, or started.
+      // Your yes to a lead's request keeps what the start said in the step that records a
+      // thread that joins the queue. One that starts now keeps nothing: its yes is only done
+      // once its builder starts, which its caller waits for.
       thread = await startThread(db, request, false, (recorded) => {
-        const said =
-          recorded.status === "queued"
-            ? queuedText(db, recorded)
-            : `Started ${threadName(db, recorded)}.`;
-        if (yes !== undefined) requestStarted(db, yes, said);
+        if (yes !== undefined && recorded.status === "queued")
+          requestStarted(db, yes, queuedText(db, recorded));
       });
     } finally {
       startingTasks.delete(key);
@@ -699,8 +715,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // Not waited on: an agent's command must answer quickly, and setup can take minutes.
     // The claim and assignment wait on the tracker, and change only what it shows.
     assignIssue(db, thread, true);
-    setUpAndStart(thread);
-    return { started: `Started ${threadName(db, thread)}.` };
+    const starting = setUpAndStart(thread);
+    return { started: `Started ${threadName(db, thread)}.`, starting };
   };
   // Carries out a request the caller may make, and returns the reply to send. The switch has
   // no default, so the typecheck fails if a request is left out.
@@ -1059,8 +1075,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       // Esc on Codex flags nothing: you are looking at the builder anyway.
       case "turn interrupted":
         return { state };
-      case "start":
-        return startTask(request);
+      case "start": {
+        const { started } = await startTask(request);
+        return { started };
+      }
       case "start new": {
         const repository = findRepository(db, request.repo);
         if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
@@ -1138,8 +1156,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const before = liveThreads(db);
   // A yes to a lead's request that the last stop cut short is done again, once the threads to
   // bring back below are taken: one the yes brings back itself must not be brought back twice.
-  // It isn't waited on, as a start waits for the first poll.
-  void finishAnswers();
+  // It waits until those whose setup the stop cut short are marked failed, below, so a yes that
+  // started one starts it over. It isn't waited on, as a start waits for the first poll.
+  const setupsCutShort = Promise.withResolvers<void>();
+  void finishAnswers(setupsCutShort.promise);
   // Reviews the daemon's stop cut short join the queue of reviews first, before any request or
   // builder could start one, and in the order they had: those that were running, then those
   // that waited, by when they joined. A review doesn't need its builder until it types changes
@@ -1208,12 +1228,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   // A thread whose builder can't come back ends its review, which would otherwise mark it
   // waiting again once it ended. Either way a review already brought back hears of it.
+  // A thread with no session yet had its setup cut short, and its bringing back fails at once.
+  const failing: Promise<void>[] = [];
   for (const thread of before) {
     await listenFor(thread);
     const settled = builderBack.get(thread.folder) ?? (() => {});
     // After the builder is back, since the round may type into its session.
     // A builder that stopped on a usage limit is woken once it resets, as it would have been.
-    bringBack(db, sessions, thread).then(
+    const back = bringBack(db, sessions, thread).then(
       () => {
         settled();
         resumeRound(db, sessions, thread.folder);
@@ -1225,7 +1247,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         failThread(db, sessions, thread, error);
       },
     );
+    if (thread.session === null) failing.push(back);
   }
+  void Promise.all(failing).then(() => setupsCutShort.resolve());
   // Type the messages waiting for builders as soon as each can take them, looking every look,
   // as a builder becomes idle with no word to the daemon, such as after Esc.
   setInterval(() => deliverAllWaiting(db, sessions), look);
@@ -1249,6 +1273,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   setInterval(() => doing("starting tasks from the queue", startFromQueue), look);
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
-  polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));
+  // A poll's start needs nothing back: it marks the thread failed where setup fails.
+  const startFromPoll = async (thread: Thread) => {
+    await setUpAndStart(thread);
+  };
+  polling.resolve(pollRepositories(db, sessions, every, startFromPoll, startingTasks));
   keepUpToDate(db);
 }
