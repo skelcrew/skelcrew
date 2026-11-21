@@ -407,7 +407,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     if (row.part === "request") return say("Press y to say yes to the lead, or n to say no.");
     if (row.part === "backlog" && row.start) {
-      asking = { question: row.start, row: row.name, merge: false };
+      asking = { question: row.start, row: row.name, offer: "start" };
       return draw();
     }
     // A task in the task queue has no builder running yet, so Enter says what it waits on.
@@ -631,12 +631,18 @@ export async function runList(agents: string, repository: string): Promise<void>
     // s starts a task not started yet, an issue or one of the backlog, as Enter does there. With
     // every builder busy, its question says it queues the task instead.
     if (key === "s" && row?.part === "backlog" && row.start) {
-      asking = { question: row.start, row: row.name, merge: false };
+      asking = { question: row.start, row: row.name, offer: "start" };
+      return draw();
+    }
+    // f starts a queued task now, over limits.threads, or one on Backlog while every builder is
+    // busy, after a question that says it goes over the limit.
+    if (key === "f" && row?.startNow) {
+      asking = { question: row.startNow, row: row.name, offer: "startNow" };
       return draw();
     }
     if (key === "m" && row?.merge) {
       if ("refused" in row.merge) return say(row.merge.refused);
-      asking = { question: row.merge, row: row.name, merge: true };
+      asking = { question: row.merge, row: row.name, offer: "merge" };
       return draw();
     }
     // A ready task whose builder needs you offers no merge until you have seen to it.

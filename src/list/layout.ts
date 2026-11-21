@@ -78,7 +78,7 @@ export const sectionNames: Record<Section, string> = {
 // Backlog's `… more` row, or as open/close on a section's heading, and not at all on the heading of
 // Needs you, which never closes. Then the numbers that open and close the sections, Shift with an
 // arrow only on a queued task in the task queue, which it moves in the queue, s only on a task it
-// can start, m only on a task it can merge, o on a task while the details pane shows, to show its
+// can start, f only on one it can start now over limits.threads, m only on a task it can merge, o on a task while the details pane shows, to show its
 // agent's whole screen or only the last lines, and Page Up and Page Down to scroll its details, and
 // Tab and Alt-Shift with an arrow only with another repository to go to. A runtime plugin's host
 // has its own key to come back, so its rows don't offer Ctrl-\. A request of the lead's offers y
@@ -104,6 +104,7 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
         : [enter];
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
+  const now = row?.startNow ? ["f start now"] : [];
   const reorder = row?.section === "task queue" && row.place !== null ? ["shift+↑↓ reorder"] : [];
   return [
     "↑↓ move",
@@ -111,6 +112,7 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
     "0-6 sections",
     ...reorder,
     ...start,
+    ...now,
     ...merge,
     ...tab,
     "q/esc quit",

@@ -121,13 +121,15 @@ export async function fileTask(repository: string, title: string, body: string) 
 // round limit go on. The daemon answers once the thread is recorded; its setup and builder
 // come after. `short` is the thread's short title for the sidebar, which on a thread already
 // at work is all that changes. `flow` is the flow the task runs, which on a thread at work that
-// hasn't submitted yet switches it.
+// hasn't submitted yet switches it. `now` starts it at once, over the repository's
+// limits.threads, a task waiting in the queue included, which then leaves it.
 export async function startOn(
   repository: string,
   task: string,
   from?: string,
   short?: string,
   flow?: string,
+  now?: true,
 ): Promise<string> {
   const reply = await request({
     command: "start",
@@ -136,6 +138,7 @@ export async function startOn(
     ...(from ? { from } : {}),
     ...(short ? { short } : {}),
     ...(flow ? { flow } : {}),
+    ...(now ? { now } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
