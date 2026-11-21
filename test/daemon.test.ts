@@ -671,14 +671,16 @@ test.skipIf(insideSandbox)(
     await untilAnswers();
     await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
     expect(onDb((db) => db.query("SELECT task FROM task_threads").all())).toEqual([{ task: "t1" }]);
+    // The second yes finds the thread at work and is heard first, as the first waits for its
+    // builder to start, so the notes are compared in the order of their words.
     const notes = onDb((db) =>
-      db.query("SELECT text FROM notes WHERE text LIKE '%request%' ORDER BY id").all(),
+      db.query("SELECT text FROM notes WHERE text LIKE '%request%' ORDER BY text").all(),
     );
     const partway =
       "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-T1 CSV export?";
     expect(notes).toEqual([
+      { text: `${partway} It did it again: Gave APP-T1 the short title "CSV".` },
       { text: `${partway} It did it again: Started APP-T1.` },
-      { text: expect.stringContaining(`${partway} It did it again: `) },
     ]);
   },
   60_000,

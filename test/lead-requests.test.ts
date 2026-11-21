@@ -212,7 +212,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     }
     // What the yes left as the daemon stopped: the task live again, and what the start said.
     const db = new Database(join(data(), "skelcrew.db"));
-    db.run("UPDATE task_threads SET status = 'working' WHERE task = '12'");
+    db.run("UPDATE threads SET status = 'working' WHERE folder = 'app-12'");
     db.run(
       `INSERT INTO lead_requests (owner, repo, action, says, made, answered, outcome) VALUES
       ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12 Add export?', 1, 1,
