@@ -542,6 +542,28 @@ const sawOld = await reopen();`);
   expect(JSON.parse(said)).toEqual({ ended: false, sawOld: true, running: true });
 }, 40_000);
 
+test("a repository opened again while its removal ends its lead keeps its clone and record", () => {
+  const said =
+    closingLead(`const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+db.run("UPDATE repositories SET tab_closed = 0 WHERE repo = 'app'");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+const removing = removeRepo("app", "unused").then(() => "removed", (error) => error.message);
+await Bun.sleep(500);
+const sawOld = await reopen();
+const ended = await removing;
+console.log(fs.existsSync(cloneDir("simon", "app")), db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get()?.tab_closed);`);
+  const [kept, outcome] = said.trim().split("\n");
+  expect(kept).toBe("true 0");
+  expect(JSON.parse(outcome ?? "")).toEqual({
+    ended: "app was opened again meanwhile, so it isn't removed",
+    sawOld: false,
+    running: false,
+  });
+}, 40_000);
+
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
   const said = runWithFakeHost(
     "sessions",
