@@ -40,6 +40,27 @@ const isOpen = (heading: string) => {
   return at >= 0 && /^ [▸ ] \S/.test(lines[at + 1] ?? "");
 };
 
+test("Building, Reviewing and Checks start open, and Backlog, Ready and Done start closed", async () => {
+  sql(`${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", pr: 45 })}
+${threadSql({ task: "16", title: "Approved", status: "waiting", verdict: "approve", checks: "pending", pr: 46 })}
+${itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z")}`);
+  open("lead");
+  await ready("lead");
+  await until(
+    () => isOpen("2 Building") && isOpen("3 Reviewing") && isOpen("4 Checks"),
+    "the stages",
+  );
+  expect(isOpen("1 Backlog")).toBe(false);
+  expect(isOpen("5 Ready")).toBe(false);
+  expect(isOpen("6 Done")).toBe(false);
+  // They stay toggles: Reviewing closes and opens again, and Checks stays open meanwhile.
+  press("M-3");
+  await until(() => !isOpen("3 Reviewing"), "Reviewing to close");
+  expect(isOpen("4 Checks")).toBe(true);
+  press("M-3");
+  await until(() => isOpen("3 Reviewing"), "Reviewing to open again");
+});
+
 test("Alt-1 to Alt-6 open and close the stages from the lead's row, and the lead gets nothing", async () => {
   open("lead");
   await ready("lead");
