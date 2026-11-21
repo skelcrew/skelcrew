@@ -37,6 +37,7 @@ import {
 import { fetchInto, noMaintenance, pushCommit } from "./git.ts";
 import {
   approvalFound,
+  checkSet,
   letGoOn,
   notReviewed,
   reviewAsked,
@@ -746,25 +747,31 @@ function inTurn<T>(folder: string, write: () => Promise<T>): Promise<T> {
 function postVerdict(db: Database, sessions: string, folder: string): Promise<string | null> {
   return inTurn(folder, async () => {
     const thread = readThread(db, folder);
-    const { posting } = roundOf(thread);
+    let { posting } = roundOf(thread);
     if (posting === null) return null;
-    const { commit, check, description, review } = posting;
+    const { review } = posting;
     try {
-      if (review !== null)
+      // The review is saved as posted once the PR has it, with the lead's note in the same save,
+      // so a check that keeps failing never holds back the note, nor a stop between the two.
+      if (review !== null) {
         await postOrEdit(db, folder, review.pr, review.commit, review, posting.note !== null);
+        const posted = verdictPosted(readThread(db, folder), posting, Date.now());
+        if (posted === null) return null;
+        db.transaction(() => {
+          record(db, folder, posted.change);
+          noteLimit(db, sessions, folder, posted.note);
+        })();
+        typeLeadNotes(db, sessions);
+        posting = roundOf(readThread(db, folder)).posting;
+        if (posting === null) return null;
+      }
+      const { commit, check, description } = posting;
       await setStatus(db, repositoryOf(db, thread), { commit, state: check, description });
     } catch (error) {
       return errorText(error);
     }
-    const now = readThread(db, folder);
-    if (JSON.stringify(roundOf(now).posting) !== JSON.stringify(posting)) return null;
-    // The post and the lead's note are saved together, so a stop between them can't lose it.
-    const { change, note } = verdictPosted(now, posting, Date.now());
-    db.transaction(() => {
-      record(db, folder, change);
-      noteLimit(db, sessions, folder, note);
-    })();
-    typeLeadNotes(db, sessions);
+    const set = checkSet(readThread(db, folder), posting, Date.now());
+    if (set !== null) record(db, folder, set);
     return null;
   });
 }

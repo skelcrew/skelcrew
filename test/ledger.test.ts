@@ -1,9 +1,11 @@
 // The round ledger, in memory: what each event of a review round does to the thread, from plain
 // data, with no clock, files or network.
 import { expect, test } from "bun:test";
+import type { Posting } from "../src/flow/ledger.ts";
 import {
   atRoundLimit,
   changesTyped,
+  checkSet,
   failureOver,
   letGoOn,
   limitDecided,
@@ -108,6 +110,13 @@ function thread(change: Partial<Thread> = {}): Thread {
     queued_since: null,
     ...change,
   };
+}
+
+// Returns what posting the saved verdict gives, which must be the verdict the thread still has.
+function postedOf(saved: Thread, posting: Posting, now: number) {
+  const posted = verdictPosted(saved, posting, now);
+  if (posted === null) throw new Error("the posting was replaced");
+  return posted;
 }
 
 const approval = { verdict: "approve" as const, body: "Ready.", findings: [] };
@@ -289,9 +298,9 @@ test("posting the verdict brings the round limit's note, unless a submit came fi
   const past = { ...reached, ...reviewOnPr(reached, { ...onPr, round: 4 }, 1900) };
   const { posting } = past;
   if (posting === null) throw new Error("the verdict saved nothing to post");
-  const posted = verdictPosted(past, posting, 2000);
+  const posted = postedOf(past, posting, 2000);
   expect(posted.note).toBe(posting.note);
-  expect(posted.change.posting).toBeNull();
+  expect(posted.change.posting).toEqual({ ...posting, review: null, note: null });
   expect(posted.change.round_log?.at(-1)).toEqual({
     kind: "posted",
     at: 2000,
@@ -299,15 +308,38 @@ test("posting the verdict brings the round limit's note, unless a submit came fi
     note: posting.note,
   });
   const resubmitted = { ...past, ...submitted(past, "Fix", 1500, false) };
-  expect(verdictPosted(resubmitted, posting, 2000).note).toBeNull();
+  expect(postedOf(resubmitted, posting, 2000).note).toBeNull();
   const decided = { ...past, ...limitDecided(past, 1500) };
-  expect(verdictPosted(decided, posting, 2000).note).toBeNull();
+  expect(postedOf(decided, posting, 2000).note).toBeNull();
   // A forge that can't edit, with nothing new said, would leave the older round's review on the
   // PR. The record then says the PR shows that round, and the lead hears nothing of this one.
   const older = { ...reached, ...reviewOnPr(reached, { ...onPr, round: 3 }, 1900) };
-  const stale = verdictPosted(older, posting, 2000);
+  const stale = postedOf(older, posting, 2000);
   expect(stale.note).toBeNull();
   expect(stale.change.round_log?.at(-1)).toMatchObject({ kind: "posted", round: 3 });
+});
+
+// The review and Skelcrew's check go on the forge one after the other. Once the review is on the
+// PR, the lead's note is due, and only the check is left to set, however long it keeps failing.
+test("a review on the PR brings the note though its check is still to set", () => {
+  const before = thread({ rounds: 3 });
+  const reached = { ...before, ...reach(before, changes).change };
+  const onPr = { pr: 7, id: "9", verdict: "changes" as const, findings: changes.findings };
+  const past = { ...reached, ...reviewOnPr(reached, { ...onPr, round: 4 }, 1900) };
+  const { posting } = past;
+  if (posting === null) throw new Error("the verdict saved nothing to post");
+  const posted = postedOf(past, posting, 2000);
+  expect(posted.note).toBe(reachedNote);
+  const checkLeft = { ...past, ...posted.change };
+  expect(checkLeft.posting).toEqual({ ...posting, review: null, note: null });
+  // The check only clears the posting it was set for.
+  expect(checkSet(checkLeft, posting, 2100)).toBeNull();
+  const left = checkLeft.posting;
+  if (left === null) throw new Error("nothing was left to set");
+  expect({ ...checkLeft, ...checkSet(checkLeft, left, 2100) }.posting).toBeNull();
+  // A newer verdict saved while the review went on replaces it, and its own turn posts it.
+  const newer = { ...past, ...reach(past, approval).change };
+  expect(verdictPosted(newer, posting, 2000)).toBeNull();
 });
 
 // The round limit needs you until you or the lead decide, and each review reaching it asks again.
@@ -351,7 +383,7 @@ test("a submit, a review that starts or ends and letting a thread go on move the
   expect(roundMoved(started, past)).toBe(true);
   const { posting } = past;
   if (posting === null) throw new Error("the verdict saved nothing to post");
-  const posted = later(past, verdictPosted(past, posting, 1300).change);
+  const posted = later(past, postedOf(past, posting, 1300).change);
   expect(roundMoved(past, posted)).toBe(false);
   const decided = later(posted, limitDecided(later(posted, { needs_you: true }), 1400));
   expect(roundMoved(posted, decided)).toBe(false);

@@ -120,6 +120,8 @@ export const RoundEvent = z.discriminatedUnion("kind", [
   }),
   // Skelcrew's review on the PR was posted, edited or found there, as it now says.
   z.object({ kind: z.literal("review on PR"), at: z.number(), post: ReviewPost }),
+  // Skelcrew's check on the verdict's commit was set, the last of the verdict to go on the forge.
+  z.object({ kind: z.literal("check set"), at: z.number() }),
   // The commit an approval from before Skelcrew saved it stands for, found in Skelcrew's clone.
   z.object({ kind: z.literal("approval found"), commit: z.string() }),
 ]);
@@ -264,6 +266,8 @@ function next(round: Round, event: RoundEvent): Round {
     case "typed":
       return { ...round, telling: null };
     case "posted":
+      return { ...round, posting: round.posting && { ...round.posting, review: null, note: null } };
+    case "check set":
       return { ...round, posting: null };
     case "review on PR":
       return { ...round, review_post: event.post };
@@ -388,7 +392,7 @@ const moving = new Set([
 // a verdict that went on the forge too, as a merge goes by what the PR shows.
 export function roundMoved(before: Thread, after: Thread, posted = false): boolean {
   const counts = (event: RoundEvent) =>
-    moving.has(event.kind) || (posted && event.kind === "posted");
+    moving.has(event.kind) || (posted && (event.kind === "posted" || event.kind === "check set"));
   const count = (thread: Thread) => recordOf(thread).filter(counts).length;
   return before.round_log === null
     ? after.round_log !== null && count(after) > 0
@@ -483,11 +487,18 @@ export const reviewOnPr = (thread: Thread, post: ReviewPost, now: number) =>
 const noteNow = (round: Round, note: string | null) =>
   round.held !== null && !round.limit_decided ? note : null;
 
-// The saved verdict went on the forge: it is no longer to post, and the record keeps the round of
-// the review the PR now shows and the note. Returns the change and the note for the lead, which the
-// caller saves with it, so the two can't come apart. The note goes only when the PR shows this
-// verdict's own round, so it never names a review the PR doesn't show.
+// Returns whether the verdict the thread still has to put on the forge is `posting`, rather than
+// a newer one saved meanwhile, which goes on in its own turn.
+const samePosting = (thread: Thread, posting: Posting) =>
+  JSON.stringify(roundOf(thread).posting) === JSON.stringify(posting);
+
+// The verdict's review went on the PR. Only Skelcrew's check is left to set, which is tried again
+// on its own, and the record keeps the round of the review the PR now shows and the note. Returns
+// the change and the note for the lead, which the caller saves with it, so the two can't come
+// apart, or null when a newer verdict replaced this one meanwhile. The note goes only when the PR
+// shows this verdict's own round, so it never names a review the PR doesn't show.
 export function verdictPosted(thread: Thread, posting: Posting, now: number) {
+  if (!samePosting(thread, posting)) return null;
   const shown = posting.review;
   const onPr = roundOf(thread).review_post;
   const round = shown !== null && onPr?.pr === shown.pr ? onPr.round : null;
@@ -495,6 +506,11 @@ export function verdictPosted(thread: Thread, posting: Posting, now: number) {
   const showsIt = shown !== null && round === shown.round;
   return { change, note: showsIt ? noteNow(roundOf(thread), posting.note) : null };
 }
+
+// Skelcrew's check on the verdict's commit was set, so nothing of the verdict is left to put on
+// the forge. Returns null when a newer verdict replaced this one meanwhile.
+export const checkSet = (thread: Thread, posting: Posting, now: number) =>
+  samePosting(thread, posting) ? logged(thread, { kind: "check set", at: now }) : null;
 
 // Returns what a reviewer said in words: its body, then each finding numbered, for the builder
 // and the PR to read.
