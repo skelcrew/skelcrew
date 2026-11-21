@@ -7,7 +7,7 @@
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
 // garble-<question> it answers that question with nothing, with down it fails every question
-// alike, with fail-<question> it fails it
+// alike, with say-<question> it fails it with the file's words, with fail-<question> it fails it
 // once, with unknown-<question> it fails it every time as an older plugin that doesn't know it,
 // with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
 // from a given time on. With a file lose-start, it starts the
@@ -201,6 +201,11 @@ if (!answers[question.ask] || existsSync(join(dir, `unknown-${question.ask}`))) 
   const known = Object.keys(answers).filter((ask) => !existsSync(join(dir, `unknown-${ask}`)));
   const expected = known.map((ask) => `'${ask}'`).join(" | ");
   console.error(`✖ Invalid discriminator value. Expected ${expected}; → at ask`);
+  process.exit(1);
+}
+// With a file say-<question>, it fails that question every time, writing what the file holds.
+if (existsSync(join(dir, `say-${question.ask}`))) {
+  process.stderr.write(readFileSync(join(dir, `say-${question.ask}`), "utf8"));
   process.exit(1);
 }
 // With a file fail-<question>, it fails that question once, as a host down for a moment would.

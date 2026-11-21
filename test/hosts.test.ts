@@ -1396,6 +1396,37 @@ process.exit(0);`,
   expect(title()).toBe("SIMON/APP-12 Fix the login redirect");
 }, 40_000);
 
+// Each fails in words much like an unknown question's, from a host that may well know rename: a
+// list wrapped before rename, and a list cut short with "at ask" elsewhere.
+test.each([
+  "✖ Invalid discriminator value. Expected 'start' | 'list' |\n  'rename' | 'status'; → at ask\n",
+  "✖ Invalid discriminator value. Expected 'start' | 'list'\nthe rename failed at ask time\n",
+])(
+  "a failure that only looks like an unknown question is asked again: %j",
+  (words) => {
+    const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+    const said = runWithFakeHost(
+      "sessions",
+      `const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(fake, "say-rename"))}, ${JSON.stringify(words)});
+await renameBuilders(db);
+await renameBuilders(db);
+console.log(JSON.stringify(db.query("SELECT no_rename FROM plugins WHERE name = 'fake'").get()));
+process.exit(0);`,
+      { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+    );
+    const renames = readFileSync(join(fake, "asked"), "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => JSON.parse(line).ask === "rename");
+    expect(renames).toHaveLength(2);
+    expect(said).toContain("couldn't rename SIMON/APP-12 on fake");
+    expect(said).toContain('{"no_rename":null}');
+  },
+  40_000,
+);
+
 test("a host down for every question isn't taken for one that can't rename", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
