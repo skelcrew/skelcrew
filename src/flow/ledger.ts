@@ -269,8 +269,19 @@ function next(round: Round, event: RoundEvent): Round {
   }
 }
 
-// Returns the round the thread's record comes to.
-export const roundOf = (thread: Recorded): Round => recordOf(thread).reduce(next, freshRound);
+// The round each thread read comes to, by the thread object, as the lists ask it many times a
+// second. A thread read is never changed in place: a change makes a new one.
+const rounds = new WeakMap<Recorded, Round>();
+
+// Returns the round the thread's record comes to. Every read of the round goes through this, so
+// no caller knows how the round is kept.
+export function roundOf(thread: Recorded): Round {
+  const known = rounds.get(thread);
+  if (known) return known;
+  const round = recordOf(thread).reduce(next, freshRound);
+  rounds.set(thread, round);
+  return round;
+}
 
 // Returns the change that adds the event to the thread's record, with every round field as the
 // record now says, so both are saved in one change. The fields are kept for everything that
@@ -286,8 +297,10 @@ export const freshRounds = { round_log: [], ...freshRound } satisfies Partial<Th
 // Returns whether the thread's latest submit may go on to CI and ready: Skelcrew's reviewer
 // approved it, or its flow has no review stage, so it was never reviewed. Everything that
 // waits on an approval waits on this, so a flow without a review never waits on one.
-export const passedReviewStage = (thread: Pick<Thread, "verdict">) =>
-  thread.verdict === "approve" || thread.verdict === "not reviewed";
+export const passedReviewStage = (thread: Recorded) => passed(roundOf(thread));
+
+// Returns whether a round passed its review stage.
+const passed = (round: Round) => round.verdict === "approve" || round.verdict === "not reviewed";
 
 // Returns the number the thread's next review round gets, counted from 1 over the thread's whole
 // life, which the PR's review and sc ps show. It is one above the highest round a review that
@@ -306,7 +319,7 @@ export function nextRound(thread: Recorded): number {
 // A flow with no review stage never counts a round, as no review asks for changes.
 export function pastRoundLimit(thread: Recorded, maxRounds: number): boolean {
   const round = roundOf(thread);
-  return round.rounds > maxRounds && !passedReviewStage(round);
+  return round.rounds > maxRounds && !passed(round);
 }
 
 // Returns whether the lead or you decided about the round limit since the latest review.
@@ -319,8 +332,7 @@ export const limitWasDecided = (thread: Recorded) => roundOf(thread).limit_decid
 // review stage or counted no round can't be past it.
 export function limitOf(thread: Thread): number {
   const round = roundOf(thread);
-  const matters =
-    round.held === null && thread.needs_you && !passedReviewStage(round) && round.rounds > 0;
+  const matters = round.held === null && thread.needs_you && !passed(round) && round.rounds > 0;
   if (!matters) return Number.POSITIVE_INFINITY;
   try {
     return roundLimit(thread);

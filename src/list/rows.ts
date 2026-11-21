@@ -10,7 +10,7 @@ import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
-import { limitOf, nextRound, passedReviewStage } from "../flow/ledger.ts";
+import { limitOf, nextRound, passedReviewStage, roundOf } from "../flow/ledger.ts";
 import {
   type Badge,
   badgeOf,
@@ -225,8 +225,8 @@ function taskRow(
   let merge: Action | null = null;
   if (ready && thread.pr !== null && copy !== null) {
     const named = `${repoName}#${thread.pr}`;
-    const approved = passedReviewStage(thread) ? thread.reviewed_commit : null;
-    const unreviewed = thread.verdict === "not reviewed";
+    const approved = passedReviewStage(thread) ? roundOf(thread).reviewed_commit : null;
+    const unreviewed = roundOf(thread).verdict === "not reviewed";
     const which = unreviewed ? "submitted" : "approved";
     const wait = unreviewed ? "wait for its builder to submit it" : "wait for its review";
     const ci = copy.checks.filter((check) => check.name !== reviewCheck);
@@ -320,12 +320,13 @@ const verdictColours: Record<Exclude<NonNullable<Thread["verdict"]>, "not review
 // one, and a task its flow doesn't review, or none reviewed yet, has none. Only the thread is
 // read, as the list draws every second.
 function reviewOf(thread: Thread): Row["review"] {
-  if (thread.verdict === "not reviewed") return null;
+  const round = roundOf(thread);
+  if (round.verdict === "not reviewed") return null;
   const live = thread.status === "working" || thread.status === "waiting";
-  if (live && (thread.submitting !== null || thread.reviewing !== null))
-    return { round: nextRound(thread), colour: thread.review_failed ? "red" : "yellow" };
-  if (thread.verdict === null || thread.review_round === null) return null;
-  return { round: thread.review_round, colour: verdictColours[thread.verdict] };
+  if (live && (round.submitting !== null || round.reviewing !== null))
+    return { round: nextRound(thread), colour: round.review_failed ? "red" : "yellow" };
+  if (round.verdict === null || round.review_round === null) return null;
+  return { round: round.review_round, colour: verdictColours[round.verdict] };
 }
 
 // How many ended tasks Done shows at least, when fewer than that ended today.

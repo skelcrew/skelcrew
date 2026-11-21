@@ -17,6 +17,7 @@ import {
   limitOf,
   limitWasDecided,
   passedReviewStage,
+  roundOf,
 } from "./ledger.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
 import {
@@ -77,7 +78,7 @@ const reasonOf = (word: string) => (word === "approved" ? "ready to merge" : wor
 // review it was armed after: a later review reaching the limit, such as after sc start, would
 // then need nobody. Changes held are what the limit waits on, as an approval drops them.
 const decided = (thread: Thread) =>
-  limitWasDecided(thread) || (thread.merge_plan === "armed" && thread.held === null);
+  limitWasDecided(thread) || (thread.merge_plan === "armed" && roundOf(thread).held === null);
 
 // Returns whether a builder that just ended its turn did so without sc submit, on any harness.
 // Such a builder may have a question written as plain text, or be stuck, or have only replied,
@@ -104,17 +105,17 @@ export const waitsOnSubmit = (thread: Thread, unchanged: boolean) =>
 // check or a conflict all need the builder to work again, so a turn without new work doesn't
 // wait on them.
 const submitStands = (thread: Thread) =>
-  thread.reviewing !== null ||
+  roundOf(thread).reviewing !== null ||
   (passedReviewStage(thread) &&
     thread.checks !== "failing" &&
     thread.conflicts === null &&
-    thread.telling === null);
+    roundOf(thread).telling === null);
 
 // Returns whether the thread's last submit is still on its way without its builder, for the safety
 // net: being pushed, reviewed, or approved and waiting on CI. A round that failed is no longer on
 // its way, though it keeps its submit or review saved.
 const inFlight = (thread: Thread) =>
-  !thread.review_failed && (thread.submitting !== null || submitStands(thread));
+  !roundOf(thread).review_failed && (roundOf(thread).submitting !== null || submitStands(thread));
 
 // Returns whether the thread waits for you to merge it: Skelcrew's reviewer approved its latest
 // round, or its flow has no review stage, with no newer one under way, and the latest poll found every check on its PR green,
@@ -124,8 +125,8 @@ const inFlight = (thread: Thread) =>
 // thread need you again.
 export const readyToMerge = (thread: Thread) =>
   thread.needs_you &&
-  thread.submitting === null &&
-  thread.reviewing === null &&
+  roundOf(thread).submitting === null &&
+  roundOf(thread).reviewing === null &&
   passedReviewStage(thread) &&
   (thread.checks === "passing" || thread.checks === null) &&
   (thread.pr === null || thread.ci_passed) &&
@@ -435,7 +436,8 @@ export function reportStatuses(db: Database): void {
 // clock shows it, such as "limit · 13:59", or only "limit" when the harness didn't say. Anything
 // that needs you comes before a limit, which only waits.
 export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
-  const { status, verdict } = thread;
+  const { status } = thread;
+  const { verdict } = roundOf(thread);
   // A mark says in words what you must do, so it goes before what Skelcrew knows by itself, even
   // on a thread that is queued, failed or stopped, which the lead or you may mark too. Only a
   // question or an error the builder stopped on comes first, as you must answer it before
@@ -449,7 +451,7 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // what it is doing.
   if (status === "queued" || status === "failed" || status === "stopped" || status === "done")
     return status;
-  const underWay = thread.submitting !== null || thread.reviewing !== null;
+  const underWay = roundOf(thread).submitting !== null || roundOf(thread).reviewing !== null;
   if (thread.asking) return "question";
   if (thread.erred && !thread.limited) return "error";
   // The round limit and an approval say what you must do next, so they come before any other
@@ -462,12 +464,13 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // A round on a flow with no review stage fails on its submit, pushing it or opening its PR,
   // or on setting Skelcrew's check once it is pushed, never on a review, so it says which. The
   // note to the lead gives the error itself, such as the forge's.
-  if (thread.review_failed && waitsOnFirstCheck(thread))
-    return thread.submitting !== null ? "submit failed" : "check failed";
+  if (roundOf(thread).review_failed && waitsOnFirstCheck(thread))
+    return roundOf(thread).submitting !== null ? "submit failed" : "check failed";
   // A review that failed doesn't need you, but says so until something sets the builder working
   // again, or a new round starts.
-  if (thread.review_failed && verdict === "timed out" && !underWay) return "review timed out";
-  if (thread.review_failed) return "review failed";
+  if (roundOf(thread).review_failed && verdict === "timed out" && !underWay)
+    return "review timed out";
+  if (roundOf(thread).review_failed) return "review failed";
   if (needsYou(thread)) return "needs you";
   // Not needing you: a builder that stopped without submitting waits on the lead, who got its
   // last message. Its word doesn't claim a question, as it may be only a reply.
@@ -486,7 +489,7 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (waitsOnFirstCheck(thread)) return "checks";
   if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
-  if (thread.telling !== null) return "changes";
+  if (roundOf(thread).telling !== null) return "changes";
   if (status === "working") return "working";
   if (passedReviewStage(thread)) return "checks";
   return verdict === "changes" ? "changes" : "waiting";
@@ -547,7 +550,7 @@ export function turnEnded(
     // thread waits on its approved submit again, and the next poll can find it ready to merge.
     // A review under way sets the status itself once it ends.
     const replied = "its builder only replied, so it waits on CI";
-    if (thread.status === "working" && thread.reviewing === null)
+    if (thread.status === "working" && roundOf(thread).reviewing === null)
       record(db, folder, { status: "waiting", ...timed }, replied);
     else record(db, folder, timed);
     return;
@@ -772,7 +775,7 @@ export function mergeShown(thread: Thread): string | null {
 // none once it approved. A merge without approval names them before you say y, and files them as an
 // issue once it merged, so they aren't lost.
 export function openFindings(thread: Thread): string[] {
-  const post = thread.review_post;
+  const post = roundOf(thread).review_post;
   if (post === null || post.pr !== thread.pr || post.verdict !== "changes") return [];
   return post.findings;
 }
@@ -785,6 +788,6 @@ export function stillAsks(thread: Thread): string {
     (finding, n) => `${n + 1}) ${finding.replace(/\s+/g, " ").trim()}`,
   );
   const asks = findings.length > 0 ? `It still asks: ${findings.join(" ")}` : "";
-  if (thread.reviewing === null) return asks || "Its reviewer hasn't approved it";
+  if (roundOf(thread).reviewing === null) return asks || "Its reviewer hasn't approved it";
   return asks ? `${asks}, and its newest review is still running` : "Its review is still running";
 }

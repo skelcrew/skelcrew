@@ -40,7 +40,7 @@ import {
 } from "./events.ts";
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadSession } from "./lead.ts";
-import { roundMoved } from "./ledger.ts";
+import { roundMoved, roundOf } from "./ledger.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
@@ -309,7 +309,7 @@ async function actOnPr(
   const checks = ciState(pr);
   const green = allGreen(thread, pr);
   const ciChanged = checks !== thread.checks || green !== thread.ci_passed;
-  if (!stale && thread.submitting === null && ciChanged)
+  if (!stale && roundOf(thread).submitting === null && ciChanged)
     record(db, folder, { checks, ci_passed: green });
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
@@ -421,7 +421,7 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   // A push under way has saved its local ref before the remote has the branch, and a failed
   // one keeps its submit, so only a thread with nothing being pushed can end. Its branch can
   // still have moved, which a push that failed may never have told the builder.
-  if (thread.submitting !== null) return actOnBranchHead(db, sessions, repository, thread);
+  if (roundOf(thread).submitting !== null) return actOnBranchHead(db, sessions, repository, thread);
   if (!(await git("rev-parse", "--verify", "--quiet", ref("threads"))).ok) return;
   // Asking git takes a while, and sc rm may meanwhile have deleted the branch and ended the
   // thread, or the thread started over. Only the thread as it was is ended. A thread sc rm is

@@ -6,6 +6,7 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { threadTask } from "../flow/copy.ts";
+import { roundOf } from "../flow/ledger.ts";
 import { readTask, safeText, type TaskView } from "../flow/list.ts";
 import { threadOn } from "../flow/thread.ts";
 import { threadsDir } from "../paths.ts";
@@ -156,11 +157,10 @@ export function readDetails(
   // The findings are those the latest review saved, posted or not. A task from before Skelcrew
   // saved them has those of its review posted on this PR, as one opened again after sc rm has
   // none yet.
-  const post = thread?.review_post;
-  const posted = post && post.pr === thread.pr ? post.findings : [];
-  const findings = (thread?.review_findings ?? posted).map((finding) =>
-    removeControlCodes(finding),
-  );
+  const round = thread && roundOf(thread);
+  const post = round?.review_post;
+  const posted = post && post.pr === thread?.pr ? post.findings : [];
+  const findings = (round?.review_findings ?? posted).map((finding) => removeControlCodes(finding));
   if (!thread)
     return {
       view,

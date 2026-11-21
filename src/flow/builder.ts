@@ -28,7 +28,7 @@ import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
-import { freshRounds, pastRoundLimit } from "./ledger.ts";
+import { freshRounds, pastRoundLimit, roundOf } from "./ledger.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus, needsYou } from "./status.ts";
@@ -70,7 +70,8 @@ export function startChoice(thread: Thread | null): "bring back" | "go on" | "ne
 // it: a submit or review under way, or the PR's checks, reviews and comments. It works when it
 // has a review's changes to be typed in, or no PR yet.
 export function statusOnceBack(stopped: Thread): "waiting" | "working" {
-  const { pr, submitting, reviewing, telling } = stopped;
+  const { pr } = stopped;
+  const { submitting, reviewing, telling } = roundOf(stopped);
   const waitsOnRound =
     telling === null && (pr !== null || submitting !== null || reviewing !== null);
   return waitsOnRound ? "waiting" : "working";

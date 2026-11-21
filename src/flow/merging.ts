@@ -18,7 +18,7 @@ import {
   skipReviewWaitsOn,
 } from "./decide.ts";
 import { beingRemoved, endThread } from "./events.ts";
-import { limitDecided, roundMoved } from "./ledger.ts";
+import { limitDecided, roundMoved, roundOf } from "./ledger.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
@@ -78,7 +78,7 @@ export function threadToMerge(
 // Returns how a thread's armed merge is said, after "Merging #7", such as "as soon as it's
 // approved and green", or for a flow with no review stage "as soon as its checks pass", for what
 // sc merge says and the lead's notes.
-const mergeWhen = (thread: Pick<Thread, "merge_pinned" | "verdict">) =>
+const mergeWhen = (thread: Thread) =>
   thread.merge_pinned === null
     ? `as soon as ${readyWhen(thread)}`
     : "without Skelcrew's approval once its checks pass";
@@ -166,9 +166,9 @@ export function armMerge(
     );
   // Only a review that asks for changes, or still runs, can be skipped. An approved PR merges
   // as usual, and one never reviewed waits for its review.
-  if (skip && thread.verdict !== "changes" && thread.reviewing === null)
+  if (skip && roundOf(thread).verdict !== "changes" && roundOf(thread).reviewing === null)
     throw new Error(
-      thread.verdict === "approve"
+      roundOf(thread).verdict === "approve"
         ? `${name} is approved already: ${asUsual}`
         : `${name} has no review asking for changes or under way, so there is nothing to skip: wait for its review`,
     );
@@ -184,7 +184,7 @@ export function armMerge(
     merge_noted_for: [],
     merge_pinned: head ?? null,
   };
-  const when = mergeWhen({ ...plan, verdict: thread.verdict });
+  const when = mergeWhen({ ...thread, ...plan });
   // The log keeps your words exactly, line breaks and spaces included. Written as JSON, they
   // still fit on one line of the daemon's log.
   const what = head
@@ -280,7 +280,7 @@ export async function mergeIfReady(
   const moved =
     thread.started !== before.started ||
     roundMoved(before, thread) ||
-    JSON.stringify(thread.posting) !== JSON.stringify(before.posting);
+    JSON.stringify(roundOf(thread).posting) !== JSON.stringify(roundOf(before).posting);
   if (moved) return;
   const name = threadName(db, thread);
   const pinned = thread.merge_pinned;
@@ -318,7 +318,7 @@ export async function mergeIfReady(
     // forge shows a review's verdict, such as GitHub's "Approved.", which nobody gave, and could
     // count it toward a required approval. Its log keeps who asked.
     const key = `${thread.merge_id} ${commit}`;
-    const quiet = pinned === null && thread.verdict === "not reviewed";
+    const quiet = pinned === null && roundOf(thread).verdict === "not reviewed";
     // A record the forge took just before the daemon stopped, with nothing saved yet, is found
     // by its marker in the PR's reviews.
     const marker = recordMarker(thread, commit);
@@ -341,7 +341,7 @@ export async function mergeIfReady(
         const id = await postReview(db, repository, {
           pr: thread.pr,
           commit,
-          verdict: pinned === null || thread.verdict === "approve" ? "approve" : "changes",
+          verdict: pinned === null || roundOf(thread).verdict === "approve" ? "approve" : "changes",
           body: recordBody(thread, commit, "Merging"),
         });
         record(db, folder, { merge_record: key, merge_record_id: id });
@@ -455,7 +455,7 @@ export async function finishSkippedMerge(
     await editReview(db, repositoryOf(db, thread), {
       pr: thread.pr,
       id: thread.merge_record_id,
-      verdict: thread.verdict === "approve" ? "approve" : "changes",
+      verdict: roundOf(thread).verdict === "approve" ? "approve" : "changes",
       body: recordBody(thread, pinned, "Merged"),
     }).catch((error) =>
       console.log(`${threadName(db, thread)}: couldn't edit its merge record: ${errorText(error)}`),

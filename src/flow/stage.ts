@@ -2,7 +2,7 @@
 // task reads its stage from here.
 import { z } from "zod";
 import { waitsOnFirstCheck } from "./decide.ts";
-import { passedReviewStage } from "./ledger.ts";
+import { passedReviewStage, roundOf } from "./ledger.ts";
 import { readyToMerge } from "./status.ts";
 import type { Thread } from "./thread.ts";
 
@@ -45,8 +45,8 @@ export function listStage(thread: Thread | null, issueOpen: boolean): ListStage 
   if (thread === null || thread.status === "failed" || thread.status === "stopped")
     return "building";
   if (waitsOnFirstCheck(thread)) return "checks";
-  const reviewing = thread.submitting !== null || thread.reviewing !== null;
-  if (reviewing || thread.review_limited || thread.review_failed) return "reviewing";
+  const reviewing = roundOf(thread).submitting !== null || roundOf(thread).reviewing !== null;
+  if (reviewing || thread.review_limited || roundOf(thread).review_failed) return "reviewing";
   if (passedReviewStage(thread) && thread.status === "waiting") return "checks";
   return "building";
 }

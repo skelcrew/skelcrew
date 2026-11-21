@@ -1,7 +1,7 @@
 // Deciding what an event means: given a thread and what its forge returned, these functions
 // say what to do. They read no clock, files or network, so they can be tested without them.
 import type { Item } from "./copy.ts";
-import { passedReviewStage, pastRoundLimit, reviewText } from "./ledger.ts";
+import { passedReviewStage, pastRoundLimit, reviewText, roundOf } from "./ledger.ts";
 import type { Thread } from "./thread.ts";
 
 // How an event changes the thread's status and its needs you flag.
@@ -18,28 +18,31 @@ export const reviewCheck = "skelcrew/check";
 // for CI's first check before it is marked not reviewed. Such a submit saves "not reviewed" as it
 // starts, so it is never shown as a review under way: no reviewer will run, and it waits on
 // checks.
-export const waitsOnFirstCheck = (thread: Pick<Thread, "verdict" | "submitting" | "reviewing">) =>
-  thread.verdict === "not reviewed" && (thread.submitting !== null || thread.reviewing !== null);
+export function waitsOnFirstCheck(thread: Thread): boolean {
+  const { verdict, submitting, reviewing } = roundOf(thread);
+  return verdict === "not reviewed" && (submitting !== null || reviewing !== null);
+}
 
 // Returns how a merge when ready of the thread waits, in words after "once" or "as soon as": for
 // an approval and green checks, or on a flow with no review stage for its checks alone.
-export const readyWhen = (thread: Pick<Thread, "verdict">) =>
-  thread.verdict === "not reviewed" ? "its checks pass" : "it's approved and green";
+export const readyWhen = (thread: Thread) =>
+  roundOf(thread).verdict === "not reviewed" ? "its checks pass" : "it's approved and green";
 
 // Returns whether the round limit makes the thread need you as an event sets its builder working:
 // past the limit, with the last review asking for changes and no submit or review under way, as
 // waiting on a review never needs you, and a review that failed is the lead's to run again.
 const limitNeedsYou = (thread: Thread, maxRounds: number) =>
   pastRoundLimit(thread, maxRounds) &&
-  thread.verdict === "changes" &&
-  thread.submitting === null &&
-  thread.reviewing === null;
+  roundOf(thread).verdict === "changes" &&
+  roundOf(thread).submitting === null &&
+  roundOf(thread).reviewing === null;
 
 // Returns whether a failed round stays failed as an event sets the builder working: a review
 // that failed is over once the builder works again, but a submit its flow doesn't review that
 // failed, to push or to set Skelcrew's check, still sits saved, and nothing retries it until a new
 // submit or sc review. Telling the builder of a comment must not make it look under way again.
-const submitStillFailed = (thread: Thread) => thread.review_failed && waitsOnFirstCheck(thread);
+const submitStillFailed = (thread: Thread) =>
+  roundOf(thread).review_failed && waitsOnFirstCheck(thread);
 
 // What decide says to do with a thread: end it, with the reason for its log and the note for
 // its lead, or tell its builder what is new and change the thread.
@@ -114,8 +117,8 @@ export function ciOnHead(
   const waits =
     ["working", "waiting"].includes(thread.status) &&
     (passedReviewStage(thread) || thread.merge_pinned === head) &&
-    thread.submitting === null &&
-    thread.reviewing === null &&
+    roundOf(thread).submitting === null &&
+    roundOf(thread).reviewing === null &&
     pr.state === "open" &&
     thread.no_ci !== head &&
     !shown;
@@ -149,23 +152,27 @@ export function mergeWaitsOn(
   if (pr === null || pr.state !== "open") return "its PR";
   // A submit its flow doesn't review waits on checks, until its push, its PR or Skelcrew's check
   // fails, which needs someone to act.
-  if (waitsOnFirstCheck(thread) && thread.review_failed)
-    return thread.submitting !== null
+  if (waitsOnFirstCheck(thread) && roundOf(thread).review_failed)
+    return roundOf(thread).submitting !== null
       ? "its submit, which failed"
       : "Skelcrew's check, which failed";
   if (waitsOnFirstCheck(thread)) return "its checks";
   // A verdict saved but not yet on the forge is still on its way, as Skelcrew's check is.
-  if (thread.submitting !== null || thread.reviewing !== null || thread.posting !== null)
+  if (
+    roundOf(thread).submitting !== null ||
+    roundOf(thread).reviewing !== null ||
+    roundOf(thread).posting !== null
+  )
     return "its review";
   // Changes the round limit held never reach the builder, so no new round comes until someone
   // lets it go on with sc start. Arming the merge decided the limit, but doesn't do that.
-  if (thread.verdict !== "approve" && thread.held !== null)
+  if (roundOf(thread).verdict !== "approve" && roundOf(thread).held !== null)
     return "its builder to be let past the round limit";
   if (!passedReviewStage(thread)) return "an approval";
   // A push Skelcrew didn't review, such as someone else's, is never merged unseen. On a flow with
   // no review stage, nothing reviews it: its builder must submit it, and then it merges.
   if (approved === null || pr.head !== approved)
-    return thread.verdict === "not reviewed"
+    return roundOf(thread).verdict === "not reviewed"
       ? "its builder to submit its newest commit"
       : "a review of its newest commit";
   if (pr.conflicts || thread.conflicts !== null) return `its conflict with ${pr.base} to be fixed`;
@@ -191,11 +198,11 @@ export function skipReviewWaitsOn(thread: Thread, pr: PullRequest | null): strin
   if (thread.status === "stopped") return "its thread, which is stopped";
   if (pr === null || pr.state !== "open") return "its PR";
   // A submit under way pushes a commit you never saw, which then cancels the plan.
-  if (thread.submitting !== null) return "its builder's new round";
+  if (roundOf(thread).submitting !== null) return "its builder's new round";
   // A review still running waits to end, so its findings reach the follow-up issue. Its verdict
   // then changes nothing. One saved but not yet on the PR waits too, as the issue files the
   // findings of the PR's review.
-  if (thread.reviewing !== null || thread.posting !== null) return "its review";
+  if (roundOf(thread).reviewing !== null || roundOf(thread).posting !== null) return "its review";
   if (pr.conflicts || thread.conflicts !== null) return `its conflict with ${pr.base} to be fixed`;
   const ci = ciOf(pr);
   if (ci.some((c) => c.state === "failed" || c.state === "cancelled"))
@@ -209,7 +216,9 @@ export function skipReviewWaitsOn(thread: Thread, pr: PullRequest | null): strin
 // each: the review round, or on a flow with no review stage, which has no rounds, when its last
 // submit was marked not reviewed. Null before either.
 export const noteRound = (thread: Thread) =>
-  thread.verdict === "not reviewed" ? thread.review_at : thread.review_round;
+  roundOf(thread).verdict === "not reviewed"
+    ? roundOf(thread).review_at
+    : roundOf(thread).review_round;
 
 // How the waits that need someone start, in the words mergeWaitsOn and skipReviewWaitsOn give,
 // and the merge's own words for a forge that failed or refused.
@@ -417,13 +426,15 @@ export function decide(
   // Only once nothing is under way, so a conflict or a failed commit status is told once: the
   // builder then works on it until it submits again.
   const quiet =
-    thread.status === "waiting" && thread.submitting === null && thread.reviewing === null;
+    thread.status === "waiting" &&
+    roundOf(thread).submitting === null &&
+    roundOf(thread).reviewing === null;
   const ci = ciOf(pr);
   // While a newer round is still being pushed, the checks the forge shows are an older
   // commit's. Parallel jobs finish out of order, so failures wait until every check has
   // finished, and are told together. A check with no ID, such as a commit status, has no log
   // and nothing to remember it by, so it is told only while the thread is quiet.
-  const finished = thread.submitting === null && !ci.some((c) => c.state === "running");
+  const finished = roundOf(thread).submitting === null && !ci.some((c) => c.state === "running");
   const failed = finished
     ? ci.filter((c) => c.state === "failed" && (c.id === null ? quiet : !before.has(c.id)))
     : [];
@@ -479,7 +490,7 @@ export function decide(
       moved,
       change: { needs_you: true },
       why:
-        thread.verdict === "not reviewed"
+        roundOf(thread).verdict === "not reviewed"
           ? "not reviewed, as its flow has none, with every check green, so it is ready to merge"
           : "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };

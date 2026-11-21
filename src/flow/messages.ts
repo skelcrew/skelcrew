@@ -14,7 +14,7 @@ import { nextSequence } from "../db.ts";
 import { errorText } from "../format.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { leadOf, leadSession } from "./lead.ts";
-import { changesTyped } from "./ledger.ts";
+import { changesTyped, roundOf } from "./ledger.ts";
 import { repositories } from "./repo.ts";
 import type { Caller } from "./requests.ts";
 import {
@@ -77,7 +77,7 @@ export function messagesWaiting(db: Database, thread: Thread): number {
   const reviews = counted(
     "SELECT COUNT(*) AS count FROM messages WHERE folder = ? AND sender = 'review'",
   );
-  return count + (thread.telling !== null && reviews === 0 ? 1 : 0);
+  return count + (roundOf(thread).telling !== null && reviews === 0 ? 1 : 0);
 }
 
 // Returns how many messages wait for a builder, in words, such as "1 message waiting", or
@@ -188,7 +188,8 @@ export function queueMessage(
 function afterTyped(db: Database, folder: string, message: Message): void {
   const thread = readThread(db, folder);
   if (message.sender === "review") {
-    if (thread.telling !== null && tagsEscaped(thread.telling) === message.text)
+    const { telling } = roundOf(thread);
+    if (telling !== null && tagsEscaped(telling) === message.text)
       record(db, folder, changesTyped(thread, Date.now()), "typed the review into the builder");
     return;
   }
