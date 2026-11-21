@@ -683,3 +683,23 @@ test("the task, the lead's updates and the findings wrap at 80 columns in a wide
   expect(Bun.stringWidth(lines.find((line) => line.startsWith("Merge")) ?? "")).toBeGreaterThan(80);
   expect(lines[1]).toBe("─".repeat(120));
 });
+
+test("a code block's first line keeps its indent, and a long link wraps inside a narrow pane", () => {
+  const code = ["```", "  indented", "  as well", "```"].join("\n");
+  const coded: Details = { ...details, view: { ...details.view, body: code } };
+  const lines = plain(drawPane(row, coded, null, 50, 50).lines);
+  const from = lines.indexOf("Task");
+  expect(lines.slice(from + 1, from + 3)).toEqual(["    indented", "    as well"]);
+  // A link too long for the pane breaks over lines, and one whose text differs shows its address.
+  const body = "<https://example.com/a/long/path> and [the docs](https://example.com/docs)";
+  const linked: Details = { ...details, view: { ...details.view, body } };
+  const narrow = plain(drawPane(row, linked, null, 20, 80).lines);
+  for (const line of narrow) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(20);
+  const task = narrow.slice(narrow.indexOf("Task") + 1, narrow.indexOf("Activity") - 1);
+  expect(task).toEqual([
+    "https://example.com/",
+    "a/long/path and the",
+    "docs (https://exampl",
+    "e.com/docs)",
+  ]);
+});

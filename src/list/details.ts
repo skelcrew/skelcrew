@@ -162,13 +162,14 @@ export function readDetails(db: Database, open: Open, task: string, now: number)
       spinner: "",
     };
   // The lead's updates show apart from the description, each with how long ago it came, so the
-  // description is read again without them. A thread that is done or failed starts over fresh,
-  // without them, so sc show's description already has none then.
+  // description is read again without them. sc show leaves them out of a thread that is done or
+  // failed, as starting over leaves them behind, but the pane keeps them as the task's history.
   const current = thread.status !== "done" && thread.status !== "failed";
   const body = current ? safeText(threadTask(db, { ...thread, updates: [] }).body) : view.body;
-  const updates = current
-    ? thread.updates.map((update) => ({ ago: ago(update.at, now), text: safeText(update.text) }))
-    : [];
+  const updates = thread.updates.map((update) => ({
+    ago: ago(update.at, now),
+    text: safeText(update.text),
+  }));
   const changed = thread.changed ?? thread.started;
   return {
     view: { ...view, body },

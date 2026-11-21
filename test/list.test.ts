@@ -2641,13 +2641,19 @@ const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${n
 console.log(JSON.stringify({ body: details?.view.body, updates: details?.updates }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
-  expect(JSON.parse(run.stdout.toString())).toEqual({
+  const said = {
     body: "Limit each client.",
     updates: [
       { ago: "3h ago", text: "Use a sliding window." },
       { ago: "4m ago", text: "Keep it per repository." },
     ],
-  });
+  };
+  expect(JSON.parse(run.stdout.toString())).toEqual(said);
+  // A task that is done keeps its updates in the pane, as part of its history.
+  sql("UPDATE threads SET status = 'done' WHERE folder = 'app-12'");
+  const done = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(done.stderr.toString()).toBe("");
+  expect(JSON.parse(done.stdout.toString()).updates).toEqual(said.updates);
 });
 
 // app-12's agent prints a line in red, then one wider than the pane, which fits its own screen.
