@@ -11,7 +11,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { type Labels, startSession } from "../src/agents/sessions.ts";
+import { type Labels, processTree, startSession, stillRunning } from "../src/agents/sessions.ts";
 import { sidebarFor } from "../src/screen/screen.ts";
 import { fakePlugin, source, threadSql, until as wait } from "./harness.ts";
 
@@ -213,20 +213,35 @@ ${threadSql({ task: "12" })}`);
 }
 
 // Ends what a test started: the stand-in daemon, the tmux servers and the test's home. Every
-// screen test file runs it after each test.
-export function endTest(): void {
+// screen test file runs it after each test, one that failed or timed out included. It returns
+// once every process the servers' panes ran has exited, such as the sidebar and a host's attach.
+// tmux only hangs up on them as its server ends, and on a busy machine they could still be
+// exiting when the check for leftover processes looks. One that never exits is still reported.
+export async function endTest(): Promise<void> {
   standIn?.close();
   standIn = null;
   asked.length = 0;
   acted.length = 0;
   release();
+  // The panes' processes are found before their servers go, as nothing names them after.
+  const panes = [terminal, screen, agents].flatMap((socket) =>
+    tmux(socket, "list-panes", "-a", "-F", "#{pane_pid}").out.split("\n").filter(Boolean),
+  );
+  const tree = panes.flatMap((pid) => processTree(Number(pid)));
   for (const socket of [terminal, screen, agents]) {
     tmux(socket, "kill-server");
     // tmux leaves the socket file behind after kill-server.
     const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
     rmSync(join(folder, socket), { force: true });
   }
-  rmSync(home, { recursive: true, force: true });
+  try {
+    await wait(() => stillRunning(tree).length === 0, {
+      timeout: 15_000,
+      what: () => `the screen's panes to end: ${stillRunning(tree).join(" ")}`,
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 }
 
 // Returns whether the right side shows a task's details, which have a line with its stage and
