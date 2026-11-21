@@ -112,7 +112,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | `sc stop <task>` | Ends a thread's agent and keeps its clone, branch and PR. |
 | `sc rm <task>` | Ends the work on a task, closing its PR and its issue. `--keep-issue` keeps the issue open, to start over. |
 | `sc merge --when-ready <task>` | Merges the PR once it is approved and green. `--cancel` disarms it. |
-| `sc add <owner/repo>` | Adds a plugin to this repository, after asking. `-g` adds one of your own. |
+| `sc plugin add <owner/repo>` | Adds a plugin to this repository, after asking. `-g` adds one of your own. |
 
 A command that acts on a thread, such as `sc stop`, also takes `<task>/<role>`, such as `APP-12/builder`, to name one. The task alone means its active thread.
 

@@ -10,7 +10,7 @@ Skelcrew is a crew of coding agents, always on, in parallel and isolated, from i
 
 You run `sc` in a checkout and talk to that repository's lead: a Claude Code or Codex session that knows the repository. The lead proposes tasks and starts them once you say yes. Each task has a builder, an agent in its own branch, clone and sandbox. It opens a PR. A fresh reviewer, on another model if you choose one, reviews it adversarially, and they go back and forth until it is ready. CI failures and your PR comments wake the builder again. You merge.
 
-Skelcrew is the engine. The repository describes how its agents work, in files, as a `Dockerfile` or `package.json` does, and Skelcrew runs what the files say. Flows are fixed stages with settings, not a language: Skelcrew trusts capable agents and adds an adversarial review, rather than scripting them. Agents run in a session host, tmux by default, and a runtime plugin can bring another, such as herdr. The command line works like npm's.
+Skelcrew is the engine. The repository describes how its agents work, in files, as a `Dockerfile` or `package.json` does, and Skelcrew runs what the files say. Flows are fixed stages with settings, not a language: Skelcrew trusts capable agents and adds an adversarial review, rather than scripting them. Agents run in a session host, tmux by default, and a runtime plugin can bring another, such as herdr. Its files and lock work like npm's.
 
 The code is small, plain and tested. `AGENTS.md` says how to write it, and `docs/learnings.md` holds the traps to avoid.
 
@@ -215,10 +215,10 @@ Skills a repository keeps in `.claude/skills/` already reach Claude Code from th
 
 ### `skelcrew.lock`
 
-The exact version and commit of every plugin `skelcrew.yaml` names. `sc add` and `sc update` write it, you commit it, and `sc install` installs exactly what it says on every machine, as `package-lock.json` does.
+The exact version and commit of every plugin `skelcrew.yaml` names. `sc plugin add` and `sc plugin update` write it, you commit it, and `sc install` installs exactly what it says on every machine, as `package-lock.json` does.
 
 ```yaml
-# Written by sc add and sc update. Commit it.
+# Written by sc plugin add and sc plugin update. Commit it.
 skelcrew/skelcrew-github:
   name: github
   version: 0.3.1
@@ -293,7 +293,7 @@ Settings in their old shape are still read: `lead:`, `builder:` and `reviewer:` 
 
 Two kinds of thing could reach your machine through the files: plugins, which run as you, and a repository's own files, which steer agents. Each has its rule.
 
-**Plugins run as you, outside the sandbox**, with no sandbox of their own. A plugin can read what you can, your git login and other plugins' tokens included. So `sc install`, `sc add` and `sc update` never install a plugin silently, unlike npm. For a plugin that is new to this machine, or whose version or commit changed, they say what it is for, in its manifest's `about`, then its name, version and source, and that it runs on this machine as you, outside the agents' sandbox, and ask: `Install the fake plugin? [Y/n]`. Typing `d` shows the rest, its kind, what it provides and every command its manifest runs, and asks again. Each answer is a line, so the Enter after a key never answers the next question. A plugin already installed at its locked version asks nothing, as you approved that exact version before. Without a terminal, such as for the engine, nothing is installed: the repository needs you, and its row says to run `sc install`. So a repository's files can make Skelcrew ask you, never make it install. Agents can't run any of these commands.
+**Plugins run as you, outside the sandbox**, with no sandbox of their own. A plugin can read what you can, your git login and other plugins' tokens included. So `sc install`, `sc plugin add` and `sc plugin update` never install a plugin silently, unlike npm. For a plugin that is new to this machine, or whose version or commit changed, they say what it is for, in its manifest's `about`, then its name, version and source, and that it runs on this machine as you, outside the agents' sandbox, and ask: `Install the fake plugin? [Y/n]`. Typing `d` shows the rest, its kind, what it provides and every command its manifest runs, and asks again. Each answer is a line, so the Enter after a key never answers the next question. A plugin already installed at its locked version asks nothing, as you approved that exact version before. Without a terminal, such as for the engine, nothing is installed: the repository needs you, and its row says to run `sc install`. So a repository's files can make Skelcrew ask you, never make it install. Agents can't run any of these commands.
 
 **A repository's files steer agents, but can't grant anything.** `skelcrew.yaml` and `.agents/` say how agents work. They can't:
 
@@ -316,9 +316,9 @@ Skelcrew keeps its own clone of every repository it works on, in `~/.local/share
 
 **Opening a repository.** The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote: its screen, or its list with `sc --list`, as **The screen** says. A repository Skelcrew doesn't have yet is added first, so the first `sc` in any clone goes straight to work. A remote that still uses a repository's old name, such as from before a rename, is matched by asking its forge once. Skelcrew remembers the answer and prints the `git remote set-url` that updates the remote. Outside any repository, `sc` opens the repository you opened last. With no repositories yet, it says `Skelcrew has no repositories yet. Run sc in a checkout of one.` In a repository with no remote, `sc` opens nothing, as opening another repository there would look as if Skelcrew had ignored where you are. It says so as steps to take: how to add a remote and push it, then run `sc` again.
 
-The folder only names the repository: agents never work in your checkout, and Skelcrew never sees changes you haven't pushed. The only files Skelcrew writes there are those of `sc init`, `sc add` and `sc update`, commands you run yourself, and the only commit it makes there is the one `sc init` asks you about.
+The folder only names the repository: agents never work in your checkout, and Skelcrew never sees changes you haven't pushed. The only files Skelcrew writes there are those of `sc init`, `sc plugin add` and `sc plugin update`, commands you run yourself, and the only commit it makes there is the one `sc init` asks you about.
 
-**The GitHub plugin.** `sc` in a checkout whose origin is on github.com, in a repository whose files name no forge plugin, offers the GitHub plugin, until it is installed or you say no for that repository. Skelcrew only reads the checkout's remote to decide to offer it, with no call to GitHub. It says why first: `This is a GitHub repository (simon/app). Skelcrew needs its GitHub plugin to read issues, open pull requests and merge them.` Then it fetches the plugin and asks once, as for any plugin: `GitHub plugin 0.8.1, from skelcrew/skelcrew-github. Runs on this machine as you, outside the agents' sandbox. Type d for details.` and `Install the GitHub plugin? [Y/n]`. With GitHub out of reach there is nothing to ask, so nothing is decided, and the next `sc` offers it again. Yes adds `skelcrew/skelcrew-github` as yours, as `sc add -g` does, and says `Installed the GitHub plugin.` Its setup then runs, as **GitHub** says. GitHub becomes the repository's tracker and forge, so its open issues show as tasks, and nothing has to be written into the repository. No is saved under `github_declined` in `config.yaml`, as the repository's full name, such as `simon/app`, so every checkout of it stays quiet and deleting the line undoes it.
+**The GitHub plugin.** `sc` in a checkout whose origin is on github.com, in a repository whose files name no forge plugin, offers the GitHub plugin, until it is installed or you say no for that repository. Skelcrew only reads the checkout's remote to decide to offer it, with no call to GitHub. It says why first: `This is a GitHub repository (simon/app). Skelcrew needs its GitHub plugin to read issues, open pull requests and merge them.` Then it fetches the plugin and asks once, as for any plugin: `GitHub plugin 0.8.1, from skelcrew/skelcrew-github. Runs on this machine as you, outside the agents' sandbox. Type d for details.` and `Install the GitHub plugin? [Y/n]`. With GitHub out of reach there is nothing to ask, so nothing is decided, and the next `sc` offers it again. Yes adds `skelcrew/skelcrew-github` as yours, as `sc plugin add -g` does, and says `Installed the GitHub plugin.` Its setup then runs, as **GitHub** says. GitHub becomes the repository's tracker and forge, so its open issues show as tasks, and nothing has to be written into the repository. No is saved under `github_declined` in `config.yaml`, as the repository's full name, such as `simon/app`, so every checkout of it stays quiet and deleting the line undoes it.
 
 **Trusting a repository.** Before cloning, Skelcrew decides whether to trust the repository: agents will run its setup and test commands, and read its `AGENTS.md` and settings as instructions. It trusts it on its own when its forge says your login can push to it, unless it is a fork. For any other repository, one with no forge included, Skelcrew asks you as you add it, and `sc repo trust <name>` trusts one without the question. Only you can do either, in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in `~/.config/skelcrew/`, never in the repository.
 
@@ -332,15 +332,15 @@ The folder only names the repository: agents never work in your checkout, and Sk
 
 ## Commands
 
-The command line follows npm: files describe what a repository needs, `sc install` makes the machine match, and `sc add`, `sc remove` and `sc update` change the files and the machine together.
+Files describe what a repository needs, as in npm. `sc install` makes the machine match. Every other plugin command is under `sc plugin`: `sc plugin add`, `sc plugin rm` and `sc plugin update` change the files and the machine together.
 
 Every command that lists or shows something takes `--json`. Commands that do something print one line or fail with a clear message and a non-zero exit. A command Skelcrew shows you to run reads as a step to take, and only a real error looks like one.
 
-- **Yours only:** opening a repository, setting up the machine, its plugins and repositories, and running the engine, such as `sc`, `sc init`, `sc install`, `sc add`, `sc serve` and `sc repo trust`.
+- **Yours only:** opening a repository, setting up the machine, its plugins and repositories, and running the engine, such as `sc`, `sc init`, `sc install`, `sc plugin add`, `sc serve` and `sc repo trust`.
 - **Yours, and the lead's in its own repository:** seeing and steering tasks and threads, such as `sc ls`, `sc task`, `sc ps`, `sc start`, `sc task add`, `sc stop`, `sc rm`, `sc merge` and `sc needs-you`. Some are the lead's alone, such as `sc tell`, as you type to an agent by attaching. Some need your words or your terminal, such as `sc merge`, and from the lead, `sc task add --issue` and an `sc rm` that closes an issue. Builders and reviewers can't run them, but for a builder asking its own task's review again. `sc task` is how the lead reads issues and PRs, as it has no login for the tracker or forge, and text from either has its control characters removed. An issue is only where some tasks come from and what they mirror to, and a PR is part of a task, so neither has commands of its own. Tasks are the only names: `sc task APP-12` shows the task with its PR.
 - **The agents':** `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc review` for a builder's own task and never another's, and `sc check`, which reviewers and you can run too.
 
-**Plugins.** `sc add` refuses a second plugin of the same name, and a plugin of yours from a folder, which has no version to pin. `sc remove` refuses the tracker or forge of a repository Skelcrew has, and removes a plugin's settings and tokens from the machine once nothing else uses it.
+**Plugins.** `sc plugin add` refuses a second plugin of the same name, and a plugin of yours from a folder, which has no version to pin. `sc plugin rm` refuses the tracker or forge of a repository Skelcrew has, and removes a plugin's settings and tokens from the machine once nothing else uses it.
 
 **Tasks.** A task is never filed or started with an empty description. Each `sc task add` files a task of its own, the same words twice included, but a filing whose answer the remote lost is never filed twice: it fails, saying to run the same command again once the remote is back. Run again, it first asks the remote whether the earlier try's claim is there, and when it is, names that task and files nothing more. A claim Skelcrew couldn't look up is never taken for another machine's, and filings on one machine run one at a time per repository, each noting its own try. `sc review` refuses while a review of that commit already waits or runs.
 
@@ -363,7 +363,7 @@ Every command an agent can run answers quickly, as Claude Code moves a shell com
 
 Each step is skipped when it is already done. A tool or login that goes missing later shows up where it is used. A command Skelcrew shows you to run, here and elsewhere, sits on a line of its own, bold, with a blank line above and below, so it reads as a step to take. Only a real error is printed as one.
 
-A plugin you are writing can be added from a folder, such as `sc add -g ./skelcrew-linear`. It is used where it is, with no tag, and asks as any install does. `sc update` then runs its `build` again, so your edits count, and `sc remove` never deletes your folder.
+A plugin you are writing can be added from a folder, such as `sc plugin add -g ./skelcrew-linear`. It is used where it is, with no tag, and asks as any install does. `sc plugin update` then runs its `build` again, so your edits count, and `sc plugin rm` never deletes your folder.
 
 ## The engine
 
@@ -510,7 +510,7 @@ A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at 
 
 Messages and the sandbox stay in core, between the two. Work comes in through an I/O plugin, becomes a message, and reaches an agent through the runtime. No plugin can provide messages or the sandbox, so the rules about who may reach whom, and what an agent can touch, are Skelcrew's on every setup. Harnesses are never plugins: each is built into Skelcrew, one module per harness, because that module draws the sandbox boundary.
 
-A runtime plugin is always personal, added with `sc add -g`, since how you run and watch your agents is yours. An I/O plugin is usually the repository's, in `plugins:`.
+A runtime plugin is always personal, added with `sc plugin add -g`, since how you run and watch your agents is yours. An I/O plugin is usually the repository's, in `plugins:`.
 
 ### The manifest
 
@@ -533,7 +533,7 @@ Each command gets `SKELCREW_PLUGIN`, its name, and `SKELCREW_PLUGIN_CONFIG`, a f
 
 ### I/O plugins
 
-A tracker or forge is asked by running its `call` command with one JSON question on stdin. It prints one JSON answer and exits within 60 seconds. If it exits with an error, its last line of stderr is the error. Exit code 2 means the plugin needs its setup again, such as after its sign-in lapsed, and Skelcrew's error names `sc setup <name>`. When `claims` exits with 2 while Skelcrew brings in a repository in your terminal, Skelcrew runs that plugin's setup there, handed the repository's remote, and then asks again, so the fix happens where you are. Ctrl-C stops it. Every answer is checked before Skelcrew uses it.
+A tracker or forge is asked by running its `call` command with one JSON question on stdin. It prints one JSON answer and exits within 60 seconds. If it exits with an error, its last line of stderr is the error. Exit code 2 means the plugin needs its setup again, such as after its sign-in lapsed, and Skelcrew's error names `sc plugin setup <name>`. When `claims` exits with 2 while Skelcrew brings in a repository in your terminal, Skelcrew runs that plugin's setup there, handed the repository's remote, and then asks again, so the fix happens where you are. Ctrl-C stops it. Every answer is checked before Skelcrew uses it.
 
 | Question | Provides | Answer |
 | --- | --- | --- |
