@@ -226,7 +226,7 @@ Every command that lists or shows something takes `--json`. Commands that do som
 
 - **Yours only:** opening a repository, setting up the machine, its plugins and repositories, and running the engine, such as `sc`, `sc init`, `sc install`, `sc add`, `sc up` and `sc repo trust`.
 - **Yours, and the lead's in its own repository:** seeing and steering tasks and threads, such as `sc ls`, `sc show`, `sc ps`, `sc start`, `sc task add`, `sc stop`, `sc rm`, `sc merge` and `sc needs-you`. Some are the lead's alone, such as `sc tell`, as you type to an agent by attaching. Some need your words or your terminal, such as `sc merge`. Builders can't run them, but for asking their own task's review again.
-- **The agents':** `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc review` for a builder's own task, and `sc check`, which reviewers and you can run too.
+- **The agents':** `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc ask` for the lead to put a request in your list, `sc review` for a builder's own task, and `sc check`, which reviewers and you can run too.
 
 Every command an agent can run answers quickly, as Claude Code moves a shell command to the background after 2 minutes.
 
@@ -490,7 +490,8 @@ Skelcrew reports every change of status to the host when the host can show it, t
 The screen is how you see and steer a repository's work. It guarantees:
 
 - **Three ways in.** Plain `sc` shows the repository's list as a sidebar, with the lead or the row you are on beside it. `sc --list` shows the list alone with a details pane. `sc attach` attaches full screen to one agent.
-- **The lead first.** The screen starts on the lead, so what you type first goes to it, and the lead's requests for your yes show under it.
+- **The lead first.** The screen starts on the lead, so what you type first goes to it, and the lead's requests for your yes show under it, always in view as you move through them.
+- **Requests are answered once, by you.** The lead can ask to start a task or to add a repository. Your yes on a start starts it exactly as `sc start` would, and a new task is filed in the backlog first. Your yes on adding a repository adds nothing, as only you add one at your terminal: the screen names the command. Each request goes once answered, from whichever screen, and the lead hears your answer and what came of it. A yes that a stop of the engine or a lost remote cut short is finished when the engine can learn the outcome, and never starts a task twice.
 - **Tasks, not threads**, in sections: everything that waits on you, always open, so one key reaches it; Up next, what waits for a builder, in the order it starts; then the stages. Each task shows in exactly one place, decided from its state alone.
 - **Words, not colours.** A task's word always says what is happening. Outside text has its control codes removed first.
 - **Always a way back.** One key brings you back from an agent, and pressing it once too often never leaves the screen. Leaving keeps every agent running, and says so.

@@ -6,7 +6,7 @@ import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { type Details, readDetails } from "../list/details.ts";
-import { liveNote, readLive } from "../list/live.ts";
+import { liveNote, readLead, readLive } from "../list/live.ts";
 import { drawPane, type Live } from "../list/pane.ts";
 import { listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
@@ -154,12 +154,14 @@ export async function runTaskDetails(
     draw();
   };
 
-  // Reads the builder's screen, one read at a time, as a slow host must never pile reads up.
+  // Reads the builder's screen, or the lead's on a request's row, one read at a time, as a slow
+  // host must never pile reads up.
   let reading = false;
   const look = async () => {
     if (reading || !row || liveNote(row) !== null) return;
     reading = true;
-    live = (await readLive(db, agents, row)) ?? live;
+    const read = row.part === "request" ? readLead(db, agents, open) : readLive(db, agents, row);
+    live = (await read) ?? live;
     reading = false;
     draw();
   };

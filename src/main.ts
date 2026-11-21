@@ -110,6 +110,7 @@ function usage(command?: string): never {
     "peek",
     "interrupt",
     "needs-you",
+    "ask",
     "review",
     "submit",
     "check",
@@ -698,13 +699,28 @@ async function checkCommand(args: string[]): Promise<void> {
   process.exit(await run.exited);
 }
 
+// Has the lead ask you to say yes in the list, under its row, for sc ask. sc ask start takes what
+// sc start takes, and your yes starts it. sc ask repo add <owner/repo> asks you to add a
+// repository, which your yes only tells the lead, as only you add one, at your terminal.
+async function askCommand(args: string[]): Promise<void> {
+  const [, first, second, repository, ...more] = args;
+  if (first === "start") return threadCommand(args);
+  if (first !== "repo" || second !== "add" || !repository || more.length > 0) usage("ask");
+  const { askHuman } = await import("./client.ts");
+  console.log(await askHuman({ kind: "repo add", repository }));
+}
+
 // Starts, stops, removes, re-reviews, peeks at, interrupts or attaches to the thread on a task
 // such as app-13. sc start also takes a repository, a title and a body, to start a thread with
-// no tracker.
+// no tracker. sc ask start takes what sc start takes, but has the lead ask you in the list, and
+// starts only once you say yes there.
 async function threadCommand(args: string[]): Promise<void> {
-  const [command, sub, ...rest] = args;
+  const asking = args[0] === "ask";
+  const [command, sub, ...rest] = asking ? args.slice(1) : args;
+  if (asking && command !== "start") usage("ask");
   const { attachToThread } = await import("./attach.ts");
   const {
+    askHuman,
     interruptOn,
     namesRepository,
     peekAt,
@@ -738,7 +754,13 @@ async function threadCommand(args: string[]): Promise<void> {
   const words = rest.filter((_, i) => !taken.includes(i));
   // --from takes a branch, and only sc start <issue> takes it.
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
-  if (command === "start" && task && (words.length === 0 || from)) {
+  const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
+  if (asking && task && (words.length === 0 || from)) {
+    const action = { kind: "start" as const, task: task[1], ...(from ? { from } : {}), ...options };
+    console.log(await askHuman(action, task[0]));
+    return;
+  }
+  if (!asking && command === "start" && task && (words.length === 0 || from)) {
     console.log(await startOn(...task, from, short, flow));
     return;
   }
@@ -753,16 +775,26 @@ async function threadCommand(args: string[]): Promise<void> {
   // no task in the tracker.
   const [title, body] = words;
   if (command === "start" && sub && !task && title && body !== undefined && words.length === 2) {
-    console.log(await startNew(sub, title, bodyFor("sc start", body), short, flow));
+    const checked = bodyFor(asking ? "sc ask start" : "sc start", body);
+    console.log(
+      asking
+        ? await askHuman({ kind: "start new", title, body: checked, ...options }, sub)
+        : await startNew(sub, title, checked, short, flow),
+    );
     return;
   }
   // With no title and body as words, they come on stdin, so a long body needs no shell
   // quoting. A terminal is never waited on: there, a missing title and body is a mistake.
   if (command === "start" && sub && !task && words.length === 0 && !process.stdin.isTTY) {
-    const given = taskFrom(await Bun.stdin.text());
-    console.log(await startNew(sub, given.title, given.body, short, flow));
+    const given = taskFrom(await Bun.stdin.text(), asking ? "sc ask start" : "sc start");
+    console.log(
+      asking
+        ? await askHuman({ kind: "start new", ...given, ...options }, sub)
+        : await startNew(sub, given.title, given.body, short, flow),
+    );
     return;
   }
+  if (asking) usage("ask");
   if (command === "stop" && thread && rest.length === 0) {
     const name = await stopOn(...thread);
     console.log(
@@ -1020,6 +1052,8 @@ async function runCommand(args: string[]): Promise<void> {
     case "interrupt":
     case "attach":
       return threadCommand(words);
+    case "ask":
+      return askCommand(words);
     case "needs-you":
       return needsYouCommand(words);
     case "tell":
