@@ -338,7 +338,7 @@ Every command that lists or shows something takes `--json`. Commands that do som
 
 - **Yours only:** opening a repository, setting up the machine, its plugins and repositories, and running the engine, such as `sc`, `sc init`, `sc install`, `sc add`, `sc up` and `sc repo trust`.
 - **Yours, and the lead's in its own repository:** seeing and steering tasks and threads, such as `sc ls`, `sc show`, `sc ps`, `sc start`, `sc task add`, `sc stop`, `sc rm`, `sc merge` and `sc needs-you`. Some are the lead's alone, such as `sc tell`, as you type to an agent by attaching. Some need your words or your terminal, such as `sc merge`, and from the lead, `sc task add --issue` and an `sc rm` that closes an issue. Builders and reviewers can't run them, but for a builder asking its own task's review again. `sc show` is how the lead reads issues and PRs, as it has no login for the tracker or forge, and text from either has its control characters removed. An issue is only where some tasks come from and what they mirror to, and a PR is part of a task, so neither has commands of its own. Tasks are the only names: `sc show APP-12` shows the task with its PR.
-- **The agents':** `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc ask` for the lead to put a start or a repository's adding in your list as a request, `sc review` for a builder's own task and never another's, and `sc check`, which reviewers and you can run too.
+- **The agents':** `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc review` for a builder's own task and never another's, and `sc check`, which reviewers and you can run too.
 
 **Plugins.** `sc add` refuses a second plugin of the same name, and a plugin of yours from a folder, which has no version to pin. `sc remove` refuses the tracker or forge of a repository Skelcrew has, and removes a plugin's settings and tokens from the machine once nothing else uses it.
 
@@ -719,8 +719,7 @@ The engine calls `status` for every change, from wherever it came: a hook, the s
 The screen is how you see and steer a repository's work. It guarantees:
 
 - **Three ways in.** Plain `sc` shows the repository's list as a sidebar, with the lead or the row you are on beside it. `sc --list` shows the list alone with a details pane. `sc attach` attaches full screen to one agent.
-- **The lead first.** The screen starts on the lead, so what you type first goes to it, and the lead's requests for your yes show under it, always in view as you move through them.
-- **Requests are answered once, by you.** The lead can ask to start a task or to add a repository. Your yes on a start starts it exactly as `sc start` would, and a new task is filed in the backlog first. Your yes on adding a repository adds nothing, as only you add one at your terminal: the screen names the command. Each request goes once answered, from whichever screen, and the lead hears your answer and what came of it. A yes that a stop of the engine or a lost remote cut short is finished when the engine can learn the outcome, and never starts a task twice.
+- **The lead first.** The screen starts on the lead, so what you type first goes to it.
 - **Tasks, not threads**, in sections: everything that waits on you, so one key reaches it; the task queue, what waits for a builder, in the order it starts; then the stages. What waits on you is always open, and shows only while something does, so it never hides and never asks for a look in vain. Each task shows in exactly one place, decided from its state alone.
 - **Words, not colours.** A task's word always says what is happening. Outside text has its control codes removed first.
 - **Always a way back.** One key brings you back from an agent, and pressing it once too often never leaves the screen. Leaving keeps every agent running, and says so.
@@ -736,7 +735,7 @@ The screen is how you see and steer a repository's work. It guarantees:
 
 **A lead you exit** ends alone: its repository and tasks stay, and the engine doesn't bring it back until you open the repository again, which resumes its conversation. A lead that crashed is brought back when you look at it. When Skelcrew can't tell which happened, it takes the lead as exited, and says how to start it.
 
-A runtime plugin's host shows the same agents in its own apps, and its sessions on the screen through its own `attach`. A host's apps never merge or answer the lead's requests: that stays with Skelcrew, on its screen and its commands.
+A runtime plugin's host shows the same agents in its own apps, and its sessions on the screen through its own `attach`. A host's apps never merge: that stays with Skelcrew, on its screen and its commands.
 
 ## Remote machines
 
