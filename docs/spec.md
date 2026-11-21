@@ -200,7 +200,7 @@ Two kinds of thing could reach your machine through the files: plugins, which ru
 
 ## Repositories
 
-Skelcrew keeps its own clone of every repository it works on, at the latest default branch. A repository comes in only when you add it, in your own terminal, such as by opening it with `sc` in a checkout. The lead can't bring one in: it asks you to.
+Skelcrew keeps its own clone of every repository it works on, at the latest default branch. A repository comes in only when you add it, in your own terminal, such as by opening it with `sc` in a checkout. The lead can't bring one in: it asks you to. Only you can remove one, and removing it is refused while it has live threads or tasks queued for a builder, naming them, so no builder is left without its repository.
 
 **Opening a repository.** The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote even after a rename, adding it first if Skelcrew doesn't have it, so the first `sc` in any clone goes straight to work. Outside any repository, `sc` opens the one you opened last. In a repository with no remote, `sc` opens nothing, as opening another one would look as if Skelcrew had ignored where you are, and says what to do.
 
@@ -235,7 +235,7 @@ Every command an agent can run answers quickly, as Claude Code moves a shell com
 `sc install` makes the machine match the files, and is safe to run again:
 
 1. It checks for the tools Skelcrew needs and every harness a role uses. If one is missing, it says exactly what to install before it asks anything.
-2. On a machine with no harness picked, it picks one, asking only when both are installed, and then which harness reviews run on, offering the other one first, since a second model sees what the builder's misses.
+2. On a machine with no harness picked, it picks one. With only one installed, it asks nothing, and reviews run on it too. With both, it asks which agents run on, then which harness reviews run on, offering the other one first, since a second model sees what the builder's misses.
 3. It logs in each harness that has no login yet, with a login of Skelcrew's own, kept readable only by you, so your own login is never touched and a renewal on either side never breaks the other.
 4. It installs each plugin the files name at its locked version, asking as **Trust** says. It refuses a plugin that needs a newer Skelcrew.
 5. It runs each plugin's setup that hasn't run on this machine, in your terminal.
@@ -531,7 +531,7 @@ One SQLite file per machine, with `bun:sqlite`, holds the repositories, tasks, t
 - Harnesses other than Claude Code and Codex
 - Windows
 - Per-task environments such as a database each (the `setup` commands only)
-- Agents talking to each other, beyond the lead and a builder telling each other, and a host's own messaging carrying them
+- Agents talking to each other, beyond the lead and a builder telling each other and leads briefing each other, and a host's own messaging carrying them
 - Triggers, schedules or automations
 - Linear, Jira, forges other than GitHub, and a chat plugin such as Slack
 - A sandbox for plugins, plugins from anywhere but a git repository or a folder of yours, and a list of plugins to browse
