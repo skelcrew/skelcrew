@@ -71,7 +71,12 @@ const zoomed = () =>
 const flat = () =>
   seen()
     .split("\n")
-    .map((line) => line.slice(0, sidebar).replace(/[│─┬┴┌┐└┘├┤]/g, "").trim())
+    .map((line) =>
+      line
+        .slice(0, sidebar)
+        .replace(/[│─┬┴┌┐└┘├┤]/g, "")
+        .trim(),
+    )
     .filter(Boolean)
     .join(" ");
 const question =
