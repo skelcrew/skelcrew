@@ -128,7 +128,8 @@ function heardInLog(folder: string, round: number): string | null {
 // one since, which waits on the lead. It is null on a thread an earlier release saved, until the
 // daemon moves its `stalled` over. The rest of the flags say why it needs you.
 // `noting` holds a note for the lead about that, kept until it is typed in, so one the daemon's
-// stop cut short carries on when it starts again. `changed` is when anything last went in the
+// stop cut short carries on when it starts again, and `noting_at` when it was saved, so the
+// lead's reading window lets in only the notes it held. `changed` is when anything last went in the
 // thread's log. `working_since` is when the builder's current stretch of work began, for the
 // sidebar. It changes with every message typed into the builder, so it is kept out of the
 // thread's log, which would otherwise fill with it. `state` is what the builder is doing, from
@@ -168,6 +169,7 @@ const threadColumns = {
   submitted: "INTEGER NOT NULL DEFAULT 0",
   told_lead: "INTEGER NOT NULL DEFAULT 0",
   noting: "TEXT",
+  noting_at: "INTEGER",
   started: "INTEGER",
   harness: "TEXT",
   changed: "INTEGER",
@@ -594,6 +596,8 @@ function prepareTables(db: Database): void {
   // answers the human, nothing is typed into it until then, so the human can read the answer.
   // `reading_released` is when the human last ended a window early by writing to the lead: the
   // notes saved before then go in once the lead is idle, though its answer opens a new window.
+  // `lead_human_turn` is whether the human started the lead's turn under way, whose end opens a
+  // window.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -616,6 +620,7 @@ function prepareTables(db: Database): void {
     digest_at: "INTEGER NOT NULL DEFAULT 0",
     reading_until: "INTEGER NOT NULL DEFAULT 0",
     reading_released: "INTEGER NOT NULL DEFAULT 0",
+    lead_human_turn: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

@@ -459,6 +459,12 @@ export function record(
       "WHERE (owner, repo, task) = (SELECT owner, repo, task FROM threads WHERE folder = ?)",
       set.filter(([column]) => onTask(column)),
     );
+    // When the note was saved, so the lead's reading window lets in only the notes it held.
+    if (noting !== undefined)
+      db.run("UPDATE threads SET noting_at = ? WHERE folder = ?", [
+        noting === null ? null : Date.now(),
+        folder,
+      ]);
   })();
   // Read the thread back rather than merging the change in memory, so the log and the caller
   // see exactly what the database holds.

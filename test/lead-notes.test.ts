@@ -696,3 +696,88 @@ console.log(JSON.stringify({ sent: true }));`),
   );
   expect(seen.sent).toBe(true);
 });
+
+// A thread that started needing you during the window was held by it, so the human writing to
+// the lead lets it in, though the lead's answer opens a new window.
+test("a thread needing you that the window held goes in once the human writes", () => {
+  const seen = run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+record(db, "app-12", { asking: true }, "its builder asked a question");
+await Bun.sleep(1500);
+const before = received();
+leadTurnStarted(db, tmux, app, "And now?");
+leadTurnEnded(db, tmux, app);
+await until(() => received().includes("needs you"));
+console.log(JSON.stringify(before));`);
+  expect(JSON.parse(seen)).toBe("");
+});
+
+// What the human's message lets in is only what came before it. A thread that starts needing you
+// in the window the answer opens waits for that window, though held notes go in meanwhile.
+test("the human's message lets in only what came before it", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+leadTurnStarted(db, tmux, app, "And now?");
+leadTurnEnded(db, tmux, app);
+await Bun.sleep(50);
+record(db, "app-12", { asking: true }, "its builder asked a question");
+(await import("node:fs")).rmSync(home + "/draft");
+await until(() => received().includes("First part done."));
+await Bun.sleep(2000);
+console.log(JSON.stringify({ received: received(), noting: readThread(db, "app-12").noting }));`),
+  );
+  expect(seen.received).not.toContain("needs you");
+  expect(seen.noting).toBe("its builder asked a question");
+});
+
+// Whether the human started the lead's turn is kept in the database, so a daemon that starts
+// again while the lead answers still opens the window as the answer ends.
+test("a restart while the lead answers the human still opens the reading window", () => {
+  run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");`);
+  const seen = JSON.parse(
+    run(
+      `
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await Bun.sleep(3000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`,
+      true,
+    ),
+  );
+  expect(seen).toEqual({ received: "", waiting: 1 });
+});
+
+// Notes that waited together keep the order they came in: an urgent note between two routine
+// ones splits the digest in two, rather than going after both.
+test("notes that waited together keep the order they came in", () => {
+  const typed: string = JSON.parse(
+    run(`
+await lead();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+noteForLead(db, tmux, app, "APP-10 is done: #5 merged");
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+(await import("node:fs")).rmSync(home + "/draft");
+await until(() => waiting() === 0 && received().includes("APP-11"));
+await Bun.sleep(500);
+console.log(JSON.stringify(received()));`),
+  );
+  const first = typed.indexOf("Skelcrew digest:\nAPP-10 is done: #5 merged");
+  const message = typed.indexOf("First part done.");
+  const second = typed.indexOf("Skelcrew digest:\nAPP-11 is done: #6 merged");
+  expect(first).toBeGreaterThan(-1);
+  expect(first).toBeLessThan(message);
+  expect(message).toBeLessThan(second);
+  expect(typed.split("\x1b[201~")).toHaveLength(2);
+});
