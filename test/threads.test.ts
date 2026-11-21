@@ -948,6 +948,54 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(thread().status).toBe("working");
   }, 60_000);
 
+  // A restart picks up new skills, settings and environment, which a builder reads only as it
+  // starts. Only you can ask for one, from the screen.
+  test("restarting a builder ends its session and starts it again with --resume, its thread as it was", async () => {
+    addApp();
+    serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => read(join(config("app-12"), "args")) !== "");
+    const session = String(thread().session);
+    // Claude Code saves a conversation once it has a message, which a fake can't send.
+    const project = clone().replace(/[^a-zA-Z0-9]/g, "-");
+    mkdirSync(join(config("app-12"), "projects", project), { recursive: true });
+    writeFileSync(join(config("app-12"), "projects", project, `${session}.jsonl`), "{}\n");
+    const before = { ...thread() };
+    rmSync(join(config("app-12"), "calls"));
+    const restarted = await new Promise<string>((done) => {
+      const connection = createConnection(join(home, "run", "skelcrew.sock"));
+      let reply = "";
+      connection.on("connect", () =>
+        connection.write(
+          `${JSON.stringify({ command: "restart", repo: "simon/app", task: "12" })}\n`,
+        ),
+      );
+      connection.on("data", (data) => {
+        reply += data.toString();
+      });
+      connection.on("close", () => done(reply));
+    });
+    expect(JSON.parse(restarted)).toEqual({ said: "Restarted APP-12's builder." });
+    await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
+    expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
+    expect(hasSession("app-12")).toBe(true);
+    // The thread is as it was: its status, its conversation, its folder, its round and the time
+    // its stretch of work began, which the sidebar shows.
+    const after = thread();
+    const timed = [
+      "status",
+      "session",
+      "folder",
+      "branch",
+      "rounds",
+      "pr",
+      "started",
+      "working_since",
+    ];
+    for (const key of timed) expect(after[key]).toEqual(before[key]);
+  }, 60_000);
+
   test("a builder starts on the session host your config names, which hears its status", async () => {
     addApp();
     const host = fakeHost("sessions, transport, status");
