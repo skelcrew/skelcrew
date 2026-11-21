@@ -1457,49 +1457,52 @@ test("an agent can't set up a machine", () => {
   expect(calls()).toBe("");
 });
 
-test("a file dropped onto the server's screen is sent to the agent it shows, and the paste says where", async () => {
-  // The screen there reads one line, as an agent would, once it knows the name the laptop gave it.
-  // The server's sidebar answers that the screen shows the agent whose folder is ~/agent, with a
-  // mark that changes at each answer.
-  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
-  writeFileSync(
-    join(home, "server", ".local", "bin", "sc"),
-    `#!/bin/sh\necho "$SKELCREW_SCREEN_NAME" > screen-name\nIFS= read -r line\nprintf '%s\\n' "$line" > got\n`,
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    join(home, "serverbin", "tmux"),
-    `#!/bin/sh\necho "tmux $*" >> "${join(home, "calls")}"\nn=$(($(cat n 2>/dev/null || echo 0) + 1)); echo $n > n\necho "$n $HOME/agent"\n`,
-    { mode: 0o755 },
-  );
-  const shot = join(home, "Screen Shot.png");
-  writeFileSync(shot, "pixels");
-  const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox"], {
-    cwd: home,
-    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
-    terminal: {},
+// Both open the server's screen, plain sc on the lead and sc --list on the list, where you can
+// attach to any agent.
+for (const shown of [[], ["--list"]])
+  test(`a file dropped onto the server's screen of sc --remote ${shown.join(" ")} is sent to the agent it shows, and the paste says where`, async () => {
+    // The screen there reads one line, as an agent would, once it knows the name the laptop gave it.
+    // The server's sidebar answers that the screen shows the agent whose folder is ~/agent, with a
+    // mark that changes at each answer.
+    mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
+    writeFileSync(
+      join(home, "server", ".local", "bin", "sc"),
+      `#!/bin/sh\necho "$SKELCREW_SCREEN_NAME" > screen-name\nIFS= read -r line\nprintf '%s\\n' "$line" > got\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(home, "serverbin", "tmux"),
+      `#!/bin/sh\necho "tmux $*" >> "${join(home, "calls")}"\nn=$(($(cat n 2>/dev/null || echo 0) + 1)); echo $n > n\necho "$n $HOME/agent"\n`,
+      { mode: 0o755 },
+    );
+    const shot = join(home, "Screen Shot.png");
+    writeFileSync(shot, "pixels");
+    const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox", ...shown], {
+      cwd: home,
+      env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+      terminal: {},
+    });
+    const named = join(home, "server", "screen-name");
+    for (let waited = 0; !existsSync(named) && waited < 100; waited++) await Bun.sleep(50);
+    // Enter pressed right after the drop waits for its paste.
+    run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`);
+    await run.exited;
+    run.terminal?.close();
+    const screen = readFileSync(named, "utf8").trim();
+    expect(screen).toMatch(/^screen-\w+$/);
+    // It reads the sidebar's answer there, by the screen's name.
+    expect(calls()).toContain(`tmux -L skelcrew-screen display -p -t =${screen}: #{@drop-answer}`);
+    const got = readFileSync(join(home, "server", "got"), "utf8").trim();
+    const agent = join(home, "server", "agent", ".skelcrew-drops");
+    // The drop's question, a right click on the top row, goes just ahead of the paste.
+    expect(got.startsWith(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${agent}/`)).toBe(true);
+    expect(got.endsWith("/Screen\\ Shot.png\x1b[201~")).toBe(true);
+    const copy = got
+      .slice(got.indexOf("\x1b[200~") + "\x1b[200~".length, -"\x1b[201~".length)
+      .replaceAll("\\ ", " ");
+    expect(readFileSync(copy, "utf8")).toBe("pixels");
+    expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
   });
-  const named = join(home, "server", "screen-name");
-  for (let waited = 0; !existsSync(named) && waited < 100; waited++) await Bun.sleep(50);
-  // Enter pressed right after the drop waits for its paste.
-  run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`);
-  await run.exited;
-  run.terminal?.close();
-  const screen = readFileSync(named, "utf8").trim();
-  expect(screen).toMatch(/^screen-\w+$/);
-  // It reads the sidebar's answer there, by the screen's name.
-  expect(calls()).toContain(`tmux -L skelcrew-screen display -p -t =${screen}: #{@drop-answer}`);
-  const got = readFileSync(join(home, "server", "got"), "utf8").trim();
-  const agent = join(home, "server", "agent", ".skelcrew-drops");
-  // The drop's question, a right click on the top row, goes just ahead of the paste.
-  expect(got.startsWith(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${agent}/`)).toBe(true);
-  expect(got.endsWith("/Screen\\ Shot.png\x1b[201~")).toBe(true);
-  const copy = got
-    .slice(got.indexOf("\x1b[200~") + "\x1b[200~".length, -"\x1b[201~".length)
-    .replaceAll("\\ ", " ");
-  expect(readFileSync(copy, "utf8")).toBe("pixels");
-  expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
-});
 
 test("a text paste reaches the server's screen as it was", async () => {
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });

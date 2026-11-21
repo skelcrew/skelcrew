@@ -313,6 +313,20 @@ test("the question never goes in right after a lone Esc, which more of a sequenc
   expect(out.startsWith(`\x1b${dropSignal}\x1b[200~${agent}/`)).toBe(true);
 });
 
+test("the question waits past a lone Esc's moment for a longer sequence still on its way", async () => {
+  const shot = file("shot.png");
+  const take = filter();
+  // A mouse event with its last bytes still to come, and the drop.
+  take(Buffer.from("\x1b[<0;3;4"));
+  take(Buffer.from(pasted(shot)));
+  await Bun.sleep(300);
+  expect(sent).toBe("\x1b[<0;3;4");
+  // Its rest never came, so after a second the question goes in, after the part sent.
+  await Bun.sleep(900);
+  const out = await sentOn();
+  expect(out.startsWith(`\x1b[<0;3;4${dropSignal}\x1b[200~${agent}/`)).toBe(true);
+});
+
 test("a double-quoted path with an escaped quote in its name is copied", async () => {
   const odd = file('say "hi".txt');
   filter()(Buffer.from(pasted(`"${odd.replaceAll('"', '\\"')}"`)));

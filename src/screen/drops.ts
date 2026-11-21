@@ -207,7 +207,8 @@ function unfinished(last: string, sent: string): string {
 //
 // What the filter adds to the stream itself, the drop's question and a paste that waited, goes in
 // only between escape sequences, never inside one you are sending, such as a mouse event split
-// across two reads. After a lone Esc it waits a moment for the rest, as an Esc key has none.
+// across two reads, however long its rest takes. After a lone Esc it waits only a moment for
+// the rest, as an Esc key has none.
 export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // The paste read so far, without its start, or null outside one.
   let held: Buffer | null = null;
@@ -216,7 +217,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   let openSequence = "";
   let startSent = 0;
   // What the filter has to add, waiting for the stream to be between sequences, and the timer
-  // that adds it anyway after a lone Esc.
+  // that adds it anyway when the sequence never ends.
   // Each comes with what to do once it went in.
   const adding: { bytes: Buffer; then: () => void }[] = [];
   let addLater: ReturnType<typeof setTimeout> | null = null;
@@ -246,16 +247,28 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       return;
     }
     adding.push({ bytes, then });
-    addLater ??= setTimeout(() => {
-      openSequence = "";
-      addWaiting();
-    }, 50);
+    waitForSequence();
+  };
+  // Sets the timer that adds what waits anyway, in case the sequence sent last never ends. A
+  // lone Esc may be the Esc key, which has nothing after it, so it waits only a moment, longer
+  // than tmux waits for the rest. Any longer start is surely a sequence whose rest is on its
+  // way, however slowly, so it waits a second.
+  const waitForSequence = () => {
+    if (addLater) clearTimeout(addLater);
+    addLater = setTimeout(
+      () => {
+        openSequence = "";
+        addWaiting();
+      },
+      openSequence === "\x1b" ? 50 : 1000,
+    );
   };
   // Sends what you sent on at once.
   const pass = (bytes: Buffer) => {
     send(bytes);
     openSequence = unfinished(openSequence, bytes.toString("latin1"));
     if (openSequence === "") addWaiting();
+    else if (adding.length > 0) waitForSequence();
   };
 
   // Returns the paste's text with each droppable path replaced by its copy's, or null when
