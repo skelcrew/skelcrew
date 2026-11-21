@@ -44,7 +44,7 @@ test("the help names every command", () => {
     "repo trust",
     "ps",
     "ls",
-    "show",
+    "task <task>",
     "task add",
     "start",
     "stop",
@@ -195,13 +195,13 @@ test("the help has no issue or PR commands, and names tasks and threads as such"
   expect(out).not.toContain("\nPULL REQUESTS\n");
   expect(out).not.toContain("  issue ");
   expect(out).not.toContain("  pr ");
-  expect(out).toContain("  show <task> ");
-  expect(out).not.toContain("show <task> | <#pr>");
+  expect(out).toContain("  task <task> ");
+  expect(out).not.toContain("  show ");
   expect(out).toContain("  --issue ");
   expect(out).toContain("  --keep-issue ");
   for (const command of ["stop", "attach", "peek", "interrupt", "tell"])
     expect(out).toContain(`  ${command} <thread>`);
-  for (const command of ["show", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
+  for (const command of ["task", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
 });
 
 // sc issue and sc pr are gone. Leads started before then may still type them, so what replaced
@@ -213,7 +213,7 @@ test("sc issue and sc pr say which task commands replaced them", () => {
   ]) {
     const ran = skel(args);
     expect(ran.code).toBe(1);
-    expect(ran.err).toContain("sc show <task> shows one with its PR");
+    expect(ran.err).toContain("sc task <task> shows one with its PR");
     expect(ran.err).toContain("--issue");
   }
 });
@@ -226,8 +226,8 @@ test("the help says how a task with no issue is named, and that names are typed 
   expect(out).toContain("Type a name in any case: app-t100 is APP-T100.");
 });
 
-// sc task only files tasks: sc ls and sc show list and show them.
-test("sc task takes only add", () => {
+// sc task shows one task or, with add, files one. Anything else is no task's name.
+test("sc task takes a task's name or add", () => {
   const ran = skel(["task", "ls"]);
   expect(ran.code).not.toBe(0);
   expect(ran.err).toContain("sc task was given arguments it doesn't take");

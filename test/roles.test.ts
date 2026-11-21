@@ -36,10 +36,13 @@ const restarted =
 const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
-// What the lead was told about issues, threads and PRs before sc ls and sc show, before threads
+// What the lead was told about issues, threads and PRs before sc ls and sc task, before threads
 // with no issue were numbered from t100, and about the sidebar before sc --list, each with what
 // it is told now.
 const leadTasks = [
+  // sc show became sc task, so everything about one task is under sc task.
+  ["- sc show app-13 shows one piece of work:", "- sc task app-13 shows one piece of work:"],
+  ["sc ls and sc show app-13 show issues,", "sc ls and sc task app-13 show issues,"],
   // sc issue and sc pr went: an issue opens with sc task add --issue, sc show names only
   // tasks, and sc rm closes the issue too unless --keep-issue keeps it open.
   [

@@ -1,4 +1,4 @@
-// The commands that show tasks and threads, and the one that files a task: sc ps, sc ls, sc show
+// The commands that show tasks and threads, and the one that files a task: sc ps, sc ls, sc task
 // and sc task add.
 import { bodyFor, parseTask, readAsked, splitTaskName, usage } from "./input.ts";
 
@@ -39,11 +39,11 @@ export async function lsCommand(command: string, words: string[], json: boolean)
   printTasks(shown, json);
 }
 
-export async function showCommand(command: string, words: string[], json: boolean): Promise<void> {
+export async function showCommand(words: string[], json: boolean): Promise<void> {
   const { askForTask } = await import("../client.ts");
   const { printTask } = await import("../flow/list.ts");
   const task = splitTaskName(words[0]);
-  if (!task || words.length !== 1) usage(command);
+  if (!task || words.length !== 1) usage("task");
   printTask(await askForTask({ repo: task[0], task: task[1] }), json);
 }
 

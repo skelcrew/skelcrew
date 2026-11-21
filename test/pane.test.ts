@@ -39,7 +39,7 @@ const row: Row = {
   request: null,
 };
 
-// Its details, as sc show reads them from Skelcrew's copy, with its review's findings and events.
+// Its details, as sc task reads them from Skelcrew's copy, with its review's findings and events.
 const details: Details = {
   view: {
     task: "app-12",
