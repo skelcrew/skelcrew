@@ -63,7 +63,7 @@ const agents = ${JSON.stringify(agents)};
 const session = ${JSON.stringify(session())};
 const name = ${JSON.stringify(name)};
 if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", name, true);
-else console.log((await attachTask(agents, session, "simon/app", name, true, () => true)) ?? "");`;
+else console.log((await attachTask(agents, session, "simon/app", name, true, () => true, false)) ?? "");`;
 }
 
 // Does what onRow does without waiting for it, and gives what it printed once it ends.
@@ -106,7 +106,7 @@ test("o on a task's row shows its builder's whole screen and back, and Enter sti
   press("M-Down");
   await until(() => right().includes("Login redirect"), "app-7's details");
   await until(() => right().includes("I am app-7"), "app-7's screen");
-  expect(footer()).toContain("⏎ attach · o output");
+  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen · o output");
   for (const line of ["one", "two", "three", "four"])
     tmux(agents, "send-keys", "-t", "=app-7:", "-l", `${line}\r`);
   // By default only the last three lines of the builder's screen show.

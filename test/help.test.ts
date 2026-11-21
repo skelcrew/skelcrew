@@ -129,16 +129,25 @@ test("sc --version answers on a server whose Skelcrew differs from the laptop's"
   expect(seen.out).toStartWith("Skelcrew ");
 });
 
-// The screen's keys, in words: those that work anywhere, then those for a task's row.
-test("the help lists the screen's keys, anywhere first, then a task's row", () => {
+// The screen's keys, in words: those that work anywhere, then those for the sidebar.
+test("the help lists the screen's keys, anywhere first, then the sidebar's", () => {
   const out = skel(["--help"]).out;
   const keys = out.slice(out.indexOf("\nKEYS\n"), out.indexOf("\nEXAMPLES\n"));
-  const order = ["alt + ↑/↓ ", "alt + 1-6 ", "alt + q ", "enter ", "ctrl + \\ ", "s ", "m "].map(
-    (key) => keys.indexOf(`\n  ${key}`),
-  );
+  const order = [
+    "ctrl + \\ ",
+    "alt + ↑/↓ ",
+    "alt + 1-6 ",
+    "alt + q ",
+    "enter ",
+    "shift + enter, a ",
+    "s ",
+    "m ",
+  ].map((key) => keys.indexOf(`\n  ${key}`));
   expect(order.every((at) => at > 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
   expect(keys).toMatch(/\n {2}m +merge a ready task\n/);
+  expect(keys).toMatch(/\n {2}shift \+ enter, a +type to the row's agent full screen\n/);
+  expect(keys).not.toContain("alt + ←");
   expect(keys).toMatch(/\n {2}shift \+ ↑\/↓ +move a queued task in up next\n/);
   expect(keys).toMatch(/\n {2}s +start or queue a task in the backlog\n/);
   expect(out).not.toContain("ctrl + q");

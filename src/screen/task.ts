@@ -45,7 +45,8 @@ export function showTask(
 // here, as it is now, so any sidebar can call this with only the name. It goes through the
 // builder's session host, and moves your typing there, unless `takeTyping` says no once the
 // builder is found: a host can take seconds, and you may have moved your typing to the sidebar
-// meanwhile, with Alt-Left. Once the attachment ends, by Ctrl-\ or by the builder ending, even
+// meanwhile, with Ctrl-\. `zoom` gives the builder the whole terminal, as sc attach does, while it
+// has your typing. Once the attachment ends, by Ctrl-\ or by the builder ending, even
 // one on tmux whose session stays with its last screen, the right side shows the task's details
 // again and your typing goes back to the sidebar. Returns why it
 // couldn't attach, such as a builder that isn't running, or null once attached or when you moved
@@ -57,6 +58,7 @@ export async function attachTask(
   name: string,
   full: boolean,
   takeTyping: () => boolean,
+  zoom: boolean,
 ): Promise<string | null> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
@@ -92,8 +94,12 @@ export async function attachTask(
   if (paneProcess() !== before) return null;
   // Your typing moves to the right side before the attachment starts, not after: an attachment
   // that ends at once, such as a host's attach that fails, moves it back to the sidebar as it
-  // ends, and that must come last. A pane that couldn't start leaves your typing on the sidebar.
-  if (takeTyping()) screenTmux(agents, ["select-pane", "-t", pane]);
+  // ends, and that must come last. A pane that couldn't start leaves your typing on the sidebar,
+  // which shows every pane again.
+  if (takeTyping()) {
+    screenTmux(agents, ["select-pane", "-t", pane]);
+    if (zoom) screenTmux(agents, ["resize-pane", "-Z", "-t", pane]);
+  }
   const started = screenTmux(agents, ["respawn-pane", "-k", "-t", pane, "--", ...attach]);
   if (!started.ok) {
     screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);

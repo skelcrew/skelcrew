@@ -345,17 +345,21 @@ test("Ctrl-Q still leaves, though nothing shows it", async () => {
 });
 
 // Ctrl-\ only leaves an agent opened alone. Were it to reach the agents' server, it would detach
-// the agent's pane and leave it empty, so the screen takes it and does nothing.
-test("Ctrl-\\ leaves neither the screen nor the agent", async () => {
+// the agent's pane and leave it empty, so the screen takes it and moves your typing to the
+// sidebar, with the lead still showing on the right side.
+test("Ctrl-\\ leaves neither the screen nor the agent, and moves your typing to the sidebar", async () => {
   open("lead");
   await ready("lead");
   press("C-\\");
-  await Bun.sleep(300);
+  await until(typingToSidebar, "the sidebar to take your typing");
   expect(existsSync(join(home, "left-one"))).toBe(false);
   expect(seen()).toContain("I am lead");
   expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).not.toBe("");
+  expect(read("lead.typed")).toBe("");
+  press("Enter");
+  await until(() => !typingToSidebar(), "the lead to take your typing");
   type("hello\r");
-  await until(() => existsSync(join(home, "lead.typed")), "the typing");
+  await until(() => read("lead.typed") === "hello\n", "the typing");
 });
 
 // The sidebar, the footer and other terminals ask the screen's server things all the time. tmux
@@ -424,29 +428,27 @@ test("Shift+Enter reaches the agent as a key of its own, through both tmux serve
   expect(read("lead.keys")).toBe(`a${shiftEnter}b\r`);
 });
 
-// Mac terminals often send Option-Left and Option-Right as Esc b and Esc f, and other terminals
-// send Alt-Left and Alt-Right. The screen takes all four, from a terminal that sends extended keys
-// or not, to move your typing between the sidebar and the agent, so none reaches the agent,
-// though the agent asks for extended keys, as Claude Code and Codex do.
+// Mac terminals send Option-Left and Option-Right as Esc b and Esc f, and other terminals send
+// Alt-Left and Alt-Right. All four move by word in a prompt, so they must reach the agent and
+// leave the screen where it is, whether or not your terminal sends extended keys. The agent asks
+// for extended keys, as Claude Code and Codex do, so Esc b and Esc f reach it as Alt-B and Alt-F
+// in the form it asked for.
 for (const extended of [false, true])
-  test(`the keys that move by word move your typing instead, from a terminal ${extended ? "with" : "without"} extended keys`, async () => {
+  test(`the keys that move by word reach the agent, from a terminal ${extended ? "with" : "without"} extended keys`, async () => {
     given.extendedKeys = extended;
     keyLoggingLead();
     open("lead");
     await ready("lead");
-    // Each goes alone, as from a hand, once the one before has moved your typing.
-    for (const [word, toSidebar] of [
-      ["\x1bb", true],
-      ["\x1bf", false],
-      ["\x1b[1;3D", true],
-      ["\x1b[1;3C", false],
-    ] as const) {
+    // Each goes alone, as from a hand.
+    for (const word of ["\x1bb", "\x1bf", "\x1b[1;3D", "\x1b[1;3C"]) {
       type(word);
-      await until(() => typingToSidebar() === toSidebar, `${JSON.stringify(word)} to move`);
+      await Bun.sleep(100);
     }
     press("Enter");
     await until(() => read("lead.keys").endsWith("\r"), "the Enter");
-    expect(read("lead.keys")).toBe("\r");
+    // tmux before 3.5 has only the xterm form of an extended key.
+    const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
+    expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
     expect(selected()).toMatch(/^▹ ○ lead\b/);
     expect(seen()).toContain("I am lead");
   });

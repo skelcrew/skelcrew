@@ -14,7 +14,7 @@ const always = "⌥↑↓ move  ⌥Q quit";
 // need most and what Esc stops there, with its harness's name, so you never have to guess that
 // Esc is the agent's. An agent whose harness isn't known yet, given as empty, gets no Esc.
 export function agentFooter(name: string, harness: string): string {
-  const keys = `typing to ${name} · ⌥← to list  ${always}`;
+  const keys = `typing to ${name} · ⌃\\ to list  ${always}`;
   return harness ? `${keys}  Esc stops ${harness}` : keys;
 }
 

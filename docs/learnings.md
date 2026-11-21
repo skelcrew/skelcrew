@@ -391,7 +391,13 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   types a character on a Mac, so neither is free.
 - **Mac terminals often send Option-Left and Option-Right as `Esc b` and `Esc f`**, where others
   send `ESC[1;3D` and `ESC[1;3C`. tmux reads the first two as M-b and M-f, not as M-Left and
-  M-Right, so a key meant for Alt-Left must be bound under both names.
+  M-Right. A screen key on Alt-Left must take Alt-B and Alt-F too, and all four move a word in an
+  agent's prompt, so none of them is free for the screen.
+- **A key binding of tmux takes the key from every pane.** Binding Shift-Enter in the screen's
+  tmux, to attach full screen from the sidebar, would take it from Claude Code, where it is a new
+  line. The binding hands it on with `send-keys S-Enter` unless the sidebar has your typing. A
+  terminal that never sends Shift-Enter apart from Enter, such as Terminal.app, needs another key
+  for the same thing.
 - **Bun doesn't keep a signal it inherits as ignored.** `trap "" INT; exec bun ...` still dies
   on Ctrl-C. Until a program makes its terminal raw, Ctrl-C can end it, so a pane that must
   stay needs `remain-on-exit`. `respawn-pane -k` starts a dead pane again.
