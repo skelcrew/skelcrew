@@ -198,6 +198,7 @@ export async function startLead(
 ): Promise<void> {
   const key = `${repository.owner}/${repository.repo}`;
   startingLeads.set(key, (startingLeads.get(key) ?? 0) + 1);
+  leadStarts.set(key, (leadStarts.get(key) ?? 0) + 1);
   try {
     // A look for exited leads may be ending this lead's last session, and a host can give the
     // new one the same ID, so the start waits for that first.
@@ -213,6 +214,12 @@ export async function startLead(
 // How many starts of each lead are under way, by its repository's owner/name, for the look for
 // exited leads to leave those leads alone.
 const startingLeads = new Map<string, number>();
+
+// How many starts of each lead have begun since the daemon started, by its repository's
+// owner/name. A check for exited leads that saw this change while it waited on the host
+// leaves the lead alone, even if the start is over: the host can give the new lead the old ID,
+// and the answer is then about the old session.
+const leadStarts = new Map<string, number>();
 
 // Does startLead's work: keeps the lead running, or ends what is left of its last session and
 // starts it again.
@@ -453,7 +460,8 @@ export async function closeIfExited(
   // Another check ending this lead goes first, and is shared rather than started twice.
   const other = endingLeads.get(key);
   if (other) return other.then(() => false);
-  const starting = () => startingLeads.has(key);
+  const starts = leadStarts.get(key) ?? 0;
+  const starting = () => startingLeads.has(key) || (leadStarts.get(key) ?? 0) !== starts;
   if (host === null || (typeof host !== "string" && lead.hostId === null) || starting())
     return false;
   const id = lead.hostId ?? lead.name;

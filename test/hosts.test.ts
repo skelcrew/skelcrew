@@ -679,6 +679,27 @@ console.log(await first, await second, await agentRuns(host, id), tab(), ends);`
   expect(said).toContain("true false true 0 1\n");
 }, 30_000);
 
+// A check for exited leads asks the host about the lead you exited, and the host answers late.
+// Meanwhile you open the repository again, and the lead starts on the same ID as before. The
+// answer that comes then is about the old session.
+test("a host's late answer about an exited lead leaves the lead started meanwhile running", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/late-list", "4");
+const checking = closeIfExited(db, "unused", "simon", "app");
+await Bun.sleep(500);
+fs.rmSync(fake + "/late-list");
+await startLead(db, "unused", repository);
+console.log(await checking, await agentRuns(host, id), tab());`,
+  );
+  expect(said).toContain("false true 0\n");
+}, 30_000);
+
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
   const lead = { repository: "simon/app", role: "lead" } as const;
   const on = host();
