@@ -249,7 +249,7 @@ await Bun.write(${JSON.stringify(ready)}, "");`;
 // service manager was asked. `more` adds to its environment.
 async function beforeAttaching(build?: string, more: Record<string, string> = {}) {
   const done = await inProcess(
-    `import { restartStaleDaemon } from ${JSON.stringify(source("attach.ts"))};
+    `import { restartStaleDaemon } from ${JSON.stringify(source("machine/service.ts"))};
 await restartStaleDaemon();`,
     build,
     more,

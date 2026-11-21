@@ -3,10 +3,11 @@
 import { usage } from "./input.ts";
 
 export async function leadCommand(list: boolean, from?: string): Promise<void> {
-  const { attachToLead, upInBackground } = await import("../attach.ts");
+  const { attachToLead } = await import("../attach.ts");
   const { openDb } = await import("../db.ts");
   const { bringInFrom, checkoutTop, repositories } = await import("../flow/repo.ts");
   const { originHere } = await import("../machine/origin.ts");
+  const { upInBackground } = await import("../machine/service.ts");
   const { firstRun, install, installFinished } = await import("../machine/setup.ts");
   if (installFinished()) firstRun(from);
   else install(from, true);
