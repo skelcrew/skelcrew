@@ -134,11 +134,13 @@ test("the help lists the screen's keys, anywhere first, then the sidebar's", () 
     "ctrl + \\ ",
     "alt + ↑/↓ ",
     "alt + 0-6 ",
+    "alt + w, w ",
     "alt + q ",
     "enter ",
     "shift + enter, a ",
     "s ",
     "m ",
+    "shift + r ",
   ].map((key) => keys.indexOf(`\n  ${key}`));
   expect(order.every((at) => at > 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -147,6 +149,7 @@ test("the help lists the screen's keys, anywhere first, then the sidebar's", () 
   expect(keys).not.toContain("alt + ←");
   expect(keys).toMatch(/\n {2}shift \+ ↑\/↓ +move a queued task in the task queue\n/);
   expect(keys).toMatch(/\n {2}s +start or queue a task in the backlog\n/);
+  expect(keys).toMatch(/\n {2}shift \+ r +restart the row's agent, keeping its conversation\n/);
   expect(out).not.toContain("ctrl + q");
   expect(out).not.toContain("⌃Q");
 });

@@ -2513,8 +2513,11 @@ const paneSeen = () => {
 // Returns the pane's lines from the line under the one between the details and the agent's screen.
 const liveSeen = () => {
   const lines = paneSeen();
-  return lines.slice(lines.findIndex((line) => line.startsWith("───")) + 1);
+  return lines.slice(lines.findLastIndex((line) => line.startsWith("───")) + 1);
 };
+// Returns whether the pane shows a task's details from their top, by the task's name and title
+// on their first line, such as `APP-12  Rate limit the API`.
+const titled = (title: string) => paneSeen()[0]?.startsWith(title) ?? false;
 
 // app-12 asks a question and has an issue's link. app-14's PR has a check that failed, whose log
 // sc show would ask the forge for, and Skelcrew's review on it found two things.
@@ -2524,13 +2527,16 @@ UPDATE tasks SET review_post = '{"pr":41,"id":"9","verdict":"approve","findings"
 ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved, checks: [...passed, { name: "build", id: "2", state: "failed" }] })}`);
   await open({ width: wide });
   expect(here()).toStartWith("▸ ● APP-12");
-  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
-  expect(paneSeen().slice(0, 7)).toEqual([
-    "Rate limit the API",
-    "issue #12  https://github.com/simon/app/issues/12",
+  await until(() => titled("APP-12  Rate limit the API"), "app-12's details");
+  expect(paneSeen().slice(0, 10)).toEqual([
+    `APP-12  Rate limit the API${" ".repeat(62)}Building`,
+    "─".repeat(paneWidth(wide)),
+    "Needs you: question",
     "",
-    "Building · question",
+    "Now      question · 1d ago",
+    "Issue    #12  https://github.com/simon/app/issues/12",
     "",
+    "Task",
     "Limit each client.",
     "",
   ]);
@@ -2538,7 +2544,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
   // Past app-14, under Needs you too, and Task queue's heading, to app-9.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => paneSeen()[0] === "Old work", "app-9's details");
+  await until(() => titled("APP-9  Old work"), "app-9's details");
   expect(liveSeen()[0]).toBe("Builder not running");
   // The lead's row isn't a task, so the pane is empty, its edge alone showing. It is five stops
   // up, past the headings of Task queue and Needs you.
@@ -2548,11 +2554,11 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   // Past Needs you's heading and APP-12.
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
-  await until(() => paneSeen()[0] === "Fix the export header", "app-14's details");
-  expect(paneSeen()).toContain("PR    #41  https://github.com/simon/app/pull/41");
-  expect(paneSeen()).toContain("CI failed:  test ✓  build ✗");
-  expect(paneSeen()).toContain("Round 1 · approved");
-  expect(paneSeen()).toContain("  - Name the limit");
+  await until(() => titled("APP-14  Fix the export header"), "app-14's details");
+  expect(paneSeen()).toContain("PR       #41  https://github.com/simon/app/pull/41");
+  expect(paneSeen()).toContain("CI       ✓ test  ✗ build");
+  expect(paneSeen()).toContain("Review   Round 1 · approved");
+  expect(paneSeen()).toContain("         1. Name the limit");
   // Nothing in the pane asked the forge, not even for the failed check's log.
   expect(pluginAsked(join(home, ".config", "skelcrew", "plugins", "github"))).toEqual([]);
 });
@@ -2563,10 +2569,10 @@ test("the pane shows the latest review's findings though it was never posted", a
   sql(`UPDATE tasks SET review_round = 1, verdict = 'changes',
   review_findings = '["Name the limit","Test the header"]' WHERE task = '12'`);
   await open({ width: wide });
-  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
-  expect(paneSeen()).toContain("Round 1 · changes asked");
-  expect(paneSeen()).toContain("  - Name the limit");
-  expect(paneSeen()).toContain("  - Test the header");
+  await until(() => titled("APP-12  Rate limit the API"), "app-12's details");
+  expect(paneSeen()).toContain("Review   Round 1 · changes asked");
+  expect(paneSeen()).toContain("         1. Name the limit");
+  expect(paneSeen()).toContain("         2. Test the header");
 });
 
 test("o shows the agent's whole screen in the pane and back, and Enter still attaches", async () => {
@@ -2605,17 +2611,25 @@ const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}.`).j
 test("a long description scrolls in the pane by Page Down, Page Up and the wheel, the strip staying put", async () => {
   sql(`UPDATE tasks SET body = '${paragraphs}' WHERE task = '12'`);
   await open({ width: wide, says: "step one\\nstep two\\n" });
-  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  await until(() => titled("APP-12  Rate limit the API"), "app-12's details");
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
   expect(seen()).toContain("o output · pgup/pgdn scroll");
   // The details fill the pane down to the strip, their last line saying there is more.
   const strip = liveSeen();
-  const rule = paneSeen().findIndex((line) => line.startsWith("───"));
+  const rule = paneSeen().findLastIndex((line) => line.startsWith("───"));
   expect(paneSeen()[rule - 1]).toBe("↓ more");
   // Page Down shows the details further down, and the strip stays under them, as it was.
   press("NPage");
-  await until(() => paneSeen()[0]?.startsWith("Paragraph") ?? false, "the details scrolled");
-  expect(paneSeen().findIndex((line) => line.startsWith("───"))).toBe(rule);
+  // A page can end on the blank line between two paragraphs, so either of the top two lines may
+  // be the paragraph.
+  await until(
+    () =>
+      paneSeen()
+        .slice(0, 2)
+        .some((line) => line.startsWith("Paragraph")),
+    "the details scrolled",
+  );
+  expect(paneSeen().findLastIndex((line) => line.startsWith("───"))).toBe(rule);
   expect(liveSeen()).toEqual(strip);
   // At the end, the last paragraph shows, with nothing more below.
   for (const _ of [1, 2, 3]) press("NPage");
@@ -2627,21 +2641,21 @@ test("a long description scrolls in the pane by Page Down, Page Up and the wheel
   await until(() => paneSeen()[0] !== atEnd, "the wheel to scroll up");
   expect(here()).toStartWith("▸ ● APP-12");
   for (const _ of [1, 2, 3, 4]) press("PPage");
-  await until(() => paneSeen()[0] === "Rate limit the API", "the top again");
+  await until(() => titled("APP-12  Rate limit the API"), "the top again");
   // Another row starts at the top of its details, and so does coming back.
   press("NPage");
-  await until(() => paneSeen()[0] !== "Rate limit the API", "the details scrolled");
+  await until(() => !titled("APP-12  Rate limit the API"), "the details scrolled");
   press("Down");
-  await until(() => paneSeen()[0] === "Fix the export header", "app-14's details from the top");
+  await until(() => titled("APP-14  Fix the export header"), "app-14's details from the top");
   press("Up");
-  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details from the top");
+  await until(() => titled("APP-12  Rate limit the API"), "app-12's details from the top");
 });
 
 test("the pane shows only while the terminal is wide enough, and the keys do the same", async () => {
   await open();
   expect(seen()).not.toContain(" │ ");
   tmux("resize-window", "-t", "=one:", "-x", String(wide));
-  await until(() => paneSeen()[0] === "Rate limit the API", "the pane");
+  await until(() => titled("APP-12  Rate limit the API"), "the pane");
   // Past APP-14 and Task queue's heading.
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
@@ -2651,7 +2665,7 @@ test("the pane shows only while the terminal is wide enough, and the keys do the
 });
 
 // A thread's log holds the thread as it was at each change, so its events are where it changed.
-test("the pane's events come from the thread's log: started, submitted, reviewed and merged", () => {
+test("the pane's events come from the thread's log: started, submitted, verdicts, CI and merged", () => {
   const at = (minute: number) => new Date(2026, 10, 19, 13, minute).toISOString();
   const line = (minute: number, change: object) =>
     JSON.stringify({
@@ -2675,10 +2689,12 @@ test("the pane's events come from the thread's log: started, submitted, reviewed
       line(20, { verdict: "changes", review_round: 1, reviewed_commit: "a" }),
       line(30, { submitting: "Fix it", verdict: "changes", review_round: 1, reviewed_commit: "a" }),
       line(40, { verdict: "approve", review_round: 2, reviewed_commit: "b" }),
+      line(45, { verdict: "approve", review_round: 2, reviewed_commit: "b", checks: "passing" }),
       line(50, {
         verdict: "approve",
         review_round: 2,
         reviewed_commit: "b",
+        checks: "passing",
         merged: true,
         status: "done",
       }),
@@ -2690,13 +2706,44 @@ console.log(JSON.stringify(readDetails(openDb(), { owner: "simon", repo: "app" }
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toEqual([
-    "13:00 started",
-    "13:05 submitted",
-    "13:10 reviewed",
-    "13:30 submitted",
-    "13:40 reviewed",
-    "13:50 merged",
+    { ago: "2h ago", text: "started" },
+    { ago: "1h ago", text: "submitted" },
+    { ago: "1h ago", text: "review round 1: changes asked" },
+    { ago: "1h ago", text: "submitted" },
+    { ago: "1h ago", text: "review round 2: approved" },
+    { ago: "1h ago", text: "CI passed" },
+    { ago: "1h ago", text: "merged" },
   ]);
+});
+
+// The lead's updates are part of the task the reviewer gets, but the pane shows them apart.
+test("the pane's details keep the lead's updates out of the description, each with how long ago", () => {
+  const updates = [
+    { from: "lead", at: now - 3 * 3_600_000, text: "Use a sliding window." },
+    { from: "lead", at: now - 4 * 60_000, text: "Keep it per repository." },
+  ];
+  sql(
+    `UPDATE tasks SET body = 'Limit each client.', updates = '${JSON.stringify(updates)}' WHERE task = '12'`,
+  );
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
+const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now});
+console.log(JSON.stringify({ body: details?.view.body, updates: details?.updates }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(run.stderr.toString()).toBe("");
+  const said = {
+    body: "Limit each client.",
+    updates: [
+      { ago: "3h ago", text: "Use a sliding window." },
+      { ago: "4m ago", text: "Keep it per repository." },
+    ],
+  };
+  expect(JSON.parse(run.stdout.toString())).toEqual(said);
+  // A task that is done keeps its updates in the pane, as part of its history.
+  sql("UPDATE threads SET status = 'done' WHERE folder = 'app-12'");
+  const done = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(done.stderr.toString()).toBe("");
+  expect(JSON.parse(done.stdout.toString()).updates).toEqual(said.updates);
 });
 
 // app-12's agent prints a line in red, then one wider than the pane, which fits its own screen.
@@ -2795,7 +2842,7 @@ async function slowReadsEnded(count: number): Promise<void> {
 
 test("a tmux slow to capture an agent's screen never holds up the keys", async () => {
   await open({ width: wide, bin: slowTmux() });
-  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  await until(() => titled("APP-12  Rate limit the API"), "app-12's details");
   // Each read of app-12's screen takes 3 seconds. The moves meanwhile still show at once.
   const start = performance.now();
   press("Down");

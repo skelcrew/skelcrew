@@ -8,7 +8,7 @@ import { fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
 import { panes } from "./screen.ts";
 
 // The keys you need most, which the footer always starts with.
-const always = "⌥↑↓ move  ⌥Q quit";
+const always = "⌥↑↓ move  ⌥W close  ⌥Q quit";
 
 // Returns the footer's text while your typing goes to an agent on the right side, named by
 // `name`, such as lead or APP-12: which one it is and the key back to the list, then the keys you

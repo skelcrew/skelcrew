@@ -288,7 +288,7 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
     return;
   }
   if (sub === "rm" && rest[0] && rest.length === 1) {
-    await removeRepo(rest[0], "skelcrew");
+    console.log(await removeRepo(rest[0], "skelcrew"));
     return;
   }
   if (sub === "trust" && rest[0] && rest.length === 1) {
