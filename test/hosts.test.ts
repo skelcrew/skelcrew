@@ -742,6 +742,27 @@ console.log(hostId, await agentRuns(host, hostId));`,
   expect(said).toMatch(/fake-lead-app\S* true\n$/);
 }, 30_000);
 
+// A brief to the lead checks it while the daemon's look is still ending it, slowly. The brief
+// opens the tab again once its check returns, which must be after the old session is gone, or a
+// daemon stopped then would find it and close the tab with the brief waiting.
+test("a check of a lead already being ended returns once its session is gone", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const first = closeIfExited(db, "unused", "simon", "app");
+for (let i = 0; i < 200 && tab() === 0; i++) await Bun.sleep(25);
+const second = await closeIfExited(db, "unused", "simon", "app");
+fs.rmSync(fake + "/slow-end");
+console.log(second, await hasSession(host, id), await first);`,
+  );
+  expect(said).toContain("false false true\n");
+}, 30_000);
+
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
   const lead = { repository: "simon/app", role: "lead" } as const;
   const on = host();

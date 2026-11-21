@@ -201,6 +201,10 @@ export const startLead = (db: Database, sessions: string, repository: Repository
 // that was replaced since, possibly under the same ID.
 const generations = new Map<string, number>();
 
+// The ending of each lead a check found exited, by its repository's owner/name, while it runs,
+// for other checks of that lead to wait for.
+const endings = new Map<string, Promise<void>>();
+
 // The last work in each lead's queue, by its repository's owner/name, while there is any.
 const leadQueues = new Map<string, Promise<unknown>>();
 
@@ -458,6 +462,13 @@ export async function closeIfExited(
   const key = `${owner}/${repo}`;
   const generation = generations.get(key) ?? 0;
   const changed = () => leadQueues.has(key) || (generations.get(key) ?? 0) !== generation;
+  // A check that finds another one ending the lead waits for that ending, so whoever asked, such
+  // as a brief about to open the tab again, carries on only once the old session is gone.
+  const settled = async () => {
+    await endings.get(key);
+    return false;
+  };
+  if (endings.has(key)) return settled();
   const lead = leadOf(db, owner, repo);
   const host = hostNamed(db, sessions, lead.host);
   if (host === null || (typeof host !== "string" && lead.hostId === null) || changed())
@@ -467,14 +478,18 @@ export async function closeIfExited(
   if (!(await agentExited(host, id, goneIsExited).catch(() => false))) return false;
   // Nothing waits from this look to the ending being queued, so no start or other check can
   // come in between.
-  if (changed()) return false;
+  if (changed()) return settled();
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
   // The host may have forgotten the session already, so only a session still there is ended.
-  // The tab is closed either way, and opening the lead again ends whatever is left of it.
-  await inLeadQueue(key, () =>
+  // The tab is closed either way, and opening the lead again ends whatever is left of it. A lead
+  // has one ending at a time, as a second check sees the generation change and waits for this.
+  const ending = inLeadQueue(key, () =>
     stopSession(host, id).catch((error) =>
       console.log(`couldn't end ${key}'s exited lead: ${errorText(error)}`),
     ),
   );
+  endings.set(key, ending);
+  await ending;
+  endings.delete(key);
   return true;
 }
