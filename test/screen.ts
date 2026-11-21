@@ -251,18 +251,23 @@ export async function endTest(): Promise<void> {
       failures.push(error);
       hung = true;
     }
-    // A server that doesn't answer is killed, with its panes' processes, before its socket goes,
-    // as nothing could reach it after. It runs as the command that started it, with the test's
-    // own socket after -L, so the match finds only this test's server and clients.
+    // A server that doesn't answer is killed, with every process under it, before its socket
+    // goes, as nothing could reach it after. It runs as the command that started it, with the
+    // test's own socket after -L, so the match finds only this test's server and clients. Its
+    // panes' processes are found under it, as list-panes may be what hung, and they would ignore
+    // the server's end if they ignore its hangup. They are waited for below like the rest.
     if (hung) {
       const ps = Bun.spawnSync(["ps", "-A", "-o", "pid=,args="], { stdout: "pipe" });
       const ours = ps.stdout
         .toString()
         .split("\n")
         .filter((line) => ` ${line} `.includes(` -L ${socket} `))
-        .map((line) => Number(line.trim().split(/\s+/)[0]));
-      // A pid of 0 would signal the test run's own process group.
-      for (const pid of [...ours, ...panes].filter((pid) => pid > 0))
+        .map((line) => Number(line.trim().split(/\s+/)[0]))
+        // A pid of 0 would signal the test run's own process group.
+        .filter((pid) => pid > 0)
+        .flatMap((pid) => processTree(pid));
+      tree.push(...ours);
+      for (const pid of [...ours, ...panes])
         try {
           process.kill(pid, "SIGKILL");
         } catch {}
