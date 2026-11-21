@@ -1,6 +1,6 @@
-// The commands that show tasks and threads, and the one that files a task: sc ps, sc ls, sc show
+// The commands that show tasks and threads, and the one that files a task: sc ps, sc ls, sc task
 // and sc task add.
-import { bodyFor, readAsked, splitTaskName, taskFrom, usage } from "./input.ts";
+import { bodyFor, parseTask, readAsked, splitTaskName, usage } from "./input.ts";
 
 export async function psCommand(args: string[], json: boolean): Promise<void> {
   const { askForRepositories, askForThreads } = await import("../client.ts");
@@ -39,11 +39,11 @@ export async function lsCommand(command: string, words: string[], json: boolean)
   printTasks(shown, json);
 }
 
-export async function showCommand(command: string, words: string[], json: boolean): Promise<void> {
+export async function showCommand(words: string[], json: boolean): Promise<void> {
   const { askForTask } = await import("../client.ts");
   const { printTask } = await import("../flow/list.ts");
   const task = splitTaskName(words[0]);
-  if (!task || words.length !== 1) usage(command);
+  if (!task || words.length !== 1) usage("task");
   printTask(await askForTask({ repo: task[0], task: task[1] }), json);
 }
 
@@ -72,7 +72,7 @@ export async function taskCommand(args: string[]): Promise<void> {
   if (title && body !== undefined && words.length === 2)
     given = { title, body: bodyFor(shown, body) };
   else if (words.length === 0 && !process.stdin.isTTY)
-    given = taskFrom(await Bun.stdin.text(), shown);
+    given = parseTask(await Bun.stdin.text(), shown);
   if (!given) usage(command);
   if (issue) {
     const asked = askedFile === undefined ? undefined : await readAsked(askedFile);

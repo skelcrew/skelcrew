@@ -1,6 +1,6 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
-import { colorful } from "./say.ts";
+import { colorful } from "./format.ts";
 
 // The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [
@@ -10,26 +10,24 @@ const sections: [string, [string, string][]][] = [
       ["(no command)", "Open this repository's lead, with the sidebar"],
       ["--list", "This repository's list. ctrl+\\ comes back to it from an agent"],
       ["ls [<repo>]", "Tasks, with each one's stage, status, PR, CI and review"],
-      ["show <task>", "A task: stage, description, threads, PR, checks, review"],
+      ["task <task>", "A task: stage, description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
-      ["start <issue> [--from <branch>]", "Start, resume, or go on past the limit"],
+      ["start <task> [--from <branch>]", "Start, resume, or go on past the limit"],
       ['start <repo> "<title>" "<body>"', "Start a thread, with no issue in the tracker"],
       ["start <repo> < <file>", "The same, with the title on stdin's first line"],
       ['task add <repo> "<title>" "<body>"', "File a task in the backlog, starting nothing"],
-      ["stop <thread>", "End the builder, keeping its clone and PR"],
+      ["stop <task>", "End the builder, keeping its clone and PR"],
       ['rm <task> ["<reason>"]', "Close its PR and issue, delete its branch and clone"],
-      ["attach <thread>", "Open that builder full screen. ctrl+\\ detaches on tmux"],
-      ["peek <thread>", "What that builder shows now, without attaching"],
-      ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
+      ["attach <task>", "Open that builder full screen. ctrl+\\ detaches on tmux"],
+      ["peek <task>", "What that builder shows now, without attaching"],
+      ["interrupt <task>", "Stop that builder's turn, as Esc does"],
       ["review <task>", "Run the task's last review again"],
-      ['needs-you <thread> "<action>"', "Mark it as waiting on you, saying what to do"],
-      ["needs-you --clear <thread>", "Take that mark off"],
-      ["merge --when-ready <thread> | <#pr>", "Merge it once it is approved and green"],
-      [
-        "merge --skip-review <thread> | <#pr>",
-        "Merge it without Skelcrew's approval once CI passes",
-      ],
-      ["merge --cancel <thread> | <#pr>", "Stop a merge armed with either"],
+      ['needs-you <task> "<action>"', "Mark it as waiting on you, saying what to do"],
+      ["needs-you --clear <task>", "Take that mark off"],
+      ["merge --when-ready <task> | <#pr>", "Merge it once it is approved and green"],
+      ["merge --skip-review <task> | <#pr>", "Merge it without Skelcrew's approval once CI passes"],
+      ["merge --cancel <task> | <#pr>", "Stop a merge armed with either"],
+      ["<task>/<role>", "One thread, such as APP-12/builder, for a command that acts on one"],
     ],
   ],
   [
@@ -46,27 +44,27 @@ const sections: [string, [string, string][]][] = [
     "PLUGINS",
     [
       ["install", "Set up this machine and the plugins your files name, asking"],
-      ["add <owner/repo>", "Add a plugin to this repository, after asking"],
-      ["add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
-      ["update -g [<name>]", "Move one, or all, to its newest version, after asking"],
-      ["setup <name>", "Run its setup again, such as to sign in again"],
-      ["remove -g <name>", "Remove one, with its settings and tokens"],
-      ["plugins", "Your plugins, and what install would change"],
+      ["plugin add <owner/repo>", "Add a plugin to this repository, after asking"],
+      ["plugin add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
+      ["plugin update -g [<name>]", "Move one, or all, to its newest version, after asking"],
+      ["plugin setup <name>", "Run its setup again, such as to sign in again"],
+      ["plugin rm -g <name>", "Remove one, with its settings and tokens"],
+      ["plugin ls", "Your plugins, and what install would change"],
     ],
   ],
   [
     "ELSEWHERE",
     [
       ["--remote <host> install", "Send your personal files to a server, and set it up"],
-      ["--remote <host> up --bg", "Run the daemon on a server, in the background"],
+      ["--remote <host> serve --bg", "Run the daemon on a server, in the background"],
       ["--remote <host> [command]", "Run sc on a server, over ssh"],
     ],
   ],
   [
     "THE DAEMON",
     [
-      ["up", "Run the daemon here, until Ctrl-C"],
-      ["up --bg", "Run it as a systemd or launchd service, and return"],
+      ["serve", "Run the daemon here, until Ctrl-C"],
+      ["serve --bg", "Run it as a systemd or launchd service, and return"],
       ["restart", "Restart it, here or with --remote. Agents keep running"],
     ],
   ],
@@ -76,11 +74,8 @@ const sections: [string, [string, string][]][] = [
       ['submit "<summary>"', "Hand in a round for review, as a builder"],
       ["check", "Run the repository's tests once a check slot is free"],
       ['tell lead "<text>"', "Type a message into its repository's lead, as a builder"],
-      ['tell <thread> "<text>" | -', "Type a message into its builder, as the lead, - for stdin"],
+      ['tell <task> "<text>" | -', "Type a message into its builder, as the lead, - for stdin"],
       ['tell lead <repo> "<text>" | -', "Type a brief into another repository's lead, - for stdin"],
-      ["ask start <issue>", "Ask you in the list to start it, as the lead"],
-      ['ask start <repo> "<title>" "<body>"', "The same for a thread with no issue"],
-      ["ask repo add <owner/repo>", "Ask you in the list to add a repository, as the lead"],
     ],
   ],
   [

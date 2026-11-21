@@ -7,6 +7,7 @@ import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
+import { errorText } from "../format.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import {
   askWhatChanged,
@@ -18,8 +19,7 @@ import {
   setStatus,
 } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
-import { quietly } from "../run.ts";
-import { errorText } from "../say.ts";
+import { capture } from "../run.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, saveItems, saveOwnReview, threadTask } from "./copy.ts";
 import {
@@ -36,13 +36,13 @@ import {
   reviewComment,
   whoRunsTheSuite,
 } from "./decide.ts";
-import { stopping } from "./events.ts";
 import { fetchInto, noMaintenance, pushCommit } from "./git.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
 import { limitWaits, needsYou as neededYou } from "./status.ts";
+import { supervisor } from "./supervisor.ts";
 import {
   cloneOf,
   hostMissing,
@@ -58,7 +58,7 @@ import {
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails. Never with maintenance in the background, which a fetch could otherwise start.
 async function git(folder: string, ...args: string[]): Promise<string> {
-  const { out, err, ok } = await quietly(["git", ...noMaintenance, "-C", folder, ...args], {
+  const { out, err, ok } = await capture(["git", ...noMaintenance, "-C", folder, ...args], {
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
   if (!ok) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
@@ -1130,7 +1130,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
   // A flow with no review stage saves its verdict as the submit starts, so the thread waits on
   // checks from then on, rather than showing a review no reviewer will run.
   const unreviewed = flowRoles(thread).review === null;
-  if (thread.status === "stopped" || stopping.has(folder))
+  if (thread.status === "stopped" || supervisor(folder).state().stopping)
     throw new Error("this thread was stopped, so Skelcrew won't push it");
   // A submit is in flight until its review answers, and waiting on a review never needs you, so
   // a thread past the round limit needs you for it again only once a review asks for changes.

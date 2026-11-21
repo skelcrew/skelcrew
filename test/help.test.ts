@@ -34,9 +34,9 @@ test("the help names every command", () => {
     "--list",
     "--remote",
     "--remote <host> install",
-    "--remote <host> up --bg",
-    "up",
-    "up --bg",
+    "--remote <host> serve --bg",
+    "serve",
+    "serve --bg",
     "init",
     "repo add",
     "repo ls",
@@ -44,7 +44,7 @@ test("the help names every command", () => {
     "repo trust",
     "ps",
     "ls",
-    "show",
+    "task <task>",
     "task add",
     "start",
     "stop",
@@ -54,13 +54,20 @@ test("the help names every command", () => {
     "interrupt",
     "review",
     "install",
-    "add -g",
-    "update -g",
-    "setup",
-    "remove -g",
-    "plugins",
+    "plugin add",
+    "plugin add -g",
+    "plugin update -g",
+    "plugin setup",
+    "plugin rm -g",
+    "plugin ls",
   ])
     expect(out).toContain(`  ${command} `);
+});
+
+// sc serve runs the daemon. sc up was its old name, and is gone.
+test("the help names sc serve for the daemon, and never sc up", () => {
+  const out = skel(["--help"]).out;
+  expect(out).not.toMatch(/^ {2}(--remote <host> )?up /m);
 });
 
 // --remote keeps Skelcrew on the other side up to date, so there is no command for it. The one
@@ -68,7 +75,9 @@ test("the help names every command", () => {
 test("the help names no update command for Skelcrew, and says --remote keeps it up to date", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("update --remote");
-  expect(out.match(/^ {2}update.*/gm)).toEqual([expect.stringContaining("update -g [<name>]")]);
+  expect(out.match(/^ {2}(plugin )?update.*/gm)).toEqual([
+    expect.stringContaining("plugin update -g [<name>]"),
+  ]);
   expect(out).toContain("up to date");
 });
 
@@ -188,20 +197,34 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
 });
 
 // An issue is only where some tasks come from, and a PR is part of a task, so the help has no
-// commands of their own for them: the task commands cover both. A thread is an agent on a task.
+// commands of their own for them: the task commands cover both. A thread is an agent on a task,
+// named as <task>/<role> wherever a task goes.
 test("the help has no issue or PR commands, and names tasks and threads as such", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("\nISSUES\n");
   expect(out).not.toContain("\nPULL REQUESTS\n");
   expect(out).not.toContain("  issue ");
   expect(out).not.toContain("  pr ");
-  expect(out).toContain("  show <task> ");
-  expect(out).not.toContain("show <task> | <#pr>");
+  expect(out).toContain("  task <task> ");
+  expect(out).not.toContain("  show ");
   expect(out).toContain("  --issue ");
   expect(out).toContain("  --keep-issue ");
-  for (const command of ["stop", "attach", "peek", "interrupt", "tell"])
-    expect(out).toContain(`  ${command} <thread>`);
-  for (const command of ["show", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
+  for (const command of [
+    "task",
+    "start",
+    "stop",
+    "rm",
+    "attach",
+    "peek",
+    "interrupt",
+    "tell",
+    "review",
+  ])
+    expect(out).toContain(`  ${command} <task>`);
+  expect(out).not.toContain("<thread>");
+  expect(out).not.toContain("<issue>");
+  expect(out.split("<task>/<role>").length - 1).toBe(1);
+  expect(out).toContain("APP-12/builder");
 });
 
 // sc issue and sc pr are gone. Leads started before then may still type them, so what replaced
@@ -213,7 +236,7 @@ test("sc issue and sc pr say which task commands replaced them", () => {
   ]) {
     const ran = skel(args);
     expect(ran.code).toBe(1);
-    expect(ran.err).toContain("sc show <task> shows one with its PR");
+    expect(ran.err).toContain("sc task <task> shows one with its PR");
     expect(ran.err).toContain("--issue");
   }
 });
@@ -226,8 +249,8 @@ test("the help says how a task with no issue is named, and that names are typed 
   expect(out).toContain("Type a name in any case: app-t100 is APP-T100.");
 });
 
-// sc task only files tasks: sc ls and sc show list and show them.
-test("sc task takes only add", () => {
+// sc task shows one task or, with add, files one. Anything else is no task's name.
+test("sc task takes a task's name or add", () => {
   const ran = skel(["task", "ls"]);
   expect(ran.code).not.toBe(0);
   expect(ran.err).toContain("sc task was given arguments it doesn't take");

@@ -11,13 +11,13 @@ import { openDb } from "../db.ts";
 import { leadSession } from "../flow/lead.ts";
 import { ListStage } from "../flow/stage.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
+import { errorText } from "../format.ts";
 import { updateNotice } from "../machine/update.ts";
 import { attachOnHost, type Host } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
-import { shownVersions } from "../version.ts";
-import { type Asking, answerOf, canOpenLinks, openPr, stillOffered } from "./actions.ts";
+import { versionLabels } from "../version.ts";
+import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
@@ -28,7 +28,7 @@ import {
   type Target,
   tabAt,
 } from "./layout.ts";
-import { liveNote, readLead, readLive } from "./live.ts";
+import { liveNote, readLive } from "./live.ts";
 import { drawPane, type Live } from "./pane.ts";
 import {
   buildersNote,
@@ -180,7 +180,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const name = tabs.find((tab) => tab.fullName === `${open.owner}/${open.repo}`)?.name ?? "";
     const notice = updateNotice(db);
     return {
-      versions: shownVersions(),
+      versions: versionLabels(),
       where,
       name,
       tabs,
@@ -190,21 +190,10 @@ export async function runList(agents: string, repository: string): Promise<void>
     };
   };
 
-  // Returns the details pane's lines for a terminal of this size, or null when it is too narrow
-  // for the pane. A task's details are read only when you move onto it or the rows are read again.
-  // Its agent's screen is the last one read for this row, or blank until the first read comes.
-  // A row with no agent running says so at once. A request of the lead's shows the lead's screen,
-  // read-only, with no details.
   const paneFor = (size: { width: number; height: number }) => {
     const beside = paneWidth(size.width);
     if (beside === 0) return null;
     const row = rows[here];
-    if (row?.part === "request") {
-      const note = liveNote(row);
-      const shown =
-        note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
-      return drawPane(row, null, shown, beside, size.height - 2).lines;
-    }
     if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2).lines;
     if (details?.name !== row.name)
       details = { name: row.name, read: readDetails(db, open, row.task, Date.now(), row.changed) };
@@ -381,22 +370,13 @@ export async function runList(agents: string, repository: string): Promise<void>
     refresh();
   };
 
-  // Opens a row with Enter: opens or closes a stage on its heading, attaches to the lead, starting
-  // it first when it isn't running, or to the builder of a task at work. Says what a task in the
-  // task queue waits on, and that a request of the lead's is answered with y or n. Asks before
-  // starting an issue. Opens the PR of a task ready for review or ended, or copies its link, or
-  // without a forge says which branch waits for you. A ready task whose builder needs you, such as
-  // for a question, attaches to the builder, so one Enter reaches what it waits on.
   const openRow = async (row: Row) => {
     if (row.part === "heading" && row.section !== "lead") return toggleSection(row.section);
-    // The daemon starts the lead first if it isn't running, such as one you exited or one that
-    // crashed, as only it knows. The list reads only the database, which can't tell a crash.
     if (row.part === "lead" && row.session) {
       if (!row.running) say("Starting the lead…");
       const failed = await openRepository(`${open.owner}/${open.repo}`, false);
       said = null;
       if (failed) return say(`The lead didn't start: ${failed}`);
-      // The lead is reached on the host it runs on, which the daemon saved as it started it.
       const lead = await leadSession(db, agents, open.owner, open.repo);
       if (lead === null) return say("The lead's session host isn't installed.");
       return attach(lead.id, row.name, lead.host);
@@ -405,20 +385,15 @@ export async function runList(agents: string, repository: string): Promise<void>
       wholeBacklog = true;
       return reshow();
     }
-    if (row.part === "request") return say("Press y to say yes to the lead, or n to say no.");
     if (row.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, offer: "start" };
       return draw();
     }
-    // A task in the task queue has no builder running yet, so Enter says what it waits on.
     if (row.section === "task queue") return say(row.waits);
-    // A builder that exited leaves its last screen behind, which would look like it still runs.
     const atWork = row.part !== "ready" && row.part !== "done";
     if ((atWork || row.needsYou) && row.session) {
       if (!row.running)
         return say(`${row.name}'s builder isn't running: sc start ${row.name} brings it back`);
-      // The builder may run on a runtime plugin's host, which a plugin no longer installed
-      // leaves out of reach.
       try {
         const { host, id } = await builderSession(db, agents, readThread(db, row.session));
         return attach(id, row.name, host);
@@ -548,57 +523,33 @@ export async function runList(agents: string, repository: string): Promise<void>
     return draw();
   };
 
-  // Reads the screen of the agent on the row you are on, for the pane's live view, and draws it
-  // when it changed, as a quiet agent's screen mostly hasn't. It reads only while the list shows
-  // with its pane, never while you are attached to an agent or once you left. Each row has one
-  // read at a time, so a slow host never piles reads up, and a slow read of a row you left never
-  // holds up the row you moved to. A read that comes back after you moved, even back to the same
-  // row, is dropped, so it never takes the place of a newer screen of the row you are on.
   const reading = new Set<string>();
   const look = async () => {
     const row = rows[here];
-    const agent = row?.task !== null || row?.part === "request";
-    if (attached || left || !row || !agent || liveNote(row) !== null) return;
+    if (attached || left || !row || row.task === null || liveNote(row) !== null) return;
     if (reading.has(row.name) || paneWidth(process.stdout.columns || 80) === 0) return;
     reading.add(row.name);
     const asked = selections;
-    // Whether the live view still wants this row's screen: the list shows with its pane, and you
-    // are on the same row. A host can take seconds to find the builder's session, and any of
-    // these can change meanwhile, so it is asked again before the screen is read.
     const wanted = () =>
       !attached && !left && selections === asked && paneWidth(process.stdout.columns || 80) > 0;
-    // A request's row shows the lead, read as sc peek reads it.
-    const shown =
-      row.part === "request"
-        ? await readLead(db, agents, open)
-        : await readLive(db, agents, row, wanted);
+    const shown = await readLive(db, agents, row, wanted);
     reading.delete(row.name);
-    // A read the list stopped wanting read nothing and shows nothing, and so is one that came
-    // back once it was no longer wanted, such as after you left and the terminal is your shell's.
     if (shown === null || !wanted()) return;
     if (live?.name === row.name && Bun.deepEquals(live.shown, shown)) return;
     live = { name: row.name, shown };
     draw();
   };
 
-  // Acts on one key. A question takes only y and n, and anything else is a no, Esc included. A
-  // line that says something goes at the next key, which then does what it does. Nothing acts
-  // while the daemon is at work on an answer.
   // Leaves the list, once the list is ready to leave. `left` says it has.
   let leave: () => void = () => {};
   let left = false;
-  // Ctrl-\ does nothing here, an open question included, so pressing it once too often after
-  // coming back from an agent never answers or drops a question.
   const press = async (key: string) => {
     if (working || left || key === "back") return;
-    // q and Ctrl-C leave from anywhere, an open question included, which then does nothing. Esc
-    // leaves only with no question open, so a stray Esc while you answer is a no and stays.
     if (key === "q" || (key === "escape" && !asking)) return leave();
     if (asking) {
       const action = asking;
       asking = null;
       if (key !== "y") return draw();
-      // The row is read again, as the task can change while the question is open.
       refresh();
       const offer = stillOffered(action, all);
       return typeof offer === "string" ? say(offer) : goAhead(offer);
@@ -611,31 +562,20 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (key === "tab") return nextRepository(1);
     if (key === "back tab") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
-    // 0 opens or closes the task queue, and 1 to 6 the stages, in the order they show.
     if (key === "0") return toggleSection("task queue");
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) return toggleSection(stage);
     if (key === "enter" && row) return openRow(row);
-    // y and n answer the lead's request you are on at once, as its row is the question.
-    const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
-    if (answer) return goAhead(answer);
-    // o shows the agent's whole screen in the details pane, or only its last lines again. It
-    // stays as you move, as it is how you like the pane.
     if (key === "o" && row?.task && paneWidth(process.stdout.columns || 80) > 0) {
       fullOutput = !fullOutput;
       return draw();
     }
-    // Page Up and Page Down scroll the details pane a page, keeping a line of the last one.
     if ((key === "page up" || key === "page down") && row?.task)
       return scrollPane((key === "page up" ? -1 : 1) * Math.max(paneRoom - 1, 1));
-    // s starts a task not started yet, an issue or one of the backlog, as Enter does there. With
-    // every builder busy, its question says it queues the task instead.
     if (key === "s" && row?.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, offer: "start" };
       return draw();
     }
-    // f starts a queued task now, over limits.threads, or one on Backlog while every builder is
-    // busy, after a question that says it goes over the limit.
     if (key === "f" && row?.startNow) {
       asking = { question: row.startNow, row: row.name, offer: "startNow" };
       return draw();
@@ -645,7 +585,6 @@ export async function runList(agents: string, repository: string): Promise<void>
       asking = { question: row.merge, row: row.name, offer: "merge" };
       return draw();
     }
-    // A ready task whose builder needs you offers no merge until you have seen to it.
     if (key === "m" && row?.part === "ready" && row.needsYou)
       return say(`${row.name}'s builder needs you first: press Enter to reach it`);
     if (key === "m" && row?.part === "ready") return say(`${row.name} has no PR to merge here`);

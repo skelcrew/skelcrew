@@ -501,6 +501,47 @@ console.log(await hasSession(host, "fake-lead-app"));`,
   expect(readFileSync(join(fake, "asked"), "utf8")).toContain('"ask":"end"');
 });
 
+// Closing a repository ends its lead in the lead's turn. A host slow to end it can see you open
+// the repository again meanwhile. The start that opening asks for then comes after the end, so it
+// never finds the old lead still running and keeps it, only for the end to take it away.
+function closingLead(body: string): string {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  return runWithFakeHost(
+    "sessions",
+    `const { endLeadOfClosedTab, leadAgent } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, tab_closed, lead_host) VALUES ('app', 'simon', 'app', '', 1, 1, 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "slow-end"))}, "");
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+const reopen = () => {
+  db.run("UPDATE repositories SET tab_closed = 0, opened = 2 WHERE repo = 'app'");
+  let sawOld = null;
+  return leadAgent("simon", "app").start({ start: async () => { sawOld = await hasSession(host, "fake-lead-app"); } }).then(() => sawOld);
+};
+${body}
+console.log(JSON.stringify({ ended, sawOld, running: await hasSession(host, "fake-lead-app") }));
+process.exit(0);`,
+    {},
+  );
+}
+
+test("a repository opened again while its lead's host is slow to end it starts the lead only after the end", () => {
+  const said = closingLead(`const ending = endLeadOfClosedTab(db, "unused", repository, "close");
+await Bun.sleep(500);
+const sawOld = await reopen();
+const ended = await ending;`);
+  expect(JSON.parse(said)).toEqual({ ended: true, sawOld: false, running: false });
+}, 40_000);
+
+test("a repository opened again before its lead's end came keeps its lead running", () => {
+  const said = closingLead(`db.run("UPDATE repositories SET tab_closed = 0 WHERE repo = 'app'");
+const ended = await endLeadOfClosedTab(db, "unused", repository, "close");
+const sawOld = await reopen();`);
+  expect(JSON.parse(said)).toEqual({ ended: false, sawOld: true, running: true });
+}, 40_000);
+
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
   const said = runWithFakeHost(
     "sessions",
@@ -1494,7 +1535,7 @@ process.exit(0);`,
   expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
 }, 40_000);
 
-// Renames every live builder in a process of its own with the test's home, as an engine started
+// Renames every live builder in a process of its own with the test's home, as a daemon started
 // again would as it starts.
 function renameInNewEngine(): void {
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
@@ -1527,7 +1568,7 @@ process.exit(0);`,
       .filter((line) => JSON.parse(line).ask === "rename").length;
   const title = () =>
     JSON.parse(readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8")).title;
-  // The same version isn't asked again by an engine started again, even one that now could.
+  // The same version isn't asked again by a daemon started again, even one that now could.
   rmSync(join(fake, "unknown-rename"));
   renameInNewEngine();
   expect(renames()).toBe(1);

@@ -2,9 +2,9 @@
 import { createConnection } from "node:net";
 import { z } from "zod";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
-import { type DaemonRequest, type LeadAction, parseJson } from "./flow/requests.ts";
+import { type DaemonRequest, parseJson } from "./flow/requests.ts";
 import { cliSocket } from "./paths.ts";
-import { quietly } from "./run.ts";
+import { capture } from "./run.ts";
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
@@ -81,7 +81,7 @@ export async function askForTasks(repository?: string): Promise<TaskRow[]> {
   return checkReply(z.object({ tasks: z.array(TaskRow) }), reply).tasks;
 }
 
-// Asks the daemon for one task, for sc show. The daemon answers from Skelcrew's copy, and asks
+// Asks the daemon for one task, for sc task. The daemon answers from Skelcrew's copy, and asks
 // the forge for the logs of failed checks, as only it holds the forge's login.
 export async function askForTask(which: { repo: string; task: string }): Promise<TaskView> {
   const reply = await request({ command: "task show", ...which });
@@ -164,23 +164,10 @@ export async function startNew(
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 
-// Has the daemon save a request of the lead's for sc ask, which waits under the lead in the
-// list for your y or n, and returns what the lead is told, naming the request. `repository` is
-// the lead's own, when the command named it, as sc start does.
-export async function askHuman(action: LeadAction, repository?: string): Promise<string> {
-  const reply = await request({
-    command: "ask",
-    action,
-    ...(repository ? { repo: repository } : {}),
-  });
-  return checkReply(z.object({ asked: z.string() }), reply).asked;
-}
-
-// Has the daemon start a thread on an issue, merge a PR or answer a lead's request, for a key
-// on the screen's lists and pages, which hold the request ready. Throws the daemon's error, such
-// as the forge's reason for refusing a merge. Only your own socket takes a merge or an answer,
-// so no agent can merge or say yes for you. Returns what the daemon said of a start or an
-// answer, such as that the task waits in the queue, or null.
+// Has the daemon start a thread on an issue or merge a PR, for a key on the screen's lists and
+// pages, which hold the request ready. Throws the daemon's error, such as the forge's reason for
+// refusing a merge. Only your own socket takes a merge, so no agent can merge. Returns what the
+// daemon said, such as that the task waits in the queue, or null.
 export async function startOrMerge(asked: DaemonRequest): Promise<string | null> {
   const reply = await request(asked);
   const said = z
@@ -444,14 +431,14 @@ export async function reportTurnEnded(): Promise<void> {
   // sends no commit, so the turn counts as new work. git status would take the clone's
   // index.lock to refresh the index, and the hook runs right after sc submit, as the reviewer
   // checks the commit out in its view of the clone. A lock there makes that checkout refuse.
-  const status = await quietly([
+  const status = await capture([
     "git",
     "--no-optional-locks",
     "status",
     "--porcelain",
     "--untracked-files=all",
   ]);
-  const head = await quietly(["git", "rev-parse", "--verify", "HEAD"]);
+  const head = await capture(["git", "rev-parse", "--verify", "HEAD"]);
   const clean = status.ok && status.out.trim() === "" && head.ok;
   await request({
     command: "turn ended",

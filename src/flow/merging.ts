@@ -6,8 +6,8 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { flowRoles } from "../flows.ts";
+import { errorText } from "../format.ts";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
-import { errorText } from "../say.ts";
 import { openTasks, prOf } from "./copy.ts";
 import {
   mergeNoteFor,
@@ -17,7 +17,7 @@ import {
   readyWhen,
   skipReviewWaitsOn,
 } from "./decide.ts";
-import { endThread, removing } from "./events.ts";
+import { beingRemoved, endThread } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
@@ -273,7 +273,7 @@ export async function mergeIfReady(
 ): Promise<void> {
   const { folder } = before;
   const thread = readThread(db, folder);
-  if (thread.merge_plan !== "armed" || thread.status === "done" || removing.has(folder)) return;
+  if (thread.merge_plan !== "armed" || thread.status === "done" || beingRemoved(folder)) return;
   // `pr` is what the forge said while this poll ran. A round that moved on meanwhile, such as
   // a review that started or ended, or a saved verdict this poll just posted, makes it stale: the checks of the new round may not be in
   // it yet. The next poll acts on the PR as it is after the round.
@@ -399,7 +399,7 @@ export async function mergeIfReady(
     now.merge_id === thread.merge_id &&
     now.started === thread.started &&
     now.status !== "done" &&
-    !removing.has(folder);
+    !beingRemoved(folder);
   if (!samePlan) return;
   // What it waits on changes only now and then, so the log isn't filled with every poll.
   if (waits !== now.merge_waits)

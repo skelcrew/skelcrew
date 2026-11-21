@@ -17,7 +17,7 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { screenSocket } from "../agents/tmux.ts";
 import { sshFolder } from "../paths.ts";
-import { quietly } from "../run.ts";
+import { capture } from "../run.ts";
 import {
   answeredFolder,
   type Drop,
@@ -28,11 +28,11 @@ import {
 } from "../screen/drops.ts";
 import {
   built,
+  checkoutBuild,
   checkoutFolder,
   dirty,
   git,
   isRelease,
-  laptopBuild,
   mainFile,
   readable,
   release,
@@ -62,9 +62,8 @@ export const checkThenSc = [
   "case $b in *.*.*) b=v$b;; esac",
   // e is the sc the daemon's service starts, as its unit names it with each % doubled, or else
   // the sc on the PATH. The daemon is what must run new code, and the sc you run can be another
-  // install, such as a copy in ~/.local/bin beside a service that runs a checkout. A unit an older
-  // Skelcrew wrote runs sc serve rather than sc up.
-  String.raw`e=$(sed -n 's/%%/%/g; s/^ExecStart="\(.*\)" up$/\1/p; s/^ExecStart="\(.*\)" serve$/\1/p' "$HOME/.config/systemd/user/skelcrew.service" 2>/dev/null); [ -n "$e" ] || e=$(command -v sc)`,
+  // install, such as a copy in ~/.local/bin beside a service that runs a checkout.
+  String.raw`e=$(sed -n 's/%%/%/g; s/^ExecStart="\(.*\)" serve$/\1/p' "$HOME/.config/systemd/user/skelcrew.service" 2>/dev/null); [ -n "$e" ] || e=$(command -v sc)`,
   // d is the checkout that sc runs from, or empty when it runs from none. It is the folder
   // above the sc, which is often a link to its bin/sc. A copy has no src/main.ts there, and
   // needs no warning, as Skelcrew there checks its own build.
@@ -98,19 +97,17 @@ export const outdated = 98;
 // so the laptop can offer to set it up.
 export const unfinished = 97;
 
-// Reports whether this Skelcrew, copied to a server, is from another build than the
-// laptop that runs it there with --remote, and says so. The laptop passes its build along
-// with the command, so the check costs no round trip of its own. A release newer than the
-// laptop's counts as up to date: it installed itself in the background, and the laptop
-// catches up on its own, so asking would only offer to go back.
+export function serverName(): string | undefined {
+  return process.env.SKELCREW_REMOTE_NAME;
+}
+
 export function outOfDate(): boolean {
   const laptop = process.env.SKELCREW_LAPTOP_BUILD;
-  // No laptop build means the command came without the check, and no build here means this
-  // Skelcrew runs from a checkout. Uncommitted changes never count as the same build.
   if (!laptop || built === undefined || (laptop === built && !built.endsWith(dirty))) return false;
   if (release && isRelease(laptop) && newer(release, laptop)) return false;
-  const where = process.env.SKELCREW_REMOTE_NAME;
-  console.log(`Skelcrew on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`);
+  console.log(
+    `Skelcrew on ${serverName()} is from ${readable(built)}, yours is ${readable(laptop)}.`,
+  );
   return true;
 }
 
@@ -324,11 +321,11 @@ function dropOnServer(machine: Machine, screen: string): Drop {
   // The sidebar's last answer, then the drop's question, then a wait there, of up to two seconds,
   // for the answer to change.
   const where = async (ask: () => void) => {
-    const before = await quietly(quiet(read));
+    const before = await capture(quiet(read));
     if (!before.ok) return null;
     ask();
     const wait = `b=${quoted(before.out.trim())}; i=0; while [ $i -lt 200 ]; do a=$(${read}); [ "$a" != "$b" ] && { printf '%s\n' "$a"; exit 0; }; sleep 0.01; i=$((i+1)); done; exit 1`;
-    const asked = await quietly(quiet(`sh -c ${quoted(wait)}`));
+    const asked = await capture(quiet(`sh -c ${quoted(wait)}`));
     return asked.ok ? answeredFolder(asked.out.trim()) : null;
   };
   const put = (folder: string, files: string[]) =>
@@ -364,7 +361,7 @@ export async function installServer(host: string, asked = false): Promise<number
   } finally {
     // sc install there removes the folder once it puts your files in place. It is still there
     // when sc install never started, such as after a no, and goes here.
-    if (sending) await quietly(machine.shell(`rm -rf .config/skelcrew/${sending}`));
+    if (sending) await capture(machine.shell(`rm -rf .config/skelcrew/${sending}`));
   }
 }
 
@@ -434,9 +431,9 @@ async function sendYourFiles(where: string, machine: Machine): Promise<string | 
       writeFileSync(file, text, { mode: 0o600 });
       // scp shows a progress bar named after the temporary file, which means nothing to you,
       // so the copy runs out of your terminal and says why it failed.
-      const pushed = await quietly(machine.push(file, `${staging}/${name}`));
+      const pushed = await capture(machine.push(file, `${staging}/${name}`));
       if (!pushed.ok) {
-        await quietly(machine.shell(`rm -rf ${staging}`));
+        await capture(machine.shell(`rm -rf ${staging}`));
         throw new Error(`couldn't send your ${name} to ${where}:\n${pushed.said}`);
       }
     }
@@ -456,7 +453,7 @@ async function runUpToDate(
   where: string,
   there: (env: string[]) => Promise<number>,
   machine: Machine,
-  build = release || laptopBuild(),
+  build = release || checkoutBuild(),
 ): Promise<number> {
   // Loaded only here, as it brings in much of Skelcrew that the check on each command needs
   // only this of.
@@ -501,12 +498,10 @@ function serverMachine(host: string): Machine {
     shell,
     push,
     sc: (words, before, run) => onServer(host, shared, words, before, run),
-    // The unit names the Skelcrew the daemon runs, with each % doubled for systemd. A unit an
-    // older Skelcrew wrote runs sc serve rather than sc up.
     daemonSkel: async () => {
       const unit = ".config/systemd/user/skelcrew.service";
-      const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" up$/\\1/p; s/^ExecStart="\\(.*\\)" serve$/\\1/p' ${unit}`;
-      const read = await quietly(shell(sed));
+      const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p' ${unit}`;
+      const read = await capture(shell(sed));
       return read.ok && read.said !== "" ? read.said : null;
     },
     copy: (file) => copySkel(host, shell, push(file, ".local/bin/sc.new")),
@@ -568,7 +563,7 @@ d=$(dirname "$(readlink -f "$f")")/..
 if [ -f "$d/src/main.ts" ]; then echo "checkout $(cd "$d" && pwd)"
 elif [ "$f" = .local/bin/sc ] || [ "$f" = "$HOME/.local/bin/sc" ]; then echo copied
 else echo "elsewhere $f"; fi`;
-  const asked = await quietly(machine.shell(script));
+  const asked = await capture(machine.shell(script));
   const found = asked.said.match(/^(checkout (.+)|copied|elsewhere (.+))$/m);
   if (!found)
     throw new Error(`couldn't tell how Skelcrew is installed on ${where}:\n${asked.said}`);
@@ -586,7 +581,7 @@ else echo "elsewhere $f"; fi`;
   const now = release ? `Skelcrew ${release}` : describeCheckout();
   await withLinuxSkel(machine);
   // The service commands print their logs, which matter only when they fail.
-  const restarted = await quietly(machine.shell(machine.restart));
+  const restarted = await capture(machine.shell(machine.restart));
   if (!restarted.ok)
     throw new Error(
       `the new Skelcrew is on ${where}, but its daemon didn't restart, so it still runs the old one:\n${restarted.said}`,
@@ -601,7 +596,7 @@ else echo "elsewhere $f"; fi`;
 async function machineCpu(machine: Machine): Promise<string> {
   const cpus: Record<string, string> = { x86_64: "x64", aarch64: "arm64", arm64: "arm64" };
   // ssh's warnings arrive in the same text, so the CPU is picked out of it.
-  const { said } = await quietly(machine.shell("uname -m"));
+  const { said } = await capture(machine.shell("uname -m"));
   const cpu = cpus[said.match(/\b(x86_64|aarch64|arm64)\b/)?.[1] ?? ""];
   if (!cpu) throw new Error(`Skelcrew runs on arm64 and x64 CPUs, not on "${said}"`);
   return cpu;
@@ -624,7 +619,7 @@ async function downloadLinuxSkel(file: string, cpu: string): Promise<void> {
 async function buildLinuxSkel(file: string, cpu: string): Promise<void> {
   console.log("Building Skelcrew for Linux.");
   const target = `--target=bun-linux-${cpu}`;
-  const build = laptopBuild();
+  const build = checkoutBuild();
   const stamp = build ? ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`] : [];
   const argv = ["bun", "build", "--compile", target, ...stamp, mainFile, "--outfile", file];
   if ((await runInTerminal(argv)) !== 0)

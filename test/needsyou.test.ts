@@ -15,12 +15,12 @@ test("only an agent's hooks can say it is asking you a question, stopped, or sto
   await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
   for (const args of [
-    ["question", "asked"],
-    ["question", "answered"],
-    ["turn", "failed"],
-    ["turn", "ended"],
-    ["question", "closed"],
-    ["turn", "interrupted"],
+    ["hook", "question-asked"],
+    ["hook", "prompt"],
+    ["hook", "turn-failed"],
+    ["hook", "turn-ended"],
+    ["hook", "question-closed"],
+    ["hook", "turn-interrupted"],
   ]) {
     const run = await skel(args);
     expect(run.code).not.toBe(0);
@@ -154,7 +154,7 @@ console.log(JSON.stringify({ decided: thread().limit_decided, needsYou: needsYou
 });
 
 // The lead's own mark is still owed once you install the plugin, so the instruction goes first
-// and keeps it, however often the engine starts while the plugin is gone.
+// and keeps it, however often the daemon starts while the plugin is gone.
 test("a missing host plugin puts its instruction before the lead's mark, once", () => {
   const seen = inProcess(`
 record(db, "app-12", { session: "s", host: "gone", host_id: "gone-app-12", needs_you_for: "apply the fix in #463" });

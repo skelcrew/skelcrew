@@ -74,6 +74,8 @@ beforeEach(async () => {
     connection.on("data", (data) => {
       // Plain sc asks what the daemon runs before anything else, which these tests don't follow.
       if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
+      // Answers nothing, as no daemon would, so removing a repository ends its lead itself.
+      if (JSON.parse(data.toString()).command === "end lead") return connection.destroy();
       // sc repo asks the daemon to rename builders whose names it changed, which answers at once.
       if (JSON.parse(data.toString()).command === "rename builders") {
         appendFileSync(join(home, "calls"), "daemon rename builders\n");
@@ -436,18 +438,10 @@ test("repo ls says how to bring a repository in while there is none", async () =
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });
 
-test("repo rm removes Skelcrew's clone and the lead's requests, and forgets the trust", async () => {
+test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
   const checkout = onGitHub("simon/app");
   await skel([], "y\n", checkout);
-  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  const requests = `INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12?', 1),
-  ('simon', 'site', '{"kind":"start","task":"3"}', 'Start SITE-3?', 2)`;
-  db.run(requests);
   const removed = await skel(["repo", "rm", "app"]);
-  // Another repository's requests stay.
-  expect(db.query("SELECT repo FROM lead_requests").all()).toEqual([{ repo: "site" }]);
-  db.close();
   expect(removed.err).toBe("");
   expect(existsSync(clone("simon/app"))).toBe(false);
   expect(readFileSync(trustFile(), "utf8")).toBe("");
@@ -540,9 +534,9 @@ test("names two repositories that share a name with their owners", async () => {
 
 // A builder's title on its plugin's host starts with its task's name, which gains its owner once
 // another repository shares its name, and loses it once none does. The host keeps the title
-// while the builder runs, so adding and removing a repository has the engine rename them. The
-// engine does it, so a host that fails says so in its log, not in sc repo's output.
-test("adding or removing a repository asks the engine to rename the running builders", async () => {
+// while the builder runs, so adding and removing a repository has the daemon rename them. The
+// daemon does it, so a host that fails says so in its log, not in sc repo's output.
+test("adding or removing a repository asks the daemon to rename the running builders", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
   writeFileSync(join(home, "calls"), "");
   await skel([], "", onGitHub("other/app", "WRITE"));
@@ -604,7 +598,7 @@ test("repo ls lists each repository with its tracker and forge, as text and for 
   expect((await skel(["repo", "ls"])).out).toContain("linear, not installed");
 });
 
-// The engine can't install a plugin, as only a yes at your terminal can, so the row says to.
+// The daemon can't install a plugin, as only a yes at your terminal can, so the row says to.
 test("repo ls says to run sc install while a repository's files name a plugin this machine lacks", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
   const waiting = async () =>
@@ -954,7 +948,7 @@ plugins:
   );
 });
 
-// The forge's plugin isn't on this machine yet, so sc init installs it as sc add does: it shows
+// The forge's plugin isn't on this machine yet, so sc init installs it as sc plugin add does: it shows
 // what the plugin runs and asks first.
 test("init installs the forge's plugin after asking, and pins it", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
@@ -1046,7 +1040,7 @@ test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin, 
   expect(await listed()).toEqual([["app", "simon/app", "github"]]);
 });
 
-// sc add would move a pin to the version installed here, so a pin the repository has already
+// sc plugin add would move a pin to the version installed here, so a pin the repository has already
 // stays as it is, and only skelcrew.yaml gains the plugin's name.
 test("init keeps the pin a skelcrew.lock that is there has for the forge's plugin", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
@@ -1463,7 +1457,7 @@ function agentsOnlyOnGitHub(checkout: string): void {
 }
 
 // Makes the fake forge the GitHub plugin installed as yours from skelcrew/skelcrew-github, at a
-// commit of its own, as sc add -g leaves it. Returns that commit.
+// commit of its own, as sc plugin add -g leaves it. Returns that commit.
 function githubInstalledAsYours(): string {
   const folder = join(home, "plugin-github");
   git(folder, "init", "-q", "-b", "main");
@@ -1770,7 +1764,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     const run = await skel([], "\n", checkout);
     expect(run.code).toBe(0);
     expect(run.err).toBe(
-      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc setup github to set it up again.\n",
+      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc plugin setup github to set it up again.\n",
     );
     expect(existsSync(join(forge, "setup-remote"))).toBe(false);
     expect(existsSync(clone("simon/app"))).toBe(false);

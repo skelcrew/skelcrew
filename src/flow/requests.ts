@@ -16,28 +16,6 @@ const TaskBody = z.string().regex(/\S/);
 // A thread's short title for the sidebar, which says nothing when blank, so one is refused.
 const ShortTitle = z.string().trim().min(1);
 
-// What a request from the lead does once you say yes: start a task or an issue, from a branch
-// when it names one, or start a new task with its title and description, each in the lead's own repository as sc start would, or
-// only tell the lead yes to adding a repository, as only sc repo add at your terminal adds one.
-export const LeadAction = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("start"),
-    task: TaskId,
-    from: Branch.optional(),
-    short: ShortTitle.optional(),
-    flow: FlowName.optional(),
-  }),
-  z.object({
-    kind: z.literal("start new"),
-    title: z.string().min(1),
-    body: TaskBody,
-    short: ShortTitle.optional(),
-    flow: FlowName.optional(),
-  }),
-  z.object({ kind: z.literal("repo add"), repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/) }),
-]);
-export type LeadAction = z.infer<typeof LeadAction>;
-
 // A request's `repo` names a repository the way a command does: by its name in Skelcrew or its
 // owner/name. It keeps that word because clients on other machines send it.
 export const DaemonRequest = z.discriminatedUnion("command", [
@@ -55,6 +33,8 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   // Renames each live builder on a plugin's host by its title as it is now, after sc repo added
   // or removed a repository, which can change the names in titles.
   z.object({ command: z.literal("rename builders") }),
+  // Ends a repository's lead whose tab you closed, for closing or removing the repository.
+  z.object({ command: z.literal("end lead"), repo: z.string(), verb: z.enum(["close", "remove"]) }),
   // Whether a word names a repository Skelcrew has. It isn't `repo`, as a word that names none
   // is no request about another repository.
   z.object({ command: z.literal("repo named"), word: z.string() }),
@@ -186,16 +166,6 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId,
     reason: z.string().regex(/\S/).nullable(),
   }),
-  // A lead's request that waits for your yes. `repo`, when given, is the lead's own repository,
-  // which sc ask start names as sc start does.
-  z.object({ command: z.literal("ask"), repo: z.string().optional(), action: LeadAction }),
-  // Your answer to a lead's request, by its ID, from y or n on its row in the list.
-  z.object({
-    command: z.literal("answer"),
-    repo: z.string(),
-    id: z.number().int().positive(),
-    yes: z.boolean(),
-  }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   // A lead's brief for another repository's lead. `to` names that repository. It isn't `repo`,
   // which every other request a lead makes must name as its own. `asked` is the human's words,
@@ -242,8 +212,7 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // but a builder may not, as it has only its own. You type to a builder yourself in the sidebar, so
 // you have no tell. Which queued task starts next is yours alone, as you set it in the list, and
 // so is restarting an agent, with a key on the screen.
-// Merging is yours alone: no agent may merge, as merging stays a human's choice. Only a lead
-// asks you to say yes to something in the list, and only you answer it.
+// Merging is yours alone: no agent may merge, as merging stays a human's choice.
 // A lead may arm a merge, when ready or without Skelcrew's approval, only while your config lets it,
 // which the daemon checks at each one, and only when you ask it to. The lead may cancel one, which
 // is always safe. Builders and reviewers can't. Only you and the lead may mark a thread as
@@ -261,6 +230,7 @@ export const allowed = {
     "lead",
     "repo ls",
     "rename builders",
+    "end lead",
     "repo named",
     "ps",
     "task ls",
@@ -283,7 +253,6 @@ export const allowed = {
     "merge skip review",
     "merge cancel",
     "needs you",
-    "answer",
     "check",
   ],
   lead: [
@@ -308,7 +277,6 @@ export const allowed = {
     "merge cancel",
     "needs you",
     "tell",
-    "ask",
     "brief lead",
     "question asked",
     "question answered",

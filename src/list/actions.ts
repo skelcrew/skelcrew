@@ -64,16 +64,3 @@ export function stillOffered(asking: Asking, rows: Row[]): Question | string {
     ? offer.refused
     : `${asking.row} changed while you were asked, so nothing was done`;
 }
-
-// Returns your answer to the lead's request on a row, for y or n there, as what the daemon gets,
-// with what the bottom line says while it works. A yes to a start starts it, so the daemon's
-// reply then says what happened, such as that the task waits in the queue.
-export function answerOf(open: Open, row: Row, yes: boolean): Question | null {
-  if (row.request === null) return null;
-  return {
-    ask: "",
-    working: yes ? "Saying yes…" : "Saying no…",
-    request: { command: "answer", repo: `${open.owner}/${open.repo}`, id: row.request, yes },
-    queues: false,
-  };
-}

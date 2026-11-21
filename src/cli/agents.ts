@@ -1,7 +1,16 @@
 // The commands agents run: a builder submitting its work, the hooks that tell the daemon what an
-// agent is doing, and what the lead and builders use to ask, tell and mark a thread as needing you.
-import { readAsked, runByAgent, splitThreadName, usage } from "./input.ts";
-import { startCommand } from "./threads.ts";
+// agent is doing, and what the lead and builders use to tell each other and mark a thread as needing you.
+import { runByAgent } from "../agents/sandbox.ts";
+import { readAsked, splitThreadName, usage } from "./input.ts";
+
+const oldHookNames = new Map([
+  ["question asked", "question-asked"],
+  ["question closed", "question-closed"],
+  ["question answered", "prompt"],
+  ["turn ended", "turn-ended"],
+  ["turn failed", "turn-failed"],
+  ["turn interrupted", "turn-interrupted"],
+]);
 
 export async function agentCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
@@ -19,34 +28,20 @@ export async function agentCommand(args: string[]): Promise<void> {
     );
     return;
   }
-  if (command === "question" && rest.length === 0) {
-    if (sub === "asked" || sub === "answered" || sub === "closed") {
-      await reportQuestion(sub);
-      return;
-    }
-  }
-  if (command === "turn" && sub === "ended" && rest.length === 0) {
-    await reportTurnEnded();
-    return;
-  }
-  if (command === "turn" && sub === "failed" && rest.length === 0) {
-    await reportTurnFailed(process.stdin.isTTY ? "" : await Bun.stdin.text());
-    return;
-  }
-  if (command === "turn" && sub === "interrupted" && rest.length === 0) {
-    await reportTurnInterrupted();
-    return;
-  }
-  if (command === "attached" && args.length === 1) return;
+  const event = command === "hook" ? sub : oldHookNames.get(`${command} ${sub}`);
+  const report = new Map([
+    ["question-asked", () => reportQuestion("asked")],
+    ["question-closed", () => reportQuestion("closed")],
+    ["prompt", () => reportQuestion("answered")],
+    ["turn-ended", reportTurnEnded],
+    [
+      "turn-failed",
+      async () => reportTurnFailed(process.stdin.isTTY ? "" : await Bun.stdin.text()),
+    ],
+    ["turn-interrupted", reportTurnInterrupted],
+  ]).get(event ?? "");
+  if (report && rest.length === 0) return report();
   usage(command);
-}
-
-export async function askCommand(args: string[]): Promise<void> {
-  const [, first, second, repository, ...more] = args;
-  if (first === "start") return startCommand(args.slice(1), true);
-  if (first !== "repo" || second !== "add" || !repository || more.length > 0) usage("ask");
-  const { askHuman } = await import("../client.ts");
-  console.log(await askHuman({ kind: "repo add", repository }));
 }
 
 export async function needsYouCommand(args: string[]): Promise<void> {

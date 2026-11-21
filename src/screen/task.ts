@@ -5,13 +5,12 @@ import { attachUntilEnded } from "../agents/sessions.ts";
 import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
+import { errorText } from "../format.ts";
 import { type Details, readDetails } from "../list/details.ts";
-import { liveNote, readLead } from "../list/live.ts";
-import { drawPane, type Live } from "../list/pane.ts";
+import { drawPane } from "../list/pane.ts";
 import { listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { attachedMark, panes, skelcrewCommand } from "./screen.ts";
 
 // What the details pane scrolls by: Page Up, as 5, or Page Down, as 6, then the wheel up, as 64,
@@ -99,37 +98,20 @@ export async function attachTask(
   return null;
 }
 
-// Runs a task's details in the screen's right pane until the pane is replaced, by the task's row
-// name in the repository named by its owner/name. It reads the task again each second and writes
-// only when what shows changed. A request of the lead's has no details, so there it shows the
-// lead's screen, read 4 times a second, as the list's pane does. Your typing stays with the
-// sidebar, which hands on only Page Up and Page Down, and those and the wheel over the pane scroll
-// the details. Each row starts this again, so its details start at their top.
-export async function runTaskDetails(
-  agents: string,
-  repository: string,
-  name: string,
-): Promise<void> {
+export async function runTaskDetails(repository: string, name: string): Promise<void> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
   const open: Open = { owner, repo };
   let row: Row | undefined;
   let details: Details | null = null;
-  let live: Live = { screen: "" };
   let lastFrame = "";
-  // How far the details are scrolled, and how many lines of them the pane last had room for.
   let scroll = 0;
   let room = 0;
 
-  // Draws the pane, filling it, only when it changed. The cursor stays hidden, as nothing here
-  // is typed into.
   const draw = () => {
     const width = process.stdout.columns || 80;
     const height = process.stdout.rows || 24;
-    // Only a request's row shows an agent's screen: the lead's, in place of details.
-    const note = row ? liveNote(row) : null;
-    const shown = row?.part !== "request" ? null : note === null ? live : { note };
-    const pane = drawPane(row, details, shown, width, height, false, scroll);
+    const pane = drawPane(row, details, null, width, height, false, scroll);
     scroll = pane.scroll;
     room = pane.room;
     const text = `\x1b[?25l\x1b[H${pane.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
@@ -138,27 +120,12 @@ export async function runTaskDetails(
     process.stdout.write(text);
   };
 
-  // Reads the task's row and details again, from the database as it is now. A task that went,
-  // such as one removed a moment ago, leaves the pane empty.
   const refresh = () => {
     row = listRows(db, open, Date.now()).find((one) => one.name === name);
     details = row?.task ? readDetails(db, open, row.task, Date.now(), row.changed) : null;
     draw();
   };
 
-  // Reads the lead's screen on a request's row, one read at a time, as a slow host must never
-  // pile reads up.
-  let reading = false;
-  const look = async () => {
-    if (reading || row?.part !== "request" || liveNote(row) !== null) return;
-    reading = true;
-    live = await readLead(db, agents, open);
-    reading = false;
-    draw();
-  };
-
-  // Page Up and Page Down scroll a page, keeping a line of the last one, and the wheel 3 lines.
-  // 1000 and 1006 ask tmux for the wheel over this pane, and a click reaches nothing here.
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
     process.stdout.write("\x1b[?1000h\x1b[?1006h");
@@ -175,8 +142,6 @@ export async function runTaskDetails(
     draw();
   });
   refresh();
-  void look();
   setInterval(refresh, 1000);
-  setInterval(() => void look(), 250);
   await new Promise(() => {});
 }

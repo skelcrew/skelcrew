@@ -3,7 +3,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { panes } from "../src/screen/screen.ts";
 import { itemSql, threadSql } from "./harness.ts";
 import {
   acted,
@@ -18,15 +17,11 @@ import {
   press,
   read,
   ready,
-  right,
-  screen,
-  screenSessions,
   seen,
   selected,
   sidebar,
   sql,
   startTest,
-  tmux,
   type,
   until,
 } from "./screen.ts";
@@ -235,54 +230,5 @@ test("f on a queued task in the task queue asks to start it now over the limit, 
   );
   type("y");
   await until(() => acted.includes("start simon/app 20 now"), "the daemon to start APP-20");
-  expect(read("lead.typed")).toBe("");
-});
-
-// A request of the lead's shows under the lead, and on its row the lead shows live on the right,
-// but your typing stays with the sidebar: y and n answer the request, and the lead gets nothing.
-test("on a request of the lead's, the lead shows read-only on the right, and y and n answer it", async () => {
-  daemon();
-  sql(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start","task":"31"}', 'Start APP-31 Export as CSV?', 1),
-  ('simon', 'app', '{"kind":"repo add","repository":"simon/site"}', 'Add the repository simon/site?', 2);`);
-  open("lead");
-  await ready("lead");
-  const lines = left();
-  const lead = lines.findIndex((line) => line.includes("lead"));
-  expect(lines[lead + 2]).toContain("● Add the repository simon/site?");
-  expect(lines[lead + 3]).toContain("● Start APP-31 Export as CSV?");
-  press("M-Down");
-  await until(() => selected().includes("Add the repository"), "the newest request");
-  await until(() => footer().includes("y yes  n no"), "the keys in the footer");
-  // The right side is the details pane, which reads the lead's screen without attaching to it.
-  const rightCommand = () =>
-    tmux(
-      screen,
-      "display",
-      "-p",
-      "-t",
-      `=${screenSessions()[0]}:.${panes.right}`,
-      "#{pane_start_command}",
-    ).out;
-  await until(() => rightCommand().includes("details"), "the details pane");
-  await until(() => right().includes("I am lead"), "the lead's screen, read-only");
-  type("n");
-  await until(() => acted.includes("answer simon/app 2 no"), "the no");
-  await until(() => footer().includes("Told the lead no."), "the daemon's answer");
-  press("M-Down");
-  await until(() => selected().includes("Start APP-31"), "the older request");
-  type("y");
-  await until(() => acted.includes("answer simon/app 1 yes"), "the yes");
-  await until(() => footer().includes("Started APP-31."), "the daemon's answer");
-  // Alt-Shift-Down from the lead goes past the requests, to the first section.
-  press("M-Up");
-  press("M-Up");
-  await until(onLead, "back on the lead");
-  press("M-S-Down");
-  await until(
-    () => !onLead() && !selected().includes("● Start") && !selected().includes("● Add"),
-    "past the requests",
-  );
-  await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
 });

@@ -14,20 +14,22 @@ import {
   type Labels,
   listSessions,
   startSession,
+  stopSession,
 } from "../agents/sessions.ts";
 import { approvedAgents, approvedRef, markApproved } from "../approved-agents.ts";
 import { agentRole, leadCanMerge, repositoryCommands, sessionHost } from "../config.ts";
 import { Repository } from "../db.ts";
 import leadRules from "../defaults/roles/lead-rules.md" with { type: "text" };
+import { errorText } from "../format.ts";
 import { quoted } from "../machine/remote.ts";
 import { cloneDir, leadPlaces, reposDir } from "../paths.ts";
 import { filesFor, type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
-import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
+import { supervisor } from "./supervisor.ts";
 
 // What Skelcrew's database keeps about a repository's lead, checked as it is read back.
 const LeadRow = z.object({
@@ -376,15 +378,65 @@ export function leadPrompted(db: Database, owner: string, repo: string): void {
 // closed, and doesn't bring the lead back. Only a lead on tmux keeps its session on a clean exit,
 // so a lead on a plugin's host is never taken for one you exited: it comes back as one that
 // crashed. Only tmux is asked, which answers at once, so a plugin's host that hangs holds up
-// nothing here.
+// nothing here. A lead being started or ended is left to that, which ends what it left behind:
+// closed meanwhile, a lead you just opened again would have its tab closed under it. So is a
+// repository you open again before its tab closes: opening it wins, and the lead's start that
+// follows ends the old session.
 export async function closeExitedLeads(db: Database, sessions: string): Promise<void> {
   for (const { owner, repo } of openedRepositories(db)) {
     const { name, host, hostId } = leadOf(db, owner, repo);
-    if (host !== "tmux") continue;
+    const agent = leadAgent(owner, repo);
     const id = hostId ?? name;
-    if (!exitedCleanly(sessions, id)) continue;
-    db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
-    await endSession(sessions, id);
-    console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
+    if (host !== "tmux" || agent.state().busy || !exitedCleanly(sessions, id)) continue;
+    const { opened } = z
+      .object({ opened: z.number().nullable() })
+      .parse(
+        db.query("SELECT opened FROM repositories WHERE owner = ? AND repo = ?").get(owner, repo),
+      );
+    await agent.end({
+      stop: async () => {
+        if (!exitedCleanly(sessions, id)) return;
+        const closed = db.run(
+          "UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ? AND tab_closed = 0 AND opened IS ?",
+          [owner, repo, opened],
+        );
+        if (closed.changes === 0) return;
+        await endSession(sessions, id);
+        console.log(
+          `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
+        );
+      },
+    });
   }
 }
+
+// Ends a repository's lead and waits for it, once you closed its tab, for closing or removing the
+// repository, which `verb` names. It takes the lead's turn, so a start asked for meanwhile, as
+// when you open the repository again, comes after it and starts the lead afresh. A tab opened
+// again before its turn came ends nothing, and this returns false. Throws when the lead's host
+// can't be reached or won't end it.
+export async function endLeadOfClosedTab(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+  verb: "close" | "remove",
+): Promise<boolean> {
+  const { owner, repo, name } = repository;
+  let ended = false;
+  await leadAgent(owner, repo).end({
+    stop: async () => {
+      const closed = db
+        .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
+        .get(owner, repo);
+      if (!closed) return;
+      const lead = await leadSession(db, sessions, owner, repo);
+      if (lead === null) throw new Error(`${name}'s lead's host went away while it was ${verb}d`);
+      await stopSession(lead.host, lead.id);
+      ended = true;
+    },
+  });
+  return ended;
+}
+
+// Returns the supervisor of a repository's lead, which starts and ends it one at a time.
+export const leadAgent = (owner: string, repo: string) => supervisor(`${owner}/${repo}`);

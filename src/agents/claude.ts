@@ -46,11 +46,11 @@ const settings = JSON.stringify(base);
 // Pressing Esc runs no hook, so Skelcrew reads that from the screen. A lead's hooks flag nothing:
 // you see a lead whenever you open its repository. The commands answer at once, and print
 // nothing, since UserPromptSubmit adds what a hook prints to the message.
-const askedHook = { type: "command", command: "sc question asked", timeout: 10 };
-const answeredHook = { ...askedHook, command: "sc question answered" };
-const closedHook = { ...askedHook, command: "sc question closed" };
-const failedHook = { ...askedHook, command: "sc turn failed" };
-const endedHook = { ...askedHook, command: "sc turn ended" };
+const askedHook = { type: "command", command: "sc hook question-asked", timeout: 10 };
+const answeredHook = { ...askedHook, command: "sc hook prompt" };
+const closedHook = { ...askedHook, command: "sc hook question-closed" };
+const failedHook = { ...askedHook, command: "sc hook turn-failed" };
+const endedHook = { ...askedHook, command: "sc hook turn-ended" };
 const agentSettings = JSON.stringify({
   ...base,
   hooks: {

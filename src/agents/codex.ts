@@ -301,9 +301,9 @@ const withSkillsOff = (after: number, args: string[]): string[] => [
 const hookToml = (command: string) =>
   `[{hooks=[{type="command",command=${tomlString(command)},timeout=10}]}]`;
 const agentHooks = [
-  ["-c", `hooks.Stop=${hookToml("sc turn ended")}`],
-  ["-c", `hooks.UserPromptSubmit=${hookToml("sc question answered")}`],
-  ["-c", `hooks.Interrupt=${hookToml("sc turn interrupted")}`],
+  ["-c", `hooks.Stop=${hookToml("sc hook turn-ended")}`],
+  ["-c", `hooks.UserPromptSubmit=${hookToml("sc hook prompt")}`],
+  ["-c", `hooks.Interrupt=${hookToml("sc hook turn-interrupted")}`],
 ].flat();
 
 // Throws when Codex doesn't offer the model, saying which it does. An unknown model only shows

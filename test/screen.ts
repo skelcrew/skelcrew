@@ -64,16 +64,17 @@ export const seen = (window = "one") =>
 const widthNow = (window = "one") =>
   Number(tmux(terminal, "display", "-p", "-t", `=${window}:`, "#{window_width}").out);
 const sidebarNow = (window = "one") => sidebarFor(widthNow(window));
-// The top row as you see it: Skelcrew above the sidebar, then the tabs above the right side.
+// The header as you see it, on the top row: Skelcrew and its version, then the tabs above the
+// right side.
 export const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
 // The row you are looking at, as the sidebar shows it: the line it starts with ▸, or a heading
-// with the grey background. Below the status line, where the open tab has the same grey, and
+// with the grey background. Below the status lines, where the open tab has the same grey, and
 // inside the sidebar's box, which starts two columns in, past the pad and the box's line. Empty
 // until the sidebar has drawn one.
 export function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
   const width = sidebarNow(window);
-  const lines = colours.split("\n").slice(1);
+  const lines = colours.split("\n").slice(2);
   const line = lines.find((text) => {
     const plain = Bun.stripANSI(text).slice(2, width).trim();
     return /^▸ /.test(plain) || (text.split("│")[1] ?? "").includes("48;5;238");
@@ -83,10 +84,10 @@ export function selected(window = "one"): string {
     .trim();
 }
 // Returns whose box is lit, which is where your typing goes: the sidebar's, the right side's, both
-// or none, from the colour of the outer line of each side, on the row under the top row. The
+// or none, from the colour of the outer line of each side, on the row under the top rows. The
 // line between the two sides is in both boxes, so it says nothing.
 export function litBox(window = "one"): string {
-  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out.split("\n")[1];
+  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out.split("\n")[2];
   const parts = (row ?? "").split("│");
   // The colours that were set last before a line, as the text before it ends.
   const lit = (before: string) => before.lastIndexOf("38;5;33") > before.lastIndexOf("\x1b[9");
@@ -352,7 +353,7 @@ export const footer = (row = 29) =>
 // Stands in for the daemon on the test's own socket: it logs each repository asked to open,
 // saying when a tab asked, which must never open a tab you closed, and answers with nothing to
 // say.
-// It also logs each thread started, agent restarted, PR merged and request of the lead's answered, in `acted`, answering a merge with
+// It also logs each thread started, agent restarted and PR merged, in `acted`, answering a merge with
 // `given.mergeAnswer`. While `given.holding`, those wait for `release`, so a test sees what the screen says
 // meanwhile.
 export const asked: string[] = [];
@@ -365,7 +366,7 @@ export const release = () => {
 export function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, id, yes, now } = z
+      const { command, from, tab, repo, task, pr, commit, by, now } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
@@ -375,19 +376,15 @@ export function daemon(): void {
           pr: z.number().default(0),
           commit: z.string().default(""),
           by: z.number().default(0),
-          id: z.number().default(0),
-          yes: z.boolean().default(false),
           now: z.boolean().default(false),
         })
         .parse(JSON.parse(data.toString()));
-      if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
-      if (command === "answer") {
-        acted.push(`answer ${repo} ${id} ${yes ? "yes" : "no"}`);
-        connection.end(
-          `${JSON.stringify({ said: yes ? "Started APP-31." : "Told the lead no." })}\n`,
-        );
+      // Answers nothing, as no daemon would, so closing a repository ends its lead itself.
+      if (command === "end lead") {
+        connection.destroy();
         return;
       }
+      if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
       if (command === "restart") {
         acted.push(`restart ${repo} ${task}`.trimEnd());
         const who = task ? `APP-${task}'s builder` : "app's lead";

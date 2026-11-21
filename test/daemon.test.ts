@@ -1,4 +1,4 @@
-// sc up and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
+// sc serve and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -95,7 +95,7 @@ function setUp(): void {
   writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
 }
 
-// Runs the daemon as sc up would, but on the test's own tmux server.
+// Runs the daemon as sc serve would, but on the test's own tmux server.
 function serve(runtime = join(home, "run")): Subprocess<"ignore", "pipe", "pipe"> {
   const script = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)});`;
@@ -316,48 +316,43 @@ test("refuses to start before the first run, and says to run sc", async () => {
   expect(hasLead()).toBe(false);
 });
 
-// Before the first run sc up stops at once, so these reach the daemon without starting one on
+// Before the first run sc serve stops at once, so these reach the daemon without starting one on
 // Skelcrew's own tmux server.
-test("sc up runs the daemon, and sc serve does too after saying sc up replaces it", () => {
+test("sc serve runs the daemon, and sc up is no command", () => {
   const env = {
     HOME: home,
     XDG_RUNTIME_DIR: join(home, "run"),
     PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
   };
-  const up = Bun.spawnSync([process.execPath, main, "up"], { env, stderr: "pipe" });
-  expect(up.exitCode).toBe(1);
-  expect(up.stderr.toString()).toBe(
-    "Skelcrew: the first run isn't done on this machine: run sc first\n",
-  );
   const serve = Bun.spawnSync([process.execPath, main, "serve"], { env, stderr: "pipe" });
   expect(serve.exitCode).toBe(1);
   expect(serve.stderr.toString()).toBe(
-    "sc serve is now sc up, and sc serve will go in a later release.\nSkelcrew: the first run isn't done on this machine: run sc first\n",
+    "Skelcrew: the first run isn't done on this machine: run sc first\n",
+  );
+  const up = Bun.spawnSync([process.execPath, main, "up"], { env, stderr: "pipe" });
+  expect(up.exitCode).toBe(1);
+  expect(up.stderr.toString()).toBe(
+    "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.\n",
   );
 });
 
-test("sc up and sc serve refuse inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
+test("sc serve refuses inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
   setUp();
-  const refused = Bun.spawnSync([process.execPath, main, "up", "--bg"], {
-    env: { HOME: home, XDG_RUNTIME_DIR: join(home, "run"), SKELCREW_SANDBOX: "1" },
-    stderr: "pipe",
-  });
-  expect(refused.stderr.toString()).toBe(
-    "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
-  );
-  const run = Bun.spawnSync([process.execPath, main, "serve"], {
-    env: {
-      HOME: home,
-      XDG_RUNTIME_DIR: join(home, "run"),
-      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-      SKELCREW_SANDBOX: "1",
-    },
-    stderr: "pipe",
-  });
-  expect(run.exitCode).toBe(1);
-  expect(run.stderr.toString()).toBe(
-    "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
-  );
+  for (const words of [["serve"], ["serve", "--bg"]]) {
+    const run = Bun.spawnSync([process.execPath, main, ...words], {
+      env: {
+        HOME: home,
+        XDG_RUNTIME_DIR: join(home, "run"),
+        PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+        SKELCREW_SANDBOX: "1",
+      },
+      stderr: "pipe",
+    });
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr.toString()).toBe(
+      "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
+    );
+  }
   expect(existsSync(join(home, "run", "skelcrew.sock"))).toBe(false);
 });
 
@@ -410,465 +405,6 @@ test("writes down the full commit and checkout it started from", async () => {
   const commit = Bun.spawnSync(["git", "-C", checkout, "rev-parse", "HEAD"]).stdout.toString();
   const file = join(home, ".local", "share", "skelcrew", "daemon-code");
   expect(readFileSync(file, "utf8")).toBe(`${commit.trim()} ${checkout}\n`);
-});
-
-// Puts a stand-in for git first on the daemon's PATH, which runs the real one, but can hold the
-// daemon partway through a yes to a new task: after the push numbered in `hold-push`, counted
-// from 1, while that file holds that number, or at the first fetch after the first push, while
-// `hold-fetch` is there. The yes's first push files the task, and as it starts the task, its
-// second takes the task from the backlog and its third, after its thread is recorded, ends that
-// claim. It leaves `held` there once it holds, and `held-<n>` once it holds after push n, and
-// lets go once the file that holds it goes or names another push. While `fail-push` is there, a
-// push reaches the remote but fails on its way back, and asking the remote after it fails too, as
-// when the remote goes out of reach.
-function holdGit(): void {
-  const real = Bun.which("git") ?? "git";
-  const holdWhile = (file: string) =>
-    `touch "$HOME/held"; while [ -e "$HOME/${file}" ]; do sleep 0.1; done`;
-  writeFileSync(
-    join(home, "bin", "git"),
-    `#!/bin/sh
-case " $* " in
-  *" push "*)
-    ${real} "$@"; code=$?
-    n=$(( $(cat "$HOME/pushes" 2>/dev/null || echo 0) + 1 )); echo $n > "$HOME/pushes"
-    if [ "$(cat "$HOME/hold-push" 2>/dev/null)" = "$n" ]; then
-      touch "$HOME/held" "$HOME/held-$n"
-      while [ "$(cat "$HOME/hold-push" 2>/dev/null)" = "$n" ]; do sleep 0.1; done
-    fi
-    [ -e "$HOME/fail-push" ] && exit 1
-    exit $code ;;
-  *" ls-remote "*) [ -e "$HOME/pushes" ] && [ -e "$HOME/fail-push" ] && exit 1 ;;
-  *" fetch "*) [ -e "$HOME/pushes" ] && [ -e "$HOME/hold-fetch" ] && { ${holdWhile("hold-fetch")}; } ;;
-esac
-exec ${real} "$@"
-`,
-    { mode: 0o755 },
-  );
-}
-
-// Says yes to a new task the lead asked for, has git hold the daemon as `hold` says, stops the
-// daemon there, as a crash or a restart would, then starts it again. Returns the request and the
-// task's threads as the stop left them, then what the daemon kept of the task once it is back.
-async function restartDuring(hold: { file: "hold-push" | "hold-fetch"; text?: string }) {
-  setUp();
-  addRepository("app");
-  holdGit();
-  serve();
-  await untilAnswers();
-  await until(() => existsSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app")));
-  onDb((db) =>
-    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
-    'Start a new task: CSV export?', 1)`),
-  );
-  writeFileSync(join(home, hold.file), hold.text ?? "");
-  void ask({ command: "answer", repo: "simon/app", id: 1, yes: true });
-  await until(() => existsSync(join(home, "held")));
-  for (const run of running.splice(0)) await stop(run);
-  const left = onDb((db) => db.query("SELECT action, answered, outcome FROM lead_requests").all());
-  const threadsLeft = onDb((db) => db.query("SELECT task FROM task_threads").all());
-  rmSync(join(home, hold.file));
-  serve();
-  await untilAnswers();
-  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
-  const threads = onDb((db) =>
-    db.query("SELECT task, short FROM task_threads WHERE title = 'CSV export'").all(),
-  );
-  const backlog = onDb((db) => db.query("SELECT task FROM backlog").all());
-  const notes = onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all());
-  return { left, threadsLeft, threads, backlog, notes };
-}
-
-// A request the lead made, that waits for your answer, waits through a restart: the daemon does
-// nothing of it until you answer.
-test("a request that waits for your answer still waits after a restart, with nothing done", async () => {
-  setUp();
-  addRepository("app");
-  serve();
-  await untilAnswers();
-  onDb((db) =>
-    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it."}',
-    'Start a new task: CSV export?', 1)`),
-  );
-  for (const run of running.splice(0)) await stop(run);
-  serve();
-  await untilAnswers();
-  await Bun.sleep(500);
-  expect(onDb((db) => db.query("SELECT id, answered, outcome FROM lead_requests").all())).toEqual([
-    { id: 1, answered: null, outcome: null },
-  ]);
-  expect(onDb((db) => db.query("SELECT task FROM task_threads").all())).toEqual([]);
-  expect(onDb((db) => db.query("SELECT task FROM backlog").all())).toEqual([]);
-});
-
-// The push that files the task went through, but the daemon stopped before it heard. Its filing's
-// note finds the task again, so the yes starts it, and files nothing more.
-test.skipIf(insideSandbox)(
-  "a stop after the push that files a yes's new task starts that task once, filing no second",
-  async () => {
-    const { left, threads, backlog, notes } = await restartDuring({ file: "hold-push", text: "1" });
-    expect(left).toEqual([
-      {
-        action: '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
-        answered: expect.any(Number),
-        outcome: null,
-      },
-    ]);
-    expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
-    expect(backlog).toEqual([]);
-    expect(notes).toEqual([
-      {
-        text: "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
-      },
-    ]);
-  },
-  60_000,
-);
-
-// The task was filed and the request names it, but the daemon stopped before it started it.
-test.skipIf(insideSandbox)(
-  "a stop after a yes's new task is filed starts the task it named, filing no second",
-  async () => {
-    const { left, threads, backlog, notes } = await restartDuring({ file: "hold-fetch" });
-    expect(left).toEqual([
-      {
-        action: '{"kind":"start","task":"t1","short":"CSV"}',
-        answered: expect.any(Number),
-        outcome: null,
-      },
-    ]);
-    expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
-    expect(backlog).toEqual([]);
-    expect(notes).toEqual([
-      {
-        text: "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
-      },
-    ]);
-  },
-  60_000,
-);
-
-// The yes's start recorded the task's thread, but the daemon stopped while it set the thread up,
-// before its builder started. The request waits for the builder, so the restart starts the
-// thread over, and its builder runs.
-test.skipIf(insideSandbox)(
-  "a stop during the setup of a yes's thread starts it over once the daemon is back",
-  async () => {
-    const { left, threadsLeft, threads, backlog, notes } = await restartDuring({
-      file: "hold-push",
-      text: "3",
-    });
-    expect(left).toEqual([
-      {
-        action: '{"kind":"start","task":"t1","short":"CSV"}',
-        answered: expect.any(Number),
-        outcome: null,
-      },
-    ]);
-    expect(threadsLeft).toEqual([{ task: "t1" }]);
-    expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
-    expect(
-      onDb((db) =>
-        db.query("SELECT status, session IS NOT NULL AS running FROM task_threads").all(),
-      ),
-    ).toEqual([{ status: "working", running: 1 }]);
-    expect(backlog).toEqual([]);
-    expect(notes).toEqual([
-      {
-        text: "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
-      },
-    ]);
-  },
-  60_000,
-);
-
-// The push that files the task reached the remote, but its answer and the lookup after it failed,
-// so Skelcrew can't tell whether the task is filed. The yes is kept, and the daemon's next start
-// finds the task filed, starts it once, and tells the lead it started.
-test.skipIf(insideSandbox)(
-  "a yes whose filing's outcome is unknown keeps its request, and starts the task after a restart",
-  async () => {
-    setUp();
-    addRepository("app");
-    holdGit();
-    serve();
-    await untilAnswers();
-    await until(() =>
-      existsSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app")),
-    );
-    onDb((db) =>
-      db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
-    'Start a new task: CSV export?', 1)`),
-    );
-    writeFileSync(join(home, "fail-push"), "");
-    expect(await ask({ command: "answer", repo: "simon/app", id: 1, yes: true })).toHaveProperty(
-      "error",
-    );
-    expect(onDb((db) => db.query("SELECT answered, outcome FROM lead_requests").all())).toEqual([
-      { answered: expect.any(Number), outcome: null },
-    ]);
-    expect(onDb((db) => db.query("SELECT task, request FROM filing_tries").all())).toEqual([
-      { task: "t1", request: 1 },
-    ]);
-    const unsure = onDb((db) =>
-      db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all(),
-    );
-    expect(unsure).toEqual([
-      {
-        text: expect.stringMatching(
-          /^The human said yes in the list to your request: Start a new task: CSV export\? Skelcrew couldn't tell whether the task was filed: .* It finishes the yes, and tells you, when it next starts\.$/s,
-        ),
-      },
-    ]);
-    for (const run of running.splice(0)) await stop(run);
-    rmSync(join(home, "fail-push"));
-    serve();
-    await untilAnswers();
-    await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
-    expect(
-      onDb((db) =>
-        db.query("SELECT task, short FROM task_threads WHERE title = 'CSV export'").all(),
-      ),
-    ).toEqual([{ task: "t1", short: "CSV" }]);
-    expect(onDb((db) => db.query("SELECT 1 FROM filing_tries").all())).toEqual([]);
-    const notes = onDb((db) =>
-      db.query("SELECT text FROM notes WHERE text LIKE '%request%' ORDER BY id").all(),
-    );
-    expect(notes).toEqual([
-      ...unsure,
-      {
-        text: "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
-      },
-    ]);
-  },
-  60_000,
-);
-
-// Two yeses to start the same task can overlap. A stop while the first sets up its thread leaves
-// both waiting. As the daemon comes back, the first starts the thread over, and the second, done
-// again after it, starts nothing more: the task keeps one thread.
-test.skipIf(insideSandbox)(
-  "two overlapping yeses for one task start it once across a restart",
-  async () => {
-    setUp();
-    addRepository("app");
-    holdGit();
-    serve();
-    await untilAnswers();
-    await until(() =>
-      existsSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app")),
-    );
-    // The first push files t1 in the backlog. Starting it, the second takes it from the backlog
-    // and the third, once its thread is recorded, ends that claim.
-    expect(
-      await ask({ command: "task add", repo: "app", title: "CSV export", body: "Add it." }),
-    ).toEqual({ task: "APP-T1", already: false });
-    onDb((db) =>
-      db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start","task":"t1"}', 'Start APP-T1 CSV export?', 1),
-  ('simon', 'app', '{"kind":"start","task":"t1","short":"CSV"}', 'Start APP-T1 CSV export?', 2)`),
-    );
-    // The first yes's start is held before its thread is recorded while the second yes comes in,
-    // then held again once the thread is recorded, and the daemon stops there.
-    writeFileSync(join(home, "hold-push"), "2");
-    void ask({ command: "answer", repo: "simon/app", id: 1, yes: true });
-    await until(() => existsSync(join(home, "held-2")));
-    void ask({ command: "answer", repo: "simon/app", id: 2, yes: true });
-    await until(
-      () =>
-        onDb((db) => db.query("SELECT 1 FROM lead_requests WHERE answered IS NOT NULL").all())
-          .length === 2,
-    );
-    writeFileSync(join(home, "hold-push"), "3");
-    await until(() => existsSync(join(home, "held-3")));
-    for (const run of running.splice(0)) await stop(run);
-    expect(onDb((db) => db.query("SELECT id, outcome FROM lead_requests").all())).toEqual([
-      { id: 1, outcome: null },
-      { id: 2, outcome: null },
-    ]);
-    rmSync(join(home, "hold-push"));
-    serve();
-    await untilAnswers();
-    await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
-    expect(onDb((db) => db.query("SELECT task FROM task_threads").all())).toEqual([{ task: "t1" }]);
-    // The second yes finds the thread at work and is heard first, as the first waits for its
-    // builder to start, so the notes are compared in the order of their words.
-    const notes = onDb((db) =>
-      db.query("SELECT text FROM notes WHERE text LIKE '%request%' ORDER BY text").all(),
-    );
-    const partway =
-      "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-T1 CSV export?";
-    expect(notes).toEqual([
-      { text: `${partway} It did it again: Gave APP-T1 the short title "CSV".` },
-      { text: `${partway} It did it again: Started APP-T1.` },
-    ]);
-  },
-  60_000,
-);
-
-// A yes whose start changed a task that had a thread, such as one brought back or given a short
-// title, keeps what it said with that change. A restart before the lead heard only tells the lead
-// that, and does nothing again: here the task stays stopped, as a second try would bring it back.
-test("a yes whose start changed its task before a stop is only reported, with what it said", async () => {
-  setUp();
-  addRepository("app");
-  serve();
-  await untilAnswers();
-  for (const run of running.splice(0)) await stop(run);
-  const said = "Started APP-T1 again: its builder is back where it was.";
-  onDb((db) =>
-    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered, outcome) VALUES
-  ('simon', 'app', '{"kind":"start","task":"t1"}', 'Start APP-T1?', 1, 1, '${said}');
-${threadSql({ task: "t1", title: "CSV export", status: "stopped" })}`),
-  );
-  serve();
-  await untilAnswers();
-  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
-  expect(
-    onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all()),
-  ).toEqual([
-    {
-      text: `Skelcrew stopped partway through the human's yes in the list to your request: Start APP-T1? It had done it already: ${said}`,
-    },
-  ]);
-  expect(onDb((db) => db.query("SELECT status FROM task_threads").all())).toEqual([
-    { status: "stopped" },
-  ]);
-});
-
-// A repository with no commits can't start a task, so a yes to a new task there files nothing,
-// as sc start doesn't, and tells you and the lead why.
-test("a yes to a new task in a repository with no commits files nothing, and says why", async () => {
-  setUp();
-  addRepository("app");
-  // The repository's remote is emptied, as a repository made on the forge and never pushed to.
-  rmSync(join(github(), "simon", "app.git"), { recursive: true, force: true });
-  git(home, "init", "-q", "--bare", join(github(), "simon", "app.git"));
-  serve();
-  await untilAnswers();
-  onDb((db) =>
-    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it."}',
-    'Start a new task: CSV export?', 1)`),
-  );
-  const answered = await ask({ command: "answer", repo: "simon/app", id: 1, yes: true });
-  expect(answered).toEqual({ error: expect.stringContaining("no commits") });
-  expect(onDb((db) => db.query("SELECT task FROM backlog").all())).toEqual([]);
-  expect(
-    Bun.spawnSync([
-      "git",
-      "-C",
-      join(github(), "simon", "app.git"),
-      "for-each-ref",
-    ]).stdout.toString(),
-  ).toBe("");
-  expect(
-    onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all()),
-  ).toEqual([
-    {
-      text: expect.stringContaining(
-        "The human said yes in the list to your request: Start a new task: CSV export? It failed: ",
-      ),
-    },
-  ]);
-});
-
-// Two requests can ask for the same new task in the same words. A stop after the second yes's
-// filing pushed, before it heard, leaves a note of that try, which is the second request's alone:
-// done again after the restart, the first yes files a task of its own, never the second's, and
-// each yes starts the task it filed.
-test.skipIf(insideSandbox)(
-  "identical new-task yeses each find only their own filing across a restart",
-  async () => {
-    setUp();
-    addRepository("app");
-    holdGit();
-    serve();
-    await untilAnswers();
-    await until(() =>
-      existsSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app")),
-    );
-    const action = '{"kind":"start new","title":"CSV export","body":"Add it."}';
-    onDb((db) =>
-      db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '${action}', 'First CSV export?', 1),
-  ('simon', 'app', '${action}', 'Second CSV export?', 2)`),
-    );
-    writeFileSync(join(home, "hold-push"), "1");
-    void ask({ command: "answer", repo: "simon/app", id: 2, yes: true });
-    await until(() => existsSync(join(home, "held-1")));
-    for (const run of running.splice(0)) await stop(run);
-    // The first yes was cut short too, before it filed anything, and is done again first.
-    onDb((db) => db.run("UPDATE lead_requests SET answered = 1 WHERE id = 1"));
-    rmSync(join(home, "hold-push"));
-    serve();
-    await untilAnswers();
-    await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
-    const tasks = onDb((db) => db.query("SELECT task FROM task_threads ORDER BY task").all());
-    expect(tasks).toEqual([{ task: "t1" }, { task: "t2" }]);
-    expect(onDb((db) => db.query("SELECT task FROM backlog").all())).toEqual([]);
-    const notes = onDb((db) =>
-      db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all(),
-    );
-    const said = (says: string, task: string) =>
-      `Skelcrew stopped partway through the human's yes in the list to your request: ${says} It did it again: Started ${task}.`;
-    expect(notes).toEqual([
-      { text: said("First CSV export?", "APP-T2") },
-      { text: said("Second CSV export?", "APP-T1") },
-    ]);
-  },
-  60_000,
-);
-
-// A daemon stopped partway through a yes does it again as it starts, and the lead hears what that
-// said. Here the yes asks for a flow that doesn't exist, so doing it again fails and says why, and
-// the task stays as it was.
-test("a yes a stop cut short is done again once the daemon is back, and the lead hears what it said", async () => {
-  setUp();
-  addRepository("app");
-  serve();
-  await untilAnswers();
-  for (const run of running.splice(0)) await stop(run);
-  onDb((db) =>
-    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
-  ('simon', 'app', '{"kind":"start","task":"t100","flow":"nowhere"}', 'Start APP-T100?', 1, 1);
-${threadSql({ task: "t100", title: "CSV export", status: "stopped" })}`),
-  );
-  serve();
-  await untilAnswers();
-  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
-  const notes = onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all());
-  expect(JSON.stringify(notes)).toContain(
-    "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-T100? It did it again: It failed: ",
-  );
-  expect(onDb((db) => db.query("SELECT task, status FROM task_threads").all())).toEqual([
-    { task: "t100", status: "stopped" },
-  ]);
-});
-
-// A no goes in one step with the lead's note, so no request is left marked for a restart to act on.
-test("your no takes the request away and tells the lead at once, leaving nothing to finish", async () => {
-  setUp();
-  addRepository("app");
-  serve();
-  await untilAnswers();
-  onDb((db) =>
-    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12?', 1)`),
-  );
-  expect(await ask({ command: "answer", repo: "simon/app", id: 1, yes: false })).toEqual({
-    said: "Told the lead no to: Start APP-12?",
-  });
-  expect(onDb((db) => db.query("SELECT 1 FROM lead_requests").all())).toEqual([]);
-  expect(onDb((db) => db.query("SELECT text FROM notes").all())).toEqual([
-    { text: "The human said no in the list to your request: Start APP-12?" },
-  ]);
-  expect(await ask({ command: "answer", repo: "simon/app", id: 1, yes: false })).toEqual({
-    error: "That request was answered already.",
-  });
 });
 
 // Asks the daemon to open a repository, as plain sc in a checkout of it does.
@@ -1061,9 +597,6 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     for (const line of claudeLines()) {
       expect(line).toContain("told: You are a lead");
       expect(line).toContain('sc task add <repo> "<title>" "<body>" --issue');
-      // The lead talks to the human, who sees issues and threads, never Skelcrew's word task. The
-      // command that files work in the backlog is named sc task add, which the lead runs.
-      expect(line.replaceAll("sc task add", "")).not.toMatch(/\btasks?\b/i);
       expect(line).toContain("You are the lead of simon/app.");
       expect(line).toContain("--model opus");
       expect(line.trimEnd()).toEndWith("agent-view-off=1");
@@ -1994,66 +1527,6 @@ exec ${real} "$@"
     await Bun.sleep(4000);
     expect(existsSync(clone)).toBe(false);
   }, 60_000);
-  // A lead's request waits in the list until you answer it, and the lead's notes say your answer.
-  // The fake lead never sits at a prompt, so its notes wait in the database to be read.
-  test("only a lead asks you in the list, only you answer, and the lead hears each answer", async () => {
-    setUp();
-    addRepository("app");
-    serve();
-    await untilAnswers();
-    await open();
-    await until(() => existsSync(leadSocket()));
-    onDb((db) => db.run(threadSql({ task: "99", title: "Busy work", status: "working" })));
-    const addSite = { command: "ask", action: { kind: "repo add", repository: "simon/site" } };
-    const startBusy = { command: "ask", repo: "app", action: { kind: "start", task: "99" } };
-    const refused = { error: "the daemon doesn't know that request" };
-    expect(await ask(addSite)).toEqual(refused);
-    expect(await askAsLead(addSite)).toEqual({
-      asked:
-        "Asked the human in the list: Add the repository simon/site? Their answer comes to you as a note.",
-    });
-    expect(await askAsLead(startBusy)).toEqual({
-      asked:
-        "Asked the human in the list: Start APP-99 Busy work? Their answer comes to you as a note.",
-    });
-    expect(await askAsLead({ ...addSite, action: { kind: "repo add", repository: "x" } })).toEqual(
-      refused,
-    );
-    const answer = (id: number, yes: boolean) =>
-      ({ command: "answer", repo: "simon/app", id, yes }) as const;
-    expect(await askAsLead(answer(1, true))).toEqual(refused);
-    const waiting = () =>
-      onDb((db) => db.query("SELECT id, says FROM lead_requests ORDER BY id").all());
-    expect(waiting()).toEqual([
-      { id: 1, says: "Add the repository simon/site?" },
-      { id: 2, says: "Start APP-99 Busy work?" },
-    ]);
-    // A yes to adding a repository adds nothing: only you can, at your terminal.
-    expect(await ask(answer(1, true))).toEqual({
-      said: "Told the lead yes. Add it with sc repo add simon/site in your terminal.",
-    });
-    expect(await ask(answer(1, false))).toEqual({ error: "That request was answered already." });
-    // A yes starts as sc start would, and a start that fails says why, to you and to the lead.
-    expect(await ask(answer(2, true))).toEqual({ error: "APP-99 has a thread already" });
-    expect(waiting()).toEqual([]);
-    expect(await askAsLead(startBusy)).toMatchObject({ asked: expect.any(String) });
-    expect(await ask(answer(3, false))).toEqual({
-      said: "Told the lead no to: Start APP-99 Busy work?",
-    });
-    // Only the notes about its requests: a lead's first start brings it a greeting too.
-    const notes = onDb((db) =>
-      db.query("SELECT text FROM notes WHERE text LIKE '%your request%' ORDER BY id").all(),
-    );
-    expect(notes).toEqual([
-      {
-        text: "The human said yes in the list to your request: Add the repository simon/site? Only they can add it, with sc repo add simon/site at their own terminal.",
-      },
-      {
-        text: "The human said yes in the list to your request: Start APP-99 Busy work? It failed: APP-99 has a thread already",
-      },
-      { text: "The human said no in the list to your request: Start APP-99 Busy work?" },
-    ]);
-  });
 });
 
 // A machine that ran sc with one lead for all its repositories, as the release before leads
@@ -2130,16 +1603,4 @@ describe.skipIf(insideSandbox)("the lead from before", () => {
     });
     await until(() => read(join(keptLead(), "typed")).includes("you are the lead of app"));
   }, 60_000);
-});
-
-// A lead started by the release before calls it with each message, until it restarts.
-test("Skelcrew attached prints nothing, for a lead from before", async () => {
-  const run = Bun.spawnSync([process.execPath, main, "attached"], {
-    env: { HOME: home, XDG_RUNTIME_DIR: join(home, "run"), PATH: process.env.PATH ?? "" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(run.stdout.toString()).toBe("");
-  expect(run.stderr.toString()).toBe("");
-  expect(run.exitCode).toBe(0);
 });

@@ -233,8 +233,8 @@ test("sc --list goes to the server with the repository you are in", async () => 
   );
 });
 
-// sc restart there restarts the server's engine, with no ssh by hand.
-test("sc restart goes to the server and restarts its engine there", async () => {
+// sc restart there restarts the server's daemon, with no ssh by hand.
+test("sc restart goes to the server and restarts its daemon there", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox", "restart"], "", checkout("simon/app"));
   expect(calls()).toBe(`${onServer(" restart")}\n`);
@@ -250,14 +250,14 @@ test("passes no repository from outside one", async () => {
 
 // Only plain sc and sc --list pass the repository you are in. A task's name already names its
 // repository.
-test("sc show passes no repository, as a task's name names its own", async () => {
+test("sc task passes no repository, as a task's name names its own", async () => {
   installed();
   const named = await skel(
-    ["--remote", "simon@workbox", "show", "app-12"],
+    ["--remote", "simon@workbox", "task", "app-12"],
     "",
     checkout("simon/app"),
   );
-  expect(named.out).toBe("Skelcrew on the server got 2 arguments\n[show]\n[app-12]\n");
+  expect(named.out).toBe("Skelcrew on the server got 2 arguments\n[task]\n[app-12]\n");
 });
 
 test("a command reaches the server exactly as typed", async () => {
@@ -273,11 +273,11 @@ test("a command reaches the server exactly as typed", async () => {
   );
 });
 
-test("up --bg runs the engine on the server, with no repository passed", async () => {
+test("serve --bg runs the daemon on the server, with no repository passed", async () => {
   installed(laptop.commit);
-  const run = await skel(["--remote", "simon@workbox", "up", "--bg"], "", checkout("simon/app"));
-  expect(run.out).toBe("Skelcrew on the server got 2 arguments\n[up]\n[--bg]\n");
-  expect(calls()).toBe(`${onServer(" up --bg")}\n`);
+  const run = await skel(["--remote", "simon@workbox", "serve", "--bg"], "", checkout("simon/app"));
+  expect(run.out).toBe("Skelcrew on the server got 2 arguments\n[serve]\n[--bg]\n");
+  expect(calls()).toBe(`${onServer(" serve --bg")}\n`);
 });
 
 test("without a terminal, --remote on a server without Skelcrew only says how to set it up", async () => {
@@ -687,12 +687,11 @@ function serverCheckout(name = "skel"): string {
   return checkout;
 }
 
-// Writes the daemon's systemd unit on the server, starting the given Skelcrew with `command`:
-// up, or serve in a unit an older Skelcrew wrote.
-function unit(skel: string, command = "up"): void {
+// Writes the daemon's systemd unit on the server, starting the given Skelcrew with sc serve.
+function unit(skel: string): void {
   const units = join(home, "server", ".config", "systemd", "user");
   mkdirSync(units, { recursive: true });
-  writeFileSync(join(units, "skelcrew.service"), `[Service]\nExecStart="${skel}" ${command}\n`);
+  writeFileSync(join(units, "skelcrew.service"), `[Service]\nExecStart="${skel}" serve\n`);
 }
 
 // Skelcrew run once from a checkout points the daemon's service at it, and a copy left in
@@ -707,15 +706,6 @@ test("the update goes by what the daemon's service runs, not by ~/.local/bin", a
   expect(run.out).toEndWith("Skelcrew on the server got 1 arguments\n[ps]\n");
   expect(calls()).not.toContain("scp");
   expect(calls()).not.toMatch(/^systemctl --user restart/m);
-});
-
-// A server whose service an older Skelcrew installed runs sc serve, and is found all the same.
-test("the update finds the checkout of a service that runs sc serve", async () => {
-  installed("0000000");
-  const checkout = serverCheckout();
-  unit(join(checkout, "bin", "sc"), "serve");
-  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
-  expect(run.out).toContain(`Skelcrew on simon@workbox runs from a checkout at ${checkout}`);
 });
 
 // systemd reads % in a unit as the start of a name it fills in, so the service doubles it.
@@ -857,10 +847,10 @@ test("Skelcrew from a checkout never says it is out of date", () => {
   expect(farSkel(null, "def5678").out).toContain("USAGE");
 });
 
-// sc update is for plugins now, so the old way of updating Skelcrew on a server reaches nothing.
+// The old way of updating Skelcrew on a server reaches nothing.
 test("Skelcrew update is gone", async () => {
   const run = await skel(["update", "--remote", "simon@workbox"]);
-  expect(run.err).toStartWith("Skelcrew: sc update without -g is for a repository's plugins");
+  expect(run.err).toStartWith("Skelcrew: plugin commands are under sc plugin now");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
 });
