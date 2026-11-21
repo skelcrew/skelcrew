@@ -9,6 +9,7 @@ import { hasSession } from "../agents/sessions.ts";
 import { agentsOnDefaultBranch, agentsWaiting, markApproved } from "../approved-agents.ts";
 import { roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
+import { errorText } from "../format.ts";
 import { cloneDir } from "../paths.ts";
 import {
   askWhatChanged,
@@ -18,7 +19,6 @@ import {
   trackerOf,
 } from "../plugins/ask.ts";
 import { capture } from "../run.ts";
-import { errorText } from "../say.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openPrs, openTasks, prOf, saveItems } from "./copy.ts";

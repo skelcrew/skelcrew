@@ -1,7 +1,7 @@
 // The arrow-key picker the first run asks its questions with, such as which coding agent agents
 // run on: ↑ and ↓ move between the choices, and Enter takes the one marked.
 import { readSync, writeSync } from "node:fs";
-import { colorful } from "../say.ts";
+import { colorful } from "../format.ts";
 
 // One choice: its name, and a dim word beside it, such as installed.
 export type Choice = { label: string; hint?: string };

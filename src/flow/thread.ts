@@ -7,6 +7,7 @@ import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { listSessions, renameSession } from "../agents/sessions.ts";
 import { nextSequence, savedJson, taskColumns } from "../db.ts";
+import { errorText } from "../format.ts";
 import { threadsDir } from "../paths.ts";
 import {
   type Host,
@@ -15,7 +16,6 @@ import {
   pluginHost,
   unknownQuestion,
 } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { threadTask } from "./copy.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";

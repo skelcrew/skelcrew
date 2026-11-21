@@ -4,8 +4,8 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { threadLimit } from "../config.ts";
+import { errorText } from "../format.ts";
 import { claimTask } from "../plugins/ask.ts";
-import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
 import { statusOnceBack } from "./builder.ts";
 import { removalEnded } from "./events.ts";

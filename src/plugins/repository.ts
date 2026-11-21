@@ -8,9 +8,9 @@ import { isMap, isScalar, isSeq, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { openDb } from "../db.ts";
 import { checkoutTop, repositories } from "../flow/repo.ts";
+import { errorText } from "../format.ts";
 import { originHere } from "../machine/origin.ts";
 import { cloneDir } from "../paths.ts";
-import { errorText } from "../say.ts";
 import {
   eachAsked,
   installPlugin,

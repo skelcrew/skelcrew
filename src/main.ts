@@ -9,9 +9,9 @@ import { repoCommand } from "./cli/repos.ts";
 import { leadCommand, screenCommand } from "./cli/screen.ts";
 import { lsCommand, psCommand, showCommand, taskCommand } from "./cli/tasks.ts";
 import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
+import { errorText } from "./format.ts";
 import { help } from "./help.ts";
 import { outdated, outOfDate, remote, serverName, unfinished } from "./machine/remote.ts";
-import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 
 const agentRefusals: Record<string, string> = {

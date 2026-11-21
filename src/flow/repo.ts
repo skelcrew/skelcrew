@@ -27,6 +27,7 @@ import {
 import { agentRole } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { builtInFlowText } from "../flows.ts";
+import { errorText, toRun } from "../format.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
@@ -43,7 +44,6 @@ import {
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
-import { errorText, toRun } from "../say.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
