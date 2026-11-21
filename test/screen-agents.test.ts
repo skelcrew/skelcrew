@@ -43,6 +43,7 @@ import {
   toFirstThread,
   toSecondThread,
   type,
+  typingToSidebar,
   until,
   wheel,
 } from "./screen.ts";
@@ -61,7 +62,7 @@ test("shows the lead, then Needs you, Up next and the stages, beside the agent",
   // next and the six stages, with only Building open.
   expect(left(1)).toBe("");
   expect(lines[1]).toContain("I am lead");
-  expect(left(2)).toMatch(/^ ▸ ○ lead\b/);
+  expect(left(2)).toMatch(/^ ▹ ○ lead\b/);
   expect(left(3)).toBe("     running");
   expect(left(4)).toBe("");
   expect(left(5)).toBe("   Needs you 0");
@@ -74,7 +75,7 @@ test("shows the lead, then Needs you, Up next and the stages, beside the agent",
   expect(left(13)).toBe("");
   expect(left(14)).toBe(" 3 Reviewing 0");
   expect(left(17)).toBe(" 6 Done      1");
-  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  expect(selected()).toMatch(/^▹ ○ lead\b/);
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
   expect(panes.sort()).toEqual(["app-12", "app-7", "lead"]);
@@ -169,9 +170,10 @@ function fakeHost(listed: string[], attach: string) {
 // Plain sc opens the screen whatever the session host. A lead on a runtime plugin's host shows on
 // the right through the host's own attach, here a script that keeps every byte typed into it and
 // ends at each one. Ctrl-\\ is herdr's key to detach, so it, and Ctrl-4 which sends the same
-// byte, must never reach the host's attach, which would leave the right side empty. An attach
-// that ends anyway is started again.
-test("a lead on a plugin's host shows on the right from the start, and never gets Ctrl-\\", async () => {
+// byte, must never reach the host's attach, which would leave the right side empty. They move
+// your typing to the sidebar, as from a lead on tmux, and Enter on the lead's row gives it back.
+// An attach that ends anyway is started again.
+test("a lead on a plugin's host shows on the right from the start, and Ctrl-\\ moves your typing to the sidebar without reaching it", async () => {
   given.extendedKeys = true;
   const { plugin } = fakeHost(
     ["fake-lead"],
@@ -180,12 +182,21 @@ test("a lead on a plugin's host shows on the right from the start, and never get
   sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
   open("lead");
   await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
+  await until(onLead, "the sidebar on the lead's row");
   expect(seen()).not.toContain("Waiting for the lead");
   const attached = () => read(join("plugin-fake", "attached")).length;
   expect(attached()).toBe(1);
-  press("C-\\");
-  press("C-4");
+  for (const key of ["C-\\", "C-4"]) {
+    press(key);
+    await until(typingToSidebar, `${key} to move your typing to the sidebar`);
+    press("Enter");
+    await until(() => !typingToSidebar(), "the lead to take your typing again");
+  }
+  // Ctrl-\\'s byte typed as text, as a terminal without extended keys sends it, never reaches
+  // the host either.
   type("\x1c");
+  await Bun.sleep(500);
+  expect(attached()).toBe(1);
   type("x");
   await until(() => attached() === 2, "the host's attach to start again");
   type("y");
@@ -302,7 +313,7 @@ test("the screen starts on the lead's row, even while a task needs you", async (
   open("lead");
   await ready("lead");
   await until(() => seen().includes("● APP-12"), "APP-12 under Needs you");
-  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  expect(selected()).toMatch(/^▹ ○ lead\b/);
 });
 
 test("updates on its own, with needs you in the sidebar", async () => {
@@ -314,7 +325,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("● APP-12");
   expect(seen()).toContain("Needs you 1");
   // Its tab says so too, as other repositories' tabs would.
-  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*│ {3}app •1$/);
+  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*▕ {3}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => !seen().includes("APP-7"), "the done thread to go");
 });
@@ -344,17 +355,21 @@ test("Ctrl-Q still leaves, though nothing shows it", async () => {
 });
 
 // Ctrl-\ only leaves an agent opened alone. Were it to reach the agents' server, it would detach
-// the agent's pane and leave it empty, so the screen takes it and does nothing.
-test("Ctrl-\\ leaves neither the screen nor the agent", async () => {
+// the agent's pane and leave it empty, so the screen takes it and moves your typing to the
+// sidebar, with the lead still showing on the right side.
+test("Ctrl-\\ leaves neither the screen nor the agent, and moves your typing to the sidebar", async () => {
   open("lead");
   await ready("lead");
   press("C-\\");
-  await Bun.sleep(300);
+  await until(typingToSidebar, "the sidebar to take your typing");
   expect(existsSync(join(home, "left-one"))).toBe(false);
   expect(seen()).toContain("I am lead");
   expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).not.toBe("");
+  expect(read("lead.typed")).toBe("");
+  press("Enter");
+  await until(() => !typingToSidebar(), "the lead to take your typing");
   type("hello\r");
-  await until(() => existsSync(join(home, "lead.typed")), "the typing");
+  await until(() => read("lead.typed") === "hello\n", "the typing");
 });
 
 // The sidebar, the footer and other terminals ask the screen's server things all the time. tmux
@@ -444,7 +459,7 @@ for (const extended of [false, true])
     // tmux before 3.5 has only the xterm form of an extended key.
     const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
     expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
-    expect(selected()).toMatch(/^▸ ○ lead\b/);
+    expect(selected()).toMatch(/^▹ ○ lead\b/);
     expect(seen()).toContain("I am lead");
   });
 
@@ -553,8 +568,8 @@ test("Ctrl-Q and switching still work while scrolled back", async () => {
   await ready("output");
   wheel(64);
   await until(() => !seen().includes("I am output"), "the scrollback");
-  press("M-Down");
-  await until(() => selected().includes("APP-12"), "the next row");
+  press("M-S-Down");
+  await until(() => selected().includes("APP-12"), "the first task");
   press("C-q");
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
@@ -758,7 +773,7 @@ test("two terminals each get their own session, and leaving one leaves the other
   open("lead", "two");
   await ready("lead", "two");
   expect(screenSessions()).toHaveLength(2);
-  press("M-Down", "two");
+  press("M-S-Down", "two");
   await until(() => selected("two").includes("APP-12"), "the second to switch", "two");
   expect(onLead("one")).toBe(true);
   press("C-q", "one");

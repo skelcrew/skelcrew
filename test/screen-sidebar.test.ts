@@ -41,7 +41,7 @@ const left = () =>
 const isOpen = (heading: string) => {
   const lines = left();
   const at = lines.findIndex((line) => line.includes(heading));
-  return at >= 0 && /^ [▸ ] \S/.test(lines[at + 1] ?? "");
+  return at >= 0 && /^ [▸▹ ] \S/.test(lines[at + 1] ?? "");
 };
 
 test("Building, Reviewing and Checks start open, and Backlog, Ready and Done start closed", async () => {

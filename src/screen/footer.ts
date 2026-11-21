@@ -9,11 +9,13 @@ import { edge, fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
 // The keys you need most, which the footer always starts with.
 const always = "⌥↑↓ move  ⌥Q quit";
 
-// Returns the footer's text under an agent: the keys you need most, then what Esc stops there,
-// with its harness's name, so you never have to guess that Esc is the agent's. An agent whose
-// harness isn't known yet, given as empty, gets only the keys you need most.
-export function agentFooter(harness: string): string {
-  return harness ? `${always}  Esc stops ${harness}` : always;
+// Returns the footer's text while your typing goes to an agent on the right side, named by
+// `name`, such as lead or APP-12: which one it is and the key back to the list, then the keys you
+// need most and what Esc stops there, with its harness's name, so you never have to guess that
+// Esc is the agent's. An agent whose harness isn't known yet, given as empty, gets no Esc.
+export function agentFooter(name: string, harness: string): string {
+  const keys = `typing to ${name} · ⌃\\ to list  ${always}`;
+  return harness ? `${keys}  Esc stops ${harness}` : keys;
 }
 
 // Returns the footer's pane as lines, from the top, for a screen `width` columns wide: a thin

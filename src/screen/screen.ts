@@ -53,11 +53,14 @@ const config = [
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
   // Mac terminal that doesn't send Option as Alt. Ctrl-\ never reaches a pane: left to reach the
-  // agents' server or a host's own client, it would detach it and leave the right side empty. On
-  // a builder you attached to on the right side, it ends that attachment instead, found by the
-  // mark in the pane's command, and the pane goes back to the task's details. Anywhere else it
-  // does nothing. Ctrl-4 does the same: a terminal sending extended keys sends it as a key of its
-  // own, which tmux would hand on to the pane as Ctrl-\'s byte.
+  // agents' server or a host's own client, it would detach it and leave the right side empty.
+  // It brings your typing back to the sidebar instead. On a builder you attached to on the right
+  // side, found by the mark in the right pane's command, it ends that attachment, and the pane
+  // goes back to the task's details with your typing in the sidebar. Anywhere else it tells the
+  // sidebar, as the byte Ctrl-\ sends, and the sidebar takes your typing. It looks at the right
+  // pane, not the one you type to, so it ends an attachment with your typing in the sidebar too.
+  // Ctrl-4 does the same: a terminal sending extended keys sends it as a key of its own, which
+  // tmux would hand on to the pane as Ctrl-\'s byte.
   // Each key that leaves ends your terminal's session rather than detaching from it. tmux 3.6
   // crashed about one time in five when a detach met another command, such as the sidebar's,
   // ending at that moment, and every terminal on the server lost its screen.
@@ -72,9 +75,27 @@ const config = [
     key,
     "if",
     "-F",
+    "-t",
+    ":.1",
     `#{m:*${attachedMark}*,#{pane_start_command}}`,
-    "run-shell 'pkill -P #{pane_pid}'",
+    "run-shell -t :.1 'pkill -P #{pane_pid}'",
+    "send-keys -t :.0 -H 1c",
   ]),
+  // Shift-Enter in the sidebar attaches full screen to the agent of the row you are on. tmux reads
+  // it from your terminal as a key of its own, by the extended keys below, but hands the sidebar
+  // only plain Enter, as the sidebar never asks for extended keys. So it is typed into the
+  // sidebar as the CSI-u sequence the sidebar knows. Anywhere else it goes on to the pane, as
+  // Claude Code takes Shift-Enter for a new line in its prompt.
+  [
+    "bind",
+    "-n",
+    "S-Enter",
+    "if",
+    "-F",
+    "#{==:#{pane_index},0}",
+    "send-keys -t :.0 -H 1b 5b 31 33 3b 32 75",
+    "send-keys S-Enter",
+  ],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
@@ -82,8 +103,9 @@ const config = [
   ["set", "-g", "assume-paste-time", "0"],
   // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-1 to
   // Alt-6, which open and close the stages, go to the sidebar, in pane 0, without moving your
-  // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as some terminals send
-  // them to move a word while you type.
+  // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as they move a word in
+  // its prompt, and so do Alt-B and Alt-F, which is how tmux reads the Esc b and Esc f a Mac
+  // terminal often sends for Option-Left and Option-Right.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
@@ -170,7 +192,10 @@ const config = [
   // for the agents' server to hand on, instead of as plain Enter, which sends the prompt. tmux
   // asks your terminal for them; Terminal.app can't, and still sends Enter. A modified key
   // still fires the bindings above, and the sidebar, which doesn't ask, gets keys as before.
+  // They reach a pane that asks as CSI-u, as on the agents' server. A tmux older than 3.5 has
+  // only its own form, and -q keeps it from refusing the whole screen over the option.
   ["set", "-s", "extended-keys", "on"],
+  ["set", "-sq", "extended-keys-format", "csi-u"],
   // The footer is a pane of its own. A screen server an older Skelcrew started, still open in
   // another terminal, drew it as tmux's border line, which would add a row under every pane.
   ["set", "-g", "pane-border-status", "off"],

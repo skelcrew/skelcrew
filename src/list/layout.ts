@@ -73,28 +73,53 @@ export const sectionNames: Record<Section, string> = {
   done: "Done",
 };
 
-// Returns the keys the bottom line offers on a row: Enter always, as attach on a row whose agent
-// it attaches to, with Ctrl-\, which comes back, when that is on tmux, or as showing every issue
-// on Backlog's `… more` row, the numbers that open and close the stages, Shift with an arrow
-// only on a queued task in Up next, which it moves in the queue, s only on a task it can start,
-// m only on a task it can merge, o on a task while the details pane shows, to show its agent's
-// whole screen or only the last lines, and Page Up and Page Down to scroll its details, and Tab and Alt-Shift with an arrow only with another
-// repository to go to. A runtime plugin's host has its own key to come back, so its rows don't
-// offer Ctrl-\. A request of the lead's offers y and n, which answer it, in place of Enter.
+// Returns the keys the bottom line offers on a row: Enter, as attach on a row whose agent it
+// attaches to, with Ctrl-\, which comes back, when that is on tmux, as showing every issue on
+// Backlog's `… more` row, or as open/close on a stage's heading, and not at all on the heading of
+// Needs you or Up next, which never close. Then the numbers that open and close the stages, Shift
+// with an arrow only on a queued task in Up next, which it moves in the queue, s only on a task it
+// can start, m only on a task it can merge, o on a task while the details pane shows, to show its
+// agent's whole screen or only the last lines, and Page Up and Page Down to scroll its details,
+// and Tab and Alt-Shift with an arrow only with another repository to go to. A runtime plugin's
+// host has its own key to come back, so its rows don't offer Ctrl-\. A request of the lead's
+// offers y and n, which answer it, in place of Enter.
 export function keysFor(row: Row | undefined, tabs: number, pane = false): string {
   const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   if (row?.part === "request")
     return ["↑↓ move", "y yes", "n no", "1-6 stages", ...tab, "q/esc quit"].join("  ");
   const back = row?.tmux ? " · ctrl+\\ back" : "";
-  const enter = row?.more ? "⏎ show all" : row && enterAttaches(row) ? `⏎ attach${back}` : "⏎ open";
-  const open = pane && row?.task ? `${enter} · o output · pgup/pgdn scroll` : enter;
+  const heading = row?.part === "heading";
+  const enter = row?.more
+    ? "⏎ show all"
+    : heading
+      ? "⏎ open/close"
+      : row && enterAttaches(row)
+        ? `⏎ attach${back}`
+        : "⏎ open";
+  const open =
+    pane && row?.task
+      ? [`${enter} · o output · pgup/pgdn scroll`]
+      : heading && alwaysOpen(row)
+        ? []
+        : [enter];
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const reorder = row?.section === "up next" && row.place !== null ? ["shift+↑↓ reorder"] : [];
-  return ["↑↓ move", open, "1-6 stages", ...reorder, ...start, ...merge, ...tab, "q/esc quit"].join(
-    "  ",
-  );
+  return [
+    "↑↓ move",
+    ...open,
+    "1-6 stages",
+    ...reorder,
+    ...start,
+    ...merge,
+    ...tab,
+    "q/esc quit",
+  ].join("  ");
 }
+
+// Returns whether a row is in Needs you or Up next, which never close, as they are where you
+// must look.
+const alwaysOpen = (row: Row) => row.section === "needs you" || row.section === "up next";
 
 // Returns whether Enter on a row attaches to its agent: the lead, or a task's builder while it is
 // at work, or once it is ready but needs you. On Backlog it starts the task, on Up next it says
@@ -215,16 +240,22 @@ const tall = (row: Row) => row.part !== "backlog" && row.part !== "done";
 const marked = (lines: string[], here: boolean, width: number) =>
   here ? lines.map((line) => shaded(line, width)) : lines;
 
-// Returns the start of a row's first line: ▸ on the row you are on, then its mark.
-const markStart = (row: Row, here: boolean) =>
-  `${here ? " ▸ " : "   "}${tinted(here, markColours[row.mark.colour], row.mark.sign)}`;
+// What starts the first line of the row you are on: ▸ while your typing goes to the list, or the
+// outline ▹ while it goes to the agent beside the screen's sidebar. Other rows start blank.
+const pointers = { lit: " ▸ ", outline: " ▹ ", none: "   " };
+type Pointer = keyof typeof pointers;
+
+// Returns the start of a row's first line: its pointer, then its mark.
+const markStart = (row: Row, pointer: Pointer) =>
+  `${pointers[pointer]}${tinted(pointer === "lit", markColours[row.mark.colour], row.mark.sign)}`;
 
 // Returns a row in Backlog or Done as one line, in columns from the left: its mark, its name,
 // its title, cut with … when it doesn't fit, then when it changed, dim. The title's column is as
 // wide as the widest title, or what is left, so the times line up. A row whose name and time
 // alone are too wide is cut to fit, without its colours, as a longer line would wrap.
-function shortLine(row: Row, here: boolean, columns: Columns, width: number): string {
-  const start = `${here ? " ▸ " : "   "}${row.mark.sign} `;
+function shortLine(row: Row, pointer: Pointer, columns: Columns, width: number): string {
+  const here = pointer === "lit";
+  const start = `${pointers[pointer]}${row.mark.sign} `;
   const name = filled(row.name, columns.name);
   const time = columns.when > 0 ? `  ${filled(row.when, columns.when)}` : "";
   const room = width - Bun.stringWidth(start) - columns.name - 2 - Bun.stringWidth(time);
@@ -235,7 +266,7 @@ function shortLine(row: Row, here: boolean, columns: Columns, width: number): st
   // the grey there.
   const shownName = here ? tinted(here, bright, name) : name;
   const shownTitle = here ? tinted(here, bright, title) : title;
-  return `${markStart(row, here)} ${shownName}  ${shownTitle}${time && tinted(here, grey, time)}`;
+  return `${markStart(row, pointer)} ${shownName}  ${shownTitle}${time && tinted(here, grey, time)}`;
 }
 
 // Returns the lead's row, or a task's in Building, Reviewing, Checks or Ready, as its two lines,
@@ -244,8 +275,9 @@ function shortLine(row: Row, here: boolean, columns: Columns, width: number): st
 // dim the step its builder is on, its PR, its CI and when it last changed, such as
 // `working · Editing rows.ts · #40 · CI passed · 14:31`, each left out where it has none. Each
 // line is cut with … to fit, and the row you are on is shaded on both its lines.
-function tallLines(row: Row, here: boolean, nameWidth: number, width: number): string[] {
-  const plainStart = `${here ? " ▸ " : "   "}${row.mark.sign} `;
+function tallLines(row: Row, pointer: Pointer, nameWidth: number, width: number): string[] {
+  const here = pointer === "lit";
+  const plainStart = `${pointers[pointer]}${row.mark.sign} `;
   const indent = " ".repeat(Bun.stringWidth(plainStart));
   const room = Math.max(width - indent.length, 0);
   // The first line: on a terminal too narrow for the mark, it is cut without its colours.
@@ -254,7 +286,7 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   const first =
     width < indent.length
       ? fitted(`${plainStart}${top}`, width)
-      : `${markStart(row, here)} ${here ? tinted(here, bright, top) : top}`;
+      : `${markStart(row, pointer)} ${here ? tinted(here, bright, top) : top}`;
   // The word keeps its colour and the rest is dim, so each is split back out of the cut line.
   const parts = [row.says, row.step, row.pr, row.checks, row.when];
   const doing = fitted(parts.filter(Boolean).join(" · "), room);
@@ -269,13 +301,14 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
 
 // Returns a request of the lead's as one line, under the lead: its yellow mark, then the request,
 // such as `Start APP-12 Fix login?`, cut with … to fit. Your answer is y or n, which the bottom
-// line says on its row.
-function requestLine(row: Row, here: boolean, width: number): string {
-  const start = `${here ? " ▸ " : "   "}${row.mark.sign} `;
+// line says on its row. `pointer` says whether it is the row you are on, lit or only outlined.
+function requestLine(row: Row, pointer: Pointer, width: number): string {
+  const here = pointer === "lit";
+  const start = `${pointers[pointer]}${row.mark.sign} `;
   const room = width - Bun.stringWidth(start);
   if (room <= 0) return fitted(start, width);
   const text = fitted(row.title, room);
-  const line = `${markStart(row, here)} ${here ? tinted(here, bright, text) : text}`;
+  const line = `${markStart(row, pointer)} ${here ? tinted(here, bright, text) : text}`;
   return here ? shaded(line, width) : line;
 }
 
@@ -389,8 +422,11 @@ function edgeLine(
 // move only when the row you are on would leave the view. A row that is the first of its section
 // brings its heading into view with it, so opening a section shows the heading over its rows. A
 // view too short for those edge lines keeps only the row you are on, or its first line when even
-// it doesn't fit. Gives the lines, each at most `width` columns, what a click on each reaches,
-// and the scroll they were drawn at, which the next draw starts from.
+// it doesn't fit. A heading among `rows` is one you can stand on: on it, its line is shaded.
+// `focused` says whether your typing goes to the list. The screen's sidebar passes false while it
+// goes to the agent beside it, and the row you are on then shows only the outline ▹, unshaded.
+// Gives the lines, each at most `width` columns, what a click on each reaches, and the scroll
+// they were drawn at, which the next draw starts from.
 export function drawRows(
   rows: Row[],
   headings: Heading[],
@@ -398,17 +434,17 @@ export function drawRows(
   top: number,
   width: number,
   height: number,
+  focused = true,
 ): { lines: string[]; targets: Target[]; top: number } {
-  // The one-line rows' columns, from those rows alone, and the names' width, from every row but
-  // the lead's requests, which show no name.
-  const short = rows.filter((row) => !tall(row) && row.part !== "request");
+  // The one-line rows' columns, from those rows alone, and the names' width, from every task's
+  // and the lead's row. Headings are drawn from `headings`, so they take no column, and the
+  // lead's requests show no name.
+  const tasks = rows.filter((row) => row.part !== "heading" && row.part !== "request");
+  const short = tasks.filter((row) => !tall(row));
   const widest = (of: (row: Row) => string, among = short) =>
     Math.max(...among.map((row) => Bun.stringWidth(of(row))), 0);
   const columns = {
-    name: widest(
-      (row) => row.name,
-      rows.filter((row) => row.part !== "request"),
-    ),
+    name: widest((row) => row.name, tasks),
     title: widest((row) => row.title),
     when: widest((row) => row.when),
   };
@@ -416,10 +452,13 @@ export function drawRows(
   const linesOf = (i: number) => {
     const row = rows[i];
     if (!row) return [];
-    if (row.part === "request") return [requestLine(row, i === here, width)];
-    if (tall(row)) return tallLines(row, i === here, columns.name, width);
-    return marked([shortLine(row, i === here, columns, width)], i === here, width);
+    const pointer: Pointer = i !== here ? "none" : focused ? "lit" : "outline";
+    if (row.part === "request") return [requestLine(row, pointer, width)];
+    if (tall(row)) return tallLines(row, pointer, columns.name, width);
+    return marked([shortLine(row, pointer, columns, width)], pointer === "lit", width);
   };
+  // The section whose heading you are on, if you are on one.
+  const onHeading = rows[here]?.part === "heading" ? rows[here]?.section : undefined;
   const countWidth = Math.max(...headings.map((heading) => String(heading.count).length), 1);
   // The lead is above the sections, and never scrolls. Its requests come right under it, at the
   // top of the sections' part, so however many wait they scroll with the sections, and the one
@@ -443,12 +482,13 @@ export function drawRows(
     ...(requests.length > 0 ? [blankLine] : []),
     ...headings.flatMap((heading) => {
       const ours = rows.flatMap((row, i) =>
-        row.section === heading.section
+        row.section === heading.section && row.part !== "heading"
           ? linesOf(i).map((text) => ({ text, row: i, target: { row: i } }))
           : [],
       );
       const after = parted && ours.length > 0 ? [blankLine] : [];
-      const text = headingLine(heading, countWidth, width);
+      const plain = headingLine(heading, countWidth, width);
+      const text = onHeading === heading.section ? shaded(plain, width) : plain;
       const line = { text, row: null, target: { section: heading.section } };
       return [line, ...ours, ...after];
     }),
@@ -463,7 +503,15 @@ export function drawRows(
     const edges = room >= 3;
     const view = edges ? room - 2 : room;
     start = Math.min(Math.max(top, 0), Math.max(body.length - view, 0));
-    const own = body.flatMap((line, at) => (line.row === here ? [at] : []));
+    // The lines of the row you are on, or of the heading you are on.
+    const isOwn = (line: BodyLine) =>
+      line.row === here ||
+      (line.row === null &&
+        onHeading !== undefined &&
+        line.target !== null &&
+        "section" in line.target &&
+        line.target.section === onHeading);
+    const own = body.flatMap((line, at) => (isOwn(line) ? [at] : []));
     const first = own[0];
     const last = own.at(-1);
     if (first !== undefined && last !== undefined) {
@@ -482,12 +530,25 @@ export function drawRows(
     if (atRowEnd && (first === undefined || start < first)) start += 1;
     // Returns a blank line of the body, which a click reaches nothing on.
     const edge = (text: string) => ({ text, row: null, target: null });
-    // The view never ends on a heading whose rows are all below it, which would look closed. It
-    // goes past the bottom edge instead, which pins it there, and a blank line takes its place.
+    // The view never ends on a heading whose rows are all below it, which would look closed. When
+    // it is the heading you are on, the view goes down until a row of it shows, so the heading
+    // stays where you see it, past a tall row's second line too. Any other heading goes past the
+    // bottom edge instead, which pins it there, and a blank line takes its place.
+    const endsOnHeading = (at: number) =>
+      body[at + view - 1]?.row === null && (body[at + view]?.row ?? null) !== null;
+    if (onHeading !== undefined && first === start + view - 1 && endsOnHeading(start)) {
+      let moved = start + 1;
+      while (
+        moved < first &&
+        body[moved]?.row !== null &&
+        body[moved - 1]?.row === body[moved]?.row
+      )
+        moved += 1;
+      if (moved <= first) start = moved;
+    }
     let end = start + view;
-    const lastShown = body[end - 1];
-    const next = body[end];
-    if (lastShown && lastShown.row === null && next && next.row !== null) end -= 1;
+    const ownAtEnd = onHeading !== undefined && first === start + view - 1;
+    if (endsOnHeading(start) && !ownAtEnd) end -= 1;
     const visible = [...body.slice(start, end), ...(end < start + view ? [edge("")] : [])];
     shown = edges
       ? [

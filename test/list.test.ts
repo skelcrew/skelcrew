@@ -8,8 +8,15 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
-import { drawList, type Frame, keysFor, paneWidth, tabAt } from "../src/list/layout.ts";
-import { cutBacklog, type Row, type Section, sectionHeadings, sections } from "../src/list/rows.ts";
+import { drawList, drawRows, type Frame, keysFor, paneWidth, tabAt } from "../src/list/layout.ts";
+import {
+  cutBacklog,
+  type Row,
+  type Section,
+  sectionHeadings,
+  sections,
+  shownRows,
+} from "../src/list/rows.ts";
 import {
   fakePlugin,
   itemSql,
@@ -1001,6 +1008,62 @@ test("an open section shows its rows, and its heading is bright while a closed o
   );
 });
 
+// Each heading is a place you can be on, so Enter there can open or close its stage. Drawn while
+// your typing goes elsewhere, as the screen's sidebar does, the row you are on is only outlined.
+test("the rows shown have every heading among them, a heading you are on is shaded, and its keys say open/close", () => {
+  const all = rows();
+  const opened = new Set<Section>(["needs you", "up next", "building"]);
+  const shown = shownRows(all, opened, false);
+  const names = shown.map((row) => (row.part === "heading" ? `# ${row.section}` : row.name));
+  expect(names).toEqual([
+    "lead",
+    "# needs you",
+    "APP-12",
+    "APP-14",
+    "# up next",
+    "APP-9",
+    "# backlog",
+    "# building",
+    "APP-7",
+    "# reviewing",
+    "# checks",
+    "# ready",
+    "# done",
+  ]);
+  const at = names.indexOf("# building");
+  const size = { width: 80, height: 26 };
+  const { lines } = drawList(shown, sectionHeadings(all, opened), at, 0, frame, size);
+  expect(lines.find((line) => Bun.stripANSI(line).startsWith(" 2 Building"))).toContain(
+    "\x1b[48;5;238m",
+  );
+  expect(lines.some((line) => line.includes("▸"))).toBe(false);
+  expect(keysFor(shown[at], 1)).toBe("↑↓ move  ⏎ open/close  1-6 stages  q/esc quit");
+  // Needs you never closes, so Enter offers nothing on its heading.
+  expect(keysFor(shown[1], 1)).toBe("↑↓ move  1-6 stages  q/esc quit");
+  const outlined = drawRows(shown, sectionHeadings(all, opened), 0, 0, 60, 20, false).lines;
+  expect(Bun.stripANSI(outlined[0] ?? "")).toStartWith(" ▹ ○ lead");
+  expect(outlined[0]).not.toContain("48;5;238");
+});
+
+// Scrolling down onto a heading can leave it on the last line before the bottom edge, with its
+// rows all below. A heading there is pinned at the edge, but not the one you are on, which must
+// stay where you see it, shaded, with a row of its section under it.
+test("the heading you are on never hides at the bottom edge, as the view goes down to its first row", () => {
+  const all = rows();
+  const opened = new Set<Section>(["needs you", "up next", "building"]);
+  const shown = shownRows(all, opened, false);
+  const at = shown.findIndex((row) => row.part === "heading" && row.section === "building");
+  // The lead's 3 lines, then 10 lines of sections between the edges, end on Building's heading.
+  const { lines } = drawRows(shown, sectionHeadings(all, opened), at, 0, 60, 15);
+  const plain = lines.map((line) => Bun.stripANSI(line).trimEnd());
+  const heading = plain.findIndex((line) => line.startsWith(" 2 Building"));
+  expect(heading).toBeGreaterThan(0);
+  expect(lines[heading]).toContain("\x1b[48;5;238m");
+  expect(plain[heading + 1]).toContain("APP-7");
+  expect(plain.at(-1)).toStartWith(" ↓");
+  expect(plain.at(-1)).not.toContain("Building");
+});
+
 // Returns SQL for the tasks of the stages 1 to 4 test: more at work, one under review and two
 // approved and waiting on CI.
 const fourStagesSql = () => `${Array.from({ length: 6 }, (_, i) =>
@@ -1426,6 +1489,23 @@ const until = (done: () => boolean, what: string) =>
 // Presses a key in the terminal, as tmux names it, or types text with `literal`.
 const press = (key: string) => tmux("send-keys", "-t", "=one:", key);
 const type = (text: string) => tmux("send-keys", "-t", "=one:", "-l", text);
+// Presses Down, or Up as `key` says, one press at a time, until you are on the row that starts
+// with `row`. The arrows stop on each heading too, so how many presses a row takes depends on the
+// sections between. Each press waits for the grey of the row or heading you are on to move to
+// another, as the next moves from there.
+async function arrowTo(row: string, key: "Down" | "Up" = "Down"): Promise<void> {
+  const at = () => {
+    const lines = tmux("capture-pane", "-p", "-e", "-t", "=one:").stdout.toString().split("\n");
+    const line = lines.findIndex((text, y) => y > 0 && text.includes("48;5;238"));
+    return `${line} ${lines[line]}`;
+  };
+  for (let presses = 0; presses < 40 && !here().startsWith(row); presses++) {
+    const before = at();
+    press(key);
+    await until(() => at() !== before, `a move ${key} towards ${row}`);
+  }
+  expect(here()).toStartWith(row);
+}
 
 // Opens the list of app in a terminal of its own, 100 columns wide unless `width` says, with the
 // agents app-7, app-12 and the lead running. app-12 prints `says` first. `bin` is a folder of
@@ -1479,8 +1559,7 @@ test("a task moves into Needs you and back as its mark comes and goes, and you s
   await open();
   expect(seen()).toContain(" Needs you 2");
   // From app-12 down past app-14 and app-9 to app-7, under Building.
-  for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7");
+  await arrowTo("▸ ○ APP-7");
   sql(
     `UPDATE threads SET needs_you = 1, needs_you_for = 'apply the split', changed = ${now} WHERE folder = 'app-7';`,
   );
@@ -1549,8 +1628,7 @@ for (const [key, name] of [
 
 test("Enter attaches to the builder, every key reaches it, and Ctrl-\\ comes back on the same row", async () => {
   await open();
-  for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  await arrowTo("▸ ○ APP-7");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   // q and m are the list's keys, but the agent has the keyboard now.
@@ -1582,10 +1660,10 @@ const sendBytes = async (bytes: string[], split: boolean) => {
 // You may have scrolled an agent back, which puts its session in tmux's copy mode, where keys
 // have a table of their own. Ctrl-\ must leave from there too, and never reach the agent. The
 // lead stands in for Claude Code and app-7 for Codex. Each has its session's name and the name
-// its row shows.
+// its row shows. APP-7 is six stops down, past Up next's row and the headings between.
 for (const [form, bytes] of Object.entries(back))
   for (const [agent, shown, arrows, mark] of [
-    ["app-7", "APP-7", ["Down", "Down", "Down"], "○"],
+    ["app-7", "APP-7", ["Down", "Down", "Down", "Down", "Down", "Down"], "○"],
     ["lead", "lead", ["Up", "Up", "Up"], "○"],
   ] as const)
     test(`Ctrl-\\ as ${form} comes back from ${agent} on its row, in pieces or scrolled back`, async () => {
@@ -1614,8 +1692,7 @@ for (const [form, bytes] of Object.entries(back))
 // now stays with the agent.
 test("Ctrl-Q no longer comes back from an agent", async () => {
   await open();
-  for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  await arrowTo("▸ ○ APP-7");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   press("C-q");
@@ -1687,9 +1764,8 @@ test("y and n answer the lead's request you are on, and Enter says to use them",
   expect(lines[lead + 4]).toMatch(/^ {3}● Add the repository simon\/site\? *$/);
   expect(lines[lead + 5]).toMatch(/^ {3}● Start APP-31 Export as CSV\? *$/);
   expect(lines[lead + 6]?.trim()).toBe("");
-  // The list starts on what needs you, right below the requests.
-  press("Up");
-  await until(() => here().startsWith("▸ ● Start APP-31"), "the request's row");
+  // The list starts on what needs you, right below the requests and Needs you's heading.
+  await arrowTo("▸ ● Start APP-31", "Up");
   expect(seen()).toContain("y yes  n no");
   press("Enter");
   await until(() => seen().includes("Press y to say yes to the lead, or n to say no."), "how");
@@ -1715,8 +1791,7 @@ test("y and n answer the lead's request you are on, and Enter says to use them",
 test("the details pane on a request of the lead's shows the lead's screen, with no details", async () => {
   leadRequests();
   await open({ width: 140 });
-  press("Up");
-  await until(() => here().startsWith("▸ ● Start APP-31"), "the request's row");
+  await arrowTo("▸ ● Start APP-31", "Up");
   await until(() => seen().includes("I am lead"), "the lead's screen in the pane");
   expect(seen()).not.toContain("issue ");
   type("x");
@@ -1729,8 +1804,7 @@ test("the details pane on a request of the lead's shows the lead's screen, with 
 test("shift+up on a queued task moves it earlier in the queue, and the line says its place", async () => {
   queueTwo();
   await open();
-  for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-20"), "APP-20's row");
+  await arrowTo("▸ ○ APP-20");
   expect(seen()).toContain("shift+↑↓ reorder");
   press("S-Up");
   await until(() => asked.includes("queue move simon/app 20 -1"), "the move");
@@ -1775,8 +1849,7 @@ test("while attached the title names the agent and the key back, and the list sh
 
 test("an agent that ends while you are attached brings you back to the list, on its row", async () => {
   await open();
-  for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  await arrowTo("▸ ○ APP-7");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   type("bye");
@@ -1789,8 +1862,7 @@ test("an agent that ends while you are attached brings you back to the list, on 
 // Keys typed fast, or over a slow link, can reach the list in one read with the Enter before them.
 test("keys that come with Enter reach the agent, not the list", async () => {
   await open();
-  for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  await arrowTo("▸ ○ APP-7");
   // q and m would leave the list or merge, were the list to read them.
   type("\rq m now\r");
   await until(() => read(join(home, "app-7.typed")) === "q m now\n", "what was typed");
@@ -1819,8 +1891,7 @@ test("an agent that ends detaches only the list's own client", async () => {
   const clients = () =>
     Bun.spawnSync(["tmux", "-L", agents, "list-clients", "-F", "#S"]).stdout.toString().trim();
   await until(() => clients() === "app-7", "the other client");
-  for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  await arrowTo("▸ ○ APP-7");
   press("Enter");
   await until(() => clients() === "app-7\napp-7", "both clients");
   type("bye");
@@ -1859,8 +1930,8 @@ test("keys the list doesn't read, and a terminal's answers, never leave it", asy
   await open();
   for (const key of ["Left", "Right", "Home", "End", "PPage", "F5", "M-x"]) press(key);
   type("\x1b[?1;2;4c\x1b[>84;0;0c\x1bP>|tmux 3.6\x1b\\");
-  press("Down");
-  press("Down");
+  // APP-9 is past APP-14 and Up next's heading.
+  for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "the row below");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
@@ -1932,6 +2003,20 @@ test("the number keys open and close the stages, which stay so in another reposi
   await until(() => seen().includes(" site •1"), "app's list again");
   expect(seen()).toContain("○ APP-31");
   expect(seen()).not.toContain("APP-7");
+});
+
+// The arrows stop on a heading, and Enter there opens or closes its stage, as a click does.
+test("Enter on a stage's heading closes it, keeping you there, and opens it on its first row", async () => {
+  await open();
+  type("1");
+  await until(() => here().startsWith("▸ ○ APP-31"), "Backlog's first row");
+  press("Up");
+  await until(() => seen().includes("⏎ open/close"), "Backlog's heading");
+  press("Enter");
+  await until(() => !seen().includes("APP-31"), "Backlog to close");
+  expect(seen()).toContain("⏎ open/close");
+  press("Enter");
+  await until(() => here().startsWith("▸ ○ APP-31"), "Backlog to open, on its first row");
 });
 
 test("a forge's refusal shows as words, its control codes never reaching your terminal", async () => {
@@ -2014,8 +2099,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
 test("Enter on a builder that isn't running says so, and attaches to nothing", async () => {
   sql(`UPDATE threads SET status = 'failed' WHERE folder = 'app-7'`);
   await open();
-  for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  await arrowTo("▸ ○ APP-7");
   press("Enter");
   await until(
     () => seen().includes("APP-7's builder isn't running: sc start APP-7 brings it back"),
@@ -2026,8 +2110,8 @@ test("Enter on a builder that isn't running says so, and attaches to nothing", a
 // A paused task is up next, with no builder running, so Enter says how to bring it back.
 test("Enter on a paused task says how to bring it back, and attaches to nothing", async () => {
   await open();
-  press("Down");
-  press("Down");
+  // Past APP-14 and Up next's heading.
+  for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   press("Enter");
   await until(
@@ -2176,8 +2260,7 @@ test("opening a stage with its key brings its heading and first rows into view",
   sql(`${more.join("\n")}
 UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
   await open();
-  for (const _ of Array.from({ length: 15 })) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-61"), "Building's last task");
+  await arrowTo("▸ ○ APP-61");
   type("5");
   await until(() => here().startsWith("▸ ○ APP-14"), "Ready's first task");
   const lines = seen()
@@ -2291,8 +2374,9 @@ test("a click on a stage's heading opens or closes it, and the wheel moves a row
   await until(() => seen().includes("APP-7"), "Building open again");
   // The wheel down, then up, as SGR reports it, with the pointer anywhere.
   await until(() => here().startsWith("▸ ○ APP-7"), "Building's first task");
+  // A row up from Building's first task is Building's heading.
   type("\x1b[<64;10;3M");
-  await until(() => here().startsWith("▸ ○ APP-31"), "a row up");
+  await until(() => seen().includes("⏎ open/close"), "a row up");
   type("\x1b[<65;10;3M");
   await until(() => here().startsWith("▸ ○ APP-7"), "a row down");
   // A click on a blank line reaches nothing.
@@ -2364,17 +2448,17 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   ]);
   // Its agent runs, so its screen shows below.
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
-  // Past app-14, under Needs you too, to app-9 under Building.
-  press("Down");
-  press("Down");
+  // Past app-14, under Needs you too, and Up next's heading, to app-9.
+  for (const _ of [1, 2, 3]) press("Down");
   await until(() => paneSeen()[0] === "Old work", "app-9's details");
   expect(liveSeen()[0]).toBe("Builder not running");
-  // The lead's row isn't a task, so the pane is empty, its edge alone showing.
-  for (const _ of [1, 2, 3]) press("Up");
+  // The lead's row isn't a task, so the pane is empty, its edge alone showing. It is five stops
+  // up, past the headings of Up next and Needs you.
+  for (const _ of [1, 2, 3, 4, 5]) press("Up");
   await until(() => here().startsWith("▸ ○ lead"), "the lead's row");
   await until(() => paneSeen().every((line) => line === ""), "an empty pane");
-  press("Down");
-  press("Down");
+  // Past Needs you's heading and APP-12.
+  for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
   await until(() => paneSeen()[0] === "Fix the export header", "app-14's details");
   expect(paneSeen()).toContain("PR    #41  https://github.com/simon/app/pull/41");
@@ -2470,8 +2554,8 @@ test("the pane shows only while the terminal is wide enough, and the keys do the
   expect(seen()).not.toContain(" │ ");
   tmux("resize-window", "-t", "=one:", "-x", String(wide));
   await until(() => paneSeen()[0] === "Rate limit the API", "the pane");
-  press("Down");
-  press("Down");
+  // Past APP-14 and Up next's heading.
+  for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   tmux("resize-window", "-t", "=one:", "-x", "100");
   await until(() => !seen().includes(" │ "), "no pane");
@@ -2637,8 +2721,8 @@ test("a tmux slow to capture an agent's screen never holds up the keys", async (
   // ends, as the test started it.
   press("Up");
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
-  press("Down");
-  press("Down");
+  // Past APP-14 and Up next's heading.
+  for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   const reads = slowReads("started");
   await slowReadsEnded(reads);
@@ -2656,14 +2740,15 @@ test("the live view reads only while the list shows with its pane", async () => 
   await open({ width: wide, bin });
   await until(() => reads() >= 4, "the live view's reads");
   // On a row with no agent running, there is nothing to read.
-  press("Down");
-  press("Down");
+  // Past APP-14 and Up next's heading.
+  for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   expect(await noReads(reads)).toBe(true);
   // While you are attached to an agent, the list isn't showing. A read that began on APP-7's row
   // just before Enter may still be noted, on a slow machine, so the list must first go a second
-  // without a read: one that went on reading never would. Then it stays without.
-  press("Down");
+  // without a read: one that went on reading never would. Then it stays without. APP-7 is past
+  // the headings of Backlog and Building.
+  for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
@@ -2741,8 +2826,8 @@ test("the list stays quick to move while the live view reads", async () => {
   const took: number[] = [];
   for (const [key, row] of [
     ["Down", "APP-14"],
-    ["Down", "APP-9"],
-    ["Up", "APP-14"],
+    ["Up", "APP-12"],
+    ["Down", "APP-14"],
     ["Up", "APP-12"],
   ] as const) {
     const start = performance.now();
@@ -2790,7 +2875,8 @@ test("a host slow to read an agent's screen never holds up the keys", async () =
   press("Up");
   press("Down");
   const start = performance.now();
-  for (const _ of [1, 2, 3]) press("Down");
+  // APP-7 is six stops on, past Up next's row and the headings between.
+  for (const _ of [1, 2, 3, 4, 5, 6]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   const reads = slowReads("started");
   expect(performance.now() - start).toBeLessThan(1000);
@@ -2857,12 +2943,13 @@ test("a slow read of the row you left never holds up the live view of the row yo
     () => liveSeen().some((line) => line.startsWith("slow screen")),
     "the slow host's screen",
   );
-  // Coming back to app-12 starts a read of 3 seconds. app-7, three rows on, is read at once.
+  // Coming back to app-12 starts a read of 3 seconds. app-7, six stops on, is read at once.
   press("Down");
   press("Up");
   await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   const start = performance.now();
-  for (const _ of [1, 2, 3]) press("Down");
+  // app-7 is six stops on, past Up next's row and the headings between.
+  for (const _ of [1, 2, 3, 4, 5, 6]) press("Down");
   await until(() => liveSeen().includes("I am app-7"), "app-7's screen");
   const reads = slowReads("started");
   expect(performance.now() - start).toBeLessThan(1000);

@@ -147,7 +147,7 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   // Then what it waits on, such as `3rd in line: 4 of 4 builders busy`, wrapped whole, as the
   // reason the queue is held, or the command that brings a paused task back, comes last.
   const stage =
-    row.part === "lead" || row.part === "request"
+    row.part === "lead" || row.part === "request" || row.part === "heading"
       ? ""
       : sectionNames[row.section === "up next" ? "up next" : row.part];
   const word = row.says ? ` · ${row.says}` : "";

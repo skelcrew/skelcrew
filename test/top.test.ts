@@ -12,7 +12,13 @@ const tab = (name: string, needYou = 0, ready = 0, colour: Tab["colour"] = "yell
   ready,
 });
 const size = { left: 30, width: 99 };
-const base: Top = { tabs: [tab("app")], open: "simon/app", where: "", versions: ["v0.1.0"] };
+const base: Top = {
+  tabs: [tab("app")],
+  open: "simon/app",
+  where: "",
+  versions: ["v0.1.0"],
+  typingRight: true,
+};
 // Returns the top row as a tmux format, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
 // Returns a line as you see it, without tmux's styles. A ## is how tmux is told to show one #.
@@ -73,16 +79,17 @@ test("a narrow sidebar shows the longest name of the version that fits", () => {
   expect(above({ versions }, { left: 38, width: 99 }).trimEnd()).toBe("  Skelcrew");
 });
 
-test("the sidebar's edge runs up through the row, and the tabs start where the right side does", () => {
+test("the sidebar's edge runs up through the row, leaning to where you type, and the tabs start where the right side does", () => {
   for (const more of [
     {},
     { where: "simon@a-very-long-server-name.example.com", versions: ["v0.4.2"] },
   ]) {
     const line = seen(top(more));
-    expect(line[size.left - 2]).toBe("│");
+    expect(line[size.left - 2]).toBe("▕");
     expect(line.indexOf("app")).toBe(size.left + 2);
   }
-  expect(top()).toContain("#[fg=colour237]│#[default]");
+  expect(top()).toContain("#[fg=colour250]▕#[default]");
+  expect(top({ typingRight: false })).toContain("#[fg=colour250]▏#[default]");
 });
 
 test("where Skelcrew runs can't run commands, restyle the row or reach your terminal", () => {

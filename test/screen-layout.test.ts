@@ -71,7 +71,7 @@ test("on a narrow terminal the sidebar narrows, so the right side keeps half of 
   await until(() => widths()[0] === "40", "the sidebar to widen with the terminal");
   expect(widths()).toEqual(["40", "59", "100"]);
   // Every line keeps its edge, at the sidebar's new width.
-  await until(() => edge(30, 100).every((columns) => columns === "│ "), "the sidebar's edge");
+  await until(() => edge(30, 100).every((columns) => columns === "▕ "), "the sidebar's edge");
 });
 
 // The columns at the sidebar's edge, on each line of a screen `height` rows high above the
@@ -89,7 +89,7 @@ const edge = (height: number, width = 120) =>
 test("the sidebar's line runs down to the footer, with a blank column before the agent", async () => {
   open("lead");
   await ready("lead");
-  expect(new Set(edge(30))).toEqual(new Set(["│ "]));
+  expect(new Set(edge(30))).toEqual(new Set(["▕ "]));
   expect(seen().split("\n")[1]?.indexOf("I am lead")).toBe(sidebar + 1);
 });
 
@@ -136,7 +136,7 @@ test("the sidebar's line stays whole however the terminal is resized", async () 
     tmux(terminal, "resize-window", "-t", "=one:", "-x", `${width}`, "-y", `${height}`);
     // Right after a resize you can see the old frame, cut to the new size.
     const whole = () =>
-      edge(height ?? 0, width).every((columns) => columns === "│ ") &&
+      edge(height ?? 0, width).every((columns) => columns === "▕ ") &&
       seen().split("○ lead").length === 2 &&
       seen().includes("⌥Q quit");
     await until(whole, "the sidebar to be whole");
@@ -152,7 +152,7 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
   }
   // Right after a resize you can see the old frame, cut to the new size.
   await until(
-    () => edge(30).every((columns) => columns === "│ ") && seen().split("○ lead").length === 2,
+    () => edge(30).every((columns) => columns === "▕ ") && seen().split("○ lead").length === 2,
     "the sidebar to be whole",
   );
   expect(onLead()).toBe(true);
@@ -204,21 +204,26 @@ test("the agent's height stays as you switch", async () => {
 // The row above the footer, as you see it.
 const aboveFooter = () => (seen().split("\n")[28] ?? "").trimEnd();
 
-test("the footer runs across the screen under a thin line, with move and quit, then what Esc stops", async () => {
+test("the footer runs across the screen under a thin line, with where you type, move and quit, then what Esc stops", async () => {
   sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
   open("lead");
   await ready("lead");
-  const lead = "  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
+  const lead = "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   expect(aboveFooter()).toBe("─".repeat(120));
   press("M-S-Down");
   await until(
-    () => footer() === "  ⌥↑↓ move  ⏎ attach · o output · pgup/pgdn scroll  1-6 stages  ⌥Q quit",
+    () =>
+      footer() ===
+      "  ↑↓ move  ⏎ attach  ⇧⏎/a full screen · o output · pgup/pgdn scroll  1-6 stages  ⌥Q quit",
     "a task's footer",
   );
   press("M-Down");
   await attachTo("app-7");
-  await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  Esc stops codex", "app-7's footer");
+  await until(
+    () => footer() === "  typing to APP-7 · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops codex",
+    "app-7's footer",
+  );
 });
 
 test("a pinned load sits at the right end of the footer", async () => {
@@ -226,7 +231,7 @@ test("a pinned load sits at the right end of the footer", async () => {
   await ready("lead");
   // The lead's harness reaches the footer a moment after the lead starts, so the load can show
   // before what Esc stops does. Wait for both, then check they sit on the row together.
-  const lead = "  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
+  const lead = "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   await until(() => (seen().split("\n")[29] ?? "").trimEnd().endsWith(fixedLoad), "the load");
   expect(footer()).toBe(lead);
@@ -243,7 +248,7 @@ test("the footer ends with the machine's own load, even with no thread working",
     "the load",
   );
   expect(seen()).not.toContain(fixedLoad);
-  expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
+  expect(footer()).toBe("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
 });
 
 test("the header and the tabs share one row, and the agent starts right under it", async () => {
@@ -252,7 +257,7 @@ test("the header and the tabs share one row, and the agent starts right under it
   await toSecondThread();
   const lines = seen().split("\n");
   // Skelcrew above the sidebar, its edge, and the tab above the agent, with nothing after it.
-  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*│ {3}app$/);
+  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*▕ {3}app$/);
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
   expect(lines[1]).toContain("I am app-7");
@@ -331,13 +336,13 @@ test("the sidebar's edge runs from the top row down to the footer, at every widt
       .split("\n")
       .slice(0, 27)
       .map((line) => line[edgeAt]);
-  await until(() => column().every((mark) => mark === "│" || mark === "┤"), "the edge");
+  await until(() => column().every((mark) => mark === "▕" || mark === "┤"), "the edge");
   for (const width of [150, 90, 120]) {
     edgeAt = Math.min(sidebar, Math.floor((width - 1) / 2)) - 1;
     tmux(terminal, "resize-window", "-t", "=one:", "-x", String(width), "-y", "30");
     // tmux stretches the sidebar for a moment before the screen's hook sets its width back.
     await until(
-      () => tabRow().length > edgeAt + 1 && column().every((mark) => mark === "│" || mark === "┤"),
+      () => tabRow().length > edgeAt + 1 && column().every((mark) => mark === "▕" || mark === "┤"),
       `the edge at ${width}`,
     );
   }
@@ -358,7 +363,10 @@ test("clicking the top row past the tabs, or turning the wheel over it, does not
 test("the footer has only the keys you need most, and a click on it does nothing", async () => {
   open("lead");
   await ready("lead");
-  await until(() => footer().startsWith("  ⌥↑↓ move  ⌥Q quit"), "the footer");
+  await until(
+    () => footer().startsWith("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit"),
+    "the footer",
+  );
   expect(seen()).not.toContain("⌃Q");
   expect(seen()).not.toContain("⌥⇧↑↓");
   expect(seen()).not.toContain("⌥←→");
@@ -367,7 +375,7 @@ test("the footer has only the keys you need most, and a click on it does nothing
   click(5, 28);
   await Bun.sleep(200);
   expect(onLead()).toBe(true);
-  expect(footer()).toStartWith("  ⌥↑↓ move  ⌥Q quit");
+  expect(footer()).toStartWith("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit");
 });
 
 // ? is text you type to an agent, so no key of the screen's may take it, and Alt-/ is none of
