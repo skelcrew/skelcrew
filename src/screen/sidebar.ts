@@ -99,8 +99,7 @@ const keyNames: Record<string, string> = {
 // without Alt. Enter says what it does on the row: to the lead on the lead's row, open/close on a
 // stage's heading, none on the heading of Needs you or Up next, which never close, attach where it
 // attaches to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter
-// or `a` attach full screen. o shows the agent's whole screen or its last lines, Page Up and Page
-// Down scroll the details, Shift with an arrow moves a queued task in Up next, and s or m show
+// or `a` attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued task in Up next, and s or m show
 // only where the row can be started, or queued, or merged. A request of the lead's offers y and
 // n, which answer it, in place of Enter.
 function sidebarFooter(row: Row): string {
@@ -110,12 +109,12 @@ function sidebarFooter(row: Row): string {
     const fixed = row.section === "needs you" || row.section === "up next";
     return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  1-6 stages  ⌥Q quit`;
   }
-  const output = row.task ? " · o output · pgup/pgdn scroll" : "";
+  const scroll = row.task ? " · pgup/pgdn scroll" : "";
   const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `↑↓ move  ${enter}${output}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
+  return `↑↓ move  ${enter}${scroll}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
@@ -215,9 +214,6 @@ export async function runSidebar(
   let running: string[] = [];
   // What is on the right: an agent's session, or a task's details, by detailsOf.
   let shown: string | null = null;
-  // Whether a task's details show its agent's whole screen, rather than its last few lines. It
-  // stays as you move, as it is how you like the right side.
-  let fullOutput = false;
   // Whether you keep your typing in the sidebar yourself, by Ctrl-\ or by any plain key there.
   // Moving then leaves it there, even onto the lead's row, so a digit or an arrow never lands in
   // an agent. Enter on the lead's row or a click on the lead gives it back. With Alt keys alone,
@@ -257,13 +253,7 @@ export async function runSidebar(
   const show = (next: string) => {
     if (next === shown) return;
     if (next.startsWith("details:"))
-      showTask(
-        agents,
-        session,
-        `${open.owner}/${open.repo}`,
-        next.slice("details:".length),
-        fullOutput,
-      );
+      showTask(agents, session, `${open.owner}/${open.repo}`, next.slice("details:".length));
     else if (
       isDetails(shown) ||
       shownSession(agents, tty) === null ||
@@ -630,12 +620,10 @@ export async function runSidebar(
       held = false;
       // The builder takes your typing as it comes, unless you kept it in the sidebar meanwhile.
       const takeTyping = () => !held;
-      void attachTask(agents, session, repository, row.name, fullOutput, takeTyping, zoom).then(
-        (failed) => {
-          if (failed !== null) refuse(row.name, failed);
-          refresh();
-        },
-      );
+      void attachTask(agents, session, repository, row.name, takeTyping, zoom).then((failed) => {
+        if (failed !== null) refuse(row.name, failed);
+        refresh();
+      });
       return;
     }
     said = openPr(db, open, row, canOpen, (text) => process.stdout.write(text));
@@ -716,13 +704,6 @@ export async function runSidebar(
     const stage = /^[1-6]$/.test(bare) ? ListStage.options[Number(bare) - 1] : undefined;
     if (stage) return toggle(stage);
     if (name === "enter" || name === "full screen") return enter(name === "full screen");
-    // o shows the agent's whole screen on the right, or only its last lines again, by starting
-    // the details again that way.
-    if (key === "o" && row?.task && isDetails(shown)) {
-      fullOutput = !fullOutput;
-      shown = null;
-      return follow();
-    }
     // Page Up and Page Down scroll the details on the right, which run in a pane of their own,
     // so they are handed on to it.
     if ((name === "page up" || name === "page down") && row?.task && isDetails(shown)) {

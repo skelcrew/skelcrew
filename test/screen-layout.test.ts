@@ -214,8 +214,7 @@ test("the footer runs across the screen under a thin line, with where you type, 
   press("M-S-Down");
   await until(
     () =>
-      footer() ===
-      "  ↑↓ move  ⏎ attach  ⇧⏎/a full screen · o output · pgup/pgdn scroll  1-6 stages  ⌥Q quit",
+      footer() === "  ↑↓ move  ⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  1-6 stages  ⌥Q quit",
     "a task's footer",
   );
   press("M-Down");
