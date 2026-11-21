@@ -450,6 +450,11 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   An agent already running can't get a new environment. Writing `CSI > 4;2 m` into its pane's
   terminal (`pane_tty`) asks for it instead: tmux reads it as the agent's own request, and
   Claude Code then reads `ESC[13;2u` as a newline.
+- **An agent on a plugin's host gets no terminal unless Skelcrew gives it one.** tmux sets
+  `TERM` in its panes, so agents there draw in colour. A host such as herdr hands the agent
+  exactly the environment Skelcrew passes. The daemon under systemd has no `TERM` or
+  `COLORTERM`, so Claude Code drew without colour there, and only there. So a plugin's host is
+  always asked for `TERM=xterm-256color` and `COLORTERM=truecolor`, never the daemon's own.
 - **The screen's tmux asks your terminal for extended keys only once it knows the terminal.**
   It sends `CSI > 4;2 m` after the terminal answers its `CSI > c` and `CSI > q` queries. A test
   pty that answers nothing never gets asked.
@@ -607,6 +612,18 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   there, and says to merge it.
 - **GitHub picks a repository on the app's install page only by its ID.** Nobody can read a
   private repository's ID before the app is on it, so there you pick it yourself.
+
+## Runtime plugins
+
+- **An older plugin fails a question it doesn't know.** herdr's plugin 0.1.4 answers `rename`
+  with Zod's `Invalid discriminator value. Expected 'start' | 'list' | …` at `ask`, listing the
+  questions it does know. `sc repo add` renamed every running builder, so it printed one such
+  error per thread, about threads you didn't ask about. A manifest says what a plugin provides,
+  not which questions it answers, so Skelcrew asks once and learns from the answer. Only that
+  answer counts: comparing a failure with the answer to a made-up question would take a write
+  that failed for a moment, in a plugin's one generic error, for a missing question, and
+  stop renames for good. What it learned is saved with the plugin's version, so a restart
+  doesn't ask again, and an update does.
 
 ## Releasing
 

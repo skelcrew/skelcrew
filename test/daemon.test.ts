@@ -1187,6 +1187,40 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(claudeLines()).toHaveLength(1);
   });
 
+  // sc repo asks for it after adding or removing a repository, and must not wait on a slow host.
+  test("answers a request to rename builders at once, while their host still holds it", async () => {
+    setUp();
+    addRepository("app");
+    serve();
+    await untilAnswers();
+    installFakeHost();
+    onDb((db) =>
+      db.run(
+        threadSql({
+          repo: "app",
+          task: "1",
+          branch: "skelcrew/x",
+          status: "working",
+          host: "fake",
+          host_id: "fake-app-1",
+        }),
+      ),
+    );
+    // The host holds every rename until the file goes.
+    const hold = join(fakeHostSettings(), "hold-rename");
+    mkdirSync(fakeHostSettings(), { recursive: true });
+    writeFileSync(hold, "1");
+    const asked = () => {
+      const file = join(fakeHostSettings(), "asked");
+      return existsSync(file) ? readFileSync(file, "utf8") : "";
+    };
+    const started = Date.now();
+    expect(await ask({ command: "rename builders" })).toEqual({});
+    expect(Date.now() - started).toBeLessThan(1000);
+    await until(() => asked().includes('"ask":"rename"'));
+    rmSync(hold);
+  });
+
   test("starts the lead on your session host, labelled as the lead", async () => {
     setUp();
     addRepository("app");
@@ -1198,6 +1232,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     const starts = fakeHostStarts();
     expect(starts).toHaveLength(1);
     expect(starts[0].labels).toEqual({ repository: "simon/app", role: "lead" });
+    // The daemon has no terminal, yet the lead draws in colour.
+    expect(starts[0].env).toMatchObject({ TERM: "xterm-256color", COLORTERM: "truecolor" });
     expect(leadHost()).toEqual({ lead_host: "fake", lead_host_id: `fake-${leadName()}` });
     expect(hasLead()).toBe(false);
     expect(claudeCalls()).toBe(`--session-id ${storedSession()}\n`);

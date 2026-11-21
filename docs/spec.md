@@ -433,7 +433,7 @@ How Skelcrew runs agents is split into five base modules. Each has a built-in de
 
 Every agent runs in a terminal session of its own: one for each repository's lead and one per builder. The rest of Skelcrew reaches a session only through this module, with plain data in and out. Its functions are `start`, `paste` (one bracketed paste), `keys`, `read` (the screen, and whether someone scrolled back), `interrupt`, `attach`, `end` (once every process it ran has exited), `list`, `rename` and `check` (whether a session exists, whether its agent runs and exited cleanly, and its last screen, so Skelcrew reconnects instead of starting an agent twice).
 
-Every session carries its repository, task and role as labels for as long as it lives, so a starting engine knows whose each session is, and a host's own apps can group and filter by them.
+Every session carries its repository, task and role as labels for as long as it lives, so a starting engine knows whose each session is, and a host's own apps can group and filter by them. A plugin's host also gets each builder's title, and `rename` when it changes. `rename` is optional and undeclared: a host that answers it doesn't know the question keeps the old name, with no error shown, and isn't asked again until another version of the plugin is installed. Any other failure goes to the engine's log, never your terminal.
 
 The built-in host is tmux, on Skelcrew's own tmux server with its own config, keeping every trap in `docs/learnings.md`. Skelcrew never runs its own terminal emulator. Leaving an agent takes one key, the same on tmux as on herdr. Only this module runs tmux for agents, and a test fails if anything else does.
 
