@@ -10,6 +10,7 @@ import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, scrolledBack } from "../agents/sessions.ts";
 import { deliver, draftReason, midTurn, type Typed, whyBusy } from "../agents/transport.ts";
+import { nextSequence } from "../db.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { leadOf, leadSession } from "./lead.ts";
@@ -29,13 +30,11 @@ import {
 // A note waiting to be typed into a lead.
 // `wrapped` marks a message Skelcrew wrapped itself, whose tags are its own.
 // `urgent` marks one that goes in at once, rather than in the next digest of routine notes.
-// `at` is when it was saved, or null for a note saved before Skelcrew kept that.
 const Note = z.object({
   id: z.number(),
   text: z.string(),
   wrapped: z.coerce.boolean(),
   urgent: z.coerce.boolean(),
-  at: z.number().nullable(),
 });
 
 // The PR's reviews and comments a message carries, for the forge to mark seen once it is typed.
@@ -667,16 +666,15 @@ export function leadTurnStarted(
     repo,
   ]);
   if (!yours) return;
-  // A window still open ends now. Every note saved until now is released from it, and from the
-  // window the lead's answer opens, so it waits only for the lead to be idle again.
-  const now = Date.now();
+  // A window still open ends now. What came before the human's message is released from it,
+  // and from the window the lead's answer opens, so it waits only for the lead to be idle again.
   const where = "WHERE owner = ? AND repo = ? AND reading_until > ?";
-  db.run(`UPDATE repositories SET reading_until = 0, reading_released = ? ${where}`, [
-    now,
-    owner,
-    repo,
-    now,
-  ]);
+  const open = db.query(`SELECT 1 FROM repositories ${where}`).get(owner, repo, Date.now());
+  if (open !== null)
+    db.run(
+      "UPDATE repositories SET reading_until = 0, reading_released = ? WHERE owner = ? AND repo = ?",
+      [nextSequence(db), owner, repo],
+    );
   typeLeadNotes(db, sessions);
 }
 
@@ -694,13 +692,17 @@ export function leadTurnEnded(
   const turn = z.object({ lead_human_turn: z.coerce.boolean() }).nullable().parse(row);
   if (!turn?.lead_human_turn) return;
   db.run(`UPDATE repositories SET lead_human_turn = 0 ${where}`, [owner, repo]);
-  // A window that ended by itself, unseen, still releases what it held.
+  // A window that ended by itself, unseen, still releases what it held, though a new one opens.
   const now = Date.now();
-  db.run(
-    `UPDATE repositories SET reading_released = MAX(reading_released, reading_until)
-      WHERE owner = ? AND repo = ? AND reading_until <= ?`,
-    [owner, repo, now],
-  );
+  const ended = db
+    .query(`SELECT 1 FROM repositories ${where} AND reading_until > 0 AND reading_until <= ?`)
+    .get(owner, repo, now);
+  if (ended !== null)
+    db.run(`UPDATE repositories SET reading_released = ? ${where}`, [
+      nextSequence(db),
+      owner,
+      repo,
+    ]);
   db.run("UPDATE repositories SET reading_until = ? WHERE owner = ? AND repo = ?", [
     now + readingFor,
     owner,
@@ -744,7 +746,7 @@ async function typeNotes(
   // they go in, and the message they make together. Routine notes left out until their digest
   // is due give `wait`, how long until it is.
   const batch = () => {
-    const sql = `SELECT id, text, wrapped, urgent, at FROM notes WHERE ${where} ORDER BY id`;
+    const sql = `SELECT id, text, wrapped, urgent FROM notes WHERE ${where} ORDER BY id`;
     const saved = z.array(Note).parse(db.query(sql).all(owner, repo));
     const rows = db
       .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
@@ -758,21 +760,22 @@ async function typeNotes(
     const time = Date.now();
     const until = last?.reading_until ?? 0;
     const reading = until > time;
-    // What a reading window held is what came before it ended, by itself or as the human wrote
-    // to the lead: the notes saved and the threads that started needing you. It goes in at
-    // once, routine notes too, whatever the window open now. Only what came strictly before the
-    // end counts: one saved in the same millisecond as the human's message may have come after
-    // it, and waiting for the next window is the safe side.
-    const releasedAt = Math.max(last?.reading_released ?? 0, reading ? 0 : until);
-    const held = (at: number | null) => releasedAt > 0 && (at ?? 0) < releasedAt;
-    const released = saved.filter((note) => held(note.at));
+    // What a reading window held is what came before it ended, as the human wrote to the lead,
+    // or by itself: the notes saved and the threads that started needing you. It goes in at
+    // once, routine notes too, whatever the window open now. Which came first is told by their
+    // places in one sequence, never by time, which can tie. A window that ended by itself and
+    // isn't settled yet releases everything waiting.
+    const cut = last?.reading_released ?? 0;
+    const ended = until > 0 && !reading;
+    const held = (place: number | null) => ended || (cut > 0 && (place ?? 0) < cut);
+    const released = saved.filter((note) => held(note.id));
     // An open window holds the rest.
     const free = reading ? released : saved;
     const notedAt = new Map(
       z
-        .array(z.object({ folder: z.string(), noting_at: z.number().nullable() }))
-        .parse(db.query("SELECT folder, noting_at FROM threads WHERE noting IS NOT NULL").all())
-        .map(({ folder, noting_at }) => [folder, noting_at]),
+        .array(z.object({ folder: z.string(), noting_seq: z.number().nullable() }))
+        .parse(db.query("SELECT folder, noting_seq FROM threads WHERE noting IS NOT NULL").all())
+        .map(({ folder, noting_seq }) => [folder, noting_seq]),
     );
     const told = reading
       ? needing.filter((thread) => held(notedAt.get(thread.folder) ?? null))
@@ -820,8 +823,15 @@ async function typeNotes(
       const timer = setTimeout(() => typeLeadNotes(db, sessions), now.wait);
       digestTimers.set(key, timer.unref());
     }
+    // A window that ended by itself is settled once nothing it held waits, so what comes later
+    // waits for its digest again.
+    const settle = () =>
+      db.run(
+        `UPDATE repositories SET reading_until = 0 WHERE ${where} AND reading_until > 0 AND reading_until <= ?`,
+        [owner, repo, Date.now()],
+      );
     // Stop when nothing is left to say, or nobody is there to hear it.
-    if (now.text === "") return;
+    if (now.text === "") return void settle();
     const on = await leadSession(db, sessions, owner, repo);
     if (on === null || !(await agentRuns(on.host, on.id))) return;
     const { host, id } = on;
@@ -860,6 +870,7 @@ async function typeNotes(
     if (typed !== "typed") continue;
     // A note's ID is never used twice, so a note saved meanwhile is never deleted as one of these.
     for (const { id } of now.notes) db.run("DELETE FROM notes WHERE id = ?", [id]);
+    settle();
     if (now.digest)
       db.run(`UPDATE repositories SET digest_at = ? WHERE ${where}`, [Date.now(), owner, repo]);
     // A thread may have stopped needing you and started again while this was typed.
@@ -974,8 +985,8 @@ function saveNote(
   wrapped: boolean,
 ): void {
   db.run(
-    "INSERT INTO notes (owner, repo, text, ended, urgent, wrapped, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [repository.owner, repository.repo, text, ended, urgent ? 1 : 0, wrapped ? 1 : 0, Date.now()],
+    "INSERT INTO notes (owner, repo, text, ended, urgent, wrapped) VALUES (?, ?, ?, ?, ?, ?)",
+    [repository.owner, repository.repo, text, ended, urgent ? 1 : 0, wrapped ? 1 : 0],
   );
   typeLeadNotes(db, sessions);
 }

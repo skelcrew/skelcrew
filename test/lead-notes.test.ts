@@ -782,9 +782,11 @@ console.log(JSON.stringify(received()));`),
   expect(typed.split("\x1b[201~")).toHaveLength(2);
 });
 
-// A note saved in the same millisecond as the human's message may have come after it, so the
-// window the answer opens holds it. The test gives the note that very time.
-test("a note from the same moment as the human's message waits for the next window", () => {
+// Which window a note belongs to goes by its place among the notes, never by time. The notes
+// either side of the human's message are saved in the same moment, most often the same
+// millisecond: the one before it goes in once the lead has answered, and the one after waits for
+// the window the answer opens.
+test("notes from the same moment as the human's message go by which came first", () => {
   const seen = JSON.parse(
     run(`
 await lead();
@@ -792,13 +794,16 @@ Bun.write(home + "/draft", "");
 await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
 leadTurnStarted(db, tmux, app, "What is left to do?");
 leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "Before.");
 leadTurnStarted(db, tmux, app, "And now?");
+messageLead(db, tmux, readThread(db, "app-12"), "After.");
 leadTurnEnded(db, tmux, app);
-messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
-db.run("UPDATE notes SET at = (SELECT reading_released FROM repositories)");
 (await import("node:fs")).rmSync(home + "/draft");
-await Bun.sleep(3000);
+await until(() => received().includes("Before."));
+await Bun.sleep(2000);
 console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
   );
-  expect(seen).toEqual({ received: "", waiting: 1 });
+  expect(seen.received).toContain("Before.");
+  expect(seen.received).not.toContain("After.");
+  expect(seen.waiting).toBe(1);
 });

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { listSessions, renameSession } from "../agents/sessions.ts";
-import { savedJson, taskColumns } from "../db.ts";
+import { nextSequence, savedJson, taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
 import {
   type Host,
@@ -459,10 +459,10 @@ export function record(
       "WHERE (owner, repo, task) = (SELECT owner, repo, task FROM threads WHERE folder = ?)",
       set.filter(([column]) => onTask(column)),
     );
-    // When the note was saved, so the lead's reading window lets in only the notes it held.
+    // The note's place among the lead's notes, so its reading window lets in only what it held.
     if (noting !== undefined)
-      db.run("UPDATE threads SET noting_at = ? WHERE folder = ?", [
-        noting === null ? null : Date.now(),
+      db.run("UPDATE threads SET noting_seq = ? WHERE folder = ?", [
+        noting === null ? null : nextSequence(db),
         folder,
       ]);
   })();
