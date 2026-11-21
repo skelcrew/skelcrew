@@ -293,9 +293,9 @@ export async function remote(host: string, args: string[]): Promise<number> {
   const from = plain || numbered ? originHere() : null;
   const machine = serverMachine(host);
   const scWords = from ? [...args, "--from", from] : args;
-  // The screen there, which plain sc and sc --list open in your terminal, gets a name picked here,
-  // so files you drop onto it can go to the agent it shows.
-  const screen = plain && process.stdin.isTTY ? `screen-${randomName()}` : null;
+  // The screen there, which plain sc opens in your terminal, gets a name picked here, so files
+  // you drop onto it can go to the agent it shows.
+  const screen = words.length === 0 && process.stdin.isTTY ? `screen-${randomName()}` : null;
   const there =
     screen === null
       ? machine.sc(scWords)

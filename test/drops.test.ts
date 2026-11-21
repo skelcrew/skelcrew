@@ -327,6 +327,23 @@ test("the question waits past a lone Esc's moment for a longer sequence still on
   expect(out.startsWith(`\x1b[<0;3;4${dropSignal}\x1b[200~${agent}/`)).toBe(true);
 });
 
+test("after an Esc whose rest comes only after the drop, everything keeps its order", async () => {
+  const shot = file("shot.png");
+  const take = filter();
+  // The terminal sent the paste between the Esc and the rest, so it is already split there. By
+  // the time the question goes in, tmux has long taken the Esc as the Esc key.
+  take(Buffer.from("\x1b"));
+  take(Buffer.from(pasted(shot)));
+  await Bun.sleep(100);
+  take(Buffer.from("[A"));
+  const out = await sentOn();
+  expect(out).toMatch(
+    new RegExp(
+      `^\\x1b${dropSignal.replaceAll("[", "\\[")}\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~\\[A$`,
+    ),
+  );
+});
+
 test("a double-quoted path with an escaped quote in its name is copied", async () => {
   const odd = file('say "hi".txt');
   filter()(Buffer.from(pasted(`"${odd.replaceAll('"', '\\"')}"`)));
