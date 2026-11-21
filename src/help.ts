@@ -17,7 +17,7 @@ const sections: [string, [string, string][]][] = [
       ["start <repo> < <file>", "The same, with the title on stdin's first line"],
       ['task add <repo> "<title>" "<body>"', "File a task in the backlog, starting nothing"],
       ["stop <thread>", "End the builder, keeping its clone and PR"],
-      ['rm <task> ["<reason>"]', "Close its PR, delete its branch and clone"],
+      ['rm <task> ["<reason>"]', "Close its PR and issue, delete its branch and clone"],
       ["attach <thread>", "Open that builder full screen. ctrl+\\ detaches on tmux"],
       ["peek <thread>", "What that builder shows now, without attaching"],
       ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
@@ -32,15 +32,6 @@ const sections: [string, [string, string][]][] = [
       ["merge --cancel <thread> | <#pr>", "Stop a merge armed with either"],
     ],
   ],
-  [
-    "ISSUES",
-    [
-      ["issue ls [<repo>]", "The same as ls"],
-      ["issue show <issue>", "The same as show"],
-      ['issue create <repo> "<title>" "<body>"', "Create an issue in the repository's tracker"],
-    ],
-  ],
-  ["PULL REQUESTS", [["pr show <number> | <task>", "The PR's task, as show shows it"]]],
   [
     "REPOSITORIES",
     [
@@ -100,6 +91,8 @@ const sections: [string, [string, string][]][] = [
       ['--short "<words>"', "A thread's short title for the sidebar, on start"],
       ["--flow <name>", "The flow a task runs, from .agents/flows/, on start"],
       ["--now", "Start a task at once, over its repository's limits.threads"],
+      ["--issue", "Open the task as an issue in the tracker too, on task add"],
+      ["--keep-issue", "Keep its issue open, to start it over, on rm"],
       ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of Skelcrew this is"],
     ],
@@ -134,7 +127,7 @@ const sections: [string, [string, string][]][] = [
 // Lines to copy, in the order a new user would run them.
 const examples = [
   "sc",
-  'sc issue create app "Fix the login redirect" "Sign-in lands on a 404."',
+  'sc task add app "Fix the login redirect" "Sign-in lands on a 404." --issue',
   "sc start APP-12",
   "sc ls",
   "sc --remote simon@workbox install",

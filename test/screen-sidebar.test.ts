@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { panes } from "../src/screen/screen.ts";
 import { itemSql, threadSql } from "./harness.ts";
 import {
   acted,
@@ -37,12 +38,12 @@ afterEach(endTest);
 const left = () =>
   seen()
     .split("\n")
-    .map((line) => line.slice(0, sidebar - 1).trimEnd());
+    .map((line) => line.slice(2, sidebar).trimEnd());
 // Returns whether a stage's heading shows with rows under it, so it is open.
 const isOpen = (heading: string) => {
   const lines = left();
   const at = lines.findIndex((line) => line.includes(heading));
-  return at >= 0 && /^ [▸▹ ] \S/.test(lines[at + 1] ?? "");
+  return at >= 0 && /^ [▸ ] \S/.test(lines[at + 1] ?? "");
 };
 
 test("Building, Reviewing and Checks start open, and Backlog, Ready and Done start closed", async () => {
@@ -218,7 +219,14 @@ test("on a request of the lead's, the lead shows read-only on the right, and y a
   await until(() => footer().includes("y yes  n no"), "the keys in the footer");
   // The right side is the details pane, which reads the lead's screen without attaching to it.
   const rightCommand = () =>
-    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:.1`, "#{pane_start_command}").out;
+    tmux(
+      screen,
+      "display",
+      "-p",
+      "-t",
+      `=${screenSessions()[0]}:.${panes.right}`,
+      "#{pane_start_command}",
+    ).out;
   await until(() => rightCommand().includes("details"), "the details pane");
   await until(() => right().includes("I am lead"), "the lead's screen, read-only");
   type("n");

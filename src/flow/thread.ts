@@ -192,7 +192,7 @@ export const Thread = z.object({
   changed: z.number().nullable(),
   // The lead's messages to the builder, oldest first, with when each was typed in. They change
   // the task after the thread started, such as a new design you agreed to, so the reviewer and
-  // sc issue show get them with the task. Only the lead's count: a builder must never change
+  // sc show get them with the task. Only the lead's count: a builder must never change
   // what it is reviewed against. A row from before Skelcrew kept them holds null, read as none.
   updates: savedJson("tasks.updates", TaskUpdate.array(), []),
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first

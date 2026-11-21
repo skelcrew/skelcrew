@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { escapeTime } from "../src/screen/drops.ts";
+import { panes } from "../src/screen/screen.ts";
 import {
   attachTo,
   daemon,
@@ -147,7 +148,7 @@ test("a file dropped while your typing goes to the sidebar presses none of its k
 // Writes `text` straight into the sidebar's input, as one read of its own.
 function intoSidebar(text: string): void {
   const hex = [...Buffer.from(text)].map((byte) => byte.toString(16).padStart(2, "0"));
-  tmux(screen, "send-keys", "-t", `=${screenSessions()[0] ?? ""}:.0`, "-H", ...hex);
+  tmux(screen, "send-keys", "-t", `=${screenSessions()[0] ?? ""}:.${panes.sidebar}`, "-H", ...hex);
 }
 
 // Opens the screen on APP-12's details, where your typing goes to the sidebar, and returns a
