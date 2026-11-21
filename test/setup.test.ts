@@ -211,7 +211,7 @@ test("installs the daemon as a systemd user service with lingering, once", async
   expect(first.code).toBe(0);
   const skelBin = join(checkout, "bin", "sc");
   const written = readFileSync(unit(), "utf8");
-  expect(written).toContain(`ExecStart="${skelBin}" up\n`);
+  expect(written).toContain(`ExecStart="${skelBin}" serve\n`);
   expect(written).toContain("Restart=on-failure");
   // systemd would otherwise end the tmux server, and every agent, with the daemon.
   expect(written).toContain("KillMode=process");
@@ -238,32 +238,32 @@ test("installs the service on a machine set up before Skelcrew had one", async (
   expect(run.out).not.toContain("Sign in to Claude");
 });
 
-test("sc up --bg installs and starts the service, then returns without attaching", async () => {
+test("sc serve --bg installs and starts the service, then returns without attaching", async () => {
   // As a first run that finished leaves a machine, with no service yet.
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
   writeFileSync(token(), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
   writeFileSync(join(home, ".local", "share", "skelcrew", "set-up"), "");
-  const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  const run = await skel("", bin, main(), home, {}, ["serve", "--bg"]);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain("running in the background");
-  expect(readFileSync(unit(), "utf8")).toContain(" up\n");
+  expect(readFileSync(unit(), "utf8")).toContain(" serve\n");
   expect(calls()).toBe(
     "systemctl --user daemon-reload\nsystemctl --user enable --now skelcrew\nloginctl enable-linger\n",
   );
 
-  // With the daemon running, a second sc up --bg changes nothing.
+  // With the daemon running, a second sc serve --bg changes nothing.
   writeFileSync(join(home, "calls"), "");
-  const again = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  const again = await skel("", bin, main(), home, {}, ["serve", "--bg"]);
   expect(again.code).toBe(0);
   expect(calls()).toBe("");
 });
 
 // A service started beside a daemon you run in a terminal would fail on its lock, again on each
 // retry, until systemd gave up on it, and then fail to start once you stopped yours.
-test("sc up --bg leaves a daemon outside the service running, and starts no service", async () => {
+test("sc serve --bg leaves a daemon outside the service running, and starts no service", async () => {
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
   writeFileSync(token(), "sk-ant-oat01-good\n");
@@ -272,7 +272,7 @@ test("sc up --bg leaves a daemon outside the service running, and starts no serv
   // The fake daemon answers, but systemd runs no service.
   writeFileSync(join(home, "started"), "");
   fake("systemctl", 'test "$2" = show && echo 0; exit 0');
-  const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  const run = await skel("", bin, main(), home, {}, ["serve", "--bg"]);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain("outside its service");
@@ -281,8 +281,8 @@ test("sc up --bg leaves a daemon outside the service running, and starts no serv
 });
 
 // The service has no terminal, so a daemon started before the first run would only fail.
-test("sc up --bg refuses before the first run, and says to run sc", async () => {
-  const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+test("sc serve --bg refuses before the first run, and says to run sc", async () => {
+  const run = await skel("", bin, main(), home, {}, ["serve", "--bg"]);
   expect(run.code).toBe(1);
   expect(run.err).toContain("run sc");
   expect(existsSync(unit())).toBe(false);
@@ -388,6 +388,19 @@ test("rewrites the service when the PATH it needs moved, without restarting anyt
   expect(calls()).toBe("systemctl --user daemon-reload\ndaemon lead\nscreen on lead\n");
 });
 
+// The service an older Skelcrew installed runs sc up, which still works until sc rewrites it.
+test("rewrites a service that runs sc up so it runs sc serve", async () => {
+  await skel("sk-ant-oat01-good\n");
+  writeFileSync(unit(), readFileSync(unit(), "utf8").replace(" serve\n", " up\n"));
+  writeFileSync(join(home, "calls"), "");
+  const run = await skel();
+  expect(run.code).toBe(0);
+  expect(readFileSync(unit(), "utf8")).toContain(
+    `ExecStart="${join(checkout, "bin", "sc")}" serve\n`,
+  );
+  expect(calls()).toBe("systemctl --user daemon-reload\ndaemon lead\nscreen on lead\n");
+});
+
 test("leaves out PATH folders that won't last, and escapes % for systemd", async () => {
   const path = `${bin}:/code/app/node_modules/.bin:${join(home, "tmp", "bunx-1")}:/opt/50%`;
   const run = await skel("sk-ant-oat01-good\n", path);
@@ -447,7 +460,7 @@ test("on a Mac, installs the daemon as a launchd agent, with no systemd", async 
   const text = readFileSync(plist(), "utf8");
   expect(text).toContain("<string>dev.skelcrew.daemon</string>");
   expect(text).toContain(
-    `<string>${join(checkout, "bin", "sc")}</string>\n    <string>up</string>`,
+    `<string>${join(checkout, "bin", "sc")}</string>\n    <string>serve</string>`,
   );
   expect(text).toContain("<key>AbandonProcessGroup</key>\n  <true/>");
   expect(text).toContain(`<string>${join(home, "Library", "Logs", "skelcrew.log")}</string>`);
@@ -511,7 +524,7 @@ esac`,
 });
 
 // launchd restarts a daemon that crashed on the definition it loaded, not on the file. So once
-// the file changes, such as from an older Skelcrew's sc serve to sc up, launchd must hold the new
+// the file changes, such as from an older Skelcrew's sc up to sc serve, launchd must hold the new
 // one, even while the daemon on this Skelcrew's code keeps answering.
 test("on a Mac, loads a changed agent file, so launchd restarts the daemon on it", async () => {
   asMac();
@@ -526,8 +539,8 @@ esac`,
   );
   await skelOnMac("sk-ant-oat01-good\n");
   const older = readFileSync(plist(), "utf8").replace(
-    "<string>up</string>",
     "<string>serve</string>",
+    "<string>up</string>",
   );
   writeFileSync(plist(), older);
   writeFileSync(join(home, "loaded.plist"), older);
@@ -536,7 +549,7 @@ esac`,
   expect(run.err).toBe("");
   const loaded = readFileSync(join(home, "loaded.plist"), "utf8");
   expect(loaded).toBe(readFileSync(plist(), "utf8"));
-  expect(loaded).toContain("<string>up</string>");
+  expect(loaded).toContain("<string>serve</string>");
   expect(loaded).toContain(`<string>${bin}:/usr/bin</string>`);
   expect(calls()).toContain(
     `launchctl bootout gui/${uid}/dev.skelcrew.daemon\nlaunchctl bootstrap gui/${uid} ${plist()}\n`,

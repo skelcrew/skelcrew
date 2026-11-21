@@ -19,11 +19,6 @@ const domain = () => `gui/${userInfo().uid}`;
 const escapeXml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-// Returns the agent's definition for the daemon. launchd starts a program with a bare PATH,
-// which misses bun, your harness and gh where they usually live, so the daemon gets yours. It is
-// started again only after a crash, since a daemon that says one is already running exits
-// cleanly. AbandonProcessGroup keeps launchd from ending what the daemon leaves running when
-// it stops, which is what keeps agents alive through a restart.
 export function plistText(skel: string, path: string, log: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -34,7 +29,7 @@ export function plistText(skel: string, path: string, log: string): string {
   <key>ProgramArguments</key>
   <array>
     <string>${escapeXml(skel)}</string>
-    <string>up</string>
+    <string>serve</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

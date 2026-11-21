@@ -362,7 +362,7 @@ test("sc restart asks you to stop an engine run in a terminal, and starts no ser
   await daemon({ pid: 2 }, {});
   const done = await restart();
   expect(done.code).toBe(1);
-  expect(done.err).toContain("sc up");
+  expect(done.err).toContain("sc serve");
   expect(done.err).toContain("Ctrl-C");
   expect(done.calls).toBe("");
 });
