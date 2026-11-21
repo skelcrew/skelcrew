@@ -172,7 +172,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     // 3's review, as the forge said it took it.
     const stale = {
       id: "1002",
-      text: "Round 2 · commit 0000000\n\nSecond problem.",
+      text: "Round 2 · commit 0000000\n\nSecond problem.\n\n<!-- skelcrew:review thread=app-12 -->",
       author: { login: "skelcrew[bot]", bot: true, you: false, push: false },
       verdict: "changes requested",
       lines: [],
