@@ -3,10 +3,10 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { agentRuns, stopSession } from "../agents/sessions.ts";
+import { errorText } from "../format.ts";
 import { cloneDir } from "../paths.ts";
 import { closePr, failedLog } from "../plugins/ask.ts";
 import { capture } from "../run.ts";
-import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
 import { baseOf, inTurn, seenRunning } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";

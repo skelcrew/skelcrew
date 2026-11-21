@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { savedJson } from "../db.ts";
-import { errorText } from "../say.ts";
+import { errorText } from "../format.ts";
 import { noteForLead, typeContinue, typeLeadNotes } from "./messages.ts";
 import { readThread, record } from "./thread.ts";
 

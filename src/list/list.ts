@@ -11,12 +11,12 @@ import { openDb } from "../db.ts";
 import { leadSession } from "../flow/lead.ts";
 import { ListStage } from "../flow/stage.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
+import { errorText } from "../format.ts";
 import { updateNotice } from "../machine/update.ts";
 import { attachOnHost, type Host } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
-import { shownVersions } from "../version.ts";
+import { versionLabels } from "../version.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
@@ -180,7 +180,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const name = tabs.find((tab) => tab.fullName === `${open.owner}/${open.repo}`)?.name ?? "";
     const notice = updateNotice(db);
     return {
-      versions: shownVersions(),
+      versions: versionLabels(),
       where,
       name,
       tabs,

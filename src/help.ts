@@ -1,6 +1,6 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
-import { colorful } from "./say.ts";
+import { colorful } from "./format.ts";
 
 // The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [

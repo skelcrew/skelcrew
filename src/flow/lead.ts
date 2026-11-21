@@ -19,11 +19,11 @@ import { approvedAgents, approvedRef, markApproved } from "../approved-agents.ts
 import { agentRole, leadCanMerge, repositoryCommands, sessionHost } from "../config.ts";
 import { Repository } from "../db.ts";
 import leadRules from "../defaults/roles/lead-rules.md" with { type: "text" };
+import { errorText } from "../format.ts";
 import { quoted } from "../machine/remote.ts";
 import { cloneDir, leadPlaces, reposDir } from "../paths.ts";
 import { filesFor, type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
-import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";

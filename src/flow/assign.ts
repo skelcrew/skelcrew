@@ -1,8 +1,8 @@
 // Assigning a thread's issue to you in its tracker as the thread starts, and taking you off
 // again when it stops, is removed, or its PR closes without merging.
 import type { Database } from "bun:sqlite";
+import { errorText } from "../format.ts";
 import { assignTask, claimTask, trackerOf } from "../plugins/ask.ts";
-import { errorText } from "../say.ts";
 import { ownTask } from "./copy.ts";
 import { readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
 
