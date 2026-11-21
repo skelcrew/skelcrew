@@ -93,9 +93,10 @@ export function requestAnswered(db: Database, id: number): void {
   db.run("DELETE FROM lead_requests WHERE id = ?", [id]);
 }
 
-// Returns the requests you said yes to that a stop of the daemon cut short, oldest first, with
-// their repository, when you answered, in milliseconds, and what the yes's start said, when it
-// changed the task already, or null. A no is never left here, as it goes in one step.
+// Returns the requests you said yes to that a stop of the daemon cut short, in the order you
+// answered them, with their repository, when you answered, in milliseconds, and what the yes's
+// start said, when it changed the task already, or null. A no is never left here, as it goes in
+// one step.
 export function answeredRequests(db: Database): (LeadRequest & {
   owner: string;
   repo: string;
@@ -104,7 +105,7 @@ export function answeredRequests(db: Database): (LeadRequest & {
 })[] {
   return db
     .query(
-      "SELECT id, owner, repo, action, says, answered, outcome FROM lead_requests WHERE answered IS NOT NULL ORDER BY id",
+      "SELECT id, owner, repo, action, says, answered, outcome FROM lead_requests WHERE answered IS NOT NULL ORDER BY answered, id",
     )
     .all()
     .flatMap((row) => {

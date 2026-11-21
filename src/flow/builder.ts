@@ -704,7 +704,13 @@ export async function endEarlierBuilder(
 // can't be reached for now, such as one restarting with the machine, is asked again every few
 // seconds for as long as the thread stays as it was: its builder may well still run there, and
 // the thread stays live meanwhile, with its round and messages waiting for it.
-export async function bringBack(db: Database, sessions: string, thread: Thread): Promise<void> {
+// Gives back null once the builder runs, or, for a host plugin that is gone, why nobody can tell
+// whether it does.
+export async function bringBack(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<string | null> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
   // A builder you stopped has no host left to look on.
@@ -727,7 +733,7 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
         );
       record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
       typeLeadNotes(db, sessions);
-      return;
+      return hostGone(thread);
     }
     // The plugin is back, such as after sc install, so the mark that asked for it goes, and any
     // mark the thread had before comes back.
@@ -744,7 +750,7 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
       try {
         // A session whose agent ended is ended too, so the new one can take its name.
         const { host, id } = await builderSession(db, sessions, thread);
-        if (await agentRuns(host, id)) return;
+        if (await agentRuns(host, id)) return null;
         if (await hasSession(host, id)) await endSession(host, id);
         break;
       } catch (error) {
@@ -762,6 +768,7 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
     }
   }
   await startBuilder(db, sessions, thread);
+  return null;
 }
 
 // How long bringBack waits before asking a plugin's host again, in milliseconds.

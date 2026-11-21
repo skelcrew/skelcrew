@@ -20,6 +20,7 @@ import {
   serve,
   setUp,
   skel,
+  socket,
   startApp12,
   tearDown,
   until,
@@ -61,6 +62,44 @@ function hasIssue12(): boolean {
   const row = db.query("SELECT 1 FROM items WHERE kind = 'task' AND id = '12'").get();
   db.close();
   return row !== null;
+}
+
+// The start of what the lead hears of a yes to its request for APP-12 that a stop cut short.
+const partway =
+  "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-12 Add export?";
+
+// Waits until the lead has been typed each of the lines.
+async function untilTold(...lines: string[]): Promise<void> {
+  await until(() => lines.every((line) => read(join(lead(), "typed")).includes(line)), 30_000);
+}
+
+// Starts APP-12 with sc start, then stops the daemon as a crash would, leaving its builder
+// running. It saves a yes to a request for each of the starts, answered just before the thread
+// started, in that order, as overlapping yeses for one task are. From here on each start of a
+// builder is counted, in the builder's own folder, which its sandbox can write.
+async function stopAfterStart(starts: object[]): Promise<void> {
+  addApp();
+  await startApp12();
+  for (const run of running.splice(0)) {
+    run.kill();
+    await run.exited;
+  }
+  const bin = join(home, "bin");
+  renameSync(join(bin, "claude"), join(bin, "claude-fake"));
+  writeFileSync(
+    join(bin, "claude"),
+    `#!/bin/sh\necho start >> "$CLAUDE_CONFIG_DIR/starts"\nexec ${join(bin, "claude-fake")} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const started = Number(threadOf("12")?.started);
+  const db = new Database(join(data(), "skelcrew.db"));
+  for (const [at, action] of starts.entries())
+    db.run(
+      `INSERT INTO lead_requests (owner, repo, action, says, made, answered)
+        VALUES ('simon', 'app', ?, 'Start APP-12 Add export?', 1, ?)`,
+      [JSON.stringify({ kind: "start", ...action }), started - starts.length + at],
+    );
+  db.close();
 }
 
 // Starts the daemon with app, and opens it, so its lead runs, once a poll has read the tracker.
@@ -239,47 +278,46 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     expect(read(join(lead(), "typed"))).not.toContain("It had done it already");
   }, 60_000);
 
-  // A stop after your yes's start saved the thread's session, and maybe started its builder, but
-  // before the lead heard. The task has a thread started since your answer, so the yes counts as
-  // done: the daemon brings the builder back once, as for any live task, and tells the lead it
-  // started, starting nothing again.
-  test("a yes whose thread started before a stop counts as started once the daemon is back", async () => {
-    addApp();
-    await startApp12();
-    for (const run of running.splice(0)) {
-      run.kill();
-      await run.exited;
-    }
-    const bin = join(home, "bin");
-    renameSync(join(bin, "claude"), join(bin, "claude-fake"));
-    writeFileSync(
-      join(bin, "claude"),
-      `#!/bin/sh\necho start >> "$CLAUDE_CONFIG_DIR/starts"\nexec ${join(bin, "claude-fake")} "$@"\n`,
-      { mode: 0o755 },
+  // A stop after your yes's start saved the thread's session, while its builder ran, before the
+  // lead heard. A second yes, answered before that thread started, asked for a short title. The
+  // first counts as started: the builder is left running and nothing starts again. The second is
+  // done again, so its short title still goes on the thread.
+  test("overlapping yeses whose thread runs before a stop count as started, keeping the second's short title", async () => {
+    await stopAfterStart([{ task: "12" }, { task: "12", short: "Export" }]);
+    serve();
+    await untilTold(
+      `${partway} It had done it already: Started APP-12.`,
+      `${partway} It did it again: Gave APP-12 the short title "Export".`,
     );
-    // Your answer came just before the thread it started.
-    const started = Number(threadOf("12")?.started);
+    // Long enough for a second start, had a yes been done again as a start.
+    await Bun.sleep(3000);
+    expect(read(join(builder(), "starts"))).toBe("");
+    expect(threadOf("12")).toMatchObject({ status: "working", short: "Export" });
+  }, 60_000);
+
+  // A stop after your yes's start saved the thread's session, but before its builder ran. The yes
+  // counts as started: the daemon starts the builder once, as it brings back every live task.
+  test("a yes whose thread's session was saved but whose builder never ran starts it once after a restart", async () => {
+    await stopAfterStart([{ task: "12" }]);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"], { stderr: "pipe" });
+    serve();
+    await untilTold(`${partway} It had done it already: Started APP-12.`);
+    await Bun.sleep(3000);
+    expect(read(join(builder(), "starts"))).toBe("start\n");
+  }, 60_000);
+
+  // The thread's builder ran on a session host plugin that is gone after the restart, so nobody
+  // can tell whether it still runs there. The lead hears that, not that it started.
+  test("a yes whose builder's session host is gone after a restart tells the lead it can't tell", async () => {
+    await stopAfterStart([{ task: "12" }]);
     const db = new Database(join(data(), "skelcrew.db"));
-    db.run(
-      `INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
-      ('simon', 'app', '{"kind":"start","task":"12","short":"Export"}', 'Start APP-12 Add export?', 1, ?)`,
-      [started - 1],
-    );
+    db.run("UPDATE threads SET host = 'gone' WHERE folder = 'app-12'");
     db.close();
     serve();
-    await until(
-      () =>
-        read(join(lead(), "typed")).includes(
-          "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-12 Add export? It had done it already: Started APP-12.",
-        ),
-      30_000,
+    await untilTold(
+      `${partway} Skelcrew can't tell whether its builder runs, as its builder's session host gone isn't installed any more.`,
     );
-    // Long enough for a second start, had the yes been done again.
-    await Bun.sleep(3000);
-    expect(read(join(builder(), "starts")).split("\n").filter(Boolean).length).toBeLessThanOrEqual(
-      1,
-    );
-    expect(threadOf("12")).toMatchObject({ status: "working" });
+    expect(read(join(lead(), "typed"))).not.toContain("It had done it already");
   }, 60_000);
 
   test("a yes to a new task starts it with its title, description, short title and flow", async () => {

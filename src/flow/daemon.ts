@@ -422,7 +422,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       return null;
     } catch (error) {
       failThread(db, sessions, thread, error);
-      return errorText(error);
+      return `It failed: ${errorText(error)}`;
     }
   };
   // Switches a thread at work, or a stopped one about to come back, to another flow, and gives it a short title too when one comes
@@ -467,14 +467,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const comeBack = async (thread: Thread): Promise<string | null> => {
     try {
       await listenFor(thread);
-      await bringBack(db, sessions, thread);
+      const gone = await bringBack(db, sessions, thread);
       resumeRound(db, sessions, thread.folder);
-      return null;
+      return gone === null ? null : cantTell(gone);
     } catch (error) {
       failThread(db, sessions, thread, error);
-      return errorText(error);
+      return `It failed: ${errorText(error)}`;
     }
   };
+  // What the lead hears of a yes whose builder runs on a host plugin that is gone, `gone` saying
+  // so: the thread needs you, and whether its builder still runs there nobody can tell.
+  const cantTell = (gone: string) => `Skelcrew can't tell whether its builder runs, as ${gone}.`;
   // Tells the lead what came of your answer to its request, and deletes the request, in one step.
   // So a stop of the daemon leaves either both done, or the request, which answeredRequests finds
   // again.
@@ -547,11 +550,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return started;
       }
       void starting.then((failed) =>
-        settle(
-          repository,
-          taken.id,
-          failed === null ? `${yes} ${started}` : `${yes} It failed: ${failed}`,
-        ),
+        settle(repository, taken.id, failed === null ? `${yes} ${started}` : `${yes} ${failed}`),
       );
       return started;
     } catch (error) {
@@ -571,16 +570,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // filing's outcome it couldn't learn, from what the world shows now rather than from where
   // the stop came. A new task's filing is settled first, by doing the yes again, which files it
   // or finds it filed. A task with a thread started since your answer counts as started by it:
-  // the lead hears so once the daemon has brought its builder back, or that it failed, and
-  // nothing starts again. Only a thread whose setup the stop cut short, which can't come back,
-  // is started over. A start that changed a thread from before, such as bringing it back, kept
-  // what it said in the same step, and is reported the same way. Any other yes is done again,
-  // which never starts a task twice.
+  // the lead hears so once the daemon has brought its builder back, or what went wrong, and
+  // nothing starts again. One that asks for a short title or flow the thread lacks, such as the
+  // second of two yeses answered before the first's thread started, is done again instead, so
+  // they go on the thread, as they would have without the stop. Only a thread whose setup the
+  // stop cut short, which can't come back, is started over. A start that changed a thread from
+  // before, such as bringing it back, kept what it said in the same step, and is reported the
+  // same way. Any other yes is done again, which never starts a task twice.
   //
   // `back` gives, once the daemon has started bringing back the threads that were live, how each
-  // one's bringing back ends, by its folder: null, or why it failed. It also names those whose
-  // setup the stop cut short, which fail at once, and are waited for, so starting one over finds
-  // it failed.
+  // one's bringing back ends, by its folder: null, or what the lead hears went wrong. It also
+  // names those whose setup the stop cut short, which fail at once, and are waited for, so
+  // starting one over finds it failed.
   const finishAnswers = async (
     back: Promise<{ ends: Map<string, Promise<string | null>>; cutShort: Set<string> }>,
   ) => {
@@ -601,7 +602,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           await doYes(repository, taken, true);
           continue;
         }
-        if (thread !== null && (since || outcome !== null)) {
+        const lacks =
+          action.kind === "start" &&
+          thread !== null &&
+          ((action.short !== undefined && action.short !== thread.short) ||
+            (action.flow !== undefined && action.flow !== thread.flow));
+        if (thread !== null && (outcome !== null || (since && !lacks))) {
           const said = outcome ?? `Started ${threadName(db, thread)}.`;
           // Not waited on: a builder's host that can't be reached is asked again for as long
           // as it takes, which mustn't hold up the other requests.
@@ -612,7 +618,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
               taken.id,
               failed === null
                 ? `${partway} It had done it already: ${said}`
-                : `${partway} It failed: ${failed}`,
+                : `${partway} ${failed}`,
             ),
           );
           continue;
@@ -1282,17 +1288,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // After the builder is back, since the round may type into its session.
     // A builder that stopped on a usage limit is woken once it resets, as it would have been.
     const end = bringBack(db, sessions, thread).then(
-      () => {
+      (gone) => {
         settled();
         resumeRound(db, sessions, thread.folder);
         if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
-        return null;
+        return gone === null ? null : cantTell(gone);
       },
       (error) => {
         endRound(thread.folder);
         settled();
         failThread(db, sessions, thread, error);
-        return errorText(error);
+        return `It failed: ${errorText(error)}`;
       },
     );
     ends.set(thread.folder, end);
