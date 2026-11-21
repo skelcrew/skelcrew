@@ -3,14 +3,10 @@
 import { runByAgent } from "./agents/sandbox.ts";
 import { agentCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
 import { usage } from "./cli/input.ts";
-import {
-  leadCommand,
-  machineCommand,
-  oldPluginCommand,
-  pluginCommand,
-  repoCommand,
-  screenCommand,
-} from "./cli/machine.ts";
+import { machineCommand } from "./cli/machine.ts";
+import { oldPluginCommand, pluginCommand } from "./cli/plugins.ts";
+import { repoCommand } from "./cli/repos.ts";
+import { leadCommand, screenCommand } from "./cli/screen.ts";
 import { lsCommand, psCommand, showCommand, taskCommand } from "./cli/tasks.ts";
 import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
 import { help } from "./help.ts";
