@@ -196,7 +196,7 @@ export function armMerge(
       : `the lead asked to ${what}, as the human asked: ${JSON.stringify(asked)}`;
   // Arming it past the round limit is your decision about the limit, which stays made though the
   // plan later ends, such as when a push cancels it, until the next review asks again.
-  record(db, thread.folder, { ...plan, ...limitDecided(thread) }, why);
+  record(db, thread.folder, { ...plan, ...limitDecided(thread, Date.now()) }, why);
   console.log(`${name}: ${why}`);
   // The lead can't see your terminal, so it hears of a merge you asked for there. One it asked
   // for itself it already told you about.

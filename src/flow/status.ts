@@ -11,7 +11,13 @@ import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../p
 import { errorText } from "../say.ts";
 import { waitsOnFirstCheck } from "./decide.ts";
 import { leadOf } from "./lead.ts";
-import { atRoundLimit, limitDecided, limitOf, passedReviewStage } from "./ledger.ts";
+import {
+  atRoundLimit,
+  limitDecided,
+  limitOf,
+  limitWasDecided,
+  passedReviewStage,
+} from "./ledger.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
 import {
   messageLead,
@@ -71,7 +77,7 @@ const reasonOf = (word: string) => (word === "approved" ? "ready to merge" : wor
 // review it was armed after: a later review reaching the limit, such as after sc start, would
 // then need nobody. Changes held are what the limit waits on, as an approval drops them.
 const decided = (thread: Thread) =>
-  thread.limit_decided || (thread.merge_plan === "armed" && thread.held === null);
+  limitWasDecided(thread) || (thread.merge_plan === "armed" && thread.held === null);
 
 // Returns whether a builder that just ended its turn did so without sc submit, on any harness.
 // Such a builder may have a question written as plain text, or be stuck, or have only replied,
@@ -638,7 +644,7 @@ export function markNeedsYou(
   if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   const acted = { ended_at: null, ended_said: null };
   // Marking or clearing a thread past its round limit is a decision about it.
-  const decision = limitDecided(thread);
+  const decision = limitDecided(thread, Date.now());
   // While the builder's host plugin is still missing, only you can bring it back, so its
   // instruction stays first, whatever the mark becomes.
   const host = thread.host;

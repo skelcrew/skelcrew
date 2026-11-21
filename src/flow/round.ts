@@ -612,8 +612,11 @@ async function actOnVerdict(
   // PR, so a thread that starts needing you for it saves no note yet.
   const failed = verdict.verdict === "failed" || verdict.verdict === "timed out";
   const quiet = limitNote !== null && !neededYou(thread) ? { noting: null } : {};
-  record(db, folder, { ...change, ...quiet }, why);
-  if (!hasForge) noteLimit(db, sessions, folder, limitNote);
+  // Without a forge there is no PR to wait for, so the note is saved with the verdict.
+  db.transaction(() => {
+    record(db, folder, { ...change, ...quiet }, why);
+    if (!hasForge) noteLimit(db, sessions, folder, limitNote);
+  })();
   // A review that failed doesn't need you: the lead hears of it, with the error the harness
   // gave, and can run it again, or mark the thread if only you can fix what stops it.
   if (failed) {
@@ -697,7 +700,7 @@ async function markNotReviewed(
     submitting: null,
     queued: null,
     status: "waiting",
-    ...notReviewed(sha, ready, Date.now()),
+    ...notReviewed(readThread(db, folder), sha, ready, Date.now()),
   } satisfies Partial<Thread>;
   const why = "not reviewed, as its flow has no review stage";
   record(db, folder, change, ready === null ? `${why}, so it waits on CI` : `${why}; ${ready}`);
@@ -747,18 +750,24 @@ function postVerdict(db: Database, sessions: string, folder: string): Promise<st
     } catch (error) {
       return errorText(error);
     }
-    const now = readThread(db, folder).posting;
-    if (JSON.stringify(now) !== JSON.stringify(posting)) return null;
-    record(db, folder, verdictPosted);
-    noteLimit(db, sessions, folder, posting.note);
+    const now = readThread(db, folder);
+    if (JSON.stringify(now.posting) !== JSON.stringify(posting)) return null;
+    // The post and the lead's note are saved together, so a stop between them can't lose it.
+    const { change, note } = verdictPosted(now, posting, Date.now());
+    db.transaction(() => {
+      record(db, folder, change);
+      noteLimit(db, sessions, folder, note);
+    })();
+    typeLeadNotes(db, sessions);
     return null;
   });
 }
 
-// Tells the lead the round limit holds the thread's changes, once its review is on the PR, or at
-// once without a forge, so the note never names a review the PR doesn't show yet. Only while the
-// thread still holds them and needs you: a submit or a decision since ends that. A thread with a
-// note still to type for another reason keeps it, and the lead gets this one apart.
+// Saves the note telling the lead the round limit holds the thread's changes, as its review went
+// on the PR, or with the verdict without a forge, so the note never names a review the PR doesn't
+// show yet. Only while the thread still holds them and needs you: a submit or a decision since
+// ends that. A thread with a note still to type for another reason keeps it, and the lead gets
+// this one apart. The caller saves it with the change that brought it, and types the notes.
 export function noteLimit(
   db: Database,
   sessions: string,
@@ -773,7 +782,6 @@ export function noteLimit(
     const line = `${threadName(db, thread)} needs you: ${note}`;
     noteForLead(db, sessions, repositoryOf(db, thread), line, null, true);
   }
-  typeLeadNotes(db, sessions);
 }
 
 // Tries again to put on the forge a verdict whose post failed, or that a stop of the daemon cut
@@ -1012,7 +1020,7 @@ function trackRound(
       status: "waiting",
       queued: null,
       ...notHeld,
-      ...roundFailed(Date.now()),
+      ...roundFailed(readThread(db, folder), Date.now()),
     } satisfies Partial<Thread>;
     const thread = record(db, folder, change, `the round failed: ${why}`);
     const name = threadName(db, thread);
@@ -1076,7 +1084,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     folder,
     {
       status: "waiting",
-      ...submitted(Date.now(), unreviewed),
+      ...submitted(thread, Date.now(), unreviewed),
       // A new submit is the thing a mark for you is most often about, such as a fix, so it
       // clears the mark. The lead marks it again if you still need to act.
       needs_you_for: null,
@@ -1296,7 +1304,7 @@ export function rerunReview(
     turn_ended: false,
     ...(byBuilder ? { submitted: true } : {}),
     ...notHeld,
-    ...reviewAsked(Date.now()),
+    ...reviewAsked(thread, Date.now()),
     reviewing: sha,
     queued: null,
   } satisfies Partial<Thread>;
@@ -1377,7 +1385,7 @@ export function goOn(db: Database, sessions: string, folder: string): void {
   // instruction to bring back a missing host plugin, which only you can do.
   const hostGone = host !== null && markBeforeHost(host, needs_you_for) !== undefined;
   const change = {
-    ...letGoOn(thread, roundLimit(thread)),
+    ...letGoOn(thread, roundLimit(thread), Date.now()),
     needs_you_for: hostGone ? hostMissing(host) : null,
   };
   record(

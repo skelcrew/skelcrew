@@ -222,7 +222,8 @@ const threadColumns = {
 // that ended, once the copy has dropped it. `queued_since` is when the task last joined the queue
 // of limits.threads, which goes first come first served, kept until its builder's session is
 // saved. `top_round` is the highest round a review that gave a verdict took on the task's thread,
-// so the next round's number goes on above it.
+// so the next round's number goes on above it. `round_log` is the record of the round's events,
+// as JSON, which the round ledger counts the rounds from, and writes `rounds` and `top_round` with.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -265,6 +266,7 @@ export const taskColumns = {
   pr_link: "TEXT",
   queued_since: "INTEGER",
   top_round: "INTEGER",
+  round_log: "TEXT",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks

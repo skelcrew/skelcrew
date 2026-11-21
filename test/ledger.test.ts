@@ -9,6 +9,7 @@ import {
   nextRound,
   roundMoved,
   submitted,
+  verdictPosted,
   verdictReached,
 } from "../src/flow/ledger.ts";
 import type { Review } from "../src/flow/reviewer.ts";
@@ -95,6 +96,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     review_post: null,
     posting: null,
     review_findings: null,
+    round_log: null,
     queued_since: null,
     ...change,
   };
@@ -162,7 +164,7 @@ test("past the round limit, changes are held and need you, and a failed review d
 // count of rounds of changes. A review that failed is run again under the same number, and an
 // approval kept after a merge of main is a round of its own.
 test("a thread's round numbers never go backwards, through sc start past the limit", () => {
-  let saved = thread();
+  let saved = thread({ round_log: [] });
   const numbers: number[] = [];
   const reviewed = (review: Review) => {
     const { change, round } = reach(saved, review, 1);
@@ -170,7 +172,7 @@ test("a thread's round numbers never go backwards, through sc start past the lim
     numbers.push(round);
   };
   const goOn = () => {
-    saved = { ...saved, ...letGoOn(saved, 1) };
+    saved = { ...saved, ...letGoOn(saved, 1, 1500) };
   };
   reviewed(changes);
   reviewed(changes);
@@ -184,8 +186,31 @@ test("a thread's round numbers never go backwards, through sc start past the lim
   expect(numbers).toEqual([1, 2, 3, 3, 4, 5, 6]);
   expect(saved.top_round).toBe(6);
   // A submit asks for the next round, and brings none of the numbers back.
-  saved = { ...saved, ...submitted(2000, false) };
+  saved = { ...saved, ...submitted(saved, 2000, false) };
   expect(nextRound(saved)).toBe(7);
+  // The numbers come from the record, so a field written back by hand can't lower them.
+  expect(nextRound({ ...saved, top_round: 1, rounds: 0 })).toBe(7);
+  expect(saved.round_log?.map((event) => event.kind)).toEqual([
+    "verdict",
+    "verdict",
+    "let go on",
+    "verdict",
+    "verdict",
+    "verdict",
+    "let go on",
+    "verdict",
+    "verdict",
+    "submitted",
+  ]);
+});
+
+// A task from before Skelcrew kept the record goes on from the counts its row had.
+test("a row with no record starts its record from its own counts", () => {
+  const old = thread({ rounds: 2, top_round: 5, round_log: null });
+  expect(nextRound(old)).toBe(6);
+  const { change } = reach(old, changes);
+  expect(change).toMatchObject({ rounds: 3, top_round: 6, review_round: 6 });
+  expect(change.round_log?.[0]).toEqual({ kind: "before", rounds: 2, top: 5, decided: false });
 });
 
 // The lead hears that the round limit holds a thread's changes only once the review is on the PR,
@@ -208,17 +233,39 @@ test("the round limit's note waits for the review to be posted", () => {
   expect(after.change.posting).toMatchObject({ review: { round: 4 }, note: null });
 });
 
+// The note comes from the posted event: once the review is on the PR, the record says so with its
+// note, and the lead gets it only while the limit still holds the changes.
+test("posting the verdict brings the round limit's note, unless a submit came first", () => {
+  const before = thread({ rounds: 3 });
+  const past = { ...before, ...reach(before, changes).change };
+  const { posting } = past;
+  if (posting === null) throw new Error("the verdict saved nothing to post");
+  const posted = verdictPosted(past, posting, 2000);
+  expect(posted.note).toBe(posting.note);
+  expect(posted.change.posting).toBeNull();
+  expect(posted.change.round_log?.at(-1)).toEqual({
+    kind: "posted",
+    at: 2000,
+    round: 4,
+    note: posting.note,
+  });
+  const resubmitted = { ...past, ...submitted(past, 1500, false) };
+  expect(verdictPosted(resubmitted, posting, 2000).note).toBeNull();
+  const decided = { ...past, ...limitDecided(past, 1500) };
+  expect(verdictPosted(decided, posting, 2000).note).toBeNull();
+});
+
 // The round limit needs you until you or the lead decide, and each review reaching it asks again.
 test("the round limit waits for a decision, which the next review asks for again", () => {
   const past = { ...thread({ rounds: 3 }), ...reach(thread({ rounds: 3 }), changes).change };
   expect(atRoundLimit(past, 3)).toBe(true);
   expect(limitWaits(past)).toBe(true);
-  const decided = { ...past, ...limitDecided(past) };
+  const decided = { ...past, ...limitDecided(past, 1500) };
   expect(decided.limit_decided).toBe(true);
   expect(limitWaits(decided)).toBe(false);
   // Nothing is decided on a thread the limit doesn't hold.
-  expect(limitDecided(thread())).toEqual({});
-  const again = { ...decided, ...letGoOn(decided, 3) };
+  expect(limitDecided(thread(), 1500)).toEqual({});
+  const again = { ...decided, ...letGoOn(decided, 3, 1600) };
   const next = reach(again, changes);
   expect(next.change).toMatchObject({ limit_decided: false, needs_you: true });
 });
@@ -227,7 +274,7 @@ test("the round limit waits for a decision, which the next review asks for again
 // longer past the limit, until the next review asking for changes.
 test("letting a thread go on types its held changes in and stops the round limit", () => {
   const past = { ...thread({ rounds: 3 }), ...reach(thread({ rounds: 3 }), changes).change };
-  const goOn = letGoOn(past, 3);
+  const goOn = letGoOn(past, 3, 1500);
   expect(goOn).toMatchObject({ rounds: 3, held: null, needs_you: false, telling: past.held });
   const on = { ...past, ...goOn };
   expect(atRoundLimit(on, 3)).toBe(false);

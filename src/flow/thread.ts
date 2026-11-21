@@ -17,6 +17,7 @@ import {
 } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { threadTask } from "./copy.ts";
+import { RoundEvent } from "./ledger.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -291,6 +292,10 @@ export const Thread = z.object({
   // goes in this order, after a restart too. Kept once the task leaves the queue, until its
   // builder's session is saved, so a restart before then puts it back in its place.
   queued_since: z.number().nullable(),
+  // The record of the task's review rounds, one event each, oldest first, which the round ledger
+  // keeps and counts the rounds from. Null in a row from before Skelcrew kept it, and for one it
+  // can't read, which the ledger reads from the row's own counts instead.
+  round_log: savedJson("tasks.round_log", RoundEvent.array().nullable(), null),
 });
 export type Thread = z.infer<typeof Thread>;
 
