@@ -132,6 +132,10 @@ const config = [
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
+  // Alt-W asks whether to close or remove the open repository, from anywhere, full screen too.
+  // The sidebar takes your typing for the question, and gives it back on Esc. Like Alt-Q, it never
+  // reaches an agent.
+  ["bind", "-n", "M-w", "send-keys", "-t", ":.0", "M-w"],
   ...["1", "2", "3", "4", "5", "6"].map((digit) => [
     "bind",
     "-n",

@@ -442,7 +442,7 @@ fs.writeFileSync(${JSON.stringify(join(fake, "slow-start"))}, "");
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
 const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
 await Bun.sleep(500);
-await removeRepo("app", "unused");
+console.log(await removeRepo("app", "unused"));
 console.log(await starting);
 const sessions = await (await import(${JSON.stringify(source("agents/sessions.ts"))})).listSessions(host);
 console.log(sessions.length);`,
@@ -483,7 +483,7 @@ db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES (
 const host = pluginHost(db, "fake");
 await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
 db.run("DELETE FROM threads");
-await removeRepo("app", "unused");
+console.log(await removeRepo("app", "unused"));
 console.log(await hasSession(host, "fake-lead-app"));`,
     {},
   );

@@ -15,6 +15,7 @@ import {
   processTree,
   readSession,
   stillRunning,
+  stopSession,
 } from "../agents/sessions.ts";
 import { agentsUnanswered } from "../approved-agents.ts";
 import { checkFlow, graceMinutes, leadCanMerge, repositoryCommands } from "../config.ts";
@@ -48,6 +49,7 @@ import {
   lastOpened,
   leadOf,
   leadPrompted,
+  leadSession,
   openedRepositories,
   startLead,
 } from "./lead.ts";
@@ -326,7 +328,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
   // keeps the lead running or starts it. One at a time for each repository, so two requests at
   // once can't start two sessions, while a host that hangs holds up no other repository's lead.
-  const ensureLead = (repository: Repository) => {
+  // `first` runs in the same turn, before the start, such as ending the lead to restart it, so
+  // no other start comes between.
+  const ensureLead = (repository: Repository, first?: () => Promise<void>) => {
     const { owner, repo } = repository;
     const key = `${owner}/${repo}`;
     const start = (leadStarts.get(key) ?? Promise.resolve())
@@ -337,6 +341,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           listening.add(socket);
           await open(socket, { lead: { owner, repo } });
         }
+        await first?.();
         await startLead(db, sessions, repository);
       });
     leadStarts.set(key, start);
@@ -913,6 +918,37 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const name = threadName(db, thread);
         await stopThread(db, sessions, thread);
         return { stopped: name };
+      }
+      // A restart ends the agent's session and starts it again, resuming its conversation, as
+      // opening a closed lead or sc stop then sc start does. The tab and the task stay as they
+      // were. Only an agent that runs is restarted: one that ended has its own way back.
+      case "restart": {
+        if (request.task === undefined) {
+          const repository = findRepository(db, request.repo);
+          const { owner, repo } = repository;
+          const lead = await leadSession(db, sessions, owner, repo);
+          if (lead === null || !(await agentRuns(lead.host, lead.id)))
+            throw new Error(`${repository.name}'s lead isn't running`);
+          await ensureLead(repository, () => stopSession(lead.host, lead.id));
+          typeLeadNotes(db, sessions);
+          return { said: `Restarted ${repository.name}'s lead.` };
+        }
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        const { host, id } = await builderSession(db, sessions, thread);
+        const live = thread.status === "working" || thread.status === "waiting";
+        if (!live || !(await agentRuns(host, id)))
+          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        // Brought back as after the daemon's restart, but its round goes on untouched, as
+        // nothing cut it short.
+        await stopSession(host, id);
+        try {
+          const gone = await bringBack(db, sessions, readThread(db, thread.folder));
+          return { said: gone === null ? `Restarted ${name}'s builder.` : cantTell(gone) };
+        } catch (error) {
+          failThread(db, sessions, thread, error);
+          return { said: `${name}'s builder couldn't start again: ${errorText(error)}` };
+        }
       }
       case "queue move":
         return { said: moveInQueue(db, findThread(db, request.repo, request.task), request.by) };

@@ -513,6 +513,10 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **Option with a digit types a character on a Mac**, such as `¡` for Option-1. So Alt-1 to
   Alt-6 and Alt-Q need the terminal to send Option as Alt. Ctrl-Q quits too, even while you
   type to an agent, for a Mac terminal that doesn't.
+- **Alt-W is taken from agents, as Alt-Q is.** The screen's tmux keeps it, to ask whether to
+  close or remove the open repository, so no agent ever sees it. Emacs-style keys in an agent's
+  prompt, where Alt-W copies, don't get it. Alt-W needs Option sent as Alt on a Mac, and plain
+  `w` does the same while your typing is in the sidebar.
 - **Ctrl-\ is herdr's key to detach, so it is Skelcrew's too.** An agent is then left the
   same way on either host. The screen's tmux takes it before any pane, so herdr's own client
   inside the screen never detaches and leaves the right side empty. Ctrl-4 sends the same

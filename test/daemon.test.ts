@@ -1371,6 +1371,36 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(hasLead()).toBe(true);
   });
 
+  // A restart picks up new skills, settings and environment, which a lead reads only as it
+  // starts. Only you can ask for one: a lead's socket doesn't know the request.
+  test("restarting the lead ends its session and starts it again with its conversation, its tab and threads as they were", async () => {
+    setUp();
+    addRepository("app");
+    addThread("app", 1);
+    serve();
+    await untilAnswers();
+    await open();
+    const id = storedSession();
+    saveTranscript(id);
+    const pane = () =>
+      Bun.spawnSync(["tmux", "-L", socket, "display", "-p", "-t", `=${leadName()}:`, "#{pane_pid}"])
+        .stdout.toString()
+        .trim();
+    const before = pane();
+    expect(await askAsLead({ command: "restart", repo: "simon/app" })).toMatchObject({
+      error: expect.stringContaining("doesn't know that request"),
+    });
+    expect(await ask({ command: "restart", repo: "simon/app" })).toEqual({
+      said: "Restarted app's lead.",
+    });
+    expect(hasLead()).toBe(true);
+    expect(pane()).not.toBe(before);
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
+    expect(storedSession()).toBe(id);
+    expect(tabClosed()).toBe(false);
+    expect(await ask({ command: "ps" })).toEqual({ threads: [stoppedApp1], slots: [] });
+  });
+
   // A lead an older Skelcrew started goes with its session when it exits, and its tab would
   // never close.
   test("a lead started before the upgrade closes its tab too when it exits", async () => {

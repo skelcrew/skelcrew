@@ -74,7 +74,8 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
   // outlined, the edge leans to the right side, the footer says so, and the lead's cursor shows.
   expect(selected()).toMatch(/^▹ ○ lead\b/);
   await until(
-    () => footer() === "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude",
+    () =>
+      footer() === "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
     "the footer under the lead",
   );
   expect(edge()).toBe("▕");
@@ -84,7 +85,9 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
   press("C-\\");
   await until(typingToSidebar, "the sidebar to take your typing");
   await until(
-    () => footer() === "  ↑↓ move  ⏎ to lead  ⇧⏎/a full screen  1-6 stages  ⌥Q quit",
+    () =>
+      footer() ===
+      "  ↑↓ move  ⏎ to lead  ⇧⏎/a full screen  1-6 stages  R restart  w close  ⌥Q quit",
     "the sidebar's keys",
   );
   expect(selected()).toMatch(/^▸ ○ lead\b/);
@@ -261,7 +264,7 @@ test("Enter on a stage's heading closes it, keeping you there, and opens it on i
   await step("Up");
   expect(selected()).toStartWith("2 Building");
   await until(
-    () => footer() === "  ↑↓ move  ⏎ open/close  1-6 stages  ⌥Q quit",
+    () => footer() === "  ↑↓ move  ⏎ open/close  1-6 stages  w close  ⌥Q quit",
     "the heading's keys",
   );
   press("Enter");
@@ -286,7 +289,7 @@ test("on a request of the lead's, the focus keys keep your typing in the sidebar
   await step("Down");
   expect(selected()).toContain("Start APP-31");
   await until(
-    () => footer() === "  ↑↓ move  y yes  n no  1-6 stages  ⌥Q quit",
+    () => footer() === "  ↑↓ move  y yes  n no  1-6 stages  w close  ⌥Q quit",
     "the request's keys",
   );
   for (const key of ["a", "S-Enter", "C-\\"]) {
