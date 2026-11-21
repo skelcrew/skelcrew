@@ -57,7 +57,7 @@ test("a tab for each repository runs across the top, with a badge for what needs
   expect(colours).toContain("48;5;234");
   expect(colours).toContain("48;5;237");
   // The sidebar shows only app's threads.
-  expect(seen()).not.toContain("SITE-8");
+  expect(seen()).not.toMatch(/[○●] 8\b/);
 });
 
 test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository beside, wrapping round, and open it", async () => {
@@ -67,14 +67,14 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   await ready("lead");
   press("M-S-Right");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
-  await until(() => seen().includes("SITE-8") && !seen().includes("APP-12"), "site's threads");
+  await until(() => /[○●] 8\b/.test(seen()) && !/[○●] 12\b/.test(seen()), "site's threads");
   expect(onLead()).toBe(true);
   await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
   type("hello\r");
   await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
   // After the last tab comes the first, and before the first the last.
   press("M-S-Right");
-  await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
+  await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
   press("M-S-Left");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead again");
 });
@@ -121,7 +121,7 @@ test("a lead on a plugin's host shows through that host from its tab, and comes 
   const opened = await leadOnHostEnds(1);
   await until(() => opened() === 2, "the daemon to bring site's lead back");
   press("M-S-Left");
-  await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
+  await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
 });
 
 // The daemon closes its tab instead, as it does for a lead you exit on tmux.
@@ -138,9 +138,9 @@ test("a click on a tab switches to its repository", async () => {
   await until(() => tabRow().includes("site"), "the tabs");
   click(tabRow().indexOf("site") + 2, 1);
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
-  await until(() => seen().includes("SITE-8"), "site's threads");
+  await until(() => /[○●] 8\b/.test(seen()), "site's threads");
   click(tabRow().indexOf("app") + 2, 1);
-  await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
+  await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
 });
 
 // A terminal can hand both keys over at once, and the second must move in the new repository.
@@ -150,7 +150,7 @@ test("several Alt keys typed together all move, and none is typed into the agent
   // The second task is five rows down, past the headings of the task queue, Backlog and
   // Building. Nothing needs you, so Needs you has no heading.
   type("\x1b[1;3B".repeat(5));
-  await until(() => selected().includes("APP-7"), "the second task");
+  await until(() => / 7\b/.test(selected()), "the second task");
   await until(onDetails, "app-7's details");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
@@ -163,9 +163,9 @@ test("Alt-Shift-Right then Alt-Shift-Down, typed together, lands on the new repo
   open("lead");
   await ready("lead");
   type("\x1b[1;4C\x1b[1;4B");
-  await until(() => selected().includes("SITE-8"), "the sidebar on SITE-8");
+  await until(() => / 8\b/.test(selected()), "the sidebar on SITE-8");
   await until(onDetails, "site-8's details");
-  expect(seen()).not.toContain("APP-12");
+  expect(seen()).not.toMatch(/[○●] 12\b/);
 });
 
 // The daemon closes a repository's tab when you exit its lead, by marking it in the database.
@@ -180,7 +180,7 @@ test("a tab that closes moves the screen to the tab after it, and leaves the thr
   await until(() => tabRow().includes("site"), "the tabs");
   closeTab("app");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
-  await until(() => seen().includes("SITE-8") && !/\bapp\b/.test(tabRow()), "app's tab to go");
+  await until(() => /[○●] 8\b/.test(seen()) && !/\bapp\b/.test(tabRow()), "app's tab to go");
   // The sidebar asks the daemon without waiting, and its request goes out only after it has
   // shown site, so site can show before the request lands.
   await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
@@ -196,7 +196,7 @@ test("the last tab closing moves the screen to the tab before it", async () => {
   press("M-S-Right");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   closeTab("site");
-  await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
+  await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
   // The top row is drawn after the right side has moved, so it can show site a moment longer.
   await until(() => !tabRow().includes("site"), "site's tab to go");
 });
