@@ -5,11 +5,12 @@
 // how many of its threads need you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { roundLimit as roundLimitOf, threadLimit } from "../config.ts";
+import { threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
-import { nextRound, passedReviewStage, reviewCheck } from "../flow/decide.ts";
+import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
+import { limitOf, nextRound, passedReviewStage, roundOf } from "../flow/ledger.ts";
 import {
   type Badge,
   badgeOf,
@@ -104,23 +105,6 @@ export type Open = { owner: string; repo: string };
 
 // A repository's tab: its name in Skelcrew, its owner/name, and its badge.
 export type Tab = Badge & { name: string; fullName: string };
-
-// Returns the round limit the list judges a thread's word by. A thread holding the changes of a
-// review past the limit says so by itself. Past the limit, sc submit and sc review drop those
-// changes but keep the thread needing you while its round runs, and so can other reasons, such
-// as a message that couldn't be typed in. Only the thread's real round limit tells them apart,
-// so for such a thread alone the list reads its settings. Settings that aren't valid already stop
-// rounds, with the reason, and mustn't also take the list away, so they read as no limit. Any
-// other thread reads none, so drawing the list stays fast.
-const roundLimit = (thread: Thread) => {
-  const underWay = thread.submitting !== null || thread.reviewing !== null;
-  if (!thread.needs_you || !underWay) return Number.POSITIVE_INFINITY;
-  try {
-    return roundLimitOf(thread);
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
-};
 
 // Returns when something happened as a clock time, such as 14:32, with the date before it for a
 // day before today, such as 12 Nov 23:59, in this machine's time zone. The details pane says when
@@ -223,7 +207,7 @@ function taskRow(
   now: number,
 ): Row {
   const name = taskName(repoName, thread.task);
-  const shown = shownOf(thread, roundLimit(thread), now);
+  const shown = shownOf(thread, limitOf(thread), now);
   const ended = stage === "done";
   const mark: Mark = ended ? { sign: "○", colour: "dim" } : shown.mark;
   const unreviewed = shown.word === "not reviewed" ? ", not reviewed" : "";
@@ -241,8 +225,8 @@ function taskRow(
   let merge: Action | null = null;
   if (ready && thread.pr !== null && copy !== null) {
     const named = `${repoName}#${thread.pr}`;
-    const approved = passedReviewStage(thread) ? thread.reviewed_commit : null;
-    const unreviewed = thread.verdict === "not reviewed";
+    const approved = passedReviewStage(thread) ? roundOf(thread).reviewed_commit : null;
+    const unreviewed = roundOf(thread).verdict === "not reviewed";
     const which = unreviewed ? "submitted" : "approved";
     const wait = unreviewed ? "wait for its builder to submit it" : "wait for its review";
     const ci = copy.checks.filter((check) => check.name !== reviewCheck);
@@ -336,12 +320,13 @@ const verdictColours: Record<Exclude<NonNullable<Thread["verdict"]>, "not review
 // one, and a task its flow doesn't review, or none reviewed yet, has none. Only the thread is
 // read, as the list draws every second.
 function reviewOf(thread: Thread): Row["review"] {
-  if (thread.verdict === "not reviewed") return null;
+  const round = roundOf(thread);
+  if (round.verdict === "not reviewed") return null;
   const live = thread.status === "working" || thread.status === "waiting";
-  if (live && (thread.submitting !== null || thread.reviewing !== null))
-    return { round: nextRound(thread), colour: thread.review_failed ? "red" : "yellow" };
-  if (thread.verdict === null || thread.review_round === null) return null;
-  return { round: thread.review_round, colour: verdictColours[thread.verdict] };
+  if (live && (round.submitting !== null || round.reviewing !== null))
+    return { round: nextRound(thread), colour: round.review_failed ? "red" : "yellow" };
+  if (round.verdict === null || round.review_round === null) return null;
+  return { round: round.review_round, colour: verdictColours[round.verdict] };
 }
 
 // How many ended tasks Done shows at least, when fewer than that ended today.
@@ -686,7 +671,7 @@ export function repositoryTabs(db: Database, keep: Open | null): Tab[] {
     .all()
     .map((row) => {
       const thread = Thread.parse(row);
-      return { thread, mark: shownOf(thread, roundLimit(thread)).mark };
+      return { thread, mark: shownOf(thread, limitOf(thread)).mark };
     });
   return repositories.map(({ name, owner, repo }) => {
     const ours = marked.filter((m) => m.thread.owner === owner && m.thread.repo === repo);

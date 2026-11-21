@@ -13,7 +13,8 @@ import { needsInstall } from "../plugins/repository.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
-import { nextRound, reviewCheck } from "./decide.ts";
+import { reviewCheck } from "./decide.ts";
+import { nextRound, roundOf } from "./ledger.ts";
 import { messagesWaiting } from "./messages.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { roundRunning } from "./round.ts";
@@ -156,16 +157,17 @@ function ciOf(
 // Otherwise it is the latest review's verdict and round. A stopped or ended thread has no round
 // running, so it shows its latest verdict.
 function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
-  const at = thread.review_at === null ? null : new Date(thread.review_at).toISOString();
+  const round = roundOf(thread);
+  const at = round.review_at === null ? null : new Date(round.review_at).toISOString();
   const live = thread.status === "working" || thread.status === "waiting";
-  if (live && (thread.submitting !== null || thread.reviewing !== null)) {
+  if (live && (round.submitting !== null || round.reviewing !== null)) {
     // A submit its flow doesn't review has no round, and no review to fail: it says it isn't
     // reviewed, while its status says it needs you when its push or check failed.
-    if (thread.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
+    if (round.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
     const state = roundRunning(thread.folder) ? "reviewing" : "failed";
     return { state, round: nextRound(thread), at };
   }
-  if (thread.verdict === null) return { state: "none", round: null, at: null };
+  if (round.verdict === null) return { state: "none", round: null, at: null };
   // A review that timed out twice failed its check, so it shows as failed.
   const states = {
     approve: "approved",
@@ -174,7 +176,7 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
     "timed out": "failed",
     "not reviewed": "not reviewed",
   } as const;
-  return { state: states[thread.verdict], round: thread.review_round, at };
+  return { state: states[round.verdict], round: round.review_round, at };
 }
 
 // Returns a thread as sc ps shows it, and as sc ls and sc show show its task's PR, CI and
@@ -199,7 +201,7 @@ function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
     checks: pr === null ? null : ciOf(thread, copy),
     // Without a forge sc ps shows no review, but a task its flow doesn't review says so, as it
     // is ready on its branch with nobody having looked at it.
-    review: forge || thread.verdict === "not reviewed" ? reviewOf(thread) : null,
+    review: forge || roundOf(thread).verdict === "not reviewed" ? reviewOf(thread) : null,
     waiting: messagesWaiting(db, thread),
     merge:
       thread.merge_plan === null

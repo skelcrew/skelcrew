@@ -17,6 +17,7 @@ import {
   unknownQuestion,
 } from "../plugins/runtime.ts";
 import { threadTask } from "./copy.ts";
+import { Posting, ReviewPost, RoundEvent, reviewPending } from "./ledger.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -28,36 +29,6 @@ export type AgentState = z.infer<typeof AgentState>;
 // One message the lead told a thread's builder: who sent it, when it was typed in, in
 // milliseconds since 1970, and its text.
 const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
-
-// Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict and findings it
-// last said, so each round edits that one review, or posts again only when what it says changed.
-const ReviewPost = z.object({
-  pr: z.number(),
-  id: z.string(),
-  verdict: z.enum(["approve", "changes"]),
-  findings: z.array(z.string()),
-});
-export type ReviewPost = z.infer<typeof ReviewPost>;
-
-// A verdict saved on the thread but not yet on the forge: the commit, Skelcrew's check on it,
-// and the review to post on the PR with the commit it covers, or null when there is none to
-// post. A failed review posts none, but keeps the review before it that is still to post.
-const Posting = z.object({
-  commit: z.string(),
-  check: z.enum(["success", "failure"]),
-  description: z.string(),
-  review: z
-    .object({
-      pr: z.number(),
-      commit: z.string(),
-      verdict: z.enum(["approve", "changes"]),
-      body: z.string(),
-      findings: z.array(z.string()),
-      round: z.number(),
-    })
-    .nullable(),
-});
-export type Posting = z.infer<typeof Posting>;
 
 // A thread with its task, as Skelcrew's database keeps them, one row per thread from the
 // task_threads view. The task's fields are those openDb's taskColumns name, and they are saved on
@@ -288,6 +259,10 @@ export const Thread = z.object({
   // goes in this order, after a restart too. Kept once the task leaves the queue, until its
   // builder's session is saved, so a restart before then puts it back in its place.
   queued_since: z.number().nullable(),
+  // The record of the task's review rounds, one event each, oldest first, which the round ledger
+  // keeps and counts the rounds from. Null in a row from before Skelcrew kept it, and for one it
+  // can't read, which the ledger reads from the row's own counts instead.
+  round_log: savedJson("tasks.round_log", RoundEvent.array().nullable(), null),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -365,8 +340,7 @@ export const hostGone = (thread: Thread) =>
 // wait either, as the queued time left from its older round's review isn't about it.
 export const queuedForReview = (thread: Thread) =>
   (thread.status === "working" || thread.status === "waiting") &&
-  thread.submitting === null &&
-  thread.reviewing !== null &&
+  reviewPending(thread) &&
   thread.queued !== null;
 
 // Returns the thread's repository as owner/name.

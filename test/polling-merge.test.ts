@@ -290,10 +290,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     // commit last submitted, once CI is green.
     test("a merge when ready of a task its flow didn't review posts no record on the PR", async () => {
       await approvedApp12();
-      // The merge goes by the verdict saved on the task, as a no-review flow's submit saves it.
+      // The merge goes by the verdict saved on the task, as a no-review flow's submit saves it. It
+      // is set on the row alone, which the ledger reads once the row has no record of its round.
       const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
-      db.run("UPDATE tasks SET verdict = 'not reviewed', review_round = NULL WHERE task = 12");
+      db.run(
+        "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, round_log = NULL WHERE task = 12",
+      );
       db.close();
       // Nobody will approve it, so neither the question nor the answer says so.
       const said = await runSkelInTerminal(

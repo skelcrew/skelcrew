@@ -57,6 +57,7 @@ import {
   openedRepositories,
   startLead,
 } from "./lead.ts";
+import { roundOf } from "./ledger.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import {
@@ -457,8 +458,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const name = threadName(db, now);
     // Any sign of a submit counts: a review under way sets `reviewing` and clears `submitting`
     // before it sets `review_at`, and a repository with no forge has no PR.
-    const submitted = [now.pr, now.submitting, now.reviewing, now.review_at, now.review_round];
-    if (submitted.some((sign) => sign !== null) || now.rounds > 0)
+    const submitted = [
+      now.pr,
+      roundOf(now).submitting,
+      roundOf(now).reviewing,
+      roundOf(now).review_at,
+      roundOf(now).review_round,
+    ];
+    if (submitted.some((sign) => sign !== null) || roundOf(now).rounds > 0)
       throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
     const repository = findRepository(db, `${now.owner}/${now.repo}`);
     checkFlow(now, repository.name, flow);
@@ -1116,7 +1123,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // builder could start one, and in the order they had: those that were running, then those
   // that waited, by when they joined. A review doesn't need its builder until it types changes
   // in, so those wait until the builder is back, or has failed and ended the round.
-  const reviewsCutShort = before.filter((t) => t.submitting === null && t.reviewing !== null);
+  const reviewsCutShort = before.filter(
+    (t) => roundOf(t).submitting === null && roundOf(t).reviewing !== null,
+  );
   reviewsCutShort.sort((a, b) => (a.queued ?? 0) - (b.queued ?? 0));
   const builderBack = new Map<string, () => void>();
   // Their sockets open first, so their reviewers can run sc check.
