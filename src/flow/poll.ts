@@ -31,7 +31,7 @@ import {
   labeledToStart,
   type PullRequest,
 } from "./decide.ts";
-import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
+import { endThread, noticeEndedBuilder, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
@@ -598,6 +598,9 @@ async function pollRepository(
     await startLabeled(db, sessions, repository, setUpAndStart, starting, passed);
   const hasForge = forgeOf(db, repository) !== null;
   for (const before of threads) {
+    // A builder that ended outside Skelcrew stops its thread first, so its events wait for sc
+    // start as a stopped thread's do.
+    await noticeEndedBuilder(db, sessions, before);
     if (!hasForge) await actOnBranch(db, sessions, repository, readThread(db, before.folder));
     else {
       // A verdict whose post failed goes on the PR first, so the merge goes by it.

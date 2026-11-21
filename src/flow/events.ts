@@ -2,13 +2,13 @@
 // merge, sc stop or sc rm, which must cancel any typing still under way.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
-import { stopSession } from "../agents/sessions.ts";
+import { agentRuns, stopSession } from "../agents/sessions.ts";
 import { cloneDir } from "../paths.ts";
 import { closePr, failedLog } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
-import { baseOf, inTurn } from "./builder.ts";
+import { baseOf, bringingBack, inTurn } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
@@ -164,6 +164,51 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
   if (thread.session === null)
     throw new Error(`${name} is still setting up: stop it once its builder has started`);
   await stopLiveThread(db, sessions, thread, false, "stopped");
+}
+
+// Stops a working or waiting thread whose builder no longer runs, for each poll, and tells its
+// lead. Only sc stop and sc rm end a builder, so one that ended, such as killed on its host or
+// exited, ended outside Skelcrew, and nothing else would notice: its thread would show work that
+// nobody does. Stopped, it keeps its clone, branch and PR, and sc start brings it back. A thread
+// whose builder is starting, ending or being brought back is left alone, as its session may be
+// missing for a moment. A host that can't be asked says nothing, so the thread stays as it was.
+export async function noticeEndedBuilder(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<void> {
+  // Returns whether the thread still runs a builder this may look at: one with a host, whose
+  // setup is over, which nothing is starting or ending right now.
+  const ours = (now: Thread) =>
+    (now.status === "working" || now.status === "waiting") &&
+    now.host !== null &&
+    now.session !== null &&
+    now.started === thread.started &&
+    !stopping.has(now.folder) &&
+    !bringingBack.has(now.folder) &&
+    !removing.has(now.folder);
+  if (!ours(thread)) return;
+  // The look takes its turn with the builder's starts and ends, so it never sees a session a
+  // start hasn't made yet.
+  const ended = await inTurn(thread.folder, async (earlier) => {
+    await earlier;
+    const now = readThread(db, thread.folder);
+    if (!ours(now)) return false;
+    const { host, id } = await builderSession(db, sessions, now);
+    return !(await agentRuns(host, id));
+  }).catch(() => false);
+  if (!ended || !ours(readThread(db, thread.folder))) return;
+  const name = threadName(db, thread);
+  // The stop ends what the session left behind, such as an agent's last screen.
+  await stopLiveThread(db, sessions, thread, false, "its builder ended outside Skelcrew");
+  if (readThread(db, thread.folder).status !== "stopped") return;
+  noteForLead(
+    db,
+    sessions,
+    thread,
+    `${name}'s builder ended outside Skelcrew, so the thread is stopped. sc start ${name} brings it back.`,
+    thread.folder,
+  );
 }
 
 // Ends a working or waiting thread's builder, then marks the thread stopped, with `why`, and

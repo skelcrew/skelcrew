@@ -344,7 +344,7 @@ Every command that lists or shows something takes `--json`. Commands that do som
 
 **Tasks.** A task is never filed or started with an empty description. Each `sc task add` files a task of its own, the same words twice included, but a filing whose answer the remote lost is never filed twice: it fails, saying to run the same command again once the remote is back. Run again, it first asks the remote whether the earlier try's claim is there, and when it is, names that task and files nothing more. A claim Skelcrew couldn't look up is never taken for another machine's, and filings on one machine run one at a time per repository, each noting its own try. `sc review` refuses while a review of that commit already waits or runs.
 
-**Stopping and starting again.** `sc stop` ends a task's sessions, or one thread's, and keeps its clone, branch and PR. `sc start` on a stopped task starts its threads again, each resuming its last conversation, and on a task past the round limit it lets the task go on, as **The flow** says.
+**Stopping and starting again.** `sc stop` ends a task's sessions, or one thread's, and keeps its clone, branch and PR. `sc start` on a stopped task starts its threads again, each resuming its last conversation, and on a task past the round limit it lets the task go on, as **The flow** says. `sc stop` says a thread stopped only once its host no longer has the session, whatever the host answered. One still there keeps its thread as it was, and `sc stop` says so. `sc start` never starts a builder while the thread's last one still runs, so two never share a clone.
 
 Every command an agent can run answers quickly, as Claude Code moves a shell command to the background after 2 minutes.
 
@@ -375,7 +375,7 @@ The engine is Skelcrew's daemon: one per machine, on the machine where its agent
 4. It opens its socket at `$XDG_RUNTIME_DIR/skelcrew.sock` for the CLI, and one socket per agent, mounted into that agent's sandbox, so Skelcrew knows which thread is calling.
 5. It asks each repository's tracker and forge what changed, and logs to stdout, which systemd sends to the journal.
 
-Sessions keep running when the engine stops, so agents keep working through a restart or an upgrade. What the engine itself started, such as a clone or a reviewer, ends with it, and the next engine starts that work again: it reruns every review whose `skelcrew/check` is still pending, and polling picks up any event it missed. Only `sc stop` and `sc rm` end a session.
+Sessions keep running when the engine stops, so agents keep working through a restart or an upgrade. What the engine itself started, such as a clone or a reviewer, ends with it, and the next engine starts that work again: it reruns every review whose `skelcrew/check` is still pending, and polling picks up any event it missed. Only `sc stop` and `sc rm` end a session. A builder that ends some other way, such as killed on its host, is found at the next poll: its thread is stopped, and the lead hears of it.
 
 **Updates.** A release installs a newer one in the background and says so in the list, such as `Skelcrew 0.6.2 installed · restart to use it`. The next `sc` restarts the engine on it. A Skelcrew run from a checkout does the same after `git pull`, when the engine started on another commit of that checkout. Changes not committed don't count. Agents keep running through it. `sc --version` prints `Skelcrew 0.6.2`, and a build from a checkout says so and names its commit.
 

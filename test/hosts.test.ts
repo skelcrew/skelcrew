@@ -201,6 +201,16 @@ test("stopping a session ends its process and the host forgets it", async () => 
   await stopSession(on, id);
 });
 
+test("a session the host says it ended but still lists isn't taken for stopped", async () => {
+  const on = host();
+  const id = await start(on, ["sleep", "30"]);
+  writeFileSync(join(settings(), "keep-end"), "");
+  await expect(stopSession(on, id, 500)).rejects.toThrow(
+    `${name} said it ended the session ${id}, but it still runs`,
+  );
+  expect(await agentRuns(on, id)).toBe(true);
+});
+
 test("interrupting a session sends its agent Esc", async () => {
   const on = host();
   const id = await start(on, ["sh", "-c", "echo ready; exec cat > keys.txt"]);
@@ -303,11 +313,11 @@ attach: ["true"]
 import { record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
 import { builderSession, readThread, renameBuilders } from ${JSON.stringify(source("flow/thread.ts"))};
-import { endThread, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
+import { endThread, noticeEndedBuilder, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { wakeAfterLimit } from ${JSON.stringify(source("flow/limits.ts"))};
-import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
-import { bringBack, endEarlierBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
+import { endSession, hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
+import { bringBack, endEarlierBuilder, refuseSecondBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
 import { deliverMessages, dropOldEvents, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
 db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(folder)}]);
@@ -591,6 +601,68 @@ console.log(after.status, after.host, after.host_id, await hasSession(host, "fak
   );
   expect(said).toBe(
     "fake answered end in a way Skelcrew doesn't understand\nworking fake fake-app-12 true\n",
+  );
+});
+
+// The stop's answer said it stopped, but the builder still ran, and sc start started a second
+// one in the same clone.
+test("a builder its host says it ended but still runs keeps its thread working, with its host", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "60"], env: {}, labels });
+require("node:fs").writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "keep-end"))}, "");
+const error = await stopThread(db, "unused", readThread(db, "app-12")).catch((error) => error.message);
+const after = readThread(db, "app-12");
+console.log(error);
+console.log(after.status, after.host, after.host_id);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe(
+    "fake said it ended the session fake-app-12, but it still runs\nworking fake fake-app-12\n",
+  );
+}, 30_000);
+
+test("sc start refuses a stopped thread whose last builder still runs on the host", () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "harness: claude\nsession: fake\n",
+  );
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", { ...readThread(db, "app-12"), host: "fake" })).host;
+const refused = () => refuseSecondBuilder(db, "unused", readThread(db, "app-12")).then(() => "started", (error) => error.message);
+console.log(await refused());
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+console.log(await refused());`,
+    { host: null, host_id: null, status: "stopped" },
+  );
+  expect(said).toBe(
+    "started\nSIMON/APP-12's last builder still runs on fake, as fake-app-12. End it there, then run sc start SIMON/APP-12 again.\n",
+  );
+});
+
+test("a poll stops a thread whose builder ended outside Skelcrew, and tells its lead", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
+console.log(readThread(db, "app-12").status);
+// Ended on the host itself, as a person might from its own app.
+await endSession(host, "fake-app-12");
+await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
+const after = readThread(db, "app-12");
+console.log(after.status, after.host, after.host_id);
+console.log(db.query("SELECT text FROM notes").all().map((note) => note.text).join("\\n"));`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe(
+    "working\nstopped null null\nSIMON/APP-12's builder ended outside Skelcrew, so the thread is stopped. sc start SIMON/APP-12 brings it back.\n",
   );
 });
 

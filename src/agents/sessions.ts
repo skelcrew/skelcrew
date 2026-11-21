@@ -387,10 +387,21 @@ export function stillRunning(tree: number[]): number[] {
 // using, such as a thread's clone, can be removed. Claude Code can outlive the end of its
 // session for a few seconds, so it gets `timeout` milliseconds before being killed. On a Mac
 // it then removes the sandbox's folders, which a killed agent would leave behind in /tmp. A
-// plugin's host waits for its session's processes itself, as only it knows them.
+// plugin's host waits for its session's processes itself, as only it knows them. Its answer
+// alone isn't trusted: a host can say it ended a session that still runs, as herdr's plugin
+// 0.1.0 did after an update. So this waits up to `timeout` for the host's list to drop the
+// session, and throws if it doesn't. Taken for ended, the session would get a second agent in
+// the same clone.
 export async function stopSession(host: Host, name: string, timeout = 10_000): Promise<void> {
   if (typeof host !== "string") {
-    if (await hasSession(host, name)) await endSession(host, name);
+    if (!(await hasSession(host, name))) return;
+    await endSession(host, name);
+    const deadline = Date.now() + timeout;
+    while (await hasSession(host, name)) {
+      if (Date.now() > deadline)
+        throw new Error(`${host.plugin} said it ended the session ${name}, but it still runs`);
+      await Bun.sleep(200);
+    }
     return;
   }
   const socket = host;

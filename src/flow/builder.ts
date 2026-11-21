@@ -8,7 +8,6 @@ import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
   agentRuns,
   checkAgentStarted,
-  endSession,
   hasSession,
   type Labels,
   startSession,
@@ -40,6 +39,7 @@ import {
   folderName,
   hostGone,
   hostMissing,
+  labelledBuilder,
   log,
   markBeforeHost,
   readThread,
@@ -715,6 +715,24 @@ export async function bringBack(
   sessions: string,
   thread: Thread,
 ): Promise<string | null> {
+  bringingBack.add(thread.folder);
+  try {
+    return await bringBackNow(db, sessions, thread);
+  } finally {
+    bringingBack.delete(thread.folder);
+  }
+}
+
+// The threads whose builder is being brought back, by folder. A poll leaves them alone, as a
+// builder about to start again would look like one that ended outside Skelcrew.
+export const bringingBack = new Set<string>();
+
+// Brings back the builder for bringBack, which notes the thread as being brought back meanwhile.
+async function bringBackNow(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<string | null> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
   // A builder you stopped has no host left to look on.
@@ -755,7 +773,9 @@ export async function bringBack(
         // A session whose agent ended is ended too, so the new one can take its name.
         const { host, id } = await builderSession(db, sessions, thread);
         if (await agentRuns(host, id)) return null;
-        if (await hasSession(host, id)) await endSession(host, id);
+        // stopSession checks the host no longer has the session, so a host that says it ended
+        // one it didn't never gets a second builder beside it.
+        if (await hasSession(host, id)) await stopSession(host, id);
         break;
       } catch (error) {
         // tmux failing isn't a host that will come back, and a thread stopped or ended
@@ -773,6 +793,32 @@ export async function bringBack(
   }
   await startBuilder(db, sessions, thread);
   return null;
+}
+
+// Throws when a builder of the thread still runs on the host your config names, though the
+// thread keeps none, for sc start on a stopped thread. It is found by its name on tmux and by
+// its labels on a plugin's host. Such a builder outlived a stop, such as on a host that said
+// it ended a session it didn't, and a second one would share its clone.
+export async function refuseSecondBuilder(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<void> {
+  const hostName = sessionHost();
+  const host = hostNamed(db, sessions, hostName);
+  // A host that isn't installed is refused by the start itself, saying so.
+  if (host === null) return;
+  // One whose agent ended left only its last screen, and works in the clone no more.
+  const found =
+    typeof host === "string"
+      ? { name: thread.folder, running: await agentRuns(host, thread.folder) }
+      : await labelledBuilder(host, thread);
+  if (!found?.running) return;
+  const id = found.name;
+  const name = threadName(db, thread);
+  throw new Error(
+    `${name}'s last builder still runs on ${hostName}, as ${id}. End it there, then run sc start ${name} again.`,
+  );
 }
 
 // How long bringBack waits before asking a plugin's host again, in milliseconds.
