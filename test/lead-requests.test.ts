@@ -199,6 +199,42 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     expect(read(join(lead(), "typed"))).not.toContain("its builder is back where it was");
   }, 60_000);
 
+  // A stop after the yes brought back a stopped task, but before its builder was back, leaves the
+  // task live and the request saying what the start did. As the daemon comes back it brings the
+  // builder back, as for every live task, and the lead hears only then: here that it failed.
+  test("a yes whose bringing back a stop cut short tells the lead how the builder came back", async () => {
+    addApp();
+    await startApp12();
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    for (const run of running.splice(0)) {
+      run.kill();
+      await run.exited;
+    }
+    // What the yes left as the daemon stopped: the task live again, and what the start said.
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("UPDATE task_threads SET status = 'working' WHERE task = '12'");
+    db.run(
+      `INSERT INTO lead_requests (owner, repo, action, says, made, answered, outcome) VALUES
+      ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12 Add export?', 1, 1,
+        'Started APP-12 again: its builder is back where it was.')`,
+    );
+    db.close();
+    // From here on APP-12's builder exits as soon as it starts, while the lead still starts.
+    const bin = join(home, "bin");
+    renameSync(join(bin, "claude"), join(bin, "claude-fake"));
+    writeFileSync(
+      join(bin, "claude"),
+      `#!/bin/sh\ncase "$CLAUDE_CONFIG_DIR" in */app-12) exit 1 ;; esac\nexec ${join(bin, "claude-fake")} "$@"\n`,
+      { mode: 0o755 },
+    );
+    serve();
+    await until(() => threadOf("12")?.status === "failed", 30_000);
+    const failed =
+      "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-12 Add export? It failed: ";
+    await until(() => read(join(lead(), "typed")).includes(failed), 30_000);
+    expect(read(join(lead(), "typed"))).not.toContain("It had done it already");
+  }, 60_000);
+
   test("a yes to a new task starts it with its title, description, short title and flow", async () => {
     await openApp();
     const asked = await asLead([

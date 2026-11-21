@@ -570,16 +570,36 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Does again each yes to a lead's request that the last stop of the daemon cut short, or whose
   // filing's outcome it couldn't learn. One whose start changed the task already is only
   // reported, with what that start said. Doing any other again never starts a task twice, and the
-  // lead hears what doing it again said. `cutShort` settles once the daemon has marked failed
-  // each thread whose setup the stop cut short, so a yes that started one starts it over.
-  const finishAnswers = async (cutShort: Promise<unknown>) => {
-    await cutShort;
+  // lead hears what doing it again said. `back` gives, once the daemon has started bringing back
+  // the threads that were live, how each one's bringing back ends, by its folder, and those whose
+  // setup the stop cut short, which fail at once. Those are waited for, so a yes that started one
+  // starts it over. A yes that brought back a stopped thread, such as with sc start after sc stop,
+  // left it live, and is only reported once its builder is back, or that it failed.
+  const finishAnswers = async (
+    back: Promise<{ ends: Map<string, Promise<string | null>>; cutShort: Promise<unknown>[] }>,
+  ) => {
+    const { ends, cutShort } = await back;
+    await Promise.all(cutShort);
     for (const taken of answeredRequests(db)) {
       try {
         const repository = findRepository(db, `${taken.owner}/${taken.repo}`);
-        if (taken.outcome !== null) {
-          const text = `Skelcrew stopped partway through the human's yes in the list to your request: ${taken.says} It had done it already: ${taken.outcome}`;
-          settle(repository, taken.id, text);
+        const { outcome } = taken;
+        if (outcome !== null) {
+          const partway = `Skelcrew stopped partway through the human's yes in the list to your request: ${taken.says}`;
+          const task = taken.action.kind === "start" ? taken.action.task : null;
+          const thread = task === null ? null : threadOn(db, `${taken.owner}/${taken.repo}`, task);
+          const end = (thread && ends.get(thread.folder)) ?? Promise.resolve(null);
+          // Not waited on: a builder's host that can't be reached is asked again for as long
+          // as it takes, which mustn't hold up the other requests.
+          void end.then((failed) =>
+            settle(
+              repository,
+              taken.id,
+              failed === null
+                ? `${partway} It had done it already: ${outcome}`
+                : `${partway} It failed: ${failed}`,
+            ),
+          );
           continue;
         }
         await doYes(repository, taken, true);
@@ -1164,8 +1184,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // bring back below are taken: one the yes brings back itself must not be brought back twice.
   // It waits until those whose setup the stop cut short are marked failed, below, so a yes that
   // started one starts it over. It isn't waited on, as a start waits for the first poll.
-  const setupsCutShort = Promise.withResolvers<void>();
-  void finishAnswers(setupsCutShort.promise);
+  const threadsBack = Promise.withResolvers<{
+    ends: Map<string, Promise<string | null>>;
+    cutShort: Promise<unknown>[];
+  }>();
+  void finishAnswers(threadsBack.promise);
   // Reviews the daemon's stop cut short join the queue of reviews first, before any request or
   // builder could start one, and in the order they had: those that were running, then those
   // that waited, by when they joined. A review doesn't need its builder until it types changes
@@ -1234,28 +1257,33 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   // A thread whose builder can't come back ends its review, which would otherwise mark it
   // waiting again once it ended. Either way a review already brought back hears of it.
-  // A thread with no session yet had its setup cut short, and its bringing back fails at once.
-  const failing: Promise<void>[] = [];
+  // How each one's bringing back ends, for the yeses to lead's requests the stop cut short. One
+  // with no session yet had its setup cut short, and its bringing back fails at once.
+  const ends = new Map<string, Promise<string | null>>();
+  const cutShort: Promise<unknown>[] = [];
   for (const thread of before) {
     await listenFor(thread);
     const settled = builderBack.get(thread.folder) ?? (() => {});
     // After the builder is back, since the round may type into its session.
     // A builder that stopped on a usage limit is woken once it resets, as it would have been.
-    const back = bringBack(db, sessions, thread).then(
+    const end = bringBack(db, sessions, thread).then(
       () => {
         settled();
         resumeRound(db, sessions, thread.folder);
         if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
+        return null;
       },
       (error) => {
         endRound(thread.folder);
         settled();
         failThread(db, sessions, thread, error);
+        return errorText(error);
       },
     );
-    if (thread.session === null) failing.push(back);
+    ends.set(thread.folder, end);
+    if (thread.session === null) cutShort.push(end);
   }
-  void Promise.all(failing).then(() => setupsCutShort.resolve());
+  threadsBack.resolve({ ends, cutShort });
   // Type the messages waiting for builders as soon as each can take them, looking every look,
   // as a builder becomes idle with no word to the daemon, such as after Esc.
   setInterval(() => deliverAllWaiting(db, sessions), look);
