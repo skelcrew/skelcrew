@@ -114,7 +114,6 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "submit":
     case "question":
     case "turn":
-    case "attached":
       return agentCommand(words);
     case "ps":
       return psCommand(words, json);
