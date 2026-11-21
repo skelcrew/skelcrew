@@ -1,6 +1,6 @@
 // The screen and the agents it shows: switching between them, the keys that reach them,
 // scrolling back and copying their text, several terminals, and your terminal's title.
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -48,8 +48,6 @@ import {
   wheel,
 } from "./screen.ts";
 
-// Longer than the screen's waits, so a test that fails says what it waited for.
-setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 
