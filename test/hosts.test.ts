@@ -671,6 +671,27 @@ console.log(db.query("SELECT text FROM notes").all().map((note) => note.text).jo
   );
 });
 
+// A daemon that stopped partway through the stop, here a note the database refuses, must leave
+// the thread as it was: never working with no host, which it would start a second time, nor
+// stopped with a lead that never hears of it.
+test("a stop for an ended builder that fails partway saves none of it", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
+await endSession(host, "fake-app-12");
+db.run("CREATE TRIGGER refuse BEFORE INSERT ON notes BEGIN SELECT RAISE(ABORT, 'the disk is full'); END");
+console.log(await noticeEndedBuilder(db, "unused", readThread(db, "app-12")).then(() => "stopped", (error) => error.message));
+const after = readThread(db, "app-12");
+console.log(after.status, after.host, after.host_id);
+console.log(db.query("SELECT COUNT(*) AS n FROM notes").get().n);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe("the disk is full\nworking fake fake-app-12\n0\n");
+});
+
 // The host alone says whether a builder runs, so a repository whose forge isn't known yet, which
 // no poll asks its tracker and forge about, still has its ended builders found.
 test("polling stops a thread whose builder ended while its repository's forge isn't known", () => {
