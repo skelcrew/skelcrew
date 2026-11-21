@@ -103,6 +103,24 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
   }, 90_000);
 
+  // A thread that needs you for something else, here your mark, already needs you as the next
+  // review reaches the limit. The lead still hears of the limit, each time.
+  test("a review reaching the round limit tells the lead though the thread already needs you", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    verdict(3, "changes", "Third problem.");
+    await startApp12();
+    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
+    const reached = "APP-12 needs you: changes asked for after 1 rounds of changes";
+    await until(() => read(join(lead(), "typed")).includes(reached));
+    expect((await skel(["needs-you", "app-12", "check the export format"])).err).toBe("");
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    await until(() => finished("failure").length === 3, 30_000);
+    await until(() => read(join(lead(), "typed")).split(reached).length - 1 === 2, 30_000);
+  }, 90_000);
+
   test("a review that fails sets the check to review failed, posts nothing, and tells the lead", async () => {
     addApp();
     await startApp12();
