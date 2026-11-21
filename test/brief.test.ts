@@ -69,7 +69,7 @@ for i in $(seq 3000); do
   if test -e "$CLAUDE_CONFIG_DIR/follows-briefs" && [ "\${briefs:-0}" -gt "\${handled:-0}" ]; then
     handled=$briefs
     if grep '<skelcrew from=' "$CLAUDE_CONFIG_DIR/typed" | tail -1 | grep -q 'asked="yes"'; then
-      sc task add web "CSV export" "Add a CSV export to the reports page." --start >> "$CLAUDE_CONFIG_DIR/acted" 2>&1
+      sc add web "CSV export" "Add a CSV export to the reports page." --start >> "$CLAUDE_CONFIG_DIR/acted" 2>&1
     else
       echo "asked my human: app's lead asks for a CSV export. Start it?" >> "$CLAUDE_CONFIG_DIR/acted"
     fi

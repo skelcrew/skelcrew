@@ -1,4 +1,4 @@
-// The backlog of Skelcrew's own tasks: work filed with sc task add, with no issue in a tracker,
+// The backlog of Skelcrew's own tasks: work filed with sc add, with no issue in a tracker,
 // waiting for sc start. Each task is kept on the repository's remote, so every machine's daemon
 // shows the same backlog, and the daemon keeps a copy in its database for the list to read.
 import type { Database } from "bun:sqlite";

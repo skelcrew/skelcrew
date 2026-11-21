@@ -7,7 +7,7 @@ import { machineCommand } from "./cli/machine.ts";
 import { installCommand, pluginCommand } from "./cli/plugins.ts";
 import { repoCommand } from "./cli/repos.ts";
 import { leadCommand, screenCommand } from "./cli/screen.ts";
-import { lsCommand, psCommand, showCommand, taskCommand } from "./cli/tasks.ts";
+import { addCommand, lsCommand, psCommand, showCommand } from "./cli/tasks.ts";
 import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
 import { errorText } from "./format.ts";
 import { help } from "./help.ts";
@@ -110,10 +110,9 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "ls":
       return lsCommand(first, words.slice(1), json);
     case "show":
-      console.error("sc show is now sc task.");
       return showCommand(words.slice(1), json);
-    case "task":
-      return words[1] === "add" ? taskCommand(words) : showCommand(words.slice(1), json);
+    case "add":
+      return addCommand(words.slice(1));
     case "start":
       return startCommand(words);
     case "stop":

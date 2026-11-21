@@ -113,7 +113,7 @@ console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, $
   return JSON.parse(run.stdout.toString());
 }
 
-// Returns what sc task prints of one of app's tasks.
+// Returns what sc show prints of one of app's tasks.
 function shown(task: string): string {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { printTask, showTask } from ${JSON.stringify(source("flow/list.ts"))};
@@ -216,7 +216,7 @@ UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
 });
 
 // A submit on a flow with no review stage whose push or check failed has no review round to
-// have failed, so sc ps, sc ls and sc task say it isn't reviewed. Like a failed review, the
+// have failed, so sc ps, sc ls and sc show say it isn't reviewed. Like a failed review, the
 // lead hears of it and can run it again, so it doesn't need you.
 test("a failed submit on a flow with no review shows as not reviewed, never a failed round", () => {
   sql(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE folder = 'app-14';
@@ -568,7 +568,7 @@ test("a task in Backlog has the same time in its details as on its row", () => {
   });
 });
 
-// A row stays short enough to read across: a merge when ready or messages waiting are for sc task.
+// A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
 test("a row says one short word, with no merge when ready or messages waiting after it", () => {
   sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
 INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-7', 'lead', 'one', 'one', 0);`);
@@ -774,9 +774,9 @@ test("a forge's base branch reaches the merge question without its control codes
   );
 });
 
-// The list's rows leave an armed merge out to stay short, so sc task says it, with what it waits
+// The list's rows leave an armed merge out to stay short, so sc show says it, with what it waits
 // on.
-test("sc task says a task's armed merge and what it waits on", () => {
+test("sc show says a task's armed merge and what it waits on", () => {
   expect(shown("7")).not.toContain("\nMerge ");
   sql(
     "UPDATE threads SET merge_plan = 'armed', merge_pinned = 'x', merge_waits = 'its checks' WHERE folder = 'app-7';",
@@ -2553,7 +2553,7 @@ const liveSeen = () => {
 const titled = (title: string) => paneSeen()[0]?.startsWith(title) ?? false;
 
 // app-12 asks a question and has an issue's link. app-14's PR has a check that failed, whose log
-// sc task would ask the forge for, and Skelcrew's review on it found two things.
+// sc show would ask the forge for, and Skelcrew's review on it found two things.
 test("the pane follows the row you are on, is empty on the lead's, and never asks the forge", async () => {
   sql(`UPDATE tasks SET issue_link = 'https://github.com/simon/app/issues/12', body = 'Limit each client.' WHERE task = '12';
 UPDATE tasks SET review_post = '{"pr":41,"id":"9","verdict":"approve","findings":["Name the limit","Test the header"]}' WHERE task = '14';

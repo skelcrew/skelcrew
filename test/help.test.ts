@@ -44,8 +44,8 @@ test("the help names every command", () => {
     "repo trust",
     "ps",
     "ls",
-    "task <task>",
-    "task add",
+    "show <task>",
+    "add <repo>",
     "start",
     "stop",
     "rm",
@@ -65,10 +65,10 @@ test("the help names every command", () => {
 });
 
 // One command files a task and can start it, so sc start takes only a task.
-test("the help names task add --start for new work, and no start <repo>", () => {
+test("the help names add --start for new work, and no start <repo>", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("  start <repo>");
-  expect(out).toContain("  task add <repo> ");
+  expect(out).toContain("  add <repo> ");
   expect(out).toContain("  --start ");
 });
 
@@ -205,20 +205,20 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
 });
 
 // An issue is only where some tasks come from, and a PR is part of a task, so the help has no
-// commands of their own for them: the task commands cover both. A thread is an agent on a task,
-// named as <task>/<role> wherever a task goes.
-test("the help has no issue or PR commands, and names tasks and threads as such", () => {
+// commands of their own for them: the task commands cover both. A command that acts on a task's
+// builder takes the task's name, never <task>/<role>.
+test("the help has no issue or PR commands, and names tasks as such", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("\nISSUES\n");
   expect(out).not.toContain("\nPULL REQUESTS\n");
   expect(out).not.toContain("  issue ");
   expect(out).not.toContain("  pr ");
-  expect(out).toContain("  task <task> ");
-  expect(out).not.toContain("  show ");
+  expect(out).toContain("  show <task> ");
+  expect(out).not.toContain("  task ");
   expect(out).toContain("  --issue ");
   expect(out).toContain("  --keep-issue ");
   for (const command of [
-    "task",
+    "show",
     "start",
     "stop",
     "rm",
@@ -231,8 +231,18 @@ test("the help has no issue or PR commands, and names tasks and threads as such"
     expect(out).toContain(`  ${command} <task>`);
   expect(out).not.toContain("<thread>");
   expect(out).not.toContain("<issue>");
-  expect(out.split("<task>/<role>").length - 1).toBe(1);
-  expect(out).toContain("APP-12/builder");
+  expect(out).not.toContain("<task>/<role>");
+  expect(out).not.toContain("/builder");
+});
+
+// A task's only thread is its builder, so a command takes the task alone. Leads started before
+// then may still type APP-12/builder, so the error names the task to type instead.
+test("a command that acts on a task's builder refuses <task>/builder and names the task", () => {
+  const ran = skel(["stop", "app-12/builder"]);
+  expect(ran.code).toBe(1);
+  expect(ran.err).toBe(
+    "Skelcrew: sc stop names the task alone now, such as APP-12, not app-12/builder.\n",
+  );
 });
 
 // sc issue and sc pr are gone. Leads started before then may still type them, so what replaced
@@ -244,7 +254,7 @@ test("sc issue and sc pr say which task commands replaced them", () => {
   ]) {
     const ran = skel(args);
     expect(ran.code).toBe(1);
-    expect(ran.err).toContain("sc task <task> shows one with its PR");
+    expect(ran.err).toContain("sc show <task> shows one with its PR");
     expect(ran.err).toContain("--issue");
   }
 });
@@ -257,11 +267,23 @@ test("the help says how a task with no issue is named, and that names are typed 
   expect(out).toContain("Type a name in any case: app-t100 is APP-T100.");
 });
 
-// sc task shows one task or, with add, files one. Anything else is no task's name.
-test("sc task takes a task's name or add", () => {
-  const ran = skel(["task", "ls"]);
+// sc show takes one task's name. Anything else is no task's name.
+test("sc show takes a task's name", () => {
+  const ran = skel(["show", "ls"]);
   expect(ran.code).not.toBe(0);
-  expect(ran.err).toContain("sc task was given arguments it doesn't take");
+  expect(ran.err).toContain("sc show was given arguments it doesn't take");
+});
+
+// sc task became sc show and sc add. Leads started before then may still type it, so it names
+// both.
+test("sc task says sc show and sc add replaced it", () => {
+  for (const args of [["task", "add", "app", "t", "b"], ["task", "app-12"], ["task"]]) {
+    const ran = skel(args);
+    expect(ran.code).toBe(1);
+    expect(ran.err).toBe(
+      'Skelcrew: sc task is gone: sc show <task> shows one, and sc add <repo> "<title>" "<body>" adds one.\n',
+    );
+  }
 });
 
 // The lead names each thread it starts for the sidebar, and you can too.

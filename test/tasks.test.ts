@@ -57,7 +57,7 @@ function run(code: string, ...args: string[]): string {
 }
 
 // Code that prints what each command and the screen show of the saved database's threads: sc
-// repo ls, sc ps, sc ls and sc task, and the tabs.
+// repo ls, sc ps, sc ls and sc show, and the tabs.
 const showAll = `import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
 const list = await import(${JSON.stringify(source("flow/list.ts"))});
 const { repositoryTabs } = await import(${JSON.stringify(source("list/rows.ts"))});
@@ -170,7 +170,7 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
       title: row.title,
       thread: row.thread,
     });
-  // sc task shows each task sc issue show showed, with its title, its body as its reviewer
+  // sc show shows each task sc issue show showed, with its title, its body as its reviewer
   // gets it, and its thread.
   const named = (name: string) =>
     shown.find((task: Task | string) => typeof task !== "string" && task.task === name);
@@ -555,6 +555,6 @@ test("a thread's rounds, PR, review and updates written just before the move sho
   });
   db.close();
   // The lead's update still reaches the task as its reviewer gets it.
-  const shown = await runSkel(["task", "app-15", "--json"], env());
+  const shown = await runSkel(["show", "app-15", "--json"], env());
   expect(JSON.parse(shown.out).body).toContain("Use the system's theme.");
 }, 60_000);
