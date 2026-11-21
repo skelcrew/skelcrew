@@ -896,36 +896,26 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   const fullName = `${found.owner}/${found.repo}`;
   const { folder } = leadOf(db, found.owner, found.repo);
   await closeTabAndEndLead(db, sessions, found, "remove");
-  const row = z
-    .record(z.string(), z.union([z.string(), z.number(), z.null()]))
-    .parse(
-      db
-        .query("SELECT * FROM repositories WHERE owner = ? AND repo = ?")
-        .get(found.owner, found.repo),
-    );
-  const removed = db.run(
-    "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
-    [found.owner, found.repo],
-  );
-  if (removed.changes === 0)
-    throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
   const aside = `.removing-${Date.now()}`;
   const moved: string[] = [];
-  try {
-    for (const place of [cloneDir(found.owner, found.repo), join(folder, dropsFolder)]) {
-      if (!existsSync(place)) continue;
-      renameSync(place, `${place}${aside}`);
-      moved.push(place);
-    }
-  } catch (error) {
-    for (const place of moved) renameSync(`${place}${aside}`, place);
-    const columns = Object.keys(row);
-    db.run(
-      `INSERT INTO repositories (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
-      Object.values(row),
+  db.transaction(() => {
+    const removed = db.run(
+      "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
+      [found.owner, found.repo],
     );
-    throw error;
-  }
+    if (removed.changes === 0)
+      throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
+    try {
+      for (const place of [cloneDir(found.owner, found.repo), join(folder, dropsFolder)]) {
+        if (!existsSync(place)) continue;
+        renameSync(place, `${place}${aside}`);
+        moved.push(place);
+      }
+    } catch (error) {
+      for (const place of moved) renameSync(`${place}${aside}`, place);
+      throw error;
+    }
+  })();
   forgetAgents(found);
   nameRepositories(db);
   await renameBuilders();

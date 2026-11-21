@@ -509,27 +509,14 @@ ${body}`,
 }
 
 test("a repository whose dropped files can't be moved keeps its whole clone, so removing it can be tried again", () => {
-  const said = removingStuck(`const { Database } = require("bun:sqlite");
-const run = Database.prototype.run;
-const listed = () => db.query("SELECT 1 FROM repositories WHERE repo = 'app'").get() !== null;
-let gone = false;
-const cloneWhenBack = [];
-Database.prototype.run = function (...args) {
-  const result = run.apply(this, args);
-  if (gone && listed()) cloneWhenBack.push(fs.existsSync(path.join(clone, "src", "app.ts")));
-  gone = !listed();
-  return result;
-};
-fs.chmodSync(lead, 0o500);
+  const said = removingStuck(`fs.chmodSync(lead, 0o500);
 console.log(await removeRepo("app", "unused").then(() => "removed", () => "refused"));
-Database.prototype.run = run;
 fs.chmodSync(lead, 0o700);
-console.log(JSON.stringify(cloneWhenBack), listed(), fs.existsSync(path.join(clone, "src", "app.ts")));
+const listed = db.query("SELECT 1 FROM repositories WHERE repo = 'app'").get() !== null;
+console.log(listed, fs.existsSync(path.join(clone, "src", "app.ts")));
 console.log(await removeRepo("app", "unused"));
 console.log(fs.existsSync(clone), fs.readdirSync(path.dirname(clone)));`);
-  expect(said).toBe(
-    "refused\n[true] true true\nRemoved app and Skelcrew's clone of it.\nfalse []\n",
-  );
+  expect(said).toBe("refused\ntrue true\nRemoved app and Skelcrew's clone of it.\nfalse []\n");
 });
 
 test("a removed repository's clone that can't be deleted is named for you, and a later removal leaves it", () => {
