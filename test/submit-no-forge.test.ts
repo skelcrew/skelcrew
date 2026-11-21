@@ -60,10 +60,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
     );
     await untilCloned();
     // It has no tracker to open an issue in, and the backlog is named instead.
-    const create = await skel(["task", "add", "app", "Add export", "As JSON", "--issue"]);
+    const create = await skel(["add", "app", "Add export", "As JSON", "--issue"]);
     expect(create.err).toContain("app has no tracker, so --issue can't open an issue there");
-    expect(create.err).toContain("Without --issue, sc task add files the task");
-    const started = await skel(["task", "add", "app", "Add export", "As JSON", "--start"]);
+    expect(create.err).toContain("Without --issue, sc add files the task");
+    const started = await skel(["add", "app", "Add export", "As JSON", "--start"]);
     expect(started.err).toBe("");
     expect(started.out).toBe(`Started APP-T1.\n`);
     const log = () => read(join(data(), "threads", `app-t1.log`));
@@ -111,7 +111,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
       Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "ignore", stderr: "ignore" }),
     );
     await untilCloned();
-    const started = await skel(["task", "add", "app", "Add export", "As JSON", "--start"]);
+    const started = await skel(["add", "app", "Add export", "As JSON", "--start"]);
     expect(started.err).toBe("");
     const log = () => read(join(data(), "threads", `app-t1.log`));
     await until(() => log().includes(`APP-T1 is ready on branch skelcrew/t1-add-export`), 30_000);
@@ -143,7 +143,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
       Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "ignore", stderr: "ignore" }),
     );
     await untilCloned();
-    const started = await skel(["task", "add", "app", "Add export", "As JSON", "--start"]);
+    const started = await skel(["add", "app", "Add export", "As JSON", "--start"]);
     expect(started.err).toBe("");
     const log = () => read(join(data(), "threads", `app-t1.log`));
     await until(() => log().includes(`APP-T1 is ready on branch skelcrew/t1-add-export`), 30_000);
@@ -201,7 +201,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     git(bare, "branch", `skelcrew/t1-add-export`, "main");
     serveOutsideCheckout();
     await untilCloned();
-    expect((await skel(["task", "add", "app", "Add export", "As JSON", "--start"])).err).toBe("");
+    expect((await skel(["add", "app", "Add export", "As JSON", "--start"])).err).toBe("");
     await until(() => read(join(data(), "claude", `app-t1`, "args")) !== "");
     const removed = await skel(["rm", `app-t1`]);
     expect(removed.err).toBe("");
@@ -245,7 +245,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
       );
     // Starts a thread on what you said, whose builder submits at once.
     const start = async (title: string) =>
-      expect((await skel(["task", "add", "app", title, "Do it", "--start"])).err).toBe("");
+      expect((await skel(["add", "app", title, "Do it", "--start"])).err).toBe("");
 
     test("a review waits while another runs, and they run in the order they came", async () => {
       config("limits: { reviews: 1 }\n");
@@ -397,7 +397,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     verdict(2, "approve", "Ready again.");
     serveOutsideCheckout();
     await untilCloned(longWait);
-    expect((await skel(["task", "add", "app", "Add export", "As JSON", "--start"])).err).toBe("");
+    expect((await skel(["add", "app", "Add export", "As JSON", "--start"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t1.log`));
     const ready = `APP-T1 is ready on branch skelcrew/t1-add-export`;
     await until(() => log().includes(ready), longWait);
@@ -440,7 +440,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     verdict(2, "approve", "Ready again.");
     serveOutsideCheckout();
     await untilCloned();
-    expect((await skel(["task", "add", "app", "Add export", "As JSON", "--start"])).err).toBe("");
+    expect((await skel(["add", "app", "Add export", "As JSON", "--start"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t1.log`));
     const ready = `APP-T1 is ready on branch skelcrew/t1-add-export`;
     await until(() => log().includes(ready), 30_000);
@@ -486,7 +486,7 @@ exec "${realGit}" "$@"`,
     const looks = () => read(trace).split("trace: built-in: git ls-remote").length - 1;
     serveOutsideCheckout({ GIT_TRACE: trace });
     await untilCloned();
-    expect((await skel(["task", "add", "app", "Add export", "As JSON", "--start"])).err).toBe("");
+    expect((await skel(["add", "app", "Add export", "As JSON", "--start"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t1.log`));
     await until(() => log().includes(`APP-T1 is ready on branch skelcrew/t1-add-export`), 30_000);
     const hook = join(bare, "hooks", "post-receive");

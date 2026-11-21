@@ -144,7 +144,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
   // words and brings a real question to you.
   // Only the human can unblock it, so the lead marks it, saying what to do. It said so itself,
   // so it gets no note of it.
-  test("the lead marks a thread with what you must do, which sc ps and sc task say, and clears it", async () => {
+  test("the lead marks a thread with what you must do, which sc ps and sc show say, and clears it", async () => {
     addApp();
     await startApp12();
     const action = "apply the check.yml split in PR #463";
@@ -153,7 +153,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(marked.out).toContain(`APP-12 needs you: ${action}`);
     await untilNeedsYou(true);
     expect(await needsYouFor()).toBe(action);
-    expect((await skel(["task", "app-12"])).out).toContain(`needs you: ${action}`);
+    expect((await skel(["show", "app-12"])).out).toContain(`needs you: ${action}`);
     await until(() => read(join(data(), "threads", "app-12.log")).includes("the lead marked it"));
     await Bun.sleep(1500);
     expect(notes()).toBe(0);

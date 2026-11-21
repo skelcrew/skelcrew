@@ -1,4 +1,4 @@
-// sc ps, sc ls, sc task and sc attach, run as you or the lead would run
+// sc ps, sc ls, sc show and sc attach, run as you or the lead would run
 // them, against a running daemon, a fake gh, a fake Claude Code and a fake tmux for attaching.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -466,7 +466,7 @@ function issue(repo: string, number: number, title: string, body: string) {
   sql(itemSql(repo, "task", number, title, "2026-11-01T12:00:00Z", { body }));
 }
 
-describe("sc task", () => {
+describe("sc show", () => {
   beforeEach(() => {
     threads();
     issue("app", 12, "Add export", "Export threads as JSON.\n\nKeep it small.");
@@ -488,7 +488,7 @@ UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo =
     issue("app", 9, "Redirect after login", "Edited.");
     serve();
     await untilAnswers();
-    const edited = JSON.parse((await skel(["task", "app-9", "--json"])).out);
+    const edited = JSON.parse((await skel(["show", "app-9", "--json"])).out);
     expect(edited).toMatchObject({
       stage: "working",
       title: "Send people back to the page they came from after signing in",
@@ -497,7 +497,7 @@ UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo =
       body: "Back to the page.",
     });
     sql("DELETE FROM items WHERE id = '9'");
-    const closed = await skel(["task", "app-9", "--json"]);
+    const closed = await skel(["show", "app-9", "--json"]);
     expect(closed.err).toBe("");
     expect(JSON.parse(closed.out)).toEqual({ ...edited, issue: { id: "#9", link: null } });
   });
@@ -521,7 +521,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     expect(started.stdout.toString()).toBe("Closes #3\n");
     serve();
     await untilAnswers();
-    const shown = JSON.parse((await skel(["task", "app-3", "--json"])).out);
+    const shown = JSON.parse((await skel(["show", "app-3", "--json"])).out);
     expect(shown).toMatchObject({ task: "APP-3", issue: { id: "#3", link }, title: "Fix typo" });
   });
 
@@ -531,7 +531,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     issue("app", 12, "Add export as CSV", "Export threads as CSV.");
     serve();
     await untilAnswers();
-    const shown = JSON.parse((await skel(["task", "app-12", "--json"])).out);
+    const shown = JSON.parse((await skel(["show", "app-12", "--json"])).out);
     expect(shown).toMatchObject({
       stage: "working",
       title: "Add export",
@@ -544,13 +544,13 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     sql(threadSql({ task: "t4", status: "done", title: "Rate limit the API" }));
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "site-7"]);
+    const shown = await skel(["show", "site-7"]);
     expect(shown.err).toBe("");
-    expect((await skel(["task", "SITE-7"])).out).toBe(shown.out);
-    expect((await skel(["task", "Site-7"])).out).toBe(shown.out);
-    const own = await skel(["task", "app-t4"]);
+    expect((await skel(["show", "SITE-7"])).out).toBe(shown.out);
+    expect((await skel(["show", "Site-7"])).out).toBe(shown.out);
+    const own = await skel(["show", "app-t4"]);
     expect(own.out).toStartWith("APP-T4  Rate limit the API\n");
-    expect((await skel(["task", "APP-T4"])).out).toBe(own.out);
+    expect((await skel(["show", "APP-T4"])).out).toBe(own.out);
   });
 
   // Two repositories whose names differ only in case, such as App and app, saved before Skelcrew
@@ -560,12 +560,12 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     sql("INSERT INTO repositories (name, owner, repo) VALUES ('App', 'other', 'App')");
     serve();
     await untilAnswers();
-    const refused = await skel(["task", "APP-12"]);
+    const refused = await skel(["show", "APP-12"]);
     expect(refused.out).toBe("");
     expect(refused.err).toContain(
       "APP names more than one repository: other/App, simon/app. Name one by its owner/name.",
     );
-    const named = await skel(["task", "simon/app-12"]);
+    const named = await skel(["show", "simon/app-12"]);
     expect(named.err).toBe("");
     expect(named.out).toStartWith("APP-12  Add export\n");
   });
@@ -573,7 +573,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
   test("shows a task's issue, threads and description", async () => {
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "site-7"]);
+    const shown = await skel(["show", "site-7"]);
     expect(shown.err).toBe("");
     expect(shown.out).toBe(
       "SITE-7  New landing page\n" +
@@ -584,7 +584,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
         "\nDescription\nMake it calm.\n",
     );
     expect(read(join(home, "calls"))).not.toContain("issues");
-    expect((await skel(["task", "APP-10"])).out).toBe(
+    expect((await skel(["show", "APP-10"])).out).toBe(
       "APP-10  Fix login\nStage   issue\nIssue   #10  https://github.com/simon/app/issues/10\nThread  none\nPR      none\n",
     );
   });
@@ -592,7 +592,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
   test("shows a task as JSON for tools", async () => {
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "app-12", "--json"]);
+    const shown = await skel(["show", "app-12", "--json"]);
     expect(shown.err).toBe("");
     expect(JSON.parse(shown.out)).toEqual({
       task: "APP-12",
@@ -609,7 +609,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
       merge: null,
       filed: null,
     });
-    expect(JSON.parse((await skel(["task", "--json", "APP-10"])).out)).toMatchObject({
+    expect(JSON.parse((await skel(["show", "--json", "APP-10"])).out)).toMatchObject({
       task: "APP-10",
       stage: "issue",
       threads: [],
@@ -617,15 +617,13 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     });
   });
 
-  // Leads started before sc task still have sc show in their instructions, so it still works,
-  // with a word on stderr that keeps stdout the same.
-  test("sc show still shows a task, and says it is now sc task", async () => {
+  // sc show is the command that shows a task, with nothing said on stderr.
+  test("sc show shows a task, and says nothing more", async () => {
     serve();
     await untilAnswers();
-    const task = await skel(["task", "app-12", "--json"]);
     const show = await skel(["show", "app-12", "--json"]);
-    expect(show.out).toBe(task.out);
-    expect(show.err).toBe("sc show is now sc task.\n");
+    expect(JSON.parse(show.out)).toMatchObject({ task: "APP-12" });
+    expect(show.err).toBe("");
     expect(show.code).toBe(0);
   });
 
@@ -635,7 +633,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     issue("app", 10, "Fix login", "Clear\u001b[2J the screen.\n\nThen\u0007beep.");
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "app-10"]);
+    const shown = await skel(["show", "app-10"]);
     expect(shown.err).toBe("");
     expect(shown.out).not.toContain("\u001b");
     expect(shown.out).not.toContain("\u0007");
@@ -645,13 +643,13 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
   test("says when the task or the repository doesn't exist", async () => {
     serve();
     await untilAnswers();
-    const missing = await skel(["task", "app-99"]);
+    const missing = await skel(["show", "app-99"]);
     expect(missing.code).not.toBe(0);
     expect(missing.err).toBe("Skelcrew: there is no task APP-99\n");
-    const unknown = await skel(["task", "web-1"]);
+    const unknown = await skel(["show", "web-1"]);
     expect(unknown.code).not.toBe(0);
     expect(unknown.err).toContain("no repository named web");
-    expect((await skel(["task"])).err).toContain("sc task was given arguments");
+    expect((await skel(["show"])).err).toContain("sc show was given arguments");
   });
 
   // The lead's messages to a builder change its task after the thread started, so they show
@@ -670,7 +668,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     expect((await asAgent(["tell", "lead", "Done with the CSV part."], builder)).err).toBe("");
     const log = () => read(join(data(), "threads", "app-12.log"));
     await until(() => log().includes("export.json"), { timeout: 15_000 });
-    const shown = await skel(["task", "app-12"]);
+    const shown = await skel(["show", "app-12"]);
     expect(shown.err).toBe("");
     expect(shown.out).toMatch(
       /\nDescription\nExport threads as JSON\.\n\nKeep it small\.\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nKeep the CSV export too\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nName the file export\.json\.\n$/,
@@ -694,7 +692,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     await until(() => read(join(data(), "threads", "app-t1.log")).includes("Two pages."), {
       timeout: 15_000,
     });
-    const shown = JSON.parse((await skel(["task", "app-t1", "--json"])).out);
+    const shown = JSON.parse((await skel(["show", "app-t1", "--json"])).out);
     expect(shown).toMatchObject({ task: "APP-T1", title: "Add docs", issue: null });
     expect(shown.body).toMatch(
       /^A page\.\n\n## Changes to the task from the lead.*\n\nTwo pages\.$/s,
@@ -709,12 +707,12 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
 UPDATE tasks SET updates = '${updates}', body = 'Fix the typo.' WHERE task IN ('12', '3')`);
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "app-12"]);
+    const shown = await skel(["show", "app-12"]);
     expect(shown.err).toBe("");
     expect(shown.out).toBe(
       "APP-12  Add export\nStage   issue\nIssue   #12  https://github.com/simon/app/issues/12\nThread  APP-12/builder  done\nPR      none\n\nDescription\nExport threads as JSON.\n\nKeep it small.\n",
     );
-    const closed = await skel(["task", "app-3"]);
+    const closed = await skel(["show", "app-3"]);
     expect(closed.err).toBe("");
     expect(closed.out).toBe(
       "APP-3  Fix typo\nStage   closed\nIssue   #3\nThread  APP-3/builder  done\nPR      none\n\nDescription\nFix the typo.\n",
@@ -729,10 +727,10 @@ ${threadSql({ task: "t2", status: "done", title: "Add tests" })}
 UPDATE tasks SET merged = 1 WHERE task = 't2'`);
     serve();
     await untilAnswers();
-    expect((await skel(["task", "APP-T1"])).out).toBe(
+    expect((await skel(["show", "APP-T1"])).out).toBe(
       "APP-T1  Add docs\nStage   closed\nIssue   none\nThread  APP-T1/builder  done\nPR      none\n",
     );
-    expect(JSON.parse((await skel(["task", "app-t2", "--json"])).out)).toMatchObject({
+    expect(JSON.parse((await skel(["show", "app-t2", "--json"])).out)).toMatchObject({
       stage: "merged",
       title: "Add tests",
     });
@@ -742,10 +740,10 @@ UPDATE tasks SET merged = 1 WHERE task = 't2'`);
     serve();
     await untilAnswers();
     await openApp();
-    const lead = await asAgent(["task", "app-12"], leadSocket());
+    const lead = await asAgent(["show", "app-12"], leadSocket());
     expect(lead.err).toBe("");
-    expect(lead.out).toBe((await skel(["task", "app-12"])).out);
-    const refused = await asAgent(["task", "app-12"], await builderSocket());
+    expect(lead.out).toBe((await skel(["show", "app-12"])).out);
+    const refused = await asAgent(["show", "app-12"], await builderSocket());
     expect(refused.code).not.toBe(0);
     expect(refused.err).toBe("Skelcrew: the daemon doesn't know that request\n");
   });
@@ -821,7 +819,7 @@ ${threadSql({ task: "20", status: "waiting", title: "Docs", pr: 39, verdict: "ap
     tmux("new-session", "-d", "-s", live, "sleep 300");
 }
 
-// What sc task prints for app-12, whose PR is 31, from Skelcrew's copy, with the forge's log of
+// What sc show prints for app-12, whose PR is 31, from Skelcrew's copy, with the forge's log of
 // its failed check. The colour codes and other control characters from the forge are gone.
 const app12 = `APP-12  Add export
 Stage   working
@@ -922,11 +920,11 @@ describe("with a forge", () => {
     expect(shown["APP-20"]?.checks).toBe("no CI");
   });
 
-  test("sc task shows a task's PR from Skelcrew's copy, with the log of a failed check", async () => {
+  test("sc show shows a task's PR from Skelcrew's copy, with the log of a failed check", async () => {
     const settings = forgeThreads();
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "app-12"]);
+    const shown = await skel(["show", "app-12"]);
     expect(shown.err).toBe("");
     expect(shown.out).toBe(app12);
     // Only the log comes from the forge, and only for the failed check with a log.
@@ -936,14 +934,14 @@ describe("with a forge", () => {
 
   // The forge can hang on a log, and sc gives up on the daemon after a minute, so the log has a
   // deadline of its own, and the task still shows with why its log is missing.
-  test("sc task still shows the task when the forge hangs on a log", async () => {
+  test("sc show still shows the task when the forge hangs on a log", async () => {
     const settings = forgeThreads();
     writeFileSync(join(settings, "hold-log"), "");
     // The daemon waits two seconds for the log, rather than its usual ten.
     startDaemon(socket, { ...env(), SKELCREW_LOG_WAIT_MS: "2000" }, running);
     await untilAnswers();
     const started = Date.now();
-    const shown = await skel(["task", "app-12"]);
+    const shown = await skel(["show", "app-12"]);
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(shown.err).toBe("");
     expect(shown.out).toStartWith("APP-12  Add export\n");
@@ -953,22 +951,22 @@ describe("with a forge", () => {
   }, 40_000);
 
   // Tasks are the only names: a PR's number names nothing.
-  test("sc task refuses a PR's number", async () => {
+  test("sc show refuses a PR's number", async () => {
     forgeThreads();
     serve();
     await untilAnswers();
     for (const named of ["#31", "31"]) {
-      const shown = await skel(["task", named]);
+      const shown = await skel(["show", named]);
       expect(shown.code).toBe(1);
-      expect(shown.err).toContain("sc task was given arguments it doesn't take");
+      expect(shown.err).toContain("sc show was given arguments it doesn't take");
     }
   });
 
-  test("sc task gives JSON for tools, with the task's PR as its page shows it", async () => {
+  test("sc show gives JSON for tools, with the task's PR as its page shows it", async () => {
     forgeThreads();
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "app-12", "--json"]);
+    const shown = await skel(["show", "app-12", "--json"]);
     expect(JSON.parse(shown.out)).toEqual({
       task: "APP-12",
       stage: "working",
@@ -1019,12 +1017,12 @@ describe("with a forge", () => {
 
   // The lead has no login to the forge, so it reads PRs here, by their tasks, and it can't read
   // another repository's.
-  test("the lead runs sc task on its own repository only", async () => {
+  test("the lead runs sc show on its own repository only", async () => {
     forgeThreads();
     serve();
     await untilAnswers();
     await openApp();
-    const own = await asAgent(["task", "app-12"], leadSocket());
+    const own = await asAgent(["show", "app-12"], leadSocket());
     expect(own.err).toBe("");
     expect(own.out).toBe(app12);
     const listed = JSON.parse((await asAgent(["ps", "--json"], leadSocket())).out);
@@ -1033,19 +1031,19 @@ describe("with a forge", () => {
       "APP-12",
       "APP-9",
     ]);
-    const other = await asAgent(["task", "site-7"], leadSocket());
+    const other = await asAgent(["show", "site-7"], leadSocket());
     expect(other.code).not.toBe(0);
     expect(other.err).toContain("you are the lead of simon/app only");
   });
 
-  test("sc task says when a task has no PR, and shows a review without a forge", async () => {
+  test("sc show says when a task has no PR, and shows a review without a forge", async () => {
     forgeThreads();
     serve();
     await untilAnswers();
     // site has no forge, but its reviews still run, on the branch, so their state shows.
-    const site = await skel(["task", "site-7"]);
+    const site = await skel(["show", "site-7"]);
     expect(site.out).toContain("\nPR      none\nReview  approved r1\n");
-    expect(JSON.parse((await skel(["task", "site-7", "--json"])).out).review).toEqual({
+    expect(JSON.parse((await skel(["show", "site-7", "--json"])).out).review).toEqual({
       state: "approved",
       round: 1,
       at: "2025-11-16T11:00:00.000Z",
@@ -1053,11 +1051,11 @@ describe("with a forge", () => {
     expect((await skel(["ls", "site"])).out).toContain(
       "SITE-7  working  Add docs  waiting · approved r1\n",
     );
-    expect((await skel(["task", "app-9"])).out).toContain("\nPR      none\n");
-    const gone = await skel(["task", "app-99"]);
+    expect((await skel(["show", "app-9"])).out).toContain("\nPR      none\n");
+    const gone = await skel(["show", "app-99"]);
     expect(gone.err).toBe("Skelcrew: there is no task APP-99\n");
-    const usage = await skel(["task"]);
-    expect(usage.err).toContain("sc task was given arguments it doesn't take");
+    const usage = await skel(["show"]);
+    expect(usage.err).toContain("sc show was given arguments it doesn't take");
   });
 });
 
@@ -1241,7 +1239,7 @@ test("an agent can't run the list command", async () => {
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there the lead can't start.
 describe.skipIf(insideSandbox)("from the lead", () => {
-  test("a lead runs sc ps, sc ls, sc task and sc repo ls from its sandbox, but can't attach", async () => {
+  test("a lead runs sc ps, sc ls, sc show and sc repo ls from its sandbox, but can't attach", async () => {
     threads();
     issue("app", 12, "Add export", "As JSON");
     // app-12 saved its issue's words as it started.
@@ -1250,7 +1248,7 @@ describe.skipIf(insideSandbox)("from the lead", () => {
       join(home, "bin", "claude"),
       `#!/bin/sh
 case "$CLAUDE_CONFIG_DIR" in
-*/lead-*) { sc ps app --json; sc ls app --json; sc task app-12 --json; sc repo ls --json; sc attach app-12; } > out.new 2>&1; mv out.new out ;;
+*/lead-*) { sc ps app --json; sc ls app --json; sc show app-12 --json; sc repo ls --json; sc attach app-12; } > out.new 2>&1; mv out.new out ;;
 esac
 exec sleep 300
 `,

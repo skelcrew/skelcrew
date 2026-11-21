@@ -455,7 +455,7 @@ test("a custom lead role that drops the safety rules still gets them after its o
   );
   expect(told).toStartWith(custom);
   for (const rule of [
-    "Run sc start or sc task add --start only once the human says yes. To park work for later, file it in Skelcrew's backlog with sc task add. Create an issue in the tracker only when the human explicitly asks for one",
+    "Run sc start or sc add --start only once the human says yes. To park work for later, file it in Skelcrew's backlog with sc add. Create an issue in the tracker only when the human explicitly asks for one",
     "Before filing an issue in a public repository's tracker, ask the human",
     "You never change code yourself",
     "You can't merge. Arming a merge when ready is the human's too",

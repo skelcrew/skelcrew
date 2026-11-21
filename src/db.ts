@@ -715,7 +715,7 @@ function prepareTables(db: Database): void {
     item TEXT NOT NULL,
     PRIMARY KEY (owner, repo, kind, id)
   )`);
-  // The daemon's copy of each repository's backlog: the tasks filed with sc task add, which its
+  // The daemon's copy of each repository's backlog: the tasks filed with sc add, which its
   // remote keeps, so the list reads them without asking the remote. `filed_commit` is the commit
   // the remote keeps each one at.
   db.run(`CREATE TABLE IF NOT EXISTS backlog (

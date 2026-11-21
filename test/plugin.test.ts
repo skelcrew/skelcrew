@@ -768,7 +768,7 @@ test("sc plugin rm and update without -g refuse, as a repository's plugins can't
 // The plugin commands were once at the top level, so typing one there says where it went.
 test("the old top-level plugin commands point to sc plugin", async () => {
   for (const words of [
-    ["add", "x"],
+    ["remove", "x"],
     ["remove", "-g", "x"],
     ["update"],
     ["setup", "x"],
@@ -780,6 +780,16 @@ test("the old top-level plugin commands point to sc plugin", async () => {
       "Skelcrew: plugin commands are under sc plugin now: sc plugin add, rm, update, setup and ls. Run sc --help to see them.\n",
     );
   }
+});
+
+// sc add adds a task now. A plugin's owner/repo alone, as sc add once took it, points to sc plugin
+// add rather than failing as a task with no title.
+test("sc add with only a plugin's owner/repo points to sc plugin add", async () => {
+  const run = await skel(["add", "skelcrew/skelcrew-github"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toBe(
+    "Skelcrew: plugins are added with sc plugin add now, such as sc plugin add skelcrew/skelcrew-github.\n",
+  );
 });
 
 // Returns a new checkout of simon/app in home/app, with a skelcrew.yaml of its own.

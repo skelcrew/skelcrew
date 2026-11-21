@@ -705,19 +705,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { tasks: listTasks(db, request.repo) };
       case "task show":
         return { task: await showTask(db, request) };
-      // A task that is also an issue in the tracker, for sc task add --issue. A lead files an
-      // issue only when the human explicitly asks for one, and gives their words, which the log
-      // keeps exactly. Otherwise it parks work in the backlog.
       case "task create": {
         const repository = findRepository(db, request.repo);
         if (trackerOf(db, repository) === null)
           throw new Error(
-            `${repository.name} has no tracker, so --issue can't open an issue there. Without --issue, sc task add files the task in Skelcrew's backlog`,
+            `${repository.name} has no tracker, so --issue can't open an issue there. Without --issue, sc add files the task in Skelcrew's backlog`,
           );
         if (leadOfCaller(caller) !== null) {
           if (request.asked === undefined)
             throw new Error(
-              "a lead creates an issue only when the human explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, leave out --issue, and sc task add files it in the backlog.",
+              "a lead creates an issue only when the human explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, leave out --issue, and sc add files it in the backlog.",
             );
           console.log(
             `${repository.name}'s lead creates an issue, as the human asked: ${JSON.stringify(request.asked)}`,
@@ -727,8 +724,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         saveItems(db, repository.owner, repository.repo, [task], []);
         return { task: taskName(repository.name, task.id) };
       }
-      // Files a task in the backlog, from Skelcrew's clone, which the daemon may still be making
-      // or may not yet know the forge of, whose login pushes the task to the remote.
       case "task add": {
         const repository = findRepository(db, request.repo);
         const clone = cloneDir(repository.owner, repository.repo);
@@ -736,17 +731,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const by = leadOfCaller(caller) === null ? loginName() : `${loginName()} via the lead`;
         const { title, body } = request;
         const current = findRepository(db, request.repo);
-        // A filing whose outcome nobody heard is settled by the same sc task add run again.
         const { task, already } = await fileTask(db, current, clone, { title, body, by }).catch(
           (error) => {
             throw new Error(
-              `${errorText(error)}. The remote may have taken the task: run the same sc task add again once it can be reached, which never files it twice.`,
+              `${errorText(error)}. The remote may have taken the task: run the same sc add again once it can be reached, which never files it twice.`,
             );
           },
         );
-        // Read back by a refresh of the clone, which never runs beside another, so the list
-        // shows it at once and sc start finds the commit it needs. One that fails only waits
-        // for the next poll: the task is filed already.
         await refreshClone(db, current).catch((error) => console.log(errorText(error)));
         return { task: taskName(repository.name, task), already };
       }

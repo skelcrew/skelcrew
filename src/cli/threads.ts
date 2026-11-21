@@ -98,7 +98,7 @@ export async function startCommand(args: string[]): Promise<void> {
   const task = splitTaskName(sub);
   if (sub !== undefined && (!task || (await namesRepository(sub))))
     throw new Error(
-      `sc start takes only a task now, such as sc start APP-12. To start new work in ${sub}, run sc task add ${sub} "<title>" "<body>" --start, or sc task add ${sub} --start with the title and body on stdin. It takes --short and --flow as sc start did.`,
+      `sc start takes only a task now, such as sc start APP-12. To start new work in ${sub}, run sc add ${sub} "<title>" "<body>" --start, or sc add ${sub} --start with the title and body on stdin. It takes --short and --flow as sc start did.`,
     );
   if (!task) return usage("start");
   const option = (name: string) => {
