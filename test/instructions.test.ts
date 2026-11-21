@@ -156,7 +156,7 @@ test("a builder asks the lead, not the human in its session, with background, op
 test("a lead decides most things and tells the human, and waits for them only on what is foundational, whatever its role", () => {
   const decides = [
     "Decide most questions yourself and answer the builder with sc tell, such as any whose answer follows from what the human already decided",
-    "Decide too a technical call with a clear better answer, another review round when its findings are real, keys, wording and layout that follow a direction the human set, starting work the human already approved, and a change to a detail document",
+    "Decide too a technical call with a clear better answer, another review round when its findings are real, keys, wording and layout that follow a direction the human set, and starting work the human already approved.",
     "Then tell the human in one line what you decided and why, so they can easily change it",
   ];
   const waits =
