@@ -169,7 +169,7 @@ CI and ready have no settings: ready waits for green checks when the repository 
 
 **Picking a flow.** Every task gets `default`, unless the repository has other flow files. Then the lead triages: it picks the flow when it starts or proposes a task, with `sc start --flow <name>`, and whenever it picks anything but `default`, it tells you which and why. A task started from the `skelcrew` label gets `default`. The lead can switch a task's flow only until its builder first runs `sc submit`, with `sc start <task> --flow <name>` on the task already working, and it tells you which and why. The builder keeps working, and the first round follows the new flow. After the first submit the flow is fixed, and `sc start --flow` on the task refuses and says so, since rounds already ran under the old one. It picks a flow with no review only for a change too small to need one, such as docs, wording or a trivial config change, and always tells you, as nobody will review it. The built-in lead's instructions say this, so it holds in every repository.
 
-Your own confirmations are never flow settings: you always merge, you always add repositories, and you always say yes before a lead starts work. No flow can drop them.
+Your own confirmations are never flow settings: you always merge, you always add repositories, and you always say yes before a lead starts work. A lead may brief another lead without asking you, but the receiving lead treats the brief as a report and starts nothing without your yes, unless the brief carries your own words, and then only what they ask. No flow can drop them.
 
 ### `.agents/skills/`
 
