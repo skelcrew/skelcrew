@@ -317,8 +317,8 @@ test("refuses to start before the first run, and says to run sc", async () => {
 });
 
 // Before the first run sc serve stops at once, so these reach the daemon without starting one on
-// Skelcrew's own tmux server. Installed services from older releases still run sc up.
-test("sc serve runs the daemon, and sc up does too after saying sc serve replaces it", () => {
+// Skelcrew's own tmux server.
+test("sc serve runs the daemon, and sc up is no command", () => {
   const env = {
     HOME: home,
     XDG_RUNTIME_DIR: join(home, "run"),
@@ -329,18 +329,16 @@ test("sc serve runs the daemon, and sc up does too after saying sc serve replace
   expect(serve.stderr.toString()).toBe(
     "Skelcrew: the first run isn't done on this machine: run sc first\n",
   );
-  for (const words of [["up"], ["up", "--bg"]]) {
-    const up = Bun.spawnSync([process.execPath, main, ...words], { env, stderr: "pipe" });
-    expect(up.exitCode).toBe(1);
-    expect(up.stderr.toString()).toBe(
-      "sc up is now sc serve.\nSkelcrew: the first run isn't done on this machine: run sc first\n",
-    );
-  }
+  const up = Bun.spawnSync([process.execPath, main, "up"], { env, stderr: "pipe" });
+  expect(up.exitCode).toBe(1);
+  expect(up.stderr.toString()).toBe(
+    "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.\n",
+  );
 });
 
-test("sc serve and sc up refuse inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
+test("sc serve refuses inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
   setUp();
-  for (const words of [["serve"], ["serve", "--bg"], ["up"], ["up", "--bg"]]) {
+  for (const words of [["serve"], ["serve", "--bg"]]) {
     const run = Bun.spawnSync([process.execPath, main, ...words], {
       env: {
         HOME: home,

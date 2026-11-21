@@ -21,7 +21,6 @@ import { versionLine } from "./version.ts";
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   "--list": "showing the list",
-  up: "running the daemon",
   restart: "restarting the engine",
   serve: "running the daemon",
   "repo add": "adding a repository",
@@ -100,7 +99,6 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     return leadCommand(list, lead[1]);
 
   switch (first) {
-    case "up":
     case "serve":
     case "restart":
       return machineCommand(words);

@@ -45,7 +45,6 @@ export async function readAsked(file: string): Promise<string> {
 }
 
 const commands = [
-  "up",
   "serve",
   "restart",
   "init",
