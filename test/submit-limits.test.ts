@@ -168,6 +168,30 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(readBacks().length).toBeGreaterThan(1);
   }, 120_000);
 
+  // Your mark while the review waits for the forge decides its round limit, as a mark does. So
+  // once the review is on the PR the lead hears of your mark, not of a limit already decided,
+  // though the thread still needs you for the mark.
+  test("a round limit decided while its review waits for the forge sends the lead no note of it", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    await startApp12();
+    // The forge holds the second review's post, which reaches the round limit.
+    await until(() => thread().review_round === 1 && thread().posting === null, 30_000);
+    const hold = join(plugin, "hold-review");
+    writeFileSync(hold, "");
+    await until(() => thread().review_round === 2 && thread().needs_you === 1, 45_000);
+    await until(() => existsSync(join(plugin, "held-review")));
+    expect((await skel(["needs-you", "app-12", "check the export format"])).err).toBe("");
+    rmSync(hold);
+    await until(() => thread().posting === null, 30_000);
+    await until(() => read(join(lead(), "typed")).includes("you marked it: check the export"));
+    await Bun.sleep(1500);
+    expect(read(join(lead(), "typed"))).not.toContain("round limit is reached");
+    expect(thread()).toMatchObject({ needs_you: 1, limit_decided: 1 });
+  }, 120_000);
+
   // Clearing it is the lead's or your decision that you have nothing to do. A review after it
   // asks again, as its changes are held anew.
   test("past the round limit, clearing its mark stops it needing you, until the next review", async () => {

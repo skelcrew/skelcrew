@@ -42,7 +42,7 @@ import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
-import { needsYou as neededYou } from "./status.ts";
+import { limitWaits, needsYou as neededYou } from "./status.ts";
 import {
   cloneOf,
   hostMissing,
@@ -796,13 +796,14 @@ function postVerdict(db: Database, sessions: string, folder: string): Promise<st
       return errorText(error);
     }
     // The review's note goes to the lead with the posting cleared, in one step, so a stop of the
-    // daemon can neither lose it nor say it twice. It goes only while the thread still needs
-    // you, as sc start or a mark cleared meanwhile already decided it.
+    // daemon can neither lose it nor say it twice. It goes only while the round limit still
+    // waits for a decision: sc start, or a mark set or cleared meanwhile, already decided it,
+    // and whatever else the thread needs you for has a note of its own.
     const now = readThread(db, folder);
     if (JSON.stringify(now.posting) === JSON.stringify(posting))
       db.transaction(() => {
         record(db, folder, { posting: null });
-        if (posting.note !== null && neededYou(now))
+        if (posting.note !== null && limitWaits(now))
           noteForLead(db, sessions, thread, posting.note);
       })();
     return null;

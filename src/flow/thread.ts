@@ -427,10 +427,17 @@ export function record(
   // that starts needing you keeps why, short enough to type as one line, unless the change says
   // there is none, as for a mark the lead set itself. A thread that already needed you keeps the
   // note it had, so a later change doesn't hide the first reason.
+  // The round limit's note waits with its review until the PR shows it, so until then the lead
+  // hasn't heard the thread needs you. Meanwhile only something else that needs you, such as a
+  // question, counts as starting to, apart from the review's flag.
   const before = readThread(db, folder);
+  const after = { ...before, ...change };
+  const apart = (thread: Thread) => needsYou({ ...thread, needs_you: false });
+  const waits = (before.posting?.note ?? null) !== null;
+  const starts = waits ? !apart(before) && apart(after) : !needsYou(before);
   let { noting } = change;
-  if (!needsYou({ ...before, ...change })) noting = null;
-  else if (!needsYou(before) && noting === undefined)
+  if (!needsYou(after)) noting = null;
+  else if (starts && noting === undefined)
     noting = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   // The column names come from the keys of Thread above, never from outside. The task's fields
   // go on its task, and the rest on the thread. One transaction, so a change is saved whole or
