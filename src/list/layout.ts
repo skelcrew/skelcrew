@@ -154,7 +154,8 @@ const keyOf = (section: Section) =>
       : String(ListStage.options.indexOf(section) + 1);
 
 // Returns a section's heading as a line: the number key that opens and closes it, dim, then its
-// name, bold in its section's colour while open and dim while closed, then how many tasks it
+// name in its section's colour, bold while open, or bright while open and dim while closed for a
+// section without a colour, then how many tasks it
 // has, lined up under the other headings' counts, such as `2 Building  4`. Needs you's count is yellow, as it shows only
 // while a task waits on you. Task queue then says dim how full the builders are, such as `Building
 // 4/4 · 3 queued`, which goes first on a narrow terminal. Cut to fit, without its colours, on a
@@ -166,7 +167,7 @@ function headingLine(heading: Heading, countWidth: number, width: number): strin
   const plain = ` ${key} ${name} ${count}`;
   if (Bun.stringWidth(plain) > width) return fitted(plain, width);
   const colour = sectionColours[heading.section];
-  const shown = paint(heading.open ? (colour ? `1;${colour}` : bright) : grey, name);
+  const shown = paint(heading.open ? (colour ? `1;${colour}` : bright) : (colour ?? grey), name);
   const waits = heading.section === "needs you";
   const fits = heading.note && Bun.stringWidth(`${plain}  ${heading.note}`) <= width;
   const note = fits ? `  ${paint(grey, heading.note)}` : "";
@@ -463,7 +464,8 @@ export type Spin = { line: number; column: number; cell: string };
 // `◆ Lead · Claude Code`, its harness, with its mark and state on the right, such as `○ idle`.
 // Its title is cut first to fit. The second says what the lead is doing while it works. Then a
 // line across, a line of how many tasks are where, such as `9 running · 2 ready · 1 needs you`,
-// with only those that have any, and a blank line. Gives the lines, and where its mark is.
+// with only those that have any, and a blank line. Gives the lines, and where its mark is. On a
+// place too short for all of them, its last lines give way, so the row you are on still shows.
 function leadBlock(
   row: Row,
   here: boolean,
@@ -547,7 +549,7 @@ export function drawRows(
   const blankLine = { text: "", row: null, target: null };
   const leadRow = rows[leadAt];
   const block = leadRow ? leadBlock(leadRow, leadAt === here, headings, width) : null;
-  const lead = block?.lines ?? [];
+  const lead = (block?.lines ?? []).slice(0, Math.max(height - 1, 0));
   const leadTargets: Target[] = lead.map((_, at) => (at < 2 ? { row: leadAt } : null));
   const room = Math.max(height - lead.length, 1);
   const sections = (parted: boolean): BodyLine[] =>
@@ -629,7 +631,7 @@ export function drawRows(
     return [{ line: lead.length + at, column: 3, cell }];
   });
   return {
-    spins: [...(spin && block?.mark ? [block.mark] : []), ...spins],
+    spins: [...(spin && block?.mark && lead.length > 0 ? [block.mark] : []), ...spins],
     lines: [...lead, ...shown.map((line) => line.text), ...blank],
     targets: [
       ...leadTargets,

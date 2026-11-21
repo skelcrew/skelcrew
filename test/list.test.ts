@@ -1038,11 +1038,11 @@ test("an open section shows its rows, and its heading is bright while a closed o
   ]);
   const coloured = drawnWith(1, frame, { width: 80, height: 24 }, ["backlog"]);
   expect(coloured).toContain(" \x1b[90m1\x1b[22;39m \x1b[1mBacklog   \x1b[22;39m 1");
-  expect(coloured).toContain(" \x1b[90m2\x1b[22;39m \x1b[90mBuilding  \x1b[22;39m 1");
+  expect(coloured).toContain(" \x1b[90m2\x1b[22;39m \x1b[38;5;69mBuilding  \x1b[22;39m 1");
   // Needs you has no number key, and its count is yellow, as it shows only while a task waits
   // on you.
   expect(coloured).toContain(
-    " \x1b[90m \x1b[22;39m \x1b[90mNeeds you \x1b[22;39m \x1b[38;5;221m2\x1b[22;39m",
+    " \x1b[90m \x1b[22;39m \x1b[38;5;221mNeeds you \x1b[22;39m \x1b[38;5;221m2\x1b[22;39m",
   );
 });
 
@@ -1352,6 +1352,12 @@ test("with the spinner, the marks of agents at work are its first frame, and the
   // Each cell is drawn in its colours: Building's blue, on the grey of the row you are on.
   expect(spins[1]?.cell).toBe("\x1b[48;5;238m\x1b[38;5;69m⠋\x1b[22;39m\x1b[49m");
   expect(lines[spins[1]?.line ?? 0]).toContain("\x1b[48;5;238m ▸ \x1b[38;5;69m⠋\x1b[22;39m");
+  // A task that needs you keeps its filled mark while its review runs, so it never spins.
+  sql("UPDATE threads SET reviewing = 'abc', asking = 1 WHERE folder = 'app-7';");
+  expect(rows().find((row) => row.name === "APP-7")).toMatchObject({
+    mark: { sign: "●" },
+    working: false,
+  });
   // Paused and waiting tasks never spin, and without the spinner nothing does.
   expect(plain.join("\n")).toContain("○ 9 ");
   const still = drawRows(shown, headings, at, 0, 60, 40);
@@ -1382,7 +1388,8 @@ ${threadSql({ task: "19", title: "Merged", status: "done", merged: 1, pr: 49 })}
   expect(line(" 4 Checks")).toContain("\x1b[1;38;5;172mChecks");
   expect(line(" 6 Done")).toContain("\x1b[1;90mDone");
   expect(line("Needs you")).toContain("\x1b[1;38;5;221mNeeds you");
-  expect(line(" 5 Ready")).toContain("\x1b[90mReady");
+  // A closed stage keeps its colour, not bold, so the stages sort while closed too.
+  expect(line(" 5 Ready")).toContain("\x1b[38;5;120mReady");
   expect(line(" 0 Task queue")).toContain("\x1b[90mTask queue");
   expect(line("Login redirect")).toContain("\x1b[38;5;69m○");
   expect(line("Under review")).toContain("\x1b[38;5;134m○");
@@ -1651,6 +1658,27 @@ test("a terminal too short for every heading still shows the row you are on", ()
   expect(fewer.filter((line) => line.includes("▸"))).toEqual([
     expect.stringMatching(/^ ▸ ○ 59 +Task 59 *$/),
   ]);
+});
+
+// However short the place, the lead's block gives way line by line from its end, so the list never
+// draws more lines than fit, and the row you are on still shows.
+test("on a terminal too short for the lead's block, it gives way and the row you are on shows", () => {
+  const all = rows();
+  const opened = new Set<Section>(["needs you", "task queue", "building"]);
+  const shown = shownRows(all, opened, false);
+  const at = shown.findIndex((row) => row.name === "APP-7");
+  const headings = sectionHeadings(all, opened);
+  for (let height = 1; height <= 8; height += 1) {
+    const { lines, targets } = drawRows(shown, headings, at, 0, 60, height);
+    expect(lines, `at ${height}`).toHaveLength(height);
+    expect(targets).toHaveLength(height);
+    expect(
+      lines.some((line) => Bun.stripANSI(line).includes("▸ ○ 7")),
+      `at ${height}`,
+    ).toBe(true);
+  }
+  const two = drawRows(shown, headings, at, 0, 60, 2).lines.map((line) => Bun.stripANSI(line));
+  expect(two[0]).toStartWith("   ◆ Lead");
 });
 
 // Stands in for the daemon on the test's own socket: it logs each request and answers a start, a
