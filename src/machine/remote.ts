@@ -98,19 +98,17 @@ export const outdated = 98;
 // so the laptop can offer to set it up.
 export const unfinished = 97;
 
-// Reports whether this Skelcrew, copied to a server, is from another build than the
-// laptop that runs it there with --remote, and says so. The laptop passes its build along
-// with the command, so the check costs no round trip of its own. A release newer than the
-// laptop's counts as up to date: it installed itself in the background, and the laptop
-// catches up on its own, so asking would only offer to go back.
+export function serverName(): string | undefined {
+  return process.env.SKELCREW_REMOTE_NAME;
+}
+
 export function outOfDate(): boolean {
   const laptop = process.env.SKELCREW_LAPTOP_BUILD;
-  // No laptop build means the command came without the check, and no build here means this
-  // Skelcrew runs from a checkout. Uncommitted changes never count as the same build.
   if (!laptop || built === undefined || (laptop === built && !built.endsWith(dirty))) return false;
   if (release && isRelease(laptop) && newer(release, laptop)) return false;
-  const where = process.env.SKELCREW_REMOTE_NAME;
-  console.log(`Skelcrew on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`);
+  console.log(
+    `Skelcrew on ${serverName()} is from ${readable(built)}, yours is ${readable(laptop)}.`,
+  );
   return true;
 }
 
