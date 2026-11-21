@@ -43,9 +43,7 @@ const header = () => (seen().split("\n")[0] ?? "").trimEnd();
 // Waits until the screen shows the lead alone, with the sidebar running behind it.
 const leadAlone = () =>
   until(() => showing() === "agent" && header().includes("‹ sidebar · lead"), "the lead alone");
-// Taps ‹ sidebar in the header, once it shows. tmux gives the agent the whole terminal before the
-// sidebar redraws the header, so the agent can show while the header still says sidebar.
-const tapBack = async () => {
+const tapBackOnceShown = async () => {
   await until(() => header().includes("‹ sidebar"), "the way back in the header");
   click(header().indexOf("‹") + 2, 1);
 };
@@ -118,20 +116,20 @@ test("on the agent's side q reaches the agent and never leaves", async () => {
 
 test("on a narrow screen a tap on ‹ sidebar shows the sidebar, and a tap on a row shows its agent", async () => {
   open("lead", "one", "xterm-256color", "60");
-  await tapBack();
+  await tapBackOnceShown();
   await until(() => showing() === "sidebar", "the sidebar alone");
   const row = seen()
     .split("\n")
     .findIndex((line) => line.includes("○ lead"));
   click(10, row + 1);
   await until(() => showing() === "agent" && seen().includes("I am lead"), "the lead alone");
-  await tapBack();
+  await tapBackOnceShown();
   await until(() => showing() === "sidebar", "the sidebar alone again");
   const task = seen()
     .split("\n")
     .findIndex((line) => line.includes("○ 12"));
   click(10, task + 1);
   await until(() => showing() === "agent" && seen().includes("I am app-12"), "app-12 alone");
-  await tapBack();
+  await tapBackOnceShown();
   await until(() => showing() === "sidebar", "the sidebar after leaving app-12");
 });
