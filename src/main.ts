@@ -112,9 +112,9 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "init":
       return repoCommand(words, json);
     case "submit":
+    case "hook":
     case "question":
     case "turn":
-    case "attached":
       return agentCommand(words);
     case "ps":
       return psCommand(words, json);

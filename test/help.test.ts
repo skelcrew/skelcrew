@@ -34,9 +34,9 @@ test("the help names every command", () => {
     "--list",
     "--remote",
     "--remote <host> install",
-    "--remote <host> up --bg",
-    "up",
-    "up --bg",
+    "--remote <host> serve --bg",
+    "serve",
+    "serve --bg",
     "init",
     "repo add",
     "repo ls",
@@ -61,6 +61,12 @@ test("the help names every command", () => {
     "plugins",
   ])
     expect(out).toContain(`  ${command} `);
+});
+
+// sc up still runs the daemon for services an older Skelcrew installed, but sc serve replaced it.
+test("the help names sc serve for the daemon, and never sc up", () => {
+  const out = skel(["--help"]).out;
+  expect(out).not.toMatch(/^ {2}(--remote <host> )?up /m);
 });
 
 // --remote keeps Skelcrew on the other side up to date, so there is no command for it. The one
@@ -188,7 +194,8 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
 });
 
 // An issue is only where some tasks come from, and a PR is part of a task, so the help has no
-// commands of their own for them: the task commands cover both. A thread is an agent on a task.
+// commands of their own for them: the task commands cover both. A thread is an agent on a task,
+// named as <task>/<role> wherever a task goes.
 test("the help has no issue or PR commands, and names tasks and threads as such", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("\nISSUES\n");
@@ -199,9 +206,22 @@ test("the help has no issue or PR commands, and names tasks and threads as such"
   expect(out).not.toContain("show <task> | <#pr>");
   expect(out).toContain("  --issue ");
   expect(out).toContain("  --keep-issue ");
-  for (const command of ["stop", "attach", "peek", "interrupt", "tell"])
-    expect(out).toContain(`  ${command} <thread>`);
-  for (const command of ["show", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
+  for (const command of [
+    "show",
+    "start",
+    "stop",
+    "rm",
+    "attach",
+    "peek",
+    "interrupt",
+    "tell",
+    "review",
+  ])
+    expect(out).toContain(`  ${command} <task>`);
+  expect(out).not.toContain("<thread>");
+  expect(out).not.toContain("<issue>");
+  expect(out.split("<task>/<role>").length - 1).toBe(1);
+  expect(out).toContain("APP-12/builder");
 });
 
 // sc issue and sc pr are gone. Leads started before then may still type them, so what replaced

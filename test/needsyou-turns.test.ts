@@ -249,12 +249,12 @@ describe.skipIf(insideSandbox)("needs you", () => {
     const asLead = (args: string[]) =>
       skel(args, { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket() });
     for (const [args, state] of [
-      [["question", "answered"], "working"],
-      [["question", "asked"], "asking"],
-      [["question", "closed"], "working"],
-      [["turn", "ended"], "idle"],
-      [["question", "answered"], "working"],
-      [["turn", "failed"], "error"],
+      [["hook", "prompt"], "working"],
+      [["hook", "question-asked"], "asking"],
+      [["hook", "question-closed"], "working"],
+      [["hook", "turn-ended"], "idle"],
+      [["hook", "prompt"], "working"],
+      [["hook", "turn-failed"], "error"],
     ] as const) {
       const run = await asLead([...args]);
       expect(run.err).toBe("");
@@ -266,5 +266,29 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(await needsYou()).toBe(false);
     expect(builderState()).toBe(null);
     expect(notes()).toBe(0);
+  }, 60_000);
+
+  test("the old hook names, still in the settings of agents started before sc hook, work the same and print nothing", async () => {
+    addApp();
+    await startApp12();
+    await until(() => read(join(lead(), "args")) !== "");
+    writeFileSync(join(lead(), "busy"), "");
+    const asLead = (args: string[]) =>
+      skel(args, { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket() });
+    for (const [args, state] of [
+      [["question", "answered"], "working"],
+      [["question", "asked"], "asking"],
+      [["question", "closed"], "working"],
+      [["turn", "ended"], "idle"],
+      [["question", "answered"], "working"],
+      [["turn", "failed"], "error"],
+      [["question", "answered"], "working"],
+      [["turn", "interrupted"], "idle"],
+    ] as const) {
+      const run = await asLead([...args]);
+      expect(run.err).toBe("");
+      expect(run.out).toBe("");
+      expect(leadState()).toBe(state);
+    }
   }, 60_000);
 });

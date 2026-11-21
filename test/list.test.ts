@@ -2566,7 +2566,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
     "─".repeat(paneWidth(wide)),
     "Needs you: question",
     "",
-    "Now      question · last change 19 Nov 14:58, 1d ago",
+    `Now      question · last change 19 Nov 14:58, ${ago(now - 120_000, Date.now())}`,
     "Issue    #12  https://github.com/simon/app/issues/12",
     "",
     "Task",
