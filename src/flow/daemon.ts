@@ -1239,7 +1239,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   }
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
-  await closeExitedLeads(db, sessions);
+  await closeExitedLeads(db, sessions, true);
   setInterval(
     () =>
       doing("closing the tabs of exited leads", () =>

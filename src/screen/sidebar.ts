@@ -805,7 +805,10 @@ async function hostedAgents(
       if (agent.host !== name) continue;
       const session = listed?.find((one) => one.name === agent.id);
       if (listed === null || session?.running) found.add(agent.key);
-      if (agent.key === open.lead && session && takenAsExited(session)) leadExited = true;
+      // A lead the host answered for but no longer lists can't be told about, and counts as
+      // exited, as the daemon takes it.
+      if (agent.key === open.lead && listed !== null && (!session || takenAsExited(session)))
+        leadExited = true;
     }
   }
   return { running: found, leadExited };

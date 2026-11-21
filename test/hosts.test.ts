@@ -494,8 +494,14 @@ console.log(await hasSession(host, "fake-lead-app"));`,
 // Runs simon/app's lead on the fake host with `command`, waits for it to end unless it runs on,
 // then has you attach and detach through the host's attach, and lets the daemon look for leads
 // you exited. Returns whether the tab closed, then whether the lead's session is still there.
-// With `files`, those files are in the host's settings folder first, such as no-ended.
-function afterLeadLook(command: string[], { ends = true, files = [] as string[] } = {}): string {
+// With `files`, those files are in the host's settings folder first, such as no-ended. With
+// `gone`, the host forgets the session once it ended, as an older plugin may. With `unsaved`,
+// the lead's ID never got saved, and the look is the one the daemon makes as it starts. With
+// `hung`, the host never answers the look.
+function afterLeadLook(
+  command: string[],
+  { ends = true, files = [] as string[], gone = false, unsaved = false, hung = false } = {},
+): string {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   return runWithFakeHost(
     "sessions",
@@ -504,13 +510,17 @@ const { attachOnHost, pluginHost } = await import(${JSON.stringify(source("plugi
 const fs = require("node:fs");
 fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
 for (const file of ${JSON.stringify(files)}) fs.writeFileSync(${JSON.stringify(fake)} + "/" + file, "");
-db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 1, 'fake', 'fake-lead-app')");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 1, 'fake', ${unsaved ? "NULL" : "'fake-lead-app'"})");
 const host = pluginHost(db, "fake");
 await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ${JSON.stringify(command)}, env: {}, labels: { repository: "simon/app", role: "lead" }, keepOnExit: true });
 const exit = ${JSON.stringify(join(fake, "sessions", "fake-lead-app", "exit"))};
 for (let i = 0; ${ends} && i < 200 && !fs.existsSync(exit); i++) await Bun.sleep(25);
+if (${gone}) fs.rmSync(${JSON.stringify(join(fake, "sessions", "fake-lead-app"))}, { recursive: true });
 attachOnHost(host, "fake-lead-app");
-await closeExitedLeads(db, "unused");
+const hold = ${JSON.stringify(join(fake, "hold-list"))};
+if (${hung}) fs.writeFileSync(hold, "1");
+await closeExitedLeads(db, "unused", ${unsaved});
+fs.rmSync(hold, { force: true });
 const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
 console.log(row.tab_closed, await hasSession(host, "fake-lead-app"));`,
     {},
@@ -538,6 +548,23 @@ test("a lead that crashed on a plugin's host keeps its tab, to be brought back",
 test("a lead that ended on a host that can't say how is taken as exited", () => {
   expect(afterLeadLook(["sh", "-c", "exit 3"], { files: ["no-ended"] })).toBe(`${closed}1 false\n`);
 });
+
+test("a lead whose session a host forgot once it ended is taken as exited", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 3"], { gone: true })).toBe(`${closed}1 false\n`);
+});
+
+// The daemon stopped after the lead started but before it saved the lead's ID, and the lead
+// exited while it was down.
+test("a lead whose ID never got saved that exited while the daemon was down closes its tab", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 0"], { unsaved: true })).toBe(`${closed}1 false\n`);
+});
+
+// A host that never answers keeps the lead and its tab, and holds up the look only a moment.
+test("a host that doesn't answer holds up the look for exited leads only a few seconds", () => {
+  const started = Date.now();
+  expect(afterLeadLook(["sleep", "30"], { ends: false, hung: true })).toBe("0 true\n");
+  expect(Date.now() - started).toBeLessThan(15_000);
+}, 30_000);
 
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
   const lead = { repository: "simon/app", role: "lead" } as const;

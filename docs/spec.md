@@ -729,7 +729,7 @@ The screen is how you see and steer a repository's work. It guarantees:
 - **Works over SSH.** On a server, a PR's link is copied to your terminal's clipboard rather than opened.
 - **Your terminal stays yours.** The screen never reads your `~/.tmux.conf`, and takes the mouse only while it shows.
 
-**A lead you exit** ends alone: its repository and tasks stay, and the engine doesn't bring it back until you open the repository again, which resumes its conversation. A lead that crashed is brought back when you look at it. When Skelcrew can't tell which happened, it takes the lead as exited, and says how to start it. On a plugin's host, a lead you only detached from still runs, and keeps its tab. One the host lists as ended with exit code 0 was exited, and with another code, or killed, it crashed. One the host lists as ended without saying how is one Skelcrew can't tell about.
+**A lead you exit** ends alone: its repository and tasks stay, and the engine doesn't bring it back until you open the repository again, which resumes its conversation. A lead that crashed is brought back when you look at it. When Skelcrew can't tell which happened, it takes the lead as exited, and says how to start it. On a plugin's host, a lead you only detached from still runs, and keeps its tab. One the host lists as ended with exit code 0 was exited, and with another code, or killed, it crashed. One the host lists as ended without saying how, or no longer lists, is one Skelcrew can't tell about.
 
 A runtime plugin's host shows the same agents in its own apps, and its sessions on the screen through its own `attach`. A host's apps never merge or answer the lead's requests: that stays with Skelcrew, on its screen and its commands.
 

@@ -322,12 +322,16 @@ export const takenAsExited = (session: { running: boolean; ended?: { code: numbe
   !session.running && (session.ended === undefined || session.ended.code === 0);
 
 // Reports whether the agent in the named session ended as one you exited, on any host, so
-// Skelcrew closes a lead's tab rather than bring it back. False while it runs, after it crashed,
-// and when its session is gone. Throws when a plugin's host can't answer.
+// Skelcrew closes a lead's tab rather than bring it back. False while it runs and after it
+// crashed. On tmux, false too when its session is gone, as tmux keeps a lead's session however
+// it ends. A plugin's host that no longer lists the session can't say how it ended, as an older
+// plugin that drops a session on exit, so that counts as exited. Throws when a plugin's host
+// can't answer within 5 seconds: this is asked every second, and a host that hangs must not hold
+// up the next look for long.
 export async function agentExited(host: Host, name: string): Promise<boolean> {
   if (typeof host === "string") return exitedCleanly(host, name);
-  const session = await hosted(host, name);
-  return session !== undefined && takenAsExited(session);
+  const session = (await listSessions(host, 5_000)).find((one) => one.name === name);
+  return session === undefined || takenAsExited(session);
 }
 
 // Reports whether the agent in the named session is still running, so Skelcrew only types into
@@ -443,9 +447,11 @@ export async function stopSession(host: Host, name: string, timeout = 10_000): P
 // with null labels for a session started without them, and for one whose agent ended, its exit
 // code when the host knows it, null when it was killed. Labels Skelcrew can't read make the whole
 // answer an error: taken for none, they would hide a builder the daemon started but stopped
-// before saving its ID, and the thread would start a second builder in the same clone.
+// before saving its ID, and the thread would start a second builder in the same clone. A
+// plugin's host gets `timeout` milliseconds to answer, 30 seconds unless given.
 export async function listSessions(
   host: Host,
+  timeout?: number,
 ): Promise<
   { name: string; running: boolean; labels: Labels | null; ended?: { code: number | null } }[]
 > {
@@ -457,7 +463,7 @@ export async function listSessions(
     ended: z.object({ code: z.number().int().nullable() }).optional(),
   });
   const answer = z.object({ sessions: z.array(Listed) });
-  const { sessions } = await askHost(host, { ask: "list" }, answer);
+  const { sessions } = await askHost(host, { ask: "list" }, answer, { timeout });
   return sessions.map(({ id, running, labels, ended }) => ({
     name: id,
     running,
