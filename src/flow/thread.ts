@@ -5,10 +5,10 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { listSessions, renameSession, unknownQuestion } from "../agents/sessions.ts";
+import { listSessions, renameSession } from "../agents/sessions.ts";
 import { savedJson, taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
-import { type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
+import { type Host, hostNamed, pluginHost, unknownQuestion } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { threadTask } from "./copy.ts";
 import { findRepository } from "./repo.ts";
@@ -460,14 +460,15 @@ export function record(
 
 // Tells the builder's host the thread's title, when the host is a plugin, so its own apps stop
 // showing an old one. A builder on tmux needs nothing, as Skelcrew's list reads the title from
-// here. It doesn't wait for the host. A plugin that doesn't know the question, such as herdr's
-// before it could rename, is asked once, and not again until its version changes, with no error
-// shown: it only keeps its old titles. Any other failure costs only that new name, goes to the
-// log, and the next title is still sent. sc repo asks the engine to rename, so that log is the
-// engine's. Each rename waits for the one before on the same session and sends the title as it
-// is then, so two quick changes can't reach the host out of order and leave it on the older
-// title. It gives back a promise that settles once the host answered, for a command that ends
-// before it would.
+// here. It doesn't wait for the host. A plugin that says it doesn't know the question, such as
+// herdr's before it could rename, is asked once, with no error shown: it only keeps its old
+// titles. That is saved with the plugin's version, so it isn't asked again after a restart,
+// and is asked once more when another version is installed. Any other failure costs only that
+// new name, goes to the log, and the next title is still sent. sc repo asks the engine to
+// rename, so that log is the engine's. Each rename waits for the one before on the same session
+// and sends the title as it is then, so two quick changes can't reach the host out of order and
+// leave it on the older title. It gives back a promise that settles once the host answered, for
+// a command that ends before it would.
 export function renameOnHost(db: Database, folder: string): Promise<void> {
   const previous = renaming.get(folder) ?? Promise.resolve();
   const sent = previous.then(async () => {
@@ -475,28 +476,33 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
     if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
     const host = pluginHost(db, thread.host);
     if (host === null) return;
-    // Known by the plugin's version too, so an update that learned to rename is asked again.
-    const plugin = `${host.plugin} ${host.version}`;
+    const { plugin, version } = host;
+    const key = `${plugin} ${version}`;
     // Until a plugin has renamed once, its renames go one at a time, so one that doesn't know
     // the question is asked once, not once per builder. Nothing waits between the last look and
     // claiming the turn, so two can't both take it.
-    while (firstRenames.has(plugin)) await firstRenames.get(plugin);
-    if (canRename.get(plugin) === false) return;
+    while (firstRenames.has(key)) await firstRenames.get(key);
+    const cant = db
+      .query("SELECT 1 FROM plugins WHERE name = ? AND no_rename = ?")
+      .get(plugin, version);
+    if (cant !== null) return;
     const title = sessionTitle(db, thread);
     const asked = renameSession(host, thread.host_id, title).then(
-      () => canRename.set(plugin, true),
-      async (error) => {
-        if (await unknownQuestion(host, "rename", error)) canRename.set(plugin, false);
+      () => {
+        renamed.add(key);
+      },
+      (error) => {
+        if (error instanceof Error && error.cause === unknownQuestion)
+          db.run("UPDATE plugins SET no_rename = ? WHERE name = ?", [version, plugin]);
         else
           console.log(
-            `couldn't rename ${threadName(db, thread)} on ${host.plugin}: ${errorText(error)}`,
+            `couldn't rename ${threadName(db, thread)} on ${plugin}: ${errorText(error)}`,
           );
       },
     );
-    const turn = asked.then(() => {});
-    if (!canRename.has(plugin)) firstRenames.set(plugin, turn);
-    await turn;
-    if (firstRenames.get(plugin) === turn) firstRenames.delete(plugin);
+    if (!renamed.has(key)) firstRenames.set(key, asked);
+    await asked;
+    if (firstRenames.get(key) === asked) firstRenames.delete(key);
   });
   // A thread gone by then, which readThread throws for, has nothing to rename.
   const settled = sent.catch(() => {});
@@ -507,9 +513,9 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
   return settled;
 }
 
-// Whether each plugin can rename sessions, by its name and version: true once one rename
-// worked, false once it showed it doesn't know the question, and unset before either.
-const canRename = new Map<string, boolean>();
+// The plugins that renamed a session since the engine started, by name and version, whose
+// renames no longer wait for each other.
+const renamed = new Set<string>();
 
 // The rename under way on each plugin that hasn't renamed yet, by its name and version.
 const firstRenames = new Map<string, Promise<void>>();

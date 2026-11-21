@@ -81,9 +81,16 @@ function sessionCommand(host: PluginHost) {
   return { argv, env: { ...process.env, ...env }, cwd: host.folder };
 }
 
+// The cause of the error askHost throws when the host said it doesn't know the question, such as
+// an older plugin asked to rename.
+export const unknownQuestion = "unknown question";
+
 // Returns a host's answer checked against `Answer`, or throws saying what went wrong: the last
 // line it wrote to stderr when it failed, or that its answer isn't understood. With `unread`,
-// a host that exited cleanly is done whatever it printed, and the answer is null.
+// a host that exited cleanly is done whatever it printed, and the answer is null. A host says
+// it doesn't know a question by failing with the questions it knows, in Zod's words for a
+// question whose ask matches none, and that error's cause is unknownQuestion. Only that counts,
+// as any other failure, however worded, may pass, and the question is worth asking again.
 function checkAnswer<T>(
   host: PluginHost,
   question: { ask: string; [key: string]: unknown },
@@ -93,7 +100,13 @@ function checkAnswer<T>(
 ): T {
   if (done.code !== 0) {
     const last = done.err.trim().split("\n").at(-1) || `it exited with code ${done.code}`;
-    throw new Error(`${host.plugin} couldn't ${question.ask}: ${last}`);
+    const said = `${host.plugin} couldn't ${question.ask}: ${last}`;
+    // Such as herdr's 0.1.4 asked to rename: "Invalid discriminator value. Expected 'start' |
+    // 'list'", at ask, which lists every question it knows.
+    const known = /Invalid discriminator value\. Expected ((?:'[^']*'(?: \| )?)+)/.exec(done.err);
+    if (known?.[1] && /\bat ask\b/.test(done.err) && !known[1].includes(`'${question.ask}'`))
+      throw new Error(said, { cause: unknownQuestion });
+    throw new Error(said);
   }
   if (unread) return Answer.parse(null);
   // Output that isn't JSON, empty output included, is refused like a wrong answer: a host that

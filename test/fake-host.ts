@@ -195,10 +195,12 @@ if (existsSync(join(dir, "down"))) {
   console.error("the host is down");
   process.exit(1);
 }
-// A question it doesn't know, or one with a file unknown-<question>, as an older plugin that
-// doesn't know it, such as herdr's before it could rename, fails every time.
+// A question it doesn't know, or one with a file unknown-<question>, fails every time, listing
+// the questions it does know in Zod's words, as herdr's plugin 0.1.4 does asked to rename.
 if (!answers[question.ask] || existsSync(join(dir, `unknown-${question.ask}`))) {
-  console.error(`✖ Invalid value '${question.ask}'. Expected 'start' | 'list'; → at ask`);
+  const known = Object.keys(answers).filter((ask) => !existsSync(join(dir, `unknown-${ask}`)));
+  const expected = known.map((ask) => `'${ask}'`).join(" | ");
+  console.error(`✖ Invalid discriminator value. Expected ${expected}; → at ask`);
   process.exit(1);
 }
 // With a file fail-<question>, it fails that question once, as a host down for a moment would.

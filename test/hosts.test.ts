@@ -1348,25 +1348,52 @@ process.exit(0);`,
   expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
 }, 40_000);
 
-test("a plugin updated to a version that renames is asked again", () => {
+// Renames every live builder in a process of its own with the test's home, as an engine started
+// again would as it starts.
+function renameInNewEngine(): void {
+  const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { renameBuilders } from ${JSON.stringify(source("flow/thread.ts"))};
+await renameBuilders(openDb());`;
+  const run = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { ...process.env, ...homeEnv(home) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!run.success) throw new Error(run.stderr.toString());
+}
+
+test("a plugin without rename isn't asked again after a restart, but is once it updates", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const manifest = join(home, "plugin-fake", "skelcrew-plugin.yaml");
   runWithFakeHost(
     "sessions",
-    `const fs = require("node:fs");
-const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
-fs.writeFileSync(${JSON.stringify(join(fake, "unknown-rename"))}, "");
-await renameBuilders(db);
-// The update knows rename, and says a version of its own.
-fs.rmSync(${JSON.stringify(join(fake, "unknown-rename"))});
-fs.writeFileSync(${JSON.stringify(manifest)}, fs.readFileSync(${JSON.stringify(manifest)}, "utf8").replace("version: 0.1.0", "version: 0.2.0"));
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "unknown-rename"))}, "");
 await renameBuilders(db);
 process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
   );
-  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
-  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 Fix the login redirect");
+  const renames = () =>
+    readFileSync(join(fake, "asked"), "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => JSON.parse(line).ask === "rename").length;
+  const title = () =>
+    JSON.parse(readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8")).title;
+  // The same version isn't asked again by an engine started again, even one that now could.
+  rmSync(join(fake, "unknown-rename"));
+  renameInNewEngine();
+  expect(renames()).toBe(1);
+  expect(title()).toBe("Fix the login redirect");
+  // Another version is asked again, and renames.
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace("version: 0.1.0", "version: 0.2.0"),
+  );
+  renameInNewEngine();
+  expect(renames()).toBe(2);
+  expect(title()).toBe("SIMON/APP-12 Fix the login redirect");
 }, 40_000);
 
 test("a host down for every question isn't taken for one that can't rename", () => {

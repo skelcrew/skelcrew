@@ -7,7 +7,6 @@
 import { closeSync, constants, openSync, rmSync, writeSync } from "node:fs";
 import { z } from "zod";
 import { askHost, type Host, type PluginHost } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { sandboxFolders } from "./seatbelt.ts";
 import { envWithoutTmux, mustTmux, tmux, tmuxIsAtLeast } from "./tmux.ts";
 
@@ -457,28 +456,6 @@ export function listTmuxSessions(
 // answer isn't read, so a host that renames and prints nothing has done it.
 export async function renameSession(host: PluginHost, id: string, title: string): Promise<void> {
   await askHost(host, { ask: "rename", id, title }, z.unknown(), { unread: true });
-}
-
-// Reports whether a host's failure at the question `ask` means it doesn't know that question,
-// such as an older plugin asked to rename, rather than that it failed this once. The protocol
-// has no word for an unknown question, so the host is asked one no host knows, and must fail it
-// the same way, in the same words. That alone can't tell a host that is down, as both may time
-// out alike, so the host must also answer list, which every host knows, to show it is up.
-export async function unknownQuestion(
-  host: PluginHost,
-  ask: string,
-  failure: unknown,
-): Promise<boolean> {
-  const probe = "skelcrew-unknown-question";
-  const failed = await askHost(host, { ask: probe }, z.unknown(), { unread: true }).then(
-    () => null,
-    (error) => errorText(error),
-  );
-  if (failed === null || failed.replaceAll(probe, ask) !== errorText(failure)) return false;
-  return listSessions(host).then(
-    () => true,
-    () => false,
-  );
 }
 
 // Returns the screen the agent in the named session shows now, as text, such as to see whether
