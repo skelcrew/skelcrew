@@ -142,7 +142,7 @@ export async function runTaskDetails(
   // such as one removed a moment ago, leaves the pane empty.
   const refresh = () => {
     row = listRows(db, open, Date.now()).find((one) => one.name === name);
-    details = row?.task ? readDetails(db, open, row.task, Date.now()) : null;
+    details = row?.task ? readDetails(db, open, row.task, Date.now(), row.changed) : null;
     draw();
   };
 

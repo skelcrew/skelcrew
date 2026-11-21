@@ -38,7 +38,7 @@ export type Size = { width: number; height: number };
 // How wide the list is, in its own window or as the screen's sidebar: a little over a quarter of
 // the terminal, so the pane or the right side has the room for the agent at work. It never gets
 // narrower than a row's name, short title and word need, nor wider than a task's two lines do,
-// such as `working · Editing rows.ts · #40 · CI passed · 14:31`.
+// such as `working · Editing rows.ts · #40 · CI passed · 4m`.
 export const listShare = { percent: 28, least: 40, most: 58 };
 
 // Returns how many columns the list takes in a terminal `width` columns wide.
@@ -269,7 +269,7 @@ function shortLine(row: Row, here: boolean, columns: Columns, width: number): st
 // so what it does sits under its title. The first line has its mark, its name, padded to
 // `nameWidth` so the titles line up, and its title. The second has its word in its colour, then
 // dim the step its builder is on, its PR, its CI and when it last changed, such as
-// `working · Editing rows.ts · #40 · CI passed · 14:31`, each left out where it has none. Each
+// `working · Editing rows.ts · #40 · CI passed · 4m`, each left out where it has none. Each
 // line is cut with … to fit, and the row you are on is shaded on both its lines.
 function tallLines(row: Row, here: boolean, nameWidth: number, width: number): string[] {
   const plainStart = `${pointer(here)}${row.mark.sign} `;

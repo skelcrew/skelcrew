@@ -10,6 +10,8 @@ import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
 import { drawList, drawRows, type Frame, keysFor, paneWidth, tabAt } from "../src/list/layout.ts";
 import {
+  ago,
+  changedAt,
   cutBacklog,
   type Row,
   type Section,
@@ -138,11 +140,11 @@ test("the lead comes first, then what needs you, then what is in the task queue,
   );
   expect(shown).toEqual([
     ["lead", "lead", "lead", "claude", "running", "", ""],
-    ["needs you", "building", "APP-12", "Rate limit the API", "question", "", "14:58"],
+    ["needs you", "building", "APP-12", "Rate limit the API", "question", "", "2m"],
     ["needs you", "ready", "APP-14", "Fix the export header", "ready to merge", "#41", ""],
-    ["task queue", "building", "APP-9", "Old work", "paused", "", "14:59"],
-    ["backlog", "backlog", "APP-31", "Export as CSV", "", "", "5 Nov"],
-    ["building", "building", "APP-7", "Login redirect", "working", "", "14:55"],
+    ["task queue", "building", "APP-9", "Old work", "paused", "", "1m"],
+    ["backlog", "backlog", "APP-31", "Export as CSV", "", "", "14d"],
+    ["building", "building", "APP-7", "Login redirect", "working", "", "5m"],
   ]);
 });
 
@@ -506,21 +508,92 @@ test("Done shows the tasks that ended today, or the last ten when fewer ended to
   expect(done()[0]).toMatchObject({
     says: "merged",
     pr: "#100",
-    when: "14:00",
+    when: "1h",
     mark: { sign: "○", colour: "dim" },
     needsYou: false,
     session: null,
   });
   expect(done()[1]?.says).toBe("closed");
-  expect(done()[3]).toMatchObject({ pr: "#200", when: "18 Nov" });
+  expect(done()[3]).toMatchObject({ pr: "#200", when: "1d" });
   // Twelve today: every one of them, and none from before.
   sql(ended(300, 9, 4));
   expect(done()).toHaveLength(12);
-  expect(done().every((row) => /^\d\d:\d\d$/.test(row.when))).toBe(true);
+  expect(done().every((row) => /^\d+h$/.test(row.when))).toBe(true);
   // Each takes one line: its mark, name and title, then when it ended, lined up.
   const lines = drawn(0, 40, 80, ["done"]).map((line) => line.trimEnd());
-  expect(lines).toContain("   ○ APP-100  Ended 100  14:00");
-  expect(lines).toContain("   ○ APP-308  Ended 308  03:00");
+  expect(lines).toContain("   ○ APP-100  Ended 100  1h");
+  expect(lines).toContain("   ○ APP-308  Ended 308  12h");
+});
+
+test("a row says how long ago its task changed, in minutes, hours or days, never a clock time", () => {
+  const minute = 60_000;
+  expect(ago(now - 30_000, now, true)).toBe("now");
+  expect(ago(now - 4 * minute, now, true)).toBe("4m");
+  expect(ago(now - 59 * minute, now, true)).toBe("59m");
+  expect(ago(now - 2 * 60 * minute, now, true)).toBe("2h");
+  expect(ago(now - 3 * 24 * 60 * minute, now, true)).toBe("3d");
+  // A clock that runs ahead of this one still reads as now.
+  expect(ago(now + 5 * minute, now, true)).toBe("now");
+  // With its words, as the details pane says it.
+  expect(ago(now - 30_000, now)).toBe("just now");
+  expect(ago(now - 4 * minute, now)).toBe("4m ago");
+  const row = rows().find((candidate) => candidate.name === "APP-7");
+  expect(row?.when).toBe("5m");
+});
+
+// Returns how a row of the list says when its task last changed, and what its details say of it,
+// as the list and the screen read them, the details given the row's moment.
+function rowAndDetails(name: string): { when: string; section: string; changed: string } {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
+import { listRows } from ${JSON.stringify(source("list/rows.ts"))};
+const db = openDb();
+const open = { owner: "simon", repo: "app" };
+const row = listRows(db, open, ${now}).find((row) => row.name === ${JSON.stringify(name)});
+const details = row?.task ? readDetails(db, open, row.task, ${now}, row.changed) : null;
+console.log(JSON.stringify({ when: row?.when, section: row?.section, changed: details?.changed }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(run.stderr.toString()).toBe("");
+  return JSON.parse(run.stdout.toString());
+}
+
+test("a task's details say when it last changed, by the clock and how long ago", () => {
+  expect(rowAndDetails("APP-7")).toEqual({
+    when: "5m",
+    section: "building",
+    changed: "last change 14:55, 5m ago",
+  });
+  // A change on an earlier day keeps its clock time, after its date.
+  const lateYesterday = new Date(2026, 10, 18, 23, 59).getTime();
+  expect(changedAt(lateYesterday, now)).toBe("18 Nov 23:59");
+  expect(changedAt(lateYesterday, new Date(2026, 10, 19, 0, 3).getTime())).toBe("18 Nov 23:59");
+});
+
+test("a task in Backlog has the same time in its details as on its row", () => {
+  // An issue never started: when it was last updated.
+  const updated = changedAt(Date.parse("2026-11-05T10:00:00Z"), now);
+  expect(rowAndDetails("APP-31")).toEqual({
+    when: "14d",
+    section: "backlog",
+    changed: `last change ${updated}, 14d ago`,
+  });
+  // A task filed in Skelcrew's backlog: when it was filed.
+  sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
+  VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
+  const filed = changedAt(Date.parse("2026-11-07T10:00:00Z"), now);
+  expect(rowAndDetails("APP-T5")).toEqual({
+    when: "12d",
+    section: "backlog",
+    changed: `last change ${filed}, 12d ago`,
+  });
+  // A task whose work ended while its issue stayed open is back in Backlog, by its issue's time,
+  // never by its old thread's.
+  sql(threadSql({ task: "31", title: "Export as CSV", status: "done", changed: now - 3_600_000 }));
+  expect(rowAndDetails("APP-31")).toEqual({
+    when: "14d",
+    section: "backlog",
+    changed: `last change ${updated}, 14d ago`,
+  });
 });
 
 // A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
@@ -528,7 +601,7 @@ test("a row says one short word, with no merge when ready or messages waiting af
   sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
 INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-7', 'lead', 'one', 'one', 0);`);
   const row = rows().find((candidate) => candidate.name === "APP-7");
-  expect(row).toMatchObject({ says: "working", pr: "", when: "14:55" });
+  expect(row).toMatchObject({ says: "working", pr: "", when: "5m" });
 });
 
 test("an issue whose work ended is back under Backlog, to start again", () => {
@@ -549,9 +622,9 @@ test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest
     ('simon', 'app', 't6', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
   const backlog = rows().filter((row) => row.part === "backlog");
   expect(backlog.map((row) => [row.name, row.title, row.when])).toEqual([
-    ["APP-T5", "Add export", "7 Nov"],
-    ["APP-31", "Export as CSV", "5 Nov"],
-    ["APP-T6", "Add import", "1 Nov"],
+    ["APP-T5", "Add export", "12d"],
+    ["APP-31", "Export as CSV", "14d"],
+    ["APP-T6", "Add import", "18d"],
   ]);
   expect(backlog[0]?.start).toEqual({
     ask: "Start APP-T5? y/n",
@@ -933,18 +1006,18 @@ test("every section has its heading with its count, only open ones show rows, an
     "",
     "   Needs you  2",
     " ▸ ● APP-12  Rate limit the API",
-    "     question · 14:58",
+    "     question · 2m",
     "   ● APP-14  Fix the export header",
     "     ready to merge · #41 · CI passed",
     "",
     " 0 Task queue 1",
     "   ○ APP-9   Old work",
-    "     paused · 14:59",
+    "     paused · 1m",
     "",
     " 1 Backlog    1",
     " 2 Building   1",
     "   ○ APP-7   Login redirect",
-    "     working · 14:55",
+    "     working · 5m",
     "",
     " 3 Reviewing  0",
     " 4 Checks     0",
@@ -990,7 +1063,7 @@ test("an open section shows its rows, and its heading is bright while a closed o
     " 0 Task queue 1",
     "",
     " 1 Backlog    1",
-    " ▸ ○ APP-31  Export as CSV  5 Nov",
+    " ▸ ○ APP-31  Export as CSV  14d",
     "",
     " 2 Building   1",
     " 3 Reviewing  0",
@@ -1020,7 +1093,7 @@ test("the task queue shows its key 0 and is parted from the stages, and an empty
     " 1 Backlog    1",
     " 2 Building   2",
     " ▸ ○ APP-12  Rate limit the API",
-    "     working · 14:58",
+    "     working · 2m",
     "   ○ APP-7   Login redirect",
   ]);
   expect(lines.some((line) => line.includes("Needs you"))).toBe(false);
@@ -1210,7 +1283,7 @@ test("each line drawn says what a click on it reaches", () => {
   expect(at("Backlog")).toEqual({ section: "backlog" });
   expect(at("Ready")).toEqual({ section: "ready" });
   expect(at("APP-7")).toEqual({ row: shown.findIndex((row) => row.name === "APP-7") });
-  expect(at("working · 14:55")).toEqual(at("APP-7"));
+  expect(at("working · 5m")).toEqual(at("APP-7"));
   expect(targets[0]).toBeNull();
   expect(targets.at(-1)).toBeNull();
 });
@@ -1228,7 +1301,7 @@ test("a row's word is in its colour, its step and what follows it are dim, and i
   const at = lines.findIndex((line) => line.includes("APP-7"));
   expect(lines.slice(at, at + 3)).toEqual([
     "   \x1b[1m○\x1b[22;39m APP-7   Login redirect",
-    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts · #40 · CI running · 14:55\x1b[22;39m",
+    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts · #40 · CI running · 5m\x1b[22;39m",
     "",
   ]);
 });
@@ -1329,11 +1402,11 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
     "",
     " ↑ 11 more   Needs you 2   Task queue 1   Backlog 1   Building 11",
     "   ○ APP-57  Task 57",
-    "     working · 14:43",
+    "     working · 17m",
     "   ○ APP-58  Task 58",
-    "     working · 14:42",
+    "     working · 18m",
     " ▸ ○ APP-59  Task 59",
-    "     working · 14:41",
+    "     working · 19m",
     " 3 Reviewing   0",
     " ↓ Checks 0   Ready 0   Done 0",
   ]);
@@ -1346,7 +1419,7 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
   expect(queued.slice(queue, queue + 5)).toEqual([
     " 0 Task queue  1",
     " ▸ ○ APP-9   Old work",
-    "     paused · 14:59",
+    "     paused · 1m",
     "",
     " 1 Backlog     1",
   ]);
@@ -1360,7 +1433,7 @@ test("on the lead, the list starts at Needs you, with what is below at the botto
     "",
     "   Needs you  2",
     "   ● APP-12  Rate limit the API",
-    "     question · 14:58",
+    "     question · 2m",
     "   ● APP-14  Fix the export header",
     " ↓ +3  Queue 1  Back 1  Build 1  Rev 0  Chk 0  Ready 0  Done 0",
   ]);
@@ -1384,12 +1457,12 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   expect(top.slice(5, 14)).toEqual([
     " ↑ 3 more   Needs you 2   Task queue 1",
     " 1 Backlog    1",
-    "   ○ APP-31  Export as CSV  5 Nov",
+    "   ○ APP-31  Export as CSV  14d",
     " 2 Building   7",
     " ▸ ○ APP-7   Login redirect",
-    "     working · 14:55",
+    "     working · 5m",
     "   ○ APP-50  Task 50",
-    "     working · 14:50",
+    "     working · 10m",
     " ↓ 8 more   Reviewing 1   Checks 2   Ready 0   Done 0",
   ]);
   // On the last task in Checks, its heading and both its rows show, and the stages above it are
@@ -1424,7 +1497,7 @@ test("a terminal too short for every heading still shows the row you are on", ()
   expect(lines[2]).toMatch(/^ {3}○ lead/);
   expect(lines.slice(5, 7).map((line) => line.trim())).toEqual([
     "▸ ○ APP-59  Task 59",
-    "working · 14:41",
+    "working · 19m",
   ]);
   // Eight leave one: the first line of the row you are on, with its ▸.
   const fewer = drawn(14, 8, 80, ["needs you", "task queue", "building"]);
@@ -2505,7 +2578,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
     "─".repeat(paneWidth(wide)),
     "Needs you: question",
     "",
-    "Now      question · 1d ago",
+    "Now      question · last change 19 Nov 14:58, 1d ago",
     "Issue    #12  https://github.com/simon/app/issues/12",
     "",
     "Task",
@@ -2674,7 +2747,7 @@ test("the pane's events come from the thread's log: started, submitted, verdicts
   );
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
-console.log(JSON.stringify(readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now})?.events));`;
+console.log(JSON.stringify(readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now}, null)?.events));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toEqual([
@@ -2699,7 +2772,7 @@ test("the pane's details keep the lead's updates out of the description, each wi
   );
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
-const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now});
+const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now}, null);
 console.log(JSON.stringify({ body: details?.view.body, updates: details?.updates }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
