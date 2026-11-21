@@ -219,8 +219,11 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     pr({ conflicts: true, base: "release", reviews: [skelReview], checks: [approved] });
     await until(() => thread().needs_you === 0);
     expect(thread().status).toBe("waiting");
-    expect(read(join(data(), "threads", "app-12.log"))).toContain(
-      "its PR conflicts with release, so it isn't ready to merge",
+    // The daemon saves the change, then logs it, so the log can lag the database a moment.
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes(
+        "its PR conflicts with release, so it isn't ready to merge",
+      ),
     );
     // The fetch fails at every poll, and the thread never goes back to ready.
     await morePolls();

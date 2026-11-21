@@ -169,14 +169,14 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => thread().status === "done" && !existsSync(clone()));
   }, 60_000);
 
-  // The lead may remove a thread, as it may stop one, and a builder may not. The task stays
-  // open, so the thread starts over on it.
+  // The lead may remove a thread, as it may stop one, and a builder may not. Kept open, the
+  // issue lets the thread start over on it. Closing it needs the human's words from the lead.
   test("sc rm closes the thread's PR with the reason, ends its builder, removes its clone, tells the lead only when you ran it, and the task can start over", async () => {
     await approvedApp12();
     const branch = String(thread().branch);
     // Runs sc rm as an agent would, with its own socket.
-    const rmFrom = (agent: string, ...reason: string[]) =>
-      Bun.spawnSync([process.execPath, main, "rm", "app-12", ...reason], {
+    const rmFrom = (agent: string, ...words: string[]) =>
+      Bun.spawnSync([process.execPath, main, "rm", "app-12", ...words], {
         env: { ...env(), SKELCREW_SOCKET: agent },
         stderr: "pipe",
         stdout: "pipe",
@@ -186,7 +186,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     const runDir = join(home, "run", "skelcrew");
     // At a terminal, sc rm says what it will do and asks first, and anything but y changes
     // nothing.
-    const question = "Remove APP-12? This closes PR #7 and deletes its branch and clone. [y/N]";
+    const question =
+      "Remove APP-12? This closes PR #7 and issue #12, and deletes its branch and clone. [y/N]";
     const kept = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "n");
     expect(kept).toContain("Skelcrew didn't remove APP-12.");
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([]);
@@ -198,10 +199,16 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(fromBuilder.stderr.toString()).toContain("doesn't know that request");
     expect(thread().status).toBe("waiting");
 
-    const fromLead = rmFrom(
-      join(runDir, "leads", hashed("simon/app"), "skelcrew.sock"),
-      "started over as app-14",
+    // The lead closes the issue only with the human's words, so without them nothing goes.
+    const leadSocket = join(runDir, "leads", hashed("simon/app"), "skelcrew.sock");
+    const closing = rmFrom(leadSocket, "started over as app-14");
+    expect(closing.stderr.toString()).toContain(
+      "a lead closes an issue only when the human explicitly asks",
     );
+    expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([]);
+    expect(thread().status).toBe("waiting");
+
+    const fromLead = rmFrom(leadSocket, "started over as app-14", "--keep-issue");
     expect(fromLead.stderr.toString()).toBe("");
     expect(fromLead.stdout.toString()).toBe(
       "Removed APP-12. Issue #12 stays open, and sc start APP-12 starts it over.\n",
@@ -225,13 +232,14 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     );
     expect(fakeBuilders()).toEqual([]);
     // Its issue is still open, so the task goes back to stage issue.
-    const listed = Bun.spawnSync([process.execPath, main, "issue", "ls", "app", "--json"], {
+    const listed = Bun.spawnSync([process.execPath, main, "ls", "app", "--json"], {
       env: env(),
     });
     expect(JSON.parse(listed.stdout.toString())).toMatchObject([
       { task: "APP-12", issue: "#12", stage: "issue" },
     ]);
-    const again = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
+    // Done, with its issue kept open, it has nothing left to remove.
+    const again = Bun.spawnSync([process.execPath, main, "rm", "app-12", "--keep-issue"], {
       env: env(),
       stderr: "pipe",
     });
@@ -243,8 +251,10 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     // The forge deletes the branch as it closes the PR, which the fake plugin leaves to the test.
     git(join(home, "github", "simon", "app.git"), "branch", "-D", branch);
 
+    expect(asked(plugin).filter((q) => q.ask === "close task")).toEqual([]);
+
     // The task is still open, so sc start starts the thread over, and its builder opens a PR
-    // again. Removed with no reason, that PR closes with no comment.
+    // again. Removed by you with no reason, that PR and its issue close with no comment.
     const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
       env: env(),
       stderr: "pipe",
@@ -254,7 +264,10 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(started.stdout.toString()).toBe("Started APP-12.\n");
     await until(() => thread().pr === 7 && thread().submitting === null, 30_000);
     const removed = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "y");
-    expect(removed).toContain("Removed APP-12.");
+    expect(removed).toContain("Removed APP-12 and closed issue #12.");
+    expect(asked(plugin).filter((q) => q.ask === "close task")).toEqual([
+      { ask: "close task", repository: "simon/app", task: "12", comment: null },
+    ]);
     expect(
       asked(plugin)
         .filter((q) => q.ask === "close pr")
@@ -428,16 +441,13 @@ echo "Not logged in"; exit 1`,
     answer(plugin, "took", { took: true });
     changes([issue12()]);
     serve();
-    // Runs sc issue ls for app as a tool would, with `more` words such as --all, and returns its
+    // Runs sc ls for app as a tool would, with `more` words such as --all, and returns its
     // rows, or none while the daemon isn't listening yet.
     const listed = (...more: string[]) => {
-      const done = Bun.spawnSync(
-        [process.execPath, main, "issue", "ls", "app", "--json", ...more],
-        {
-          env: env(),
-          stderr: "pipe",
-        },
-      );
+      const done = Bun.spawnSync([process.execPath, main, "ls", "app", "--json", ...more], {
+        env: env(),
+        stderr: "pipe",
+      });
       return done.success ? JSON.parse(done.stdout.toString()) : [];
     };
     await until(() => listed().length === 1);

@@ -76,6 +76,16 @@ export const tellingEvents = new Set<string>();
 // someone deleted. With one, a poll would tell the lead the PR sc rm closed was closed.
 export const removing = new Set<string>();
 
+// When each removal under way ends, whether it removed the thread or failed, by folder.
+const removals = new Map<string, Promise<void>>();
+
+// Waits until sc rm is no longer removing the thread in this folder, at once when it isn't. An
+// answer that comes while sc rm waits on the forge, such as the tracker's to a claim, waits for
+// it, then acts on the thread as the removal left it: done, or still queued when it failed.
+export function removalEnded(folder: string): Promise<void> {
+  return removals.get(folder) ?? Promise.resolve();
+}
+
 // Cancels the round, any typing under way into the thread's builder and any wake after a usage
 // limit, ends its session, and waits for the builder to exit, so nothing types into it or
 // changes the thread afterwards. Messages still waiting for it are dropped once the thread
@@ -364,7 +374,7 @@ export async function endThread(
 // but only if Skelcrew pushed it for this thread. A running thread is marked stopped first, so
 // a builder that submits while it exits is refused. If the forge fails, the thread stays
 // short of done, so sc rm can run again. Refuses a thread that is done, and one still setting
-// up, whose setup would go on to start its builder.
+// up, whose setup would go on to start its builder, and one another sc rm is removing.
 export async function removeThread(
   db: Database,
   sessions: string,
@@ -375,11 +385,17 @@ export async function removeThread(
   // Refuse what can't be removed, then stop a thread still running.
   const name = threadName(db, thread);
   if (thread.status === "done") throw new Error(`${name} is done already`);
+  // One removal at a time: a second would end the first one's wait for answers, such as a
+  // claim's, while the first still waits on the forge.
+  if (removing.has(thread.folder))
+    throw new Error(`${name} is being removed already: wait for that sc rm to end`);
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && thread.session === null)
     throw new Error(`${name} is still setting up: remove it once its builder has started`);
   // Until it ends, a poll leaves the thread to sc rm, which deletes its branch first.
   removing.add(thread.folder);
+  const ended = Promise.withResolvers<void>();
+  removals.set(thread.folder, ended.promise);
   try {
     // A push under way would put back the branch, or open a PR after none was closed, so it is
     // waited for, and the thread read again for the PR it may have opened.
@@ -425,6 +441,8 @@ export async function removeThread(
     await endThread(db, sessions, thread, why, byLead ? null : note, false, true);
   } finally {
     removing.delete(thread.folder);
+    removals.delete(thread.folder);
+    ended.resolve();
   }
 }
 

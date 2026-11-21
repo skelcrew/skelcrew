@@ -11,7 +11,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { type Labels, startSession } from "../src/agents/sessions.ts";
+import { type Labels, processTree, startSession, stillRunning } from "../src/agents/sessions.ts";
 import { sidebarFor } from "../src/screen/screen.ts";
 import { fakePlugin, source, threadSql, until as wait } from "./harness.ts";
 
@@ -32,13 +32,18 @@ export let terminal = "";
 
 // The sockets are the test's own too, as a sidebar tells whatever daemon it finds that it opened.
 export const env = () => ({ ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") });
-// Runs tmux on one of the test's servers, never on Skelcrew's own.
+// Runs tmux on one of the test's servers, never on Skelcrew's own. A tmux that never returns
+// would block the whole test file, Bun's own timeout included, until the run's limit ends its
+// worker without a word. So past 10 seconds it is ended, and the test fails naming the command.
 export function tmux(socket: string, ...args: string[]) {
   const run = Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args], {
     env: { ...env(), TMUX: "" },
     stdout: "pipe",
     stderr: "pipe",
+    timeout: 10_000,
   });
+  if (run.exitedDueToTimeout)
+    throw new Error(`tmux ${args.join(" ")} on ${socket} didn't return within 10 seconds`);
   return { ok: run.success, out: run.stdout.toString() };
 }
 
@@ -213,20 +218,77 @@ ${threadSql({ task: "12" })}`);
 }
 
 // Ends what a test started: the stand-in daemon, the tmux servers and the test's home. Every
-// screen test file runs it after each test.
-export function endTest(): void {
+// screen test file runs it after each test, one that failed or timed out included. It returns
+// once every process the servers' panes ran has exited, such as the sidebar and a host's attach.
+// tmux only hangs up on them as its server ends, and on a busy machine they could still be
+// exiting when the check for leftover processes looks. One still running after 15 seconds fails
+// the test, and is killed.
+export async function endTest(): Promise<void> {
   standIn?.close();
   standIn = null;
   asked.length = 0;
   acted.length = 0;
   release();
+  // Each server is ended, and the home removed, even when a tmux command hangs, so one stuck
+  // server leaves nothing else behind. The first failure is thrown once all is done.
+  const failures: unknown[] = [];
+  const tree: number[] = [];
   for (const socket of [terminal, screen, agents]) {
-    tmux(socket, "kill-server");
+    // A server's panes' processes are found before it goes, as nothing names them after.
+    const panes: number[] = [];
+    let hung = false;
+    try {
+      const listed = tmux(socket, "list-panes", "-a", "-F", "#{pane_pid}").out;
+      for (const pid of listed.split("\n").filter(Boolean)) panes.push(...processTree(Number(pid)));
+    } catch (error) {
+      failures.push(error);
+      hung = true;
+    }
+    tree.push(...panes);
+    try {
+      tmux(socket, "kill-server");
+    } catch (error) {
+      failures.push(error);
+      hung = true;
+    }
+    // A server that doesn't answer is killed, with every process under it, before its socket
+    // goes, as nothing could reach it after. It runs as the command that started it, with the
+    // test's own socket after -L, so the match finds only this test's server and clients. Its
+    // panes' processes are found under it, as list-panes may be what hung, and they would ignore
+    // the server's end if they ignore its hangup. They are waited for below like the rest.
+    if (hung) {
+      const ps = Bun.spawnSync(["ps", "-A", "-o", "pid=,args="], { stdout: "pipe" });
+      const ours = ps.stdout
+        .toString()
+        .split("\n")
+        .filter((line) => ` ${line} `.includes(` -L ${socket} `))
+        .map((line) => Number(line.trim().split(/\s+/)[0]))
+        // A pid of 0 would signal the test run's own process group.
+        .filter((pid) => pid > 0)
+        .flatMap((pid) => processTree(pid));
+      tree.push(...ours);
+      for (const pid of [...ours, ...panes])
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+    }
     // tmux leaves the socket file behind after kill-server.
     const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
     rmSync(join(folder, socket), { force: true });
   }
+  // One still running at the deadline fails the test, and is killed so it can't reach the next.
+  await wait(() => stillRunning(tree).length === 0, {
+    timeout: 15_000,
+    what: () => `the screen's panes to end: ${stillRunning(tree).join(" ")}`,
+  }).catch((error) => {
+    failures.push(error);
+    for (const pid of stillRunning(tree))
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+  });
   rmSync(home, { recursive: true, force: true });
+  if (failures.length > 0) throw failures[0];
 }
 
 // Returns whether the right side shows a task's details, which have a line with its stage and
