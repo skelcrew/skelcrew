@@ -109,21 +109,24 @@ const keyNames: Record<string, string> = {
 // task in the task queue, and s or m show only where the row can be started, or queued, or merged.
 // A request of the lead's offers y and n, which answer it, in place of Enter. R shows where the
 // row's agent runs, so it can be restarted. w, which closes or removes the repository, is always
-// there, with Alt-W beside it, as that is the key that works while an agent has your typing.
+// there, with Alt-W beside it, as that is the key that works while an agent has your typing. It
+// comes right after the moves, so a narrow terminal, which cuts the footer at its end, cuts the
+// row's own keys first.
 function sidebarFooter(row: Row, restarts: boolean): string {
-  const end = `${restarts ? "  R restart" : ""}  w/⌥W close  ⌥Q quit`;
-  if (row.part === "lead") return `↑↓ move  ⏎ to lead  ⇧⏎/a full screen  0-6 sections${end}`;
-  if (row.part === "request") return `↑↓ move  y yes  n no  0-6 sections${end}`;
+  const first = "↑↓ move  w/⌥W close";
+  const end = `${restarts ? "  R restart" : ""}  ⌥Q quit`;
+  if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎/a full screen  0-6 sections${end}`;
+  if (row.part === "request") return `${first}  y yes  n no  0-6 sections${end}`;
   if (row.part === "heading") {
     const fixed = row.section === "needs you";
-    return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  0-6 sections${end}`;
+    return `${first}${fixed ? "" : "  ⏎ open/close"}  0-6 sections${end}`;
   }
   const scroll = row.task ? " · pgup/pgdn scroll" : "";
   const reorder = row.section === "task queue" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `↑↓ move  ${enter}${scroll}  0-6 sections${reorder}${start}${merge}${end}`;
+  return `${first}  ${enter}${scroll}  0-6 sections${reorder}${start}${merge}${end}`;
 }
 
 // The question the close key asks about the open repository, by the step it is at: which of

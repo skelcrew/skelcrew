@@ -25,6 +25,7 @@ import {
   screen,
   screenSessions,
   seen,
+  selected,
   sidebar,
   sql,
   startTest,
@@ -221,4 +222,16 @@ UPDATE repositories SET name = 'app' WHERE repo = 'site'`);
   await until(() => appRow()?.tab_closed === 1, "simon/app's tab to close");
   await until(() => !leadRuns(), "simon/app's lead to end");
   expect(tmux(agents, "has-session", "-t", `=${siteLead}`).ok).toBe(true);
+});
+
+// A narrow terminal cuts the footer at its end, so the close key comes before the row's own keys,
+// which a task's row has many of.
+test("on an 80-column terminal, a task's row still shows the close key in the footer", async () => {
+  open("lead", "one", "xterm-256color", "80");
+  await ready("lead");
+  press("M-S-Down");
+  await until(() => selected().includes("APP-12"), "APP-12's row");
+  await until(() => footer().startsWith("  ↑↓ move  w/⌥W close  ⏎ attach"), "the task's keys");
+  // The footer is cut: the row's last keys don't fit.
+  expect(footer()).not.toContain("⌥Q quit");
 });
