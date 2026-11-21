@@ -781,6 +781,9 @@ fs.writeFileSync(${JSON.stringify(join(fake, "fail-keys"))}, "");
 await deliverMessages(db, "unused", "app-12");
 console.log(JSON.stringify(row()), JSON.stringify(typed()));
 await deliverMessages(db, "unused", "app-12");
+// The host has passed the Enter on once the attempt ends, but the agent may not have read it yet.
+const sent = Date.now() + 15_000;
+while (typed() === "" && Date.now() < sent) await Bun.sleep(20);
 console.log(JSON.stringify(row()), JSON.stringify(typed()));
 process.exit(0);`,
     { host: "fake", host_id: "fake-app-12" },

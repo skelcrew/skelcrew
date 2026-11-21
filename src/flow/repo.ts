@@ -44,6 +44,7 @@ import {
 import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText, toRun } from "../say.ts";
+import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 import { leadOf, leadSession } from "./lead.ts";
@@ -895,7 +896,7 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
   // A lead on a plugin no longer installed may still run there, using the clone, and removing
   // the repository would forget how to reach it. So it waits until that host is back.
   const fullName = `${found.owner}/${found.repo}`;
-  const { host } = leadOf(db, found.owner, found.repo);
+  const { host, folder } = leadOf(db, found.owner, found.repo);
   if (hostNamed(db, sessions, host) === null)
     throw new Error(
       `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then remove ${name}.`,
@@ -926,11 +927,12 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
     ]);
     throw error;
   }
-  // Remove the clone, the row, the lead's requests and your trust in it. A request left behind
-  // would come back with the repository, and a yes could start work its new lead never asked
-  // for. The other repositories are named again, as one that shared a name with this one can
-  // drop its owner.
+  // Remove the clone, the files you dropped onto its lead, the row, the lead's requests and your
+  // trust in it. A request left behind would come back with the repository, and a yes could start
+  // work its new lead never asked for. The other repositories are named again, as one that shared
+  // a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
+  rmSync(join(folder, dropsFolder), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   db.run("DELETE FROM lead_requests WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   forgetAgents(found);

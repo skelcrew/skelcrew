@@ -8,6 +8,7 @@ import { claimTask } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
 import { statusOnceBack } from "./builder.ts";
+import { removalEnded } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository } from "./repo.ts";
 import { readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
@@ -157,10 +158,11 @@ export function backToQueue(db: Database): void {
 // `retry`, runs with nobody there to decide: the first ask failed, and another machine may have
 // claimed the issue meanwhile. So when the tracker says the issue is taken, the task leaves
 // the queue, back to its issue, and the lead hears it can sc start it if no other machine works
-// on it. Throws when the tracker fails, and the claim stays owed, to be asked again. Asked once
-// at a time per start of the thread: a second call gets the ask under way. A task sc rm removed
-// and started again makes a claim of its own, as the answer to the first one was for the task
-// removed.
+// on it. An answer that comes while sc rm is removing the task waits for sc rm, and acts only
+// if the removal failed. Throws when the tracker fails, and the claim stays owed, to be asked
+// again. Asked once at a time per start of the thread: a second call gets the ask under way. A
+// task sc rm removed and started again makes a claim of its own, as the answer to the first one
+// was for the task removed.
 export function claimQueued(
   db: Database,
   sessions: string,
@@ -175,8 +177,10 @@ export function claimQueued(
   if (db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) === null)
     return Promise.resolve();
   const ask = claimTask(db, repositoryOf(db, thread), task)
-    .then((took) => {
-      // sc rm may have taken it out of the queue while the tracker answered.
+    .then(async (took) => {
+      // sc rm may have taken it out of the queue while the tracker answered. One still removing
+      // it decides first: the task stays queued, and owes its claim, only if that removal fails.
+      await removalEnded(thread.folder);
       const now = readThread(db, thread.folder);
       const same = now.started === thread.started;
       const taken = retry && !took && now.status === "queued" && same;

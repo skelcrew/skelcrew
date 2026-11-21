@@ -1,6 +1,6 @@
 // The screen's sidebar as the list: its stages opening and closing by key and by click, moving
 // between sections, and the list's keys on a task's row, which never reach an agent.
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { itemSql, threadSql } from "./harness.ts";
 import {
   acted,
@@ -27,8 +27,6 @@ import {
   until,
 } from "./screen.ts";
 
-// Longer than the screen's waits, so a test that fails says what it waited for.
-setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 
