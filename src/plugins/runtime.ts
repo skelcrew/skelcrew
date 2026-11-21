@@ -7,11 +7,12 @@ import type { z } from "zod";
 import { errorText } from "../say.ts";
 import { commandFor, installedPlugins, type Manifest, quoteForSh, readManifest } from "./plugin.ts";
 
-// A runtime plugin that hosts sessions: its name, its folder, its session and attach commands,
-// and whether it also provides the transport and the status. The sessions module uses Skelcrew's
+// A runtime plugin that hosts sessions: its name, its version, its folder, its session and attach
+// commands, and whether it also provides the transport and the status. The sessions module uses Skelcrew's
 // built-in for any it doesn't.
 export type PluginHost = {
   plugin: string;
+  version: string;
   folder: string;
   session: string[];
   attach: string[];
@@ -49,6 +50,7 @@ export function pluginHost(db: Database, name: string): PluginHost | null {
   if (!manifest.provides.includes("sessions") || !session || !attach) return null;
   return {
     plugin: name,
+    version: manifest.version,
     folder: plugin.folder,
     session,
     attach,

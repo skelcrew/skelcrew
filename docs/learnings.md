@@ -574,6 +574,16 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **A clone stopped halfway must not look like one.** Clone outside the folder the lead
   sees, then move it in.
 
+## Runtime plugins
+
+- **An older plugin fails a question it doesn't know.** herdr's plugin 0.1.4 answers `rename`
+  with a Zod error listing the questions it does know. `sc repo add` renamed every running
+  builder, so it printed one such error per thread, about threads you didn't ask about. A
+  manifest says what a plugin provides, not which questions it answers, so Skelcrew asks once
+  and learns from the answer. It tells "doesn't know it" from "failed this once" by asking a
+  question no host knows: the same failure in the same words, from a host that still answers
+  `list`, means it doesn't know. The memory is kept by the plugin's version.
+
 ## Releasing
 
 - **Bun's cross-built Mac binaries carry a signature that fails verification.** Built on

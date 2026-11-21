@@ -61,6 +61,7 @@ afterEach(async () => {
 // The fake host, providing sessions and, when asked, its own transport and status.
 const host = (own: { transport?: boolean; status?: boolean } = {}): PluginHost => ({
   plugin: name,
+  version: "0.1.0",
   folder: home,
   session: fakeHostCommand(settings()),
   attach: ["true"],
@@ -1265,7 +1266,7 @@ process.exit(0);`,
   expect(said).not.toContain("couldn't rename");
 }, 40_000);
 
-test("a host that doesn't know rename is asked once for all its builders, and logs it once", () => {
+test("a host that doesn't know rename is asked once for all its builders, and shows no error", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const labels = (task: string) =>
     `{ repository: "simon/app", role: "builder", task: "app-${task}", title: "Fix ${task}" }`;
@@ -1287,9 +1288,8 @@ process.exit(0);`,
     .split("\n")
     .filter((line) => JSON.parse(line).ask === "rename");
   expect(renames).toHaveLength(1);
-  // One line in the engine's log, not one per builder.
-  expect(said.trim().split("\n")).toHaveLength(1);
-  expect(said).toContain("fake can't rename sessions");
+  // A plugin without rename is no error, only titles that stay as they started.
+  expect(said).toBe("");
 }, 40_000);
 
 test("a rename that fails for another reason goes to the log, and the next is still asked", () => {
@@ -1311,6 +1311,27 @@ process.exit(0);`,
   );
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
   expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
+}, 40_000);
+
+test("a plugin updated to a version that renames is asked again", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const manifest = join(home, "plugin-fake", "skelcrew-plugin.yaml");
+  runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+fs.writeFileSync(${JSON.stringify(join(fake, "unknown-rename"))}, "");
+await renameBuilders(db);
+// The update knows rename, and says a version of its own.
+fs.rmSync(${JSON.stringify(join(fake, "unknown-rename"))});
+fs.writeFileSync(${JSON.stringify(manifest)}, fs.readFileSync(${JSON.stringify(manifest)}, "utf8").replace("version: 0.1.0", "version: 0.2.0"));
+await renameBuilders(db);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 Fix the login redirect");
 }, 40_000);
 
 test("a host down for every question isn't taken for one that can't rename", () => {

@@ -460,11 +460,12 @@ export function record(
 
 // Tells the builder's host the thread's title, when the host is a plugin, so its own apps stop
 // showing an old one. A builder on tmux needs nothing, as Skelcrew's list reads the title from
-// here. It doesn't wait for the host. A host that doesn't know the question, such as an older
-// plugin, isn't asked again until Skelcrew restarts. Any other failure only costs that new name,
-// and the next title is still sent. Both are logged, never thrown, and the engine's own renames,
-// which sc repo asks it for too, go to the engine's log. Each rename waits for the one before on the same session and sends the title as
-// it is then, so two quick changes can't reach the host out of order and leave it on the older
+// here. It doesn't wait for the host. A plugin that doesn't know the question, such as herdr's
+// before it could rename, is asked once, and not again until its version changes, with no error
+// shown: it only keeps its old titles. Any other failure costs only that new name, goes to the
+// log, and the next title is still sent. sc repo asks the engine to rename, so that log is the
+// engine's. Each rename waits for the one before on the same session and sends the title as it
+// is then, so two quick changes can't reach the host out of order and leave it on the older
 // title. It gives back a promise that settles once the host answered, for a command that ends
 // before it would.
 export function renameOnHost(db: Database, folder: string): Promise<void> {
@@ -474,8 +475,9 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
     if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
     const host = pluginHost(db, thread.host);
     if (host === null) return;
-    const { plugin } = host;
-    // Until a host has renamed once, its renames go one at a time, so a host that doesn't know
+    // Known by the plugin's version too, so an update that learned to rename is asked again.
+    const plugin = `${host.plugin} ${host.version}`;
+    // Until a plugin has renamed once, its renames go one at a time, so one that doesn't know
     // the question is asked once, not once per builder. Nothing waits between the last look and
     // claiming the turn, so two can't both take it.
     while (firstRenames.has(plugin)) await firstRenames.get(plugin);
@@ -484,14 +486,10 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
     const asked = renameSession(host, thread.host_id, title).then(
       () => canRename.set(plugin, true),
       async (error) => {
-        if (await unknownQuestion(host, "rename", error)) {
-          canRename.set(plugin, false);
+        if (await unknownQuestion(host, "rename", error)) canRename.set(plugin, false);
+        else
           console.log(
-            `${plugin} can't rename sessions, so Skelcrew stops asking it: ${errorText(error)}`,
-          );
-        } else
-          console.log(
-            `couldn't rename ${threadName(db, thread)} on ${plugin}: ${errorText(error)}`,
+            `couldn't rename ${threadName(db, thread)} on ${host.plugin}: ${errorText(error)}`,
           );
       },
     );
@@ -509,11 +507,11 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
   return settled;
 }
 
-// Whether each plugin's host can rename sessions, by the plugin's name: true once one rename
+// Whether each plugin can rename sessions, by its name and version: true once one rename
 // worked, false once it showed it doesn't know the question, and unset before either.
 const canRename = new Map<string, boolean>();
 
-// The rename under way on each plugin's host that hasn't renamed yet, by the plugin's name.
+// The rename under way on each plugin that hasn't renamed yet, by its name and version.
 const firstRenames = new Map<string, Promise<void>>();
 
 // Asks the host of each live builder on a plugin's host to rename it by its title as it is now,
