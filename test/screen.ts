@@ -228,25 +228,33 @@ export async function endTest(): Promise<void> {
   asked.length = 0;
   acted.length = 0;
   release();
-  // The panes' processes are found before their servers go, as nothing names them after.
-  const panes = [terminal, screen, agents].flatMap((socket) =>
-    tmux(socket, "list-panes", "-a", "-F", "#{pane_pid}").out.split("\n").filter(Boolean),
-  );
-  const tree = panes.flatMap((pid) => processTree(Number(pid)));
+  // Each server is ended, and the home removed, even when a tmux command hangs, so one stuck
+  // server leaves nothing else behind. The first failure is thrown once all is done.
+  const failures: unknown[] = [];
+  const tree: number[] = [];
   for (const socket of [terminal, screen, agents]) {
-    tmux(socket, "kill-server");
+    // A server's panes' processes are found before it goes, as nothing names them after.
+    try {
+      const panes = tmux(socket, "list-panes", "-a", "-F", "#{pane_pid}").out;
+      for (const pid of panes.split("\n").filter(Boolean)) tree.push(...processTree(Number(pid)));
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      tmux(socket, "kill-server");
+    } catch (error) {
+      failures.push(error);
+    }
     // tmux leaves the socket file behind after kill-server.
     const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
     rmSync(join(folder, socket), { force: true });
   }
-  try {
-    await wait(() => stillRunning(tree).length === 0, {
-      timeout: 15_000,
-      what: () => `the screen's panes to end: ${stillRunning(tree).join(" ")}`,
-    });
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
+  await wait(() => stillRunning(tree).length === 0, {
+    timeout: 15_000,
+    what: () => `the screen's panes to end: ${stillRunning(tree).join(" ")}`,
+  }).catch((error) => failures.push(error));
+  rmSync(home, { recursive: true, force: true });
+  if (failures.length > 0) throw failures[0];
 }
 
 // Returns whether the right side shows a task's details, which have a line with its stage and
