@@ -40,8 +40,8 @@ import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
 import { dropAnswerOption, dropAsk, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
-import { filled, lightGrey, pad, paint, removeControlCodes } from "./look.ts";
-import { attachedMark, leadOnHost } from "./screen.ts";
+import { filled, pad, removeControlCodes } from "./look.ts";
+import { attachedMark, leadOnHost, panes } from "./screen.ts";
 import { attachTask, showTask } from "./task.ts";
 import { drawTop } from "./top.ts";
 
@@ -199,7 +199,7 @@ export async function runSidebar(
       });
   };
   let tabs = repositoryTabs(db, null);
-  const rightPane = `=${session}:.1`;
+  const rightPane = `=${session}:.${panes.right}`;
   let tty = paneTty(agents, rightPane);
   // The list's rows: every row, those that show, which are the lead's and those of the open
   // sections, the row you are on among those and how far the sections scrolled. Needs you and
@@ -224,7 +224,7 @@ export async function runSidebar(
   // an agent. Enter on the lead's row or a click on the lead gives it back. With Alt keys alone,
   // typing follows the row: the lead's row types to the lead.
   let held = false;
-  // Where your typing went at the last look, which the sidebar draws and the footer says.
+  // Where your typing went at the last look, which the top row's boxes show and the footer says.
   let typingRight = true;
   // What the footer says in place of its keys until the next key, the question it asks, and
   // whether the daemon is at work on an answer.
@@ -312,7 +312,7 @@ export async function runSidebar(
   let answers = 0;
   const answerDrop = () => {
     const active = screenTmux(agents, ["display", "-p", "-t", `=${session}:`, "#{pane_index}"]);
-    const agent = active.out.trim() === "1" ? about() : null;
+    const agent = Number(active.out) === panes.right ? about() : null;
     let folder = "";
     try {
       if (agent === open.lead) folder = leadOf(db, open.owner, open.repo).folder;
@@ -354,20 +354,16 @@ export async function runSidebar(
     return agentFooter(name, harnessOf(about()));
   };
 
-  // Draws the sidebar, the notice above the rest, only when it changed. Every line ends with the
-  // sidebar's edge in the pane's last column, and a column before it is left blank. The row you
-  // are on is lit while your typing goes to the sidebar, and only outlined while it goes to the
-  // right side.
+  // Draws the sidebar, the notice above the rest, only when it changed. Every line fills the
+  // pane, and its last column is left blank, so text never touches the box's line.
   const draw = () => {
     const { width, height } = size();
     const headings = sectionHeadings(all, opened, builders);
-    const room = Math.max(width - 2, 1);
-    const drawn = drawRows(rows, headings, here, top, room, height - 1, !typingRight);
+    const room = Math.max(width - 1, 1);
+    const drawn = drawRows(rows, headings, here, top, room, height - 1);
     top = drawn.top;
     targets = [...notice.map((): Target => null), null, ...drawn.targets];
-    const lines = ["", ...drawn.lines].map(
-      (line) => `${filled(line, Math.max(width - 1, 0))}${divider(typingRight)}`,
-    );
+    const lines = ["", ...drawn.lines].map((line) => filled(line, width));
     const frame = [...notice, ...lines].join("\n");
     if (frame === lastFrame) return;
     lastFrame = frame;
@@ -426,13 +422,16 @@ export async function runSidebar(
     }
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
-    // anything is drawn, as the sidebar and the top row show it.
-    typingRight = doing(
-      "asking tmux where your typing goes",
-      () =>
-        screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active}"]).out.trim() === "1",
+    // anything is drawn, as the top row and the footer show it.
+    // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it.
+    const [active, zoomed] = doing("asking tmux where your typing goes", () =>
+      screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active} #{window_zoomed_flag}"])
+        .out.trim()
+        .split(" "),
     );
-    notice = noticeLines(updateNotice(db), size().width, typingRight);
+    typingRight = active === "1";
+    const fullScreen = zoomed === "1";
+    notice = noticeLines(updateNotice(db), size().width);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
       try {
@@ -475,17 +474,20 @@ export async function runSidebar(
       asked = open.lead;
       openRepository(`${open.owner}/${open.repo}`, true);
     }
-    // The header and the tabs go to tmux's status line, and only when they changed.
+    // The header and the tabs go to tmux's status line, and only when they changed. A right side
+    // that fills the terminal is as wide as it, so the row keeps the sidebar's places and the
+    // tabs take what is left.
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
-    const left = size().width + 1;
+    const right = fullScreen ? width - size().width - 5 : width;
     const look = {
       tabs,
       open: `${open.owner}/${open.repo}`,
       where,
       versions: shownVersions(),
       typingRight,
+      fullScreen,
     };
-    const top = drawTop(look, { left, width });
+    const top = drawTop(look, { sidebar: size().width, right });
     if (top !== lastTop) {
       lastTop = top;
       doing("drawing the top row", () => showTop(agents, session, top));
@@ -692,7 +694,7 @@ export async function runSidebar(
     // question asked here open.
     if (name === "to sidebar") {
       held = true;
-      screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);
+      screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
       return;
     }
     if (working) return;
@@ -791,18 +793,12 @@ export async function runSidebar(
   process.exit(0);
 }
 
-// Returns the sidebar's edge, the line between the two sides, which leans to the side your typing
-// goes to, and is lit there: to the right side while `typingRight`, and to the sidebar otherwise.
-// It is the last column of every line of the sidebar.
-const divider = (typingRight: boolean) => paint(lightGrey, typingRight ? "▕" : "▏");
-
 // Returns the lines that go above the rest of the sidebar for a notice, such as a release installed
 // in the background, or none without one. Cut at words to fit a sidebar `width` columns wide, and
-// parted from what follows by a blank line. Each fills the pane and ends with the sidebar's edge,
-// which leans as `typingRight` says.
-function noticeLines(notice: string, width: number, typingRight: boolean): string[] {
+// parted from what follows by a blank line. Each fills the pane.
+function noticeLines(notice: string, width: number): string[] {
   if (!notice) return [];
-  const room = Math.max(width - 1 - 2 * pad.length, 1);
+  const room = Math.max(width - 2 * pad.length, 1);
   // A word goes on the last line while it fits, and starts a new one when it doesn't. A word
   // longer than a whole line has one to itself.
   const lines = [""];
@@ -812,10 +808,8 @@ function noticeLines(notice: string, width: number, typingRight: boolean): strin
     if (Bun.stringWidth(longer) <= room || !lines[last]) lines[last] = longer;
     else lines.push(word);
   }
-  // Each line is padded, a blank one follows, and all of them end at the sidebar's edge.
-  return [...lines.map((line) => `${pad}${line}`), ""].map(
-    (line) => `${filled(line, width - 1)}${divider(typingRight)}`,
-  );
+  // Each line is padded, and a blank one follows.
+  return [...lines.map((line) => `${pad}${line}`), ""].map((line) => filled(line, width));
 }
 
 // Returns the agents running on a plugin's host, for the sidebar: builders by their thread's
