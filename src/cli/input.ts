@@ -44,50 +44,51 @@ export async function readAsked(file: string): Promise<string> {
   return words;
 }
 
+const commands = [
+  "up",
+  "serve",
+  "restart",
+  "init",
+  "repo",
+  "ps",
+  "ls",
+  "show",
+  "task",
+  "start",
+  "stop",
+  "rm",
+  "merge",
+  "attach",
+  "peek",
+  "interrupt",
+  "needs-you",
+  "ask",
+  "review",
+  "submit",
+  "check",
+  "tell",
+  "install",
+  "add",
+  "remove",
+  "update",
+  "setup",
+  "plugins",
+  "plugin",
+];
+
+function usageMessage(command: string): string {
+  if (command === "--remote") return "--remote needs a host, such as sc --remote simon@workbox.";
+  if (command === "remote")
+    return "sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install.";
+  if (command === "issue" || command === "pr")
+    return 'issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc task add <repo> "<title>" "<body>" --issue opens an issue.';
+  if (commands.includes(command))
+    return `sc ${command} was given arguments it doesn't take. Run sc --help to see how to use it.`;
+  return "that isn't a Skelcrew command. Run sc --help to see them.";
+}
+
 export function usage(command?: string): never {
-  const known = [
-    "up",
-    "serve",
-    "restart",
-    "init",
-    "repo",
-    "ps",
-    "ls",
-    "show",
-    "task",
-    "start",
-    "stop",
-    "rm",
-    "merge",
-    "attach",
-    "peek",
-    "interrupt",
-    "needs-you",
-    "ask",
-    "review",
-    "submit",
-    "check",
-    "tell",
-    "install",
-    "add",
-    "remove",
-    "update",
-    "setup",
-    "plugins",
-    "plugin",
-  ];
-  const first = command ?? "";
-  console.error(
-    first === "--remote"
-      ? "Skelcrew: --remote needs a host, such as sc --remote simon@workbox."
-      : first === "remote"
-        ? "Skelcrew: sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install."
-        : first === "issue" || first === "pr"
-          ? 'Skelcrew: issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc task add <repo> "<title>" "<body>" --issue opens an issue.'
-          : known.includes(first)
-            ? `Skelcrew: sc ${first} was given arguments it doesn't take. Run sc --help to see how to use it.`
-            : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
-  );
+  console.error(`Skelcrew: ${usageMessage(command ?? "")}`);
   process.exit(1);
 }
 
