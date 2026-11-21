@@ -11,6 +11,7 @@ import { unassignIssue } from "./assign.ts";
 import { baseOf } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
+import { failureOver, roundMoved } from "./ledger.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
 import {
   noteForLead,
@@ -253,9 +254,9 @@ async function stopNow(
       db,
       thread.folder,
       {
+        ...failureOver(now, Date.now(), true),
         status: "stopped",
         needs_you: false,
-        review_failed: false,
         asking: false,
         turn_ended: false,
         ended_at: null,
@@ -461,11 +462,7 @@ export async function tellBuilder(
     const now = readThread(db, thread.folder);
     if (now.status !== "working" && now.status !== "waiting") return;
     const moved =
-      now.status !== before.status ||
-      now.needs_you !== before.needs_you ||
-      now.rounds !== before.rounds ||
-      now.submitting !== before.submitting ||
-      now.reviewing !== before.reviewing;
+      now.status !== before.status || now.needs_you !== before.needs_you || roundMoved(before, now);
     // A round submitted meanwhile is a new commit, so the notices of the older one would send
     // the builder after a problem it may have fixed, even once that round's push is done and
     // its review runs. People's words still hold.
@@ -490,7 +487,10 @@ export async function tellBuilder(
     };
     send(notices, []);
     send(decision.tell, decision.typedIn);
-    record(db, thread.folder, moved ? { seen: handled } : { seen: handled, ...change }, why);
+    // A review that failed is over once the builder works again, as the round's record says.
+    const { review_failed, ...rest } = change;
+    const over = review_failed === false ? failureOver(now, Date.now()) : {};
+    record(db, thread.folder, moved ? { seen: handled } : { seen: handled, ...rest, ...over }, why);
     typeLeadNotes(db, sessions);
   } catch (error) {
     console.log(

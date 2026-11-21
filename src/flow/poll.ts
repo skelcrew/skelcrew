@@ -40,6 +40,7 @@ import {
 } from "./events.ts";
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadSession } from "./lead.ts";
+import { roundMoved, roundOf } from "./ledger.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
@@ -299,10 +300,7 @@ async function actOnPr(
   // The decision is pure; what follows carries it out. The poll is stale when a round
   // changed the thread since it began.
   const decision = decide(thread, pr, { maxRounds, moved });
-  const stale =
-    thread.submitting !== before.submitting ||
-    thread.reviewing !== before.reviewing ||
-    thread.rounds !== before.rounds;
+  const stale = roundMoved(before, thread);
   // Saved ahead of what the decision does, so a thread never needs you for an approval while
   // its saved checks still say otherwise. A commit on its way has no checks to speak of yet.
   // Whether every check is green, Skelcrew's own included, is saved on each poll too, even while
@@ -311,7 +309,7 @@ async function actOnPr(
   const checks = ciState(pr);
   const green = allGreen(thread, pr);
   const ciChanged = checks !== thread.checks || green !== thread.ci_passed;
-  if (!stale && thread.submitting === null && ciChanged)
+  if (!stale && roundOf(thread).submitting === null && ciChanged)
     record(db, folder, { checks, ci_passed: green });
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
@@ -423,7 +421,7 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   // A push under way has saved its local ref before the remote has the branch, and a failed
   // one keeps its submit, so only a thread with nothing being pushed can end. Its branch can
   // still have moved, which a push that failed may never have told the builder.
-  if (thread.submitting !== null) return actOnBranchHead(db, sessions, repository, thread);
+  if (roundOf(thread).submitting !== null) return actOnBranchHead(db, sessions, repository, thread);
   if (!(await git("rev-parse", "--verify", "--quiet", ref("threads"))).ok) return;
   // Asking git takes a while, and sc rm may meanwhile have deleted the branch and ended the
   // thread, or the thread started over. Only the thread as it was is ended. A thread sc rm is

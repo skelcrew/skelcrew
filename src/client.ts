@@ -81,7 +81,7 @@ export async function askForTasks(repository?: string): Promise<TaskRow[]> {
   return checkReply(z.object({ tasks: z.array(TaskRow) }), reply).tasks;
 }
 
-// Asks the daemon for one task, for sc task. The daemon answers from Skelcrew's copy, and asks
+// Asks the daemon for one task, for sc show. The daemon answers from Skelcrew's copy, and asks
 // the forge for the logs of failed checks, as only it holds the forge's login.
 export async function askForTask(which: { repo: string; task: string }): Promise<TaskView> {
   const reply = await request({ command: "task show", ...which });
@@ -107,7 +107,7 @@ export async function createTask(
   return checkReply(z.object({ task: z.string() }), reply).task;
 }
 
-// Has the daemon file a task in the repository's backlog, for sc task add, and returns its name,
+// Has the daemon file a task in the repository's backlog, for sc add, and returns its name,
 // such as app-t104. The daemon keeps it on the repository's remote, so every machine shows it.
 // `already` says the backlog held the same task, as filed by an earlier try, and nothing was
 // filed again.
@@ -143,9 +143,9 @@ export async function startOn(
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 
-// Has the daemon start a thread on a title and body, for sc start in a repository with no
-// tracker, and returns what it did, in a sentence naming the thread, such as app-t1. `short` is
-// its short title for the sidebar, and `flow` the flow it runs.
+// Has the daemon start a thread on a title and body, for sc add --start, and returns what
+// it did, in a sentence naming the thread, such as app-t1. `short` is its short title for the
+// sidebar, and `flow` the flow it runs.
 export async function startNew(
   repository: string,
   title: string,

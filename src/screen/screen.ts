@@ -1,6 +1,7 @@
 // The screen: the sidebar on the left of your terminal, with the lead or the task you are on at
 // the right, the version and the tabs above them and the footer across the bottom. It is a
-// second tmux server, one session per open terminal, ended when you leave.
+// second tmux server, one session per open terminal, ended when you leave. A terminal too narrow
+// for both sides, such as a phone's, shows one side at a time.
 import type { Database } from "bun:sqlite";
 import { applyConfig, attachCommand } from "../agents/sessions.ts";
 import { envWithoutTmux, screenSocket } from "../agents/tmux.ts";
@@ -46,6 +47,19 @@ const sidebarFormat = [
   `#{?#{e|>:${share},${most}},${most},${share}}}}`,
   ",2}",
 ].join("");
+
+export const narrowBelow = 80;
+const narrowFormat = `#{&&:#{e|<:#{window_width},${narrowBelow}},#{!=:#{window_zoomed_flag},1}}`;
+const zoomWhenNarrow = `if -F "${narrowFormat}" "resize-pane -Z"`;
+
+export const zoomIn = (pane: string) => [
+  "if",
+  "-F",
+  "-t",
+  pane,
+  "#{!=:#{window_zoomed_flag},1}",
+  `resize-pane -Z -t ${pane}`,
+];
 
 // What runs in the pads at the edges: nothing that draws or ends, as a pad only makes room for
 // tmux's line beside it. A pane whose program ended would close and give its column away.
@@ -282,8 +296,10 @@ const config = [
       `resize-pane -t :.${panes.leftPad} -x 1`,
       `resize-pane -t :.${panes.rightPad} -x 1`,
       `run-shell -C "resize-pane -t ${toSidebar} -x ${sidebarFormat}"`,
+      zoomWhenNarrow,
     ].join(" ; "),
   ],
+  ["set-hook", "-g", "after-select-pane", zoomWhenNarrow],
 ];
 
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
@@ -381,6 +397,7 @@ export async function openScreen(
     // A pane that ended, such as one Ctrl-C stopped, would give the whole screen to the
     // sidebar. A dead one stays in its place, and moving away starts it again.
     ["set", "-p", "-t", toRight, "remain-on-exit", "on"],
+    ["if", "-F", narrowFormat, "resize-pane -Z"],
   ];
   // The lone ";" separates tmux commands.
   const commands = open.flatMap((command) => [...command, ";"]).slice(0, -1);

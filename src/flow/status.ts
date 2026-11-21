@@ -7,11 +7,18 @@ import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
-import { roundLimit } from "../config.ts";
 import { errorText } from "../format.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
-import { passedReviewStage, pastRoundLimit, waitsOnFirstCheck } from "./decide.ts";
+import { waitsOnFirstCheck } from "./decide.ts";
 import { leadOf } from "./lead.ts";
+import {
+  atRoundLimit,
+  limitDecided,
+  limitOf,
+  limitWasDecided,
+  passedReviewStage,
+  roundOf,
+} from "./ledger.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
 import {
   messageLead,
@@ -54,15 +61,10 @@ export const needsYou = (thread: Thread) =>
   (thread.needs_you && !decided(thread));
 
 // Returns why the thread needs you, as its word says, such as "question" or the action a mark
-// asks of you, or null when it doesn't. sc ps and sc task print it, so you read what to do. A
-// round limit that can't be read, from settings that aren't valid, counts as none, as on the list.
+// asks of you, or null when it doesn't. sc ps and sc show print it, so you read what to do.
 export function needsYouFor(thread: Thread): string | null {
   if (!needsYou(thread)) return null;
-  let maxRounds = Number.POSITIVE_INFINITY;
-  try {
-    maxRounds = roundLimit(thread);
-  } catch {}
-  return reasonOf(threadWord(thread, maxRounds));
+  return reasonOf(threadWord(thread, limitOf(thread)));
 }
 
 // Returns why a thread needs you from its word, as an action where the word says only what
@@ -70,22 +72,13 @@ export function needsYouFor(thread: Thread): string | null {
 // word `approved`, beside the green mark that says the rest.
 const reasonOf = (word: string) => (word === "approved" ? "ready to merge" : word);
 
-// Returns whether the thread is past its round limit with nobody having decided yet, so marking,
-// clearing or arming a merge on it is that decision. The round limit's word shows only once a
-// mark, a question and an error are gone, and only while no merge is armed, so it is asked of
-// the thread without them.
-export function limitWaits(thread: Thread): boolean {
-  const without = { ...thread, needs_you_for: null, asking: false, erred: false, merge_plan: null };
-  return needsYouFor(without) === "round limit";
-}
-
 // Returns whether the lead or you decided what the thread's flag waits on: the round limit was
 // decided since its latest review, or a merge is armed on a thread ready to merge, which then
 // merges by itself. An armed merge alone never decides the round limit, as its plan outlives the
 // review it was armed after: a later review reaching the limit, such as after sc start, would
 // then need nobody. Changes held are what the limit waits on, as an approval drops them.
 const decided = (thread: Thread) =>
-  thread.limit_decided || (thread.merge_plan === "armed" && thread.held === null);
+  limitWasDecided(thread) || (thread.merge_plan === "armed" && roundOf(thread).held === null);
 
 // Returns whether a builder that just ended its turn did so without sc submit, on any harness.
 // Such a builder may have a question written as plain text, or be stuck, or have only replied,
@@ -112,17 +105,17 @@ export const waitsOnSubmit = (thread: Thread, unchanged: boolean) =>
 // check or a conflict all need the builder to work again, so a turn without new work doesn't
 // wait on them.
 const submitStands = (thread: Thread) =>
-  thread.reviewing !== null ||
+  roundOf(thread).reviewing !== null ||
   (passedReviewStage(thread) &&
     thread.checks !== "failing" &&
     thread.conflicts === null &&
-    thread.telling === null);
+    roundOf(thread).telling === null);
 
 // Returns whether the thread's last submit is still on its way without its builder, for the safety
 // net: being pushed, reviewed, or approved and waiting on CI. A round that failed is no longer on
 // its way, though it keeps its submit or review saved.
 const inFlight = (thread: Thread) =>
-  !thread.review_failed && (thread.submitting !== null || submitStands(thread));
+  !roundOf(thread).review_failed && (roundOf(thread).submitting !== null || submitStands(thread));
 
 // Returns whether the thread waits for you to merge it: Skelcrew's reviewer approved its latest
 // round, or its flow has no review stage, with no newer one under way, and the latest poll found every check on its PR green,
@@ -132,8 +125,8 @@ const inFlight = (thread: Thread) =>
 // thread need you again.
 export const readyToMerge = (thread: Thread) =>
   thread.needs_you &&
-  thread.submitting === null &&
-  thread.reviewing === null &&
+  roundOf(thread).submitting === null &&
+  roundOf(thread).reviewing === null &&
   passedReviewStage(thread) &&
   (thread.checks === "passing" || thread.checks === null) &&
   (thread.pr === null || thread.ci_passed) &&
@@ -323,7 +316,7 @@ export function reportStatus(db: Database, thread: Thread): void {
   if (host === null || !host.status) return;
   let said: { status: Status; reason: string };
   try {
-    const maxRounds = roundLimit(thread);
+    const maxRounds = limitOf(thread);
     const status = statusOf(thread, maxRounds);
     const word = threadWord(thread, maxRounds);
     said = { status, reason: status === "ready" ? reasonOf(word) : word };
@@ -443,7 +436,8 @@ export function reportStatuses(db: Database): void {
 // clock shows it, such as "limit · 13:59", or only "limit" when the harness didn't say. Anything
 // that needs you comes before a limit, which only waits.
 export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
-  const { status, verdict } = thread;
+  const { status } = thread;
+  const { verdict } = roundOf(thread);
   // A mark says in words what you must do, so it goes before what Skelcrew knows by itself, even
   // on a thread that is queued, failed or stopped, which the lead or you may mark too. Only a
   // question or an error the builder stopped on comes first, as you must answer it before
@@ -457,26 +451,26 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // what it is doing.
   if (status === "queued" || status === "failed" || status === "stopped" || status === "done")
     return status;
-  const underWay = thread.submitting !== null || thread.reviewing !== null;
+  const underWay = roundOf(thread).submitting !== null || roundOf(thread).reviewing !== null;
   if (thread.asking) return "question";
   if (thread.erred && !thread.limited) return "error";
   // The round limit and an approval say what you must do next, so they come before any other
   // reason the thread needs you. Changes held past the limit say so too after something else,
   // such as a conflict, cleared the thread's need of you: the task still waits on sc start, and
   // its CI passing must not read as waiting on checks.
-  const past = thread.held !== null || (thread.needs_you && pastRoundLimit(thread, maxRounds));
-  if (past) return "round limit";
+  if (atRoundLimit(thread, maxRounds)) return "round limit";
   // A task whose flow has no review stage is never called approved, as nobody reviewed it.
   if (readyToMerge(thread)) return verdict === "not reviewed" ? "not reviewed" : "approved";
   // A round on a flow with no review stage fails on its submit, pushing it or opening its PR,
   // or on setting Skelcrew's check once it is pushed, never on a review, so it says which. The
   // note to the lead gives the error itself, such as the forge's.
-  if (thread.review_failed && waitsOnFirstCheck(thread))
-    return thread.submitting !== null ? "submit failed" : "check failed";
+  if (roundOf(thread).review_failed && waitsOnFirstCheck(thread))
+    return roundOf(thread).submitting !== null ? "submit failed" : "check failed";
   // A review that failed doesn't need you, but says so until something sets the builder working
   // again, or a new round starts.
-  if (thread.review_failed && verdict === "timed out" && !underWay) return "review timed out";
-  if (thread.review_failed) return "review failed";
+  if (roundOf(thread).review_failed && verdict === "timed out" && !underWay)
+    return "review timed out";
+  if (roundOf(thread).review_failed) return "review failed";
   if (needsYou(thread)) return "needs you";
   // Not needing you: a builder that stopped without submitting waits on the lead, who got its
   // last message. Its word doesn't claim a question, as it may be only a reply.
@@ -495,7 +489,7 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (waitsOnFirstCheck(thread)) return "checks";
   if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
-  if (thread.telling !== null) return "changes";
+  if (roundOf(thread).telling !== null) return "changes";
   if (status === "working") return "working";
   if (passedReviewStage(thread)) return "checks";
   return verdict === "changes" ? "changes" : "waiting";
@@ -556,7 +550,7 @@ export function turnEnded(
     // thread waits on its approved submit again, and the next poll can find it ready to merge.
     // A review under way sets the status itself once it ends.
     const replied = "its builder only replied, so it waits on CI";
-    if (thread.status === "working" && thread.reviewing === null)
+    if (thread.status === "working" && roundOf(thread).reviewing === null)
       record(db, folder, { status: "waiting", ...timed }, replied);
     else record(db, folder, timed);
     return;
@@ -653,7 +647,7 @@ export function markNeedsYou(
   if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   const acted = { ended_at: null, ended_said: null };
   // Marking or clearing a thread past its round limit is a decision about it.
-  const decision = limitWaits(thread) ? { limit_decided: true } : {};
+  const decision = limitDecided(thread, Date.now());
   // While the builder's host plugin is still missing, only you can bring it back, so its
   // instruction stays first, whatever the mark becomes.
   const host = thread.host;
@@ -781,7 +775,7 @@ export function mergeShown(thread: Thread): string | null {
 // none once it approved. A merge without approval names them before you say y, and files them as an
 // issue once it merged, so they aren't lost.
 export function openFindings(thread: Thread): string[] {
-  const post = thread.review_post;
+  const post = roundOf(thread).review_post;
   if (post === null || post.pr !== thread.pr || post.verdict !== "changes") return [];
   return post.findings;
 }
@@ -794,6 +788,6 @@ export function stillAsks(thread: Thread): string {
     (finding, n) => `${n + 1}) ${finding.replace(/\s+/g, " ").trim()}`,
   );
   const asks = findings.length > 0 ? `It still asks: ${findings.join(" ")}` : "";
-  if (thread.reviewing === null) return asks || "Its reviewer hasn't approved it";
+  if (roundOf(thread).reviewing === null) return asks || "Its reviewer hasn't approved it";
   return asks ? `${asks}, and its newest review is still running` : "Its review is still running";
 }

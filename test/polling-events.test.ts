@@ -492,8 +492,9 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       opened.run(sql);
       opened.close();
     };
-    // A newer round is being pushed, so the failure the forge shows is the older commit's.
-    db("UPDATE tasks SET submitting = 'Round 2'");
+    // A newer round is being pushed, so the failure the forge shows is the older commit's. The
+    // round is set on the row alone, which the ledger reads once the row has no record of it.
+    db("UPDATE tasks SET submitting = 'Round 2', round_log = NULL");
     pr({ reviews: [skelReview], checks: [approved, check(900, "failed")] });
     await morePolls();
     writeFileSync(join(plugin, "hold-changed"), "");

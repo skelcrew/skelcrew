@@ -222,7 +222,8 @@ const threadColumns = {
 // that ended, once the copy has dropped it. `queued_since` is when the task last joined the queue
 // of limits.threads, which goes first come first served, kept until its builder's session is
 // saved. `top_round` is the highest round a review that gave a verdict took on the task's thread,
-// so the next round's number goes on above it.
+// so the next round's number goes on above it. `round_log` is the record of the round's events,
+// as JSON, which the round ledger counts the rounds from, and writes `rounds` and `top_round` with.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -265,6 +266,7 @@ export const taskColumns = {
   pr_link: "TEXT",
   queued_since: "INTEGER",
   top_round: "INTEGER",
+  round_log: "TEXT",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -553,12 +555,11 @@ function fillTopRounds(db: Database): void {
         top = Math.max(top, counted(thread.data));
     }
     if (top > 0)
-      db.run("UPDATE tasks SET top_round = ? WHERE owner = ? AND repo = ? AND task = ?", [
-        top,
-        row.owner,
-        row.repo,
-        row.task,
-      ]);
+      // A task with a record of its rounds already counts them from there.
+      db.run(
+        "UPDATE tasks SET top_round = ? WHERE owner = ? AND repo = ? AND task = ? AND round_log IS NULL",
+        [top, row.owner, row.repo, row.task],
+      );
   }
 }
 
@@ -715,7 +716,7 @@ function prepareTables(db: Database): void {
     item TEXT NOT NULL,
     PRIMARY KEY (owner, repo, kind, id)
   )`);
-  // The daemon's copy of each repository's backlog: the tasks filed with sc task add, which its
+  // The daemon's copy of each repository's backlog: the tasks filed with sc add, which its
   // remote keeps, so the list reads them without asking the remote. `filed_commit` is the commit
   // the remote keeps each one at.
   db.run(`CREATE TABLE IF NOT EXISTS backlog (

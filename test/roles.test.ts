@@ -40,6 +40,48 @@ const asking =
 // with no issue were numbered from t100, and about the sidebar before sc --list, each with what
 // it is told now.
 const leadTasks = [
+  // sc task went: sc show shows one task, and sc add files one.
+  [
+    "Run sc start or sc task add --start only once the human says yes. To park work for later, file it in Skelcrew's backlog with sc task add.",
+    "Run sc start or sc add --start only once the human says yes. To park work for later, file it in Skelcrew's backlog with sc add.",
+  ],
+  [
+    '- sc task add <repo> "<title>" "<body>" --start starts',
+    '- sc add <repo> "<title>" "<body>" --start starts',
+  ],
+  ["sc task add <repo> --start with a heredoc", "sc add <repo> --start with a heredoc"],
+  [
+    '- sc task add <repo> "<title>" "<body>" files the work',
+    '- sc add <repo> "<title>" "<body>" files the work',
+  ],
+  [
+    '- sc task add <repo> "<title>" "<body>" --issue --asked-file',
+    '- sc add <repo> "<title>" "<body>" --issue --asked-file',
+  ],
+  [
+    "with sc start or sc task add --start, add --short",
+    "with sc start or sc add --start, add --short",
+  ],
+  ["- sc task app-13 shows one piece of work:", "- sc show app-13 shows one piece of work:"],
+  ["sc ls and sc task app-13 show issues,", "sc ls and sc show app-13 show issues,"],
+  // sc start <repo> went: sc task add --start files new work and starts it, with sc start's
+  // options.
+  [
+    "Run sc start only once the human says yes.",
+    "Run sc start or sc task add --start only once the human says yes.",
+  ],
+  [
+    '- sc start <repo> "<title>" "<body>" starts a thread on what the human said, with no issue in the tracker, and prints its name, such as app-t100. <repo> is your repository\'s name in Skelcrew or its owner/name. This is how you start a thread, in any repository, once the human has said yes to it. For a long body, give the title and body on stdin instead, which needs no shell quoting: sc start <repo> with a heredoc, its first line the title and the rest the body.',
+    '- sc task add <repo> "<title>" "<body>" --start starts a thread on what the human said, with no issue in the tracker, and prints its name, such as app-t100. <repo> is your repository\'s name in Skelcrew or its owner/name. This is how you start a thread, in any repository, once the human has said yes to it. It takes --short and --flow, as sc start does. For a long body, give the title and body on stdin instead, which needs no shell quoting: sc task add <repo> --start with a heredoc, its first line the title and the rest the body.',
+  ],
+  [
+    "Like sc start <repo>, it takes the title and body on stdin too.",
+    "It takes the title and body on stdin too.",
+  ],
+  [
+    "- Each time you run sc start to start a thread, add --short",
+    "- Each time you start a thread, with sc start or sc task add --start, add --short",
+  ],
   // sc show became sc task, so everything about one task is under sc task.
   ["- sc show app-13 shows one piece of work:", "- sc task app-13 shows one piece of work:"],
   ["sc ls and sc show app-13 show issues,", "sc ls and sc task app-13 show issues,"],
@@ -93,10 +135,6 @@ const leadTasks = [
   [
     "Skelcrew keeps its own copy: sc issue ls and sc issue show app-13 show issues, with the title and body a builder sees, and sc ps and sc pr show show PRs.",
     "Skelcrew keeps its own copy: sc ls and sc show app-13 show issues, threads and their PRs, with the title and description a builder sees.",
-  ],
-  [
-    '- sc tell app-13 "<text>" types a message into that thread\'s builder once it is idle,',
-    '- sc tell app-13 "<text>", or sc tell app-13/builder "<text>", types a message into that thread\'s builder once it is idle,',
   ],
   [
     "The sidebar shows those words in place of its long title.",

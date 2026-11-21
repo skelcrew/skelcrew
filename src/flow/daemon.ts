@@ -57,6 +57,7 @@ import {
   openedRepositories,
   startLead,
 } from "./lead.ts";
+import { roundOf } from "./ledger.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import {
@@ -457,8 +458,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const name = threadName(db, now);
     // Any sign of a submit counts: a review under way sets `reviewing` and clears `submitting`
     // before it sets `review_at`, and a repository with no forge has no PR.
-    const submitted = [now.pr, now.submitting, now.reviewing, now.review_at, now.review_round];
-    if (submitted.some((sign) => sign !== null) || now.rounds > 0)
+    const submitted = [
+      now.pr,
+      roundOf(now).submitting,
+      roundOf(now).reviewing,
+      roundOf(now).review_at,
+      roundOf(now).review_round,
+    ];
+    if (submitted.some((sign) => sign !== null) || roundOf(now).rounds > 0)
       throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
     const repository = findRepository(db, `${now.owner}/${now.repo}`);
     checkFlow(now, repository.name, flow);
@@ -705,19 +712,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { tasks: listTasks(db, request.repo) };
       case "task show":
         return { task: await showTask(db, request) };
-      // A task that is also an issue in the tracker, for sc task add --issue. A lead files an
-      // issue only when the human explicitly asks for one, and gives their words, which the log
-      // keeps exactly. Otherwise it parks work in the backlog.
       case "task create": {
         const repository = findRepository(db, request.repo);
         if (trackerOf(db, repository) === null)
           throw new Error(
-            `${repository.name} has no tracker, so --issue can't open an issue there. Without --issue, sc task add files the task in Skelcrew's backlog`,
+            `${repository.name} has no tracker, so --issue can't open an issue there. Without --issue, sc add files the task in Skelcrew's backlog`,
           );
         if (leadOfCaller(caller) !== null) {
           if (request.asked === undefined)
             throw new Error(
-              "a lead creates an issue only when the human explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, leave out --issue, and sc task add files it in the backlog.",
+              "a lead creates an issue only when the human explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, leave out --issue, and sc add files it in the backlog.",
             );
           console.log(
             `${repository.name}'s lead creates an issue, as the human asked: ${JSON.stringify(request.asked)}`,
@@ -727,8 +731,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         saveItems(db, repository.owner, repository.repo, [task], []);
         return { task: taskName(repository.name, task.id) };
       }
-      // Files a task in the backlog, from Skelcrew's clone, which the daemon may still be making
-      // or may not yet know the forge of, whose login pushes the task to the remote.
       case "task add": {
         const repository = findRepository(db, request.repo);
         const clone = cloneDir(repository.owner, repository.repo);
@@ -736,17 +738,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const by = leadOfCaller(caller) === null ? loginName() : `${loginName()} via the lead`;
         const { title, body } = request;
         const current = findRepository(db, request.repo);
-        // A filing whose outcome nobody heard is settled by the same sc task add run again.
         const { task, already } = await fileTask(db, current, clone, { title, body, by }).catch(
           (error) => {
             throw new Error(
-              `${errorText(error)}. The remote may have taken the task: run the same sc task add again once it can be reached, which never files it twice.`,
+              `${errorText(error)}. The remote may have taken the task: run the same sc add again once it can be reached, which never files it twice.`,
             );
           },
         );
-        // Read back by a refresh of the clone, which never runs beside another, so the list
-        // shows it at once and sc start finds the commit it needs. One that fails only waits
-        // for the next poll: the task is filed already.
         await refreshClone(db, current).catch((error) => console.log(errorText(error)));
         return { task: taskName(repository.name, task), already };
       }
@@ -1125,7 +1123,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // builder could start one, and in the order they had: those that were running, then those
   // that waited, by when they joined. A review doesn't need its builder until it types changes
   // in, so those wait until the builder is back, or has failed and ended the round.
-  const reviewsCutShort = before.filter((t) => t.submitting === null && t.reviewing !== null);
+  const reviewsCutShort = before.filter(
+    (t) => roundOf(t).submitting === null && roundOf(t).reviewing !== null,
+  );
   reviewsCutShort.sort((a, b) => (a.queued ?? 0) - (b.queued ?? 0));
   const builderBack = new Map<string, () => void>();
   // Their sockets open first, so their reviewers can run sc check.

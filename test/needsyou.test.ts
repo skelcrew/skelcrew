@@ -35,8 +35,8 @@ test("only an agent's hooks can say it is asking you a question, stopped, or sto
 function inProcess(body: string): Record<string, unknown> {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { markForgotten, markNeedsYou, needsYou, needsYouFor, questionAnswered, threadWord, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
-import { goOn, submitRound } from ${JSON.stringify(source("flow/round.ts"))};
-import { afterReview } from ${JSON.stringify(source("flow/decide.ts"))};
+import { goOn, noteLimit, submitRound } from ${JSON.stringify(source("flow/round.ts"))};
+import { reviewOnPr, verdictPosted, verdictReached } from ${JSON.stringify(source("flow/ledger.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { bringBack } from ${JSON.stringify(source("flow/builder.ts"))};
 import { armMerge, cancelMerge } from ${JSON.stringify(source("flow/merging.ts"))};
@@ -294,15 +294,24 @@ console.log(JSON.stringify({ before, decided, after: needsYou(thread()) }));`);
 });
 
 // Saves a review asking for changes as a finished round does, under the built-in limit of 3
-// rounds, and gives back the note the lead is to get and whether the thread needs you. The note
-// is then taken as typed in, as the daemon does, so the next one is seen afresh.
+// rounds, then has it posted, and gives back whether the thread needs you and the note the lead
+// is to get, which comes only once the review is posted. The note is then taken as typed in, as
+// the daemon does, so the next one is seen afresh.
 const changesAsked = `const changesAsked = () => {
   const t = thread();
   const review = { verdict: "changes", body: "Fix it.", findings: ["Fix it."] };
-  const o = afterReview(t.rounds, review, 3, null);
-  const change = { rounds: o.rounds, needs_you: o.needsYou, status: o.status, held: o.held, telling: o.tell, verdict: "changes", review_round: t.rounds + 1, limit_decided: false, submitting: null, reviewing: null };
-  record(db, "app-12", change, o.why);
-  const seen = { needsYou: needsYou(thread()), noting: noting() };
+  const reached = { review, by: "claude", sha: "a".repeat(40), maxRounds: 3, ready: null, forge: true, kept: null, now: Date.now() };
+  const o = verdictReached(t, reached);
+  record(db, "app-12", { ...o.change, noting: null }, o.why);
+  const unposted = noting();
+  const round = thread().posting.review.round;
+  const post = { pr: 7, id: "9", verdict: "changes", findings: ["Fix it."], round };
+  record(db, "app-12", reviewOnPr(thread(), post, Date.now()));
+  const saved = thread();
+  const posted = verdictPosted(saved, saved.posting, Date.now());
+  record(db, "app-12", posted.change);
+  noteLimit(db, "none", "app-12", posted.note);
+  const seen = { needsYou: needsYou(thread()), noting: unposted === null ? noting() : "noted before the post" };
   record(db, "app-12", { noting: null });
   return seen;
 };`;

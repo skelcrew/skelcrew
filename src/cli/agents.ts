@@ -1,7 +1,7 @@
 // The commands agents run: a builder submitting its work, the hooks that tell the daemon what an
 // agent is doing, and what the lead and builders use to tell each other and mark a thread as needing you.
 import { runByAgent } from "../agents/sandbox.ts";
-import { readAsked, splitThreadName, usage } from "./input.ts";
+import { readAsked, splitTaskName, usage } from "./input.ts";
 
 const oldHookNames = new Map([
   ["question asked", "question-asked"],
@@ -48,8 +48,8 @@ export async function needsYouCommand(args: string[]): Promise<void> {
   const [command, first, second, ...rest] = args;
   const { markNeedsYou } = await import("../client.ts");
   if (first === "--clear" && rest.length === 0) {
-    const thread = splitThreadName(second);
-    if (!thread) usage(command);
+    const thread = splitTaskName(second);
+    if (!thread) usage(command, second);
     const { thread: name, needsYou } = await markNeedsYou(...thread, null);
     console.log(
       needsYou
@@ -58,8 +58,8 @@ export async function needsYouCommand(args: string[]): Promise<void> {
     );
     return;
   }
-  const thread = splitThreadName(first);
-  if (!thread || !second?.trim() || rest.length > 0) usage(command);
+  const thread = splitTaskName(first);
+  if (!thread || !second?.trim() || rest.length > 0) usage(command, first);
   const { thread: name } = await markNeedsYou(...thread, second.trim());
   console.log(`${name} needs you: ${second.trim()}. sc needs-you --clear ${name} clears it.`);
 }
@@ -87,7 +87,7 @@ export async function tellCommand(args: string[]): Promise<void> {
     return;
   }
   if (askedFile !== undefined) usage(command);
-  const task = to === "lead" ? undefined : splitThreadName(to);
+  const task = to === "lead" ? undefined : splitTaskName(to);
   if (to === "lead" && text && rest.length === 0) {
     await tellTheLead(text);
     console.log("Telling the lead. Skelcrew types it in once the lead is idle.");
@@ -99,5 +99,5 @@ export async function tellCommand(args: string[]): Promise<void> {
     console.log(await tellOn(...task, message));
     return;
   }
-  usage(command);
+  usage(command, to);
 }

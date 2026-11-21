@@ -1,5 +1,5 @@
 // What Skelcrew shows you about its work: repositories for sc repo ls, threads for sc ps, tasks
-// for sc ls, and one task with its threads and PR for sc task, as short text
+// for sc ls, and one task with its threads and PR for sc show, as short text
 // for a terminal or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -13,7 +13,8 @@ import { needsInstall } from "../plugins/repository.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
-import { nextRound, reviewCheck } from "./decide.ts";
+import { reviewCheck } from "./decide.ts";
+import { nextRound, roundOf } from "./ledger.ts";
 import { messagesWaiting } from "./messages.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { roundRunning } from "./round.ts";
@@ -21,7 +22,7 @@ import { Stage, taskStage } from "./stage.ts";
 import { mergeShown, needsYou, needsYouFor } from "./status.ts";
 import { queuedForReview, Thread, taskName, threadName, threadOn } from "./thread.ts";
 
-// Returns what a PR's CI says, for sc ps and sc task. Skelcrew's own check isn't CI, and one
+// Returns what a PR's CI says, for sc ps and sc show. Skelcrew's own check isn't CI, and one
 // failure is enough to say so while the rest still run. A repository with no CI says none.
 function ciSummary(pr: Extract<Item, { kind: "pr" }>): "none" | "passed" | "failed" | "running" {
   const ci = pr.checks.filter((check) => check.name !== reviewCheck);
@@ -32,7 +33,7 @@ function ciSummary(pr: Extract<Item, { kind: "pr" }>): "none" | "passed" | "fail
   return failed ? "failed" : "running";
 }
 
-// Returns what a review's verdict is in words, for sc task. A forge such as GitHub won't let
+// Returns what a review's verdict is in words, for sc show. A forge such as GitHub won't let
 // Skelcrew approve its own PR, so Skelcrew's verdict is a comment whose first line says it, such
 // as "**Approved**". For those, that line is the verdict.
 function reviewVerdict(review: Extract<Item, { kind: "pr" }>["reviews"][number]): string {
@@ -156,16 +157,17 @@ function ciOf(
 // Otherwise it is the latest review's verdict and round. A stopped or ended thread has no round
 // running, so it shows its latest verdict.
 function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
-  const at = thread.review_at === null ? null : new Date(thread.review_at).toISOString();
+  const round = roundOf(thread);
+  const at = round.review_at === null ? null : new Date(round.review_at).toISOString();
   const live = thread.status === "working" || thread.status === "waiting";
-  if (live && (thread.submitting !== null || thread.reviewing !== null)) {
+  if (live && (round.submitting !== null || round.reviewing !== null)) {
     // A submit its flow doesn't review has no round, and no review to fail: it says it isn't
     // reviewed, while its status says it needs you when its push or check failed.
-    if (thread.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
+    if (round.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
     const state = roundRunning(thread.folder) ? "reviewing" : "failed";
     return { state, round: nextRound(thread), at };
   }
-  if (thread.verdict === null) return { state: "none", round: null, at: null };
+  if (round.verdict === null) return { state: "none", round: null, at: null };
   // A review that timed out twice failed its check, so it shows as failed.
   const states = {
     approve: "approved",
@@ -174,10 +176,10 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
     "timed out": "failed",
     "not reviewed": "not reviewed",
   } as const;
-  return { state: states[thread.verdict], round: thread.review_round, at };
+  return { state: states[round.verdict], round: round.review_round, at };
 }
 
-// Returns a thread as sc ps shows it, and as sc ls and sc task show its task's PR, CI and
+// Returns a thread as sc ps shows it, and as sc ls and sc show show its task's PR, CI and
 // review. `forge` is whether its repository has one, as without it there are no PRs. Its PR's
 // link comes from Skelcrew's copy, which has a PR while it is open or its thread isn't over. The
 // title comes from the tracker and the short title from the lead, so tools get them with no
@@ -199,7 +201,7 @@ function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
     checks: pr === null ? null : ciOf(thread, copy),
     // Without a forge sc ps shows no review, but a task its flow doesn't review says so, as it
     // is ready on its branch with nobody having looked at it.
-    review: forge || thread.verdict === "not reviewed" ? reviewOf(thread) : null,
+    review: forge || roundOf(thread).verdict === "not reviewed" ? reviewOf(thread) : null,
     waiting: messagesWaiting(db, thread),
     merge:
       thread.merge_plan === null
@@ -342,7 +344,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
   return [...worked.map((w) => w.task), ...waiting.map((w) => w.task)];
 }
 
-// One PR as sc task shows it, from Skelcrew's copy: what its page on the screen shows, with its
+// One PR as sc show shows it, from Skelcrew's copy: what its page on the screen shows, with its
 // latest review's text. `ci` is what its CI says as a whole, and `checks` each CI check, with
 // the end of its log for a failed one, as the forge gives it, or null. Everything here that
 // came from the forge has its control codes removed.
@@ -365,7 +367,7 @@ export const PrPage = z.object({
 });
 export type PrPage = z.infer<typeof PrPage>;
 
-// One task as sc task shows it, with its stage. `body` is its description as its reviewer gets
+// One task as sc show shows it, with its stage. `body` is its description as its reviewer gets
 // it. `issue` is the issue it came from, such as #12, with the link the task started with, or the
 // one in Skelcrew's copy for a task not started, or null for a task with no issue, such as app-t1. `threads` names each of its threads with its role, such
 // as app-12/builder. `pr` is its PR's number, as sc ps gives it, and `review` where Skelcrew's
@@ -402,7 +404,7 @@ export function safeText(text: string): string {
   return text.replace(colours, "").split(/\r?\n/).map(removeControlCodes).join("\n");
 }
 
-// How long sc task waits on the forge for a failed check's log, in milliseconds. sc gives up on
+// How long sc show waits on the forge for a failed check's log, in milliseconds. sc gives up on
 // the daemon after a minute, so a forge that hangs must not keep the task itself from showing.
 // Tests set SKELCREW_LOG_WAIT_MS shorter, so a forge that hangs doesn't cost them ten seconds.
 const logDeadline = z.coerce
@@ -411,7 +413,7 @@ const logDeadline = z.coerce
   .catch(10_000)
   .parse(process.env.SKELCREW_LOG_WAIT_MS ?? 10_000);
 
-// Returns a PR as sc task shows it, from Skelcrew's copy, or null when the copy doesn't have
+// Returns a PR as sc show shows it, from Skelcrew's copy, or null when the copy doesn't have
 // it. Its checks have no logs: those come from the forge, which showTask asks.
 function prPageOf(db: Database, repository: Repository, number: number): PrPage | null {
   const pr = prOf(db, repository.owner, repository.repo, number);
@@ -461,10 +463,10 @@ async function checkLogs(db: Database, repository: Repository, number: number) {
   );
 }
 
-// What names a task for sc task: its repository, by its name or owner/name, and its ID.
+// What names a task for sc show: its repository, by its name or owner/name, and its ID.
 type Which = { repo: string; task: string };
 
-// Returns one task as sc task shows it, but without the logs of failed checks, so it reads
+// Returns one task as sc show shows it, but without the logs of failed checks, so it reads
 // Skelcrew's database and copy alone and never asks the forge. The list's details pane shows it
 // so. A task with a thread still
 // at work, or stopped, is shown as its reviewer gets it, with the lead's messages to the builder
@@ -519,7 +521,7 @@ export function readTask(db: Database, which: Which): TaskView {
   };
 }
 
-// Returns one task for sc task, as readTask does, with the end of the log of each failed check.
+// Returns one task for sc show, as readTask does, with the end of the log of each failed check.
 // It asks the forge only for those logs. Throws when there is no such task.
 export async function showTask(db: Database, which: Which): Promise<TaskView> {
   const view = readTask(db, which);
@@ -674,7 +676,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
 const saysWhy = (reason: string | null) => (reason === "needs you" ? null : reason);
 
 // The most columns sc ps gives why a thread needs you, so a long mark from the lead leaves the
-// thread's name and title room in 80 columns. sc task prints it whole.
+// thread's name and title room in 80 columns. sc show prints it whole.
 const reasonRoom = 20;
 
 // Returns how sc ps names an armed merge: when ready, or skipping Skelcrew's review.
@@ -718,7 +720,7 @@ export function printTasks(tasks: TaskRow[], json: boolean): void {
     );
 }
 
-// Prints one task for sc task: as JSON for tools, or else its name and title, its facts, then
+// Prints one task for sc show: as JSON for tools, or else its name and title, its facts, then
 // its description, its PR's latest review and description, and the logs of failed checks, each
 // under a heading that says where it came from.
 export function printTask(task: TaskView, json: boolean): void {

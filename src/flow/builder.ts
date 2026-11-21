@@ -27,8 +27,8 @@ import { capture } from "../run.ts";
 import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";
-import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
+import { freshRounds, pastRoundLimit, roundOf } from "./ledger.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus, needsYou } from "./status.ts";
@@ -70,7 +70,8 @@ export function startChoice(thread: Thread | null): "bring back" | "go on" | "ne
 // it: a submit or review under way, or the PR's checks, reviews and comments. It works when it
 // has a review's changes to be typed in, or no PR yet.
 export function statusOnceBack(stopped: Thread): "waiting" | "working" {
-  const { pr, submitting, reviewing, telling } = stopped;
+  const { pr } = stopped;
+  const { submitting, reviewing, telling } = roundOf(stopped);
   const waitsOnRound =
     telling === null && (pr !== null || submitting !== null || reviewing !== null);
   return waitsOnRound ? "waiting" : "working";
@@ -162,7 +163,7 @@ async function recordThread(
       throw new Error(
         tracked
           ? `there is no open issue ${task} in ${name}`
-          : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc start ${name} "<title>" "<body>"`,
+          : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc add ${name} "<title>" "<body>" --start`,
       );
   }
   const slug = title
@@ -200,6 +201,7 @@ async function recordThread(
       throw new Error(`${taskName(name, task)} has a thread already`);
     const queued = !("now" in given && given.now) && joinsQueue(db, repository);
     const thread: Thread = {
+      ...freshRounds,
       owner,
       repo,
       task,
@@ -208,14 +210,9 @@ async function recordThread(
       base: "from" in given ? (given.from ?? null) : null,
       status: queued ? "queued" : "working",
       session: null,
-      rounds: 0,
       pr: null,
       needs_you: false,
-      submitting: null,
-      reviewing: null,
       queued: null,
-      telling: null,
-      held: null,
       seen: [],
       last_review: null,
       last_comment: null,
@@ -237,15 +234,8 @@ async function recordThread(
       conflicts: null,
       ci_passed: false,
       reviewer: null,
-      reviewed_by: null,
-      review_round: null,
-      top_round: null,
-      verdict: null,
-      review_line: null,
-      reviewed_commit: null,
       no_ci: null,
       ci_shown: [],
-      review_at: null,
       harness: null,
       short: given.short ?? null,
       assigned: before?.assigned ?? false,
@@ -270,15 +260,10 @@ async function recordThread(
       merge_record_id: null,
       merge_followup: null,
       needs_you_for: null,
-      limit_decided: false,
       ended_at: null,
       ended_said: null,
-      review_failed: false,
       agents,
       flow,
-      review_post: null,
-      posting: null,
-      review_findings: null,
       queued_since: queued ? joinTime(db) : null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);

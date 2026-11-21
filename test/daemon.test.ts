@@ -596,7 +596,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await until(() => claudeCalls().includes("--resume"));
     for (const line of claudeLines()) {
       expect(line).toContain("told: You are a lead");
-      expect(line).toContain('sc task add <repo> "<title>" "<body>" --issue');
+      expect(line).toContain('sc add <repo> "<title>" "<body>" --issue');
       expect(line).toContain("You are the lead of simon/app.");
       expect(line).toContain("--model opus");
       expect(line.trimEnd()).toEndWith("agent-view-off=1");
@@ -634,8 +634,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     const [line] = claudeLines();
     expect(line).toContain("start no thread and file no issue");
     expect(line).toContain("Start these?");
-    expect(line).toContain("Run sc start only once the human says yes.");
-    expect(line).toContain("park work for later, file it in Skelcrew's backlog with sc task add");
+    expect(line).toContain("Run sc start or sc add --start only once the human says yes.");
+    expect(line).toContain("park work for later, file it in Skelcrew's backlog with sc add");
     expect(line).toContain("Create an issue in the tracker only when the human explicitly asks");
     // Filing in a private repository unasked once read as leave to file without asking.
     expect(line).not.toContain("file it and say you did");
