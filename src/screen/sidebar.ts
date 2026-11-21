@@ -127,11 +127,13 @@ function sidebarFooter(row: Row, restarts: boolean): string {
 
 // The question the close key asks about the open repository, by the step it is at: which of
 // closing its tab or removing it, then a yes to the one you chose, then at work on it, then a
-// refusal to read. `said` is what it says at work, or the refusal. `back` is where your typing
+// refusal to read. `name` is what it shows, and `fullName` the owner/name it acts on, as a
+// name can pass to another repository while it asks. `said` is what it says at work, or the refusal. `back` is where your typing
 // was before the question took it, so Esc puts it back there, full screen too.
 type Closing = {
   step: "choose" | "close" | "remove" | "working" | "refused";
   name: string;
+  fullName: string;
   said: string;
   back: { right: boolean; zoomed: boolean; held: boolean };
 };
@@ -632,7 +634,7 @@ export async function runSidebar(
     const asked = (format: string) =>
       screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim() === "1";
     const back = { right: asked("#{pane_active}"), zoomed: asked("#{window_zoomed_flag}"), held };
-    closing = { step: "choose", name: tab.name, said: "", back };
+    closing = { step: "choose", name: tab.name, fullName: tab.fullName, said: "", back };
     held = true;
     screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);
   };
@@ -656,7 +658,7 @@ export async function runSidebar(
     question.said = remove ? `Removing ${question.name}…` : `Closing ${question.name}'s tab…`;
     refresh();
     try {
-      said = await (remove ? removeRepo : closeRepo)(question.name, agents);
+      said = await (remove ? removeRepo : closeRepo)(question.fullName, agents);
       closing = null;
       held = question.back.held;
       if (!held && !empty) screenTmux(agents, ["select-pane", "-t", rightPane]);

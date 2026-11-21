@@ -195,3 +195,22 @@ test("closing the last tab leaves the screen on how to open a repository, until 
   agent("lead");
   await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
 });
+
+// Adding or removing a repository can rename others while the question is open, and a name
+// can pass to another repository. The question acts on the one it asked about.
+test("a repository renamed while the question is open is the one closed, and the one now named app is left alone", async () => {
+  addSite();
+  daemon();
+  open("lead");
+  await ready("lead");
+  press("M-w");
+  await until(() => seen().includes("Close app?"), "the question");
+  type("c");
+  await until(() => seen().includes("Close app's tab? y/n"), "the confirm");
+  sql(`UPDATE repositories SET name = 'simon-app' WHERE repo = 'app';
+UPDATE repositories SET name = 'app' WHERE repo = 'site'`);
+  type("y");
+  await until(() => appRow()?.tab_closed === 1, "simon/app's tab to close");
+  await until(() => !leadRuns(), "simon/app's lead to end");
+  expect(tmux(agents, "has-session", "-t", `=${siteLead}`).ok).toBe(true);
+});

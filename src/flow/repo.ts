@@ -878,13 +878,14 @@ export async function trustRepo(given: string): Promise<void> {
 // Closes a repository's tab, for the screen's close key: its lead ends, and stays ended until
 // you open the repository again, which resumes its conversation. Its threads, clone and record
 // stay. The tab is marked closed before the lead ends, whatever host it runs on, so a host that
-// brings back a lead that exited, as herdr does, never brings this one back. Returns what to say.
-export async function closeRepo(name: string, sessions: string): Promise<string> {
+// brings back a lead that exited, as herdr does, never brings this one back. `fullName` is its
+// owner/name, which never changes, unlike its name in Skelcrew. Returns what to say.
+export async function closeRepo(fullName: string, sessions: string): Promise<string> {
   const db = openDb();
-  const found = repositories(db).find((r) => r.name === name);
-  if (!found) throw new Error(`there is no repository named ${name}`);
+  const found = repositories(db).find((r) => fullNameIs(r, fullName));
+  if (!found) throw new Error(`Skelcrew no longer has ${fullName}`);
   await closeTabAndEndLead(db, sessions, found, "close");
-  return `Closed ${name}'s tab. Its tasks keep running.`;
+  return `Closed ${found.name}'s tab. Its tasks keep running.`;
 }
 
 // Removes a repository for sc repo rm and the screen's remove key. Ends its lead, which runs in
@@ -892,11 +893,16 @@ export async function closeRepo(name: string, sessions: string): Promise<string>
 // approved, and names the other repositories again. Refuses while the repository has live
 // threads, or tasks in its queue, naming them. The lead is ended because, left running, it would
 // go on with no repository behind it, and the daemon would never bring it back or end it.
-// Returns what to say, as the screen shows it in its own place rather than printing it.
-export async function removeRepo(name: string, sessions: string): Promise<string> {
+// Returns what to say, as the screen shows it in its own place rather than printing it. `given`
+// is its name, for sc repo rm, or its owner/name, which the screen gives: a name can pass to
+// another repository while the screen asks, as adding or removing one renames others.
+export async function removeRepo(given: string, sessions: string): Promise<string> {
   const db = openDb();
-  const found = repositories(db).find((r) => r.name === name);
-  if (!found) throw new Error(`there is no repository named ${name}`);
+  const found =
+    repositories(db).find((r) => fullNameIs(r, given)) ??
+    repositories(db).find((r) => r.name === given);
+  if (!found) throw new Error(`there is no repository named ${given}`);
+  const { name } = found;
   // Builders of live threads would keep running with no repository behind them, which
   // breaks polling, sc ps and cleanup after merge. A queued task would start one later.
   const live = db

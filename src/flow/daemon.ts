@@ -42,7 +42,7 @@ import {
 import { holdCheckSlot, slotHolders } from "./checks.ts";
 import { openTasks, ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
-import { removalEnded, removeThread, removing, stopThread } from "./events.ts";
+import { removalEnded, removeThread, removing, stopping, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import {
   closeExitedLeads,
@@ -972,9 +972,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const live = thread.status === "working" || thread.status === "waiting";
         if (!live || !(await agentRuns(host, id)))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        // A stop or removal under way, or one that came while the session ended, wins: the
+        // builder comes back only if its thread is still the same live one, with no stop or
+        // removal under way, so a stopped task never gets a builder again.
+        const unchanged = () => {
+          const now = readThread(db, thread.folder);
+          const same = now.started === thread.started && now.session === thread.session;
+          const live = now.status === "working" || now.status === "waiting";
+          return same && live && !stopping.has(thread.folder) && !removing.has(thread.folder);
+        };
+        if (!unchanged()) throw new Error(`${name} is being stopped, so it isn't restarted`);
+        await stopSession(host, id);
+        if (!unchanged())
+          return { said: `${name} was stopped or removed meanwhile, so its builder stays ended.` };
         // Brought back as after the daemon's restart, but its round goes on untouched, as
         // nothing cut it short.
-        await stopSession(host, id);
         try {
           const gone = await bringBack(db, sessions, readThread(db, thread.folder));
           return { said: gone === null ? `Restarted ${name}'s builder.` : cantTell(gone) };
