@@ -55,6 +55,7 @@ import {
   leadPrompted,
   leadSession,
   openedRepositories,
+  reopenTabsOfRunningLeads,
   startLead,
 } from "./lead.ts";
 import { roundOf } from "./ledger.ts";
@@ -1135,6 +1136,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     builderBack.set(thread.folder, back.resolve);
     resumeRound(db, sessions, thread.folder, back.promise);
   }
+  // A tab the daemon was closing as it stopped opens again if its lead still runs, before any
+  // request could close it.
+  await reopenTabsOfRunningLeads(db, sessions);
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
   await closeExitedLeads(db, sessions);

@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
+  agentRuns,
   checkAgentStarted,
   endSession,
   exitedCleanly,
@@ -414,18 +415,16 @@ export async function closeExitedLeads(db: Database, sessions: string): Promise<
 // repository, which `verb` names. It takes the lead's turn, so a start asked for meanwhile, as
 // when you open the repository again, comes after it and starts the lead afresh. A tab opened
 // again before its turn came ends nothing, and this returns false. Throws when the lead's host
-// can't be reached or won't end it. The tab then goes back to `wasClosed`, unless it was opened
-// again meanwhile, so a repository whose lead still runs never hides.
+// can't be reached or won't end it.
 export async function endLeadOfClosedTab(
   db: Database,
   sessions: string,
   repository: Repository,
   verb: "close" | "remove",
-  wasClosed: boolean,
 ): Promise<boolean> {
   const { owner, repo, name } = repository;
   let ended = false;
-  const ending = leadAgent(owner, repo).end({
+  await leadAgent(owner, repo).end({
     stop: async () => {
       const closed = db
         .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
@@ -437,22 +436,45 @@ export async function endLeadOfClosedTab(
       ended = true;
     },
   });
-  try {
-    await ending;
-  } catch (error) {
-    db.run(
-      "UPDATE repositories SET tab_closed = ? WHERE owner = ? AND repo = ? AND tab_closed = 1",
-      [wasClosed ? 1 : 0, owner, repo],
-    );
-    throw error;
-  }
   return ended;
 }
+
+// Opens again each closed tab whose lead still runs, as the daemon starts. A daemon that stopped
+// while closing a tab could leave it so, and nothing else would show the lead you can't see.
+export async function reopenTabsOfRunningLeads(db: Database, sessions: string): Promise<void> {
+  const closed = db
+    .query("SELECT owner, repo FROM repositories WHERE tab_closed = 1")
+    .all()
+    .map((row) => z.object({ owner: z.string(), repo: z.string() }).parse(row));
+  await Promise.all(
+    closed.map(async ({ owner, repo }) => {
+      try {
+        const lead = await leadSession(db, sessions, owner, repo);
+        if (lead === null || !(await agentRuns(lead.host, lead.id))) return;
+        if (typeof lead.host === "string" && exitedCleanly(lead.host, lead.id)) return;
+        db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
+          owner,
+          repo,
+        ]);
+        console.log(`${owner}/${repo}'s lead still runs, so its tab is open again.`);
+      } catch (error) {
+        console.log(`couldn't look at ${owner}/${repo}'s lead: ${errorText(error)}`);
+      }
+    }),
+  );
+}
+
+// The closes under way for each repository, by owner/name, and its tab as it was before the first
+// of them.
+const closing = new Map<string, { count: number; wasClosed: boolean }>();
 
 // Closes a repository's tab, then ends its lead as endLeadOfClosedTab does, for closing or removing
 // the repository. The daemon runs this when asked, and sc runs it only with no daemon, so one
 // program alone closes the tab and puts it back. The tab closes first, so an open screen moves on
 // at once, and a lead starting meanwhile sees it closed once its session is there, and ends it.
+// When the lead can't be ended, the tab goes back as it was, so a repository whose lead still runs
+// never hides. Only the last close under way puts it back, so a close that fails never undoes one
+// asked for after it, and a tab opened again meanwhile stays open.
 export async function closeTabAndEndLead(
   db: Database,
   sessions: string,
@@ -461,11 +483,30 @@ export async function closeTabAndEndLead(
 ): Promise<boolean> {
   const { owner, repo } = repository;
   const where = "WHERE owner = ? AND repo = ?";
-  const { tab_closed: wasClosed } = z
-    .object({ tab_closed: z.coerce.boolean() })
-    .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(owner, repo));
+  const key = `${owner}/${repo}`;
+  const under = closing.get(key) ?? {
+    count: 0,
+    wasClosed: z
+      .object({ tab_closed: z.coerce.boolean() })
+      .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(owner, repo)).tab_closed,
+  };
+  under.count += 1;
+  closing.set(key, under);
   db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [owner, repo]);
-  return endLeadOfClosedTab(db, sessions, repository, verb, wasClosed);
+  try {
+    return await endLeadOfClosedTab(db, sessions, repository, verb);
+  } catch (error) {
+    if (under.count === 1)
+      db.run(`UPDATE repositories SET tab_closed = ? ${where} AND tab_closed = 1`, [
+        under.wasClosed ? 1 : 0,
+        owner,
+        repo,
+      ]);
+    throw error;
+  } finally {
+    under.count -= 1;
+    if (under.count === 0) closing.delete(key);
+  }
 }
 
 // Returns the supervisor of a repository's lead, which starts and ends it one at a time.
