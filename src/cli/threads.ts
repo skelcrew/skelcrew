@@ -92,31 +92,16 @@ export async function checkCommand(args: string[]): Promise<void> {
   process.exit(await run.exited);
 }
 
-export async function threadCommand(args: string[]): Promise<void> {
-  const asking = args[0] === "ask";
-  const [command, sub, ...rest] = asking ? args.slice(1) : args;
-  if (asking && command !== "start") usage("ask");
-  const { attachToThread } = await import("../attach.ts");
-  const {
-    askHuman,
-    interruptOn,
-    namesRepository,
-    peekAt,
-    previewRemoval,
-    removeOn,
-    reviewAgain,
-    startNew,
-    startOn,
-    stopOn,
-  } = await import("../client.ts");
-  const named = command === "start" && sub !== undefined && (await namesRepository(sub));
+export async function startCommand(args: string[], asking: boolean): Promise<void> {
+  const [, sub, ...rest] = args;
+  const shown = asking ? "sc ask start" : "sc start";
+  const { askHuman, namesRepository, startNew, startOn } = await import("../client.ts");
+  const named = sub !== undefined && (await namesRepository(sub));
   const task = named ? undefined : splitTaskName(sub);
-  const thread =
-    command === "start" || command === "rm" || command === "review" ? task : splitThreadName(sub);
   const option = (name: string) => {
-    const at = command === "start" ? rest.indexOf(name) : -1;
+    const at = rest.indexOf(name);
     const value = at === -1 ? undefined : rest[at + 1]?.trim();
-    if (at !== -1 && !value) usage(command);
+    if (at !== -1 && !value) usage("start");
     return { at, value };
   };
   const { at: shortAt, value: short } = option("--short");
@@ -125,122 +110,131 @@ export async function threadCommand(args: string[]): Promise<void> {
   const words = rest.filter((_, i) => !taken.includes(i));
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
   const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
-  if (asking && task && (words.length === 0 || from)) {
-    const action = { kind: "start" as const, task: task[1], ...(from ? { from } : {}), ...options };
-    console.log(await askHuman(action, task[0]));
+  if (task && (words.length === 0 || from)) {
+    if (asking) {
+      const action = {
+        kind: "start" as const,
+        task: task[1],
+        ...(from ? { from } : {}),
+        ...options,
+      };
+      console.log(await askHuman(action, task[0]));
+    } else console.log(await startOn(...task, from, short, flow));
     return;
   }
-  if (!asking && command === "start" && task && (words.length === 0 || from)) {
-    console.log(await startOn(...task, from, short, flow));
-    return;
-  }
-  if (command === "start" && sub && !task && words[0] === "--from")
+  if (sub && !task && words[0] === "--from")
     throw new Error(
       "sc start <repo> takes no --from. Only sc start <issue> starts from another branch.",
     );
   const [title, body] = words;
-  if (command === "start" && sub && !task && title && body !== undefined && words.length === 2) {
-    const checked = bodyFor(asking ? "sc ask start" : "sc start", body);
-    console.log(
-      asking
-        ? await askHuman({ kind: "start new", title, body: checked, ...options }, sub)
-        : await startNew(sub, title, checked, short, flow),
-    );
-    return;
-  }
-  if (command === "start" && sub && !task && words.length === 0 && !process.stdin.isTTY) {
-    const given = taskFrom(await Bun.stdin.text(), asking ? "sc ask start" : "sc start");
-    console.log(
-      asking
-        ? await askHuman({ kind: "start new", ...given, ...options }, sub)
-        : await startNew(sub, given.title, given.body, short, flow),
-    );
-    return;
-  }
-  if (asking) usage("ask");
-  if (command === "stop" && thread && rest.length === 0) {
-    const name = await stopOn(...thread);
-    console.log(
-      `Stopped ${name}. Its clone, branch and pull request stay, and sc start ${name} brings its builder back.`,
-    );
-    return;
-  }
-  if (command === "rm" && task) {
-    const keepAt = rest.indexOf("--keep-issue");
-    const askedAt = rest.indexOf("--asked-file");
-    const askedFile = askedAt === -1 ? undefined : rest[askedAt + 1];
-    const reasons = rest.filter(
-      (_, i) => i !== keepAt && (askedAt === -1 || (i !== askedAt && i !== askedAt + 1)),
-    );
-    if (
-      reasons.length > 1 ||
-      (askedAt !== -1 && !askedFile) ||
-      rest.lastIndexOf("--keep-issue") !== keepAt ||
-      rest.lastIndexOf("--asked-file") !== askedAt
-    )
-      usage(command);
-    const keepIssue = keepAt !== -1;
-    const reason = reasons[0] || undefined;
-    const issueId = (issue: string) => (/^\d+$/.test(issue) ? `#${issue}` : issue);
-    if (process.stdin.isTTY) {
-      const { thread: name, status, pr, issue } = await previewRemoval(...task, keepIssue);
-      const goes =
-        status === "not started"
-          ? issue === null
-            ? "It never started, and this deletes it from the backlog on every machine."
-            : `It never started, and this closes issue ${issueId(issue)}.`
-          : status === "done"
-            ? `Its work ended already, and this closes issue ${issueId(issue ?? "")}.`
-            : pr === null
-              ? `This deletes its branch and clone${issue === null ? "" : `, and closes issue ${issueId(issue)}`}.`
-              : issue === null
-                ? `This closes PR #${pr} and deletes its branch and clone.`
-                : `This closes PR #${pr} and issue ${issueId(issue)}, and deletes its branch and clone.`;
-      const answer =
-        status === "done" && issue === null ? "y" : prompt(`Remove ${name}? ${goes} [y/N]`);
-      if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
-        console.log(`Skelcrew didn't remove ${name}.`);
-        return;
-      }
+  let given: { title: string; body: string } | undefined;
+  if (sub && !task && title && body !== undefined && words.length === 2)
+    given = { title, body: bodyFor(shown, body) };
+  else if (sub && !task && words.length === 0 && !process.stdin.isTTY)
+    given = taskFrom(await Bun.stdin.text(), shown);
+  if (!sub || !given) return usage(asking ? "ask" : "start");
+  console.log(
+    asking
+      ? await askHuman({ kind: "start new", ...given, ...options }, sub)
+      : await startNew(sub, given.title, given.body, short, flow),
+  );
+}
+
+async function removeCommand(task: [string, string], rest: string[]): Promise<void> {
+  const { previewRemoval, removeOn } = await import("../client.ts");
+  const keepAt = rest.indexOf("--keep-issue");
+  const askedAt = rest.indexOf("--asked-file");
+  const askedFile = askedAt === -1 ? undefined : rest[askedAt + 1];
+  const reasons = rest.filter(
+    (_, i) => i !== keepAt && (askedAt === -1 || (i !== askedAt && i !== askedAt + 1)),
+  );
+  if (
+    reasons.length > 1 ||
+    (askedAt !== -1 && !askedFile) ||
+    rest.lastIndexOf("--keep-issue") !== keepAt ||
+    rest.lastIndexOf("--asked-file") !== askedAt
+  )
+    usage("rm");
+  const keepIssue = keepAt !== -1;
+  const reason = reasons[0] || undefined;
+  const issueId = (issue: string) => (/^\d+$/.test(issue) ? `#${issue}` : issue);
+  if (process.stdin.isTTY) {
+    const { thread: name, status, pr, issue } = await previewRemoval(...task, keepIssue);
+    const goes =
+      status === "not started"
+        ? issue === null
+          ? "It never started, and this deletes it from the backlog on every machine."
+          : `It never started, and this closes issue ${issueId(issue)}.`
+        : status === "done"
+          ? `Its work ended already, and this closes issue ${issueId(issue ?? "")}.`
+          : pr === null
+            ? `This deletes its branch and clone${issue === null ? "" : `, and closes issue ${issueId(issue)}`}.`
+            : issue === null
+              ? `This closes PR #${pr} and deletes its branch and clone.`
+              : `This closes PR #${pr} and issue ${issueId(issue)}, and deletes its branch and clone.`;
+    const answer =
+      status === "done" && issue === null ? "y" : prompt(`Remove ${name}? ${goes} [y/N]`);
+    if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+      console.log(`Skelcrew didn't remove ${name}.`);
+      return;
     }
-    const asked = askedFile === undefined ? undefined : await readAsked(askedFile);
-    const {
-      removed: name,
-      issue,
-      unfiled,
-      closed,
-    } = await removeOn(...task, {
-      reason,
-      keepIssue,
-      asked,
-    });
-    if (unfiled) console.log(`Removed ${name} from the backlog.`);
-    else if (issue === null) console.log(`Removed ${name}. sc start ${name} starts it over.`);
-    else if (closed) console.log(`Removed ${name} and closed issue ${issueId(issue)}.`);
-    else
-      console.log(
-        `Removed ${name}. Issue ${issueId(issue)} stays open, and sc start ${name} starts it over.`,
-      );
-    return;
   }
-  if (command === "review" && task && rest.length === 0) {
+  const asked = askedFile === undefined ? undefined : await readAsked(askedFile);
+  const {
+    removed: name,
+    issue,
+    unfiled,
+    closed,
+  } = await removeOn(...task, {
+    reason,
+    keepIssue,
+    asked,
+  });
+  if (unfiled) console.log(`Removed ${name} from the backlog.`);
+  else if (issue === null) console.log(`Removed ${name}. sc start ${name} starts it over.`);
+  else if (closed) console.log(`Removed ${name} and closed issue ${issueId(issue)}.`);
+  else
+    console.log(
+      `Removed ${name}. Issue ${issueId(issue)} stays open, and sc start ${name} starts it over.`,
+    );
+}
+
+export async function threadCommand(args: string[]): Promise<void> {
+  const [command, sub, ...rest] = args;
+  if (command === "rm" || command === "review") {
+    const task = splitTaskName(sub);
+    if (!task) return usage(command);
+    if (command === "rm") return removeCommand(task, rest);
+    if (rest.length > 0) usage(command);
+    const { reviewAgain } = await import("../client.ts");
     const name = await reviewAgain(...task);
     console.log(
       `Reviewing ${name}'s last commit again. Skelcrew posts the review on its pull request, and types any changes into its builder.`,
     );
     return;
   }
-  if (command === "peek" && thread && rest.length === 0) {
+  const thread = splitThreadName(sub);
+  if (!thread || rest.length > 0) return usage(command);
+  const { interruptOn, peekAt, stopOn } = await import("../client.ts");
+  if (command === "stop") {
+    const name = await stopOn(...thread);
+    console.log(
+      `Stopped ${name}. Its clone, branch and pull request stay, and sc start ${name} brings its builder back.`,
+    );
+    return;
+  }
+  if (command === "peek") {
     const { screen } = await peekAt(...thread);
     console.log(screen.trimEnd());
     return;
   }
-  if (command === "interrupt" && thread && rest.length === 0) {
+  if (command === "interrupt") {
     const name = await interruptOn(...thread);
     console.log(`Stopped ${name}'s turn, as Esc does. sc tell ${name} gives it what to do next.`);
     return;
   }
-  if (command === "attach" && thread && rest.length === 0) {
+  if (command === "attach") {
+    const { attachToThread } = await import("../attach.ts");
     await attachToThread("skelcrew", ...thread);
     return;
   }

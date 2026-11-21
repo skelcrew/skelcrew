@@ -10,7 +10,7 @@ import {
   screenCommand,
 } from "./cli/machine.ts";
 import { lsCommand, psCommand, showCommand, taskCommand } from "./cli/tasks.ts";
-import { checkCommand, mergeCommand, threadCommand } from "./cli/threads.ts";
+import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
 import { help } from "./help.ts";
 import { outdated, outOfDate, remote, unfinished } from "./machine/remote.ts";
 import { errorText } from "./say.ts";
@@ -117,6 +117,7 @@ async function runCommand(args: string[]): Promise<void> {
     case "task":
       return taskCommand(words);
     case "start":
+      return startCommand(words, false);
     case "stop":
     case "rm":
     case "review":
