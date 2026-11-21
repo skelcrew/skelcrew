@@ -1,6 +1,6 @@
 // The commands that act on one thread: starting, stopping, removing, reviewing, peeking at,
 // interrupting and attaching to it, merging its PR, and running the checks.
-import { bodyFor, parseTask, readAsked, splitTaskName, splitThreadName, usage } from "./input.ts";
+import { readAsked, splitTaskName, splitThreadName, usage } from "./input.ts";
 
 export async function mergeCommand(args: string[]): Promise<void> {
   const [, how, named, ...rest] = args;
@@ -94,9 +94,13 @@ export async function checkCommand(args: string[]): Promise<void> {
 
 export async function startCommand(args: string[]): Promise<void> {
   const [, sub, ...rest] = args;
-  const { namesRepository, startNew, startOn } = await import("../client.ts");
-  const named = sub !== undefined && (await namesRepository(sub));
-  const task = named ? undefined : splitTaskName(sub);
+  const { namesRepository, startOn } = await import("../client.ts");
+  const task = splitTaskName(sub);
+  if (sub !== undefined && (!task || (await namesRepository(sub))))
+    throw new Error(
+      `sc start takes only a task now, such as sc start APP-12. To start new work in ${sub}, run sc task add ${sub} "<title>" "<body>" --start, or sc task add ${sub} --start with the title and body on stdin. It takes --short and --flow as sc start did.`,
+    );
+  if (!task) return usage("start");
   const option = (name: string) => {
     const at = rest.indexOf(name);
     const value = at === -1 ? undefined : rest[at + 1]?.trim();
@@ -111,25 +115,9 @@ export async function startCommand(args: string[]): Promise<void> {
     ...(nowAt === -1 ? [] : [nowAt]),
   ];
   const words = rest.filter((_, i) => !taken.includes(i));
-  if (nowAt !== -1 && !task)
-    throw new Error("Only sc start <task> takes --now, such as sc start APP-12 --now.");
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
-  if (task && (words.length === 0 || from)) {
-    console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true));
-    return;
-  }
-  if (sub && !task && words[0] === "--from")
-    throw new Error(
-      "sc start <repo> takes no --from. Only sc start <issue> starts from another branch.",
-    );
-  const [title, body] = words;
-  let given: { title: string; body: string } | undefined;
-  if (sub && !task && title && body !== undefined && words.length === 2)
-    given = { title, body: bodyFor("sc start", body) };
-  else if (sub && !task && words.length === 0 && !process.stdin.isTTY)
-    given = parseTask(await Bun.stdin.text(), "sc start");
-  if (!sub || !given) return usage("start");
-  console.log(await startNew(sub, given.title, given.body, short, flow));
+  if (words.length > 0 && !from) return usage("start");
+  console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true));
 }
 
 async function removeCommand(task: [string, string], rest: string[]): Promise<void> {
