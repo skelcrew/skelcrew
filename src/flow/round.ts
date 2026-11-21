@@ -21,7 +21,7 @@ import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
-import { openPrs, prOf, saveItems, threadTask } from "./copy.ts";
+import { openPrs, prOf, saveItems, saveOwnReview, threadTask } from "./copy.ts";
 import {
   afterReview,
   branchMoved,
@@ -794,12 +794,20 @@ function postVerdict(db: Database, sessions: string, folder: string): Promise<st
     try {
       const repository = repositoryOf(db, thread);
       if (review !== null) {
-        await postOrEdit(db, folder, review.pr, review.commit, review);
+        const posted = await postOrEdit(db, folder, review.pr, review.commit, review);
         // sc show and the list read the PR's review from Skelcrew's copy, which a poll brings up
         // to date only later. So the copy reads the PR back, and the review counts as on the
         // forge only once it has. A forge that fails here leaves it saved, to try again: the
-        // review saved as posted is edited or left as it is then, never posted twice.
+        // review saved as posted is edited or left as it is then, never posted twice. A forge
+        // can answer with data from before it took the review, so what it took goes in the copy
+        // on top. A round that said the same as the last, which a forge that can't edit gets no
+        // new review for, leaves the review the PR has.
         await refreshPr(db, repository, review.pr);
+        if (posted !== null)
+          saveOwnReview(db, thread.owner, thread.repo, review.pr, {
+            ...posted,
+            verdict: review.verdict,
+          });
         // The review's note goes to the lead as the review stops being saved as posting, in one
         // step, so a stop of the daemon can neither lose it nor say it twice. It goes only while
         // the round limit still waits for a decision: sc start, or a mark set or cleared
@@ -854,14 +862,15 @@ export async function retryPost(db: Database, sessions: string, folder: string):
 // What it posted is saved on the thread at once, so a later round edits it though this one is
 // cancelled. Two rounds of a thread never post at once: a round's review starts only once the
 // round before has ended, posting included, so the later round always reads what the earlier
-// one saved, and its verdict is the one left on the PR.
+// one saved, and its verdict is the one left on the PR. Returns the ID and text of the review it
+// put on the PR, or null when it left the PR's review as it was.
 async function postOrEdit(
   db: Database,
   folder: string,
   pr: number,
   commit: string,
   review: { verdict: "approve" | "changes"; body: string; findings: string[]; round: number },
-): Promise<void> {
+): Promise<{ id: string; text: string } | null> {
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const { verdict, findings } = review;
@@ -888,7 +897,7 @@ async function postOrEdit(
   if (already) {
     const saved = { review_post: { pr, id: already.id, verdict, findings } };
     record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
-    return;
+    return { id: already.id, text: body };
   }
   const editing = earlier?.id ?? marked.at(-1)?.id ?? null;
   // A forge that fails to edit, such as a plugin that doesn't know the question yet, is treated
@@ -906,13 +915,14 @@ async function postOrEdit(
     earlier !== null &&
     earlier.verdict === verdict &&
     JSON.stringify(earlier.findings) === JSON.stringify(findings);
-  if (edit === "can't" && same) return;
+  if (edit === "can't" && same) return null;
   const id =
     edited && editing !== null
       ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
   record(db, folder, { review_post: { pr, id, verdict, findings } }, `${how} on PR #${pr}`);
+  return { id, text: body };
 }
 
 // Brings Skelcrew's copy of the PR up to date with its forge, for a review the thread saved no

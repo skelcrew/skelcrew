@@ -3,7 +3,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { answer, asked, git, insideSandbox, read, source, until as waitFor } from "./harness.ts";
+import {
+  answer,
+  asked,
+  git,
+  insideSandbox,
+  prItem,
+  read,
+  source,
+  taskItem,
+  until as waitFor,
+} from "./harness.ts";
 import {
   addApp,
   builder,
@@ -11,6 +21,7 @@ import {
   clone,
   codexHome,
   config,
+  copiedPr,
   data,
   env,
   finished,
@@ -155,10 +166,26 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await Bun.sleep(1500);
     expect(notes()).toBe(1);
     expect(thread().posting).not.toBeNull();
-    // Once the forge answers again, a poll reads the PR back, and the lead hears.
+    // Once the forge answers again, a poll reads the PR back, and the lead hears. The forge's
+    // first answer is from before it took the review, with only round 2's, yet the copy shows
+    // round 3's review, as the forge said it took it.
+    const stale = {
+      id: "1002",
+      text: "Round 2 · commit 0000000\n\nSecond problem.",
+      author: { login: "skelcrew[bot]", bot: true, you: false, push: false },
+      verdict: "changes requested",
+      lines: [],
+    };
+    answer(plugin, "changed.once", {
+      items: [taskItem("12", "Add export"), prItem("7", "Add export", { reviews: [stale] })],
+      next: null,
+    });
     rmSync(join(plugin, "fail-changed"));
     await until(() => notes() === 2, 30_000);
-    expect(thread().posting).toBeNull();
+    const shown = JSON.parse(copiedPr()).reviews.at(-1);
+    expect(shown).toMatchObject({ id: "1003", author: stale.author });
+    expect(shown.text).toStartWith(`Round 3 · commit ${pushed().slice(0, 7)}`);
+    await until(() => thread().posting === null);
     expect(readBacks()[0]).toMatchObject({ next: null, prs: [7] });
     // The review of the commit just submitted was posted once, though its read-back was tried
     // again.
@@ -169,26 +196,28 @@ describe.skipIf(insideSandbox)("sc submit", () => {
   }, 120_000);
 
   // The note waits on the review alone. Skelcrew's check on the commit goes on by itself, so a
-  // forge slow to take it never keeps the lead from hearing of a review it can already read.
-  test("the round limit's note reaches the lead once its review is on the PR, though the check isn't yet", async () => {
+  // forge that fails to take it never keeps the lead from hearing of a review it can already read.
+  test("the round limit's note reaches the lead once its review is on the PR, though setting the check fails", async () => {
     addApp();
     config("max_rounds: 1\n");
     verdict(1, "changes", "First problem.");
     verdict(2, "changes", "Second problem.");
     await startApp12();
     await until(() => thread().review_round === 1 && thread().posting === null, 30_000);
-    // The forge holds the failed check of the second review, which reaches the round limit.
-    const hold = join(plugin, "hold-status-failure");
-    writeFileSync(hold, "");
-    await until(() => existsSync(join(plugin, "held-status")), 45_000);
-    await until(() => read(join(lead(), "typed")).includes("round limit is reached"), 15_000);
-    expect(existsSync(hold)).toBe(true);
+    // The forge fails to take the failed check of the second review, which reaches the limit.
+    const failing = join(plugin, "fail-status-failure");
+    writeFileSync(failing, "the forge is down");
+    const typed = () => read(join(lead(), "typed"));
+    await until(() => typed().includes("round limit is reached"), 45_000);
+    await until(() => typed().includes("couldn't put its review on the forge"));
     expect(asked(plugin).filter((q) => q.ask === "review")).toHaveLength(2);
     const saved = JSON.parse(String(thread().posting));
     expect(saved).toMatchObject({ check: "failure", review: null, note: null });
-    rmSync(hold);
-    await until(() => thread().posting === null, 30_000);
-    expect(read(join(lead(), "typed")).split("round limit is reached").length - 1).toBe(1);
+    // Once the forge takes the check, at a poll, the review isn't posted again, nor the note sent.
+    rmSync(failing);
+    await until(() => thread().posting === null, 90_000);
+    expect(asked(plugin).filter((q) => q.ask === "review")).toHaveLength(2);
+    expect(typed().split("round limit is reached").length - 1).toBe(1);
   }, 120_000);
 
   // Your mark while the review waits for the forge decides its round limit, as a mark does. So

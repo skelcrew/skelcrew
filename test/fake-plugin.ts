@@ -2,8 +2,8 @@
 // asked in its settings folder, in `asked`, and answers from a file there named after the
 // question, such as `changed.json`, or else as a plugin with nothing to say would. An answer in
 // `<question>.once.json` goes first, once. A held question fails, if it is to, once it is let go. For claims,
-// that file maps each remote it claims to its answer. With a file `fail-<question>`, it fails
-// with that file's words, and with `setup-<question>` it fails the same way with exit code 2,
+// that file maps each remote it claims to its answer. With a file `fail-<question>`, or for a
+// question with a state `fail-<question>-<state>`, it fails with that file's words, and with `setup-<question>` it fails the same way with exit code 2,
 // as a plugin that needs its setup again does. While `hold-<question>`, or for a question with
 // a state, `hold-<question>-<state>`, is there, it waits before answering, saying so with
 // `held-<question>`. Taking you off an issue counts as the state false, so `hold-assign-false`
@@ -25,8 +25,10 @@ if (hold) {
   const deadline = Date.now() + 20_000;
   while (existsSync(hold) && Date.now() < deadline) await Bun.sleep(50);
 }
-const failing = join(dir, `fail-${name}`);
-if (existsSync(failing)) {
+const failing = [join(dir, `fail-${name}`), join(dir, `fail-${name}-${state}`)].find((file) =>
+  existsSync(file),
+);
+if (failing) {
   console.error(readFileSync(failing, "utf8").trim());
   process.exit(1);
 }
