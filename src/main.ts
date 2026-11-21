@@ -119,9 +119,10 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "ls":
       return lsCommand(first, words.slice(1), json);
     case "show":
-      return showCommand(first, words.slice(1), json);
+      console.error("sc show is now sc task.");
+      return showCommand(words.slice(1), json);
     case "task":
-      return taskCommand(words);
+      return words[1] === "add" ? taskCommand(words) : showCommand(words.slice(1), json);
     case "start":
       return startCommand(words);
     case "stop":

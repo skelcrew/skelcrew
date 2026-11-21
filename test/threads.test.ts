@@ -1626,7 +1626,7 @@ describe("the backlog", () => {
     return tasks.parse(JSON.parse((await skel("ls", "--json")).out)).find((t) => t.task === name);
   };
 
-  test("sc task add files a task that sc ls and sc show show, and starts nothing", async () => {
+  test("sc task add files a task that sc ls and sc task show, and starts nothing", async () => {
     const work = addApp();
     serve();
     await untilCloned();
@@ -1660,7 +1660,7 @@ describe("the backlog", () => {
       checks: null,
       review: null,
     });
-    const shown = await skel("show", "APP-T2");
+    const shown = await skel("task", "APP-T2");
     expect(shown.err).toBe("");
     expect(shown.out).toStartWith("APP-T2  Add notes\nStage   issue\nIssue   none\nFiled   by ");
     expect(shown.out).toContain("\nDescription\nAs text\n");
@@ -1996,7 +1996,7 @@ exec ${real} "$@"
     git(work, "fetch", "-q", "origin", "+refs/skelcrew/*:refs/skelcrew/*");
     expect(git(work, "log", "--format=%B", "--glob=refs/skelcrew/*")).not.toContain("As JSON");
     expect(await listed("APP-T1")).toBeUndefined();
-    expect((await skel("show", "APP-T1")).err).toBe("Skelcrew: there is no task APP-T1\n");
+    expect((await skel("task", "APP-T1")).err).toBe("Skelcrew: there is no task APP-T1\n");
     // The name stays claimed, so it never names other work.
     const next = await skel("task", "add", "app", "Add import", "From CSV");
     expect(next.out).toBe("Filed APP-T2 in the backlog. sc start APP-T2 starts it.\n");

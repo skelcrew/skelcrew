@@ -1,5 +1,5 @@
 // Skelcrew's copy of each repository's open tasks, from its tracker, and open PRs, from its forge,
-// as items. The sidebar, pages, sc ls, sc show and a builder's first message read it, so none of
+// as items. The sidebar, pages, sc ls, sc task and a builder's first message read it, so none of
 // them waits on the tracker.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -164,7 +164,7 @@ const parseItems = (rows: unknown[]) =>
   );
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
-// sc show. Throws when the copy doesn't have it.
+// sc task. Throws when the copy doesn't have it.
 export function taskOf(db: Database, owner: string, repo: string, task: string): Task {
   const [found] = parseItems(
     db
@@ -226,7 +226,7 @@ export function itemAt(db: Database, link: string): Item | null {
   return items.find((item) => item.link === link) ?? null;
 }
 
-// Returns the task a thread works on, for its builder, its reviewer, its PR and sc show:
+// Returns the task a thread works on, for its builder, its reviewer, its PR and sc task:
 // the title and body saved as it started. Later edits to the issue never reach a started task,
 // so the reviewer checks against what the builder was given, and the lead passes on what
 // matters as a message. A row from before Skelcrew saved them falls back on the copy's words.

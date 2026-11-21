@@ -10,7 +10,7 @@ const sections: [string, [string, string][]][] = [
       ["(no command)", "Open this repository's lead, with the sidebar"],
       ["--list", "This repository's list. ctrl+\\ comes back to it from an agent"],
       ["ls [<repo>]", "Tasks, with each one's stage, status, PR, CI and review"],
-      ["show <task>", "A task: stage, description, threads, PR, checks, review"],
+      ["task <task>", "A task: stage, description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
       ["start <task> [--from <branch>]", "Start, resume, or go on past the limit"],
       ['start <repo> "<title>" "<body>"', "Start a thread, with no issue in the tracker"],
