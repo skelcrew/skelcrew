@@ -656,32 +656,33 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // Another flow for a thread at work switches it, as switchFlow allows. The flow it runs
     // already is no switch, so sc start goes on as without one, such as past the round limit.
     const switching = before !== null && request.flow !== undefined && request.flow !== before.flow;
-    // --now takes a task out of the queue and starts it at once, over the limit, as you chose.
-    if (before?.status === "queued" && request.now) {
-      const name = threadName(db, before);
-      if (removing.has(before.folder)) throw new Error(`${name} is being removed`);
-      if (switching && request.flow) switchFlow(before, request.flow);
-      // A task from the tracker may still owe its claim, which it makes first, as a queued sc
-      // start does. Whatever the tracker answers, the task is yours to start.
-      await claimQueued(db, sessions, before, false);
-      // sc rm may have taken it out of the queue meanwhile, or another start started it.
-      const now = readThread(db, before.folder);
-      if (now.status !== "queued" || now.started !== before.started)
-        throw new Error(`${name} left the queue meanwhile, so it wasn't started now`);
-      // It starts as when its turn comes, but its place is let go: a start the engine's stop
-      // cuts short is then taken for any start cut short, not put back in the queue.
-      const status = now.session === null ? "working" : statusOnceBack(now);
-      const change = {
-        status,
-        queued_since: null,
-        ...(request.short ? { short: request.short } : {}),
-      };
+    // Takes a queued task out of the queue and starts it at once, over the limit, for --now.
+    // A claim it still owes is no longer waited for: it is made as a new start makes one, in the
+    // background, whatever the tracker answers, so a tracker that is down can't hold it back.
+    // Its place is let go too, so a start the engine's stop cuts short is taken for any start
+    // cut short, not put back in the queue.
+    const startNowFromQueue = (queued: Thread) => {
+      const name = threadName(db, queued);
+      if (removing.has(queued.folder)) throw new Error(`${name} is being removed`);
+      const { owner, repo, task } = queued;
+      const where = "WHERE owner = ? AND repo = ? AND task = ?";
+      const owed = db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) !== null;
+      const status = queued.session === null ? "working" : statusOnceBack(queued);
+      const short = request.short ? { short: request.short } : {};
       let starting: Promise<string | null> = Promise.resolve(null);
+      let started = queued;
       const answer = done(`Started ${name} now, out of the queue, over limits.threads.`, () => {
-        const started = record(db, now.folder, change, "started now, over limits.threads");
+        db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+        const change = { status, queued_since: null, ...short };
+        started = record(db, queued.folder, change, "started now, over limits.threads");
         starting = started.session === null ? setUpAndStart(started) : comeBack(started);
       });
+      if (owed) assignIssue(db, started, true);
       return { ...answer, starting };
+    };
+    if (before?.status === "queued" && request.now) {
+      if (switching && request.flow) switchFlow(before, request.flow);
+      return startNowFromQueue(readThread(db, before.folder));
     }
     if (before && atWork && switching && request.flow) {
       const flow = request.flow;
@@ -754,6 +755,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       // short title and flow given here still go on that thread, so they aren't lost, as long
       // as its builder hasn't submitted meanwhile.
       const started = threadOn(db, request.repo, request.task);
+      // One the poll queued still starts now, as --now asked.
+      if (!before && started?.status === "queued" && request.now) {
+        if (request.flow && request.flow !== started.flow) switchFlow(started, request.flow);
+        return startNowFromQueue(readThread(db, started.folder));
+      }
       if (!before && started)
         return done(`Started ${threadName(db, started)}.`, () => {
           if (request.flow && request.flow !== started.flow)

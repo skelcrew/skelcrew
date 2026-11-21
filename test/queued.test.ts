@@ -5,7 +5,15 @@
 // queue, and when, is tested on the database alone in task-queue.test.ts.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -254,7 +262,10 @@ test("a start over limits.threads waits as queued, and starts in order once a bu
 test("sc start --now starts a new task at once over the limit, and a queued one out of the queue", async () => {
   addApp();
   await serveApp();
-  expect(await sc("start", "app-12")).toContain("APP-12 is queued");
+  // The tracker is down, so app-12 still owes its claim, which doesn't hold back --now.
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  expect(await sc("start", "app-12")).toContain("couldn't claim its issue yet");
   // A new task never joins the queue.
   const fresh = await sc("start", "app-13", "--now");
   expect(fresh).toContain("Started APP-13");
@@ -267,6 +278,20 @@ test("sc start --now starts a new task at once over the limit, and a queued one 
   expect(logOf("app-12").some((line) => line.why === "started now, over limits.threads")).toBe(
     true,
   );
+  expect(leftQueue("app-12")).toHaveLength(0);
+}, 60_000);
+
+test("sc start --now starts a task its label queued while the start waited for the poll", async () => {
+  addApp(["12"]);
+  answer(plugin, "took", { took: true });
+  // sc start comes in before the first poll queues app-12 from its label, or just after, or
+  // while the start waits for it. Either way it starts now, and never stays queued behind
+  // app-11, which still works.
+  serve();
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+  expect(await sc("start", "app-12", "--now")).toStartWith("Started APP-12");
+  await until(() => statuses()["app-12"] === "failed");
+  expect(statuses()["app-11"]).toBe("working");
   expect(leftQueue("app-12")).toHaveLength(0);
 }, 60_000);
 
