@@ -114,8 +114,6 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | `sc merge --when-ready <task>` | Merges the PR once it is approved and green. `--cancel` disarms it. |
 | `sc plugin add <owner/repo>` | Adds a plugin to this repository, after asking. `-g` adds one of your own. |
 
-A command that acts on a thread, such as `sc stop`, also takes `<task>/<role>`, such as `APP-12/builder`, to name one. The task alone means its active thread.
-
 `sc --help` lists every command and key.
 
 ## Status
