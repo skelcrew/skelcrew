@@ -565,7 +565,7 @@ async function actOnVerdict(
   const maxRounds = roundLimit(thread);
   // Decide what the verdict means for the thread. A kept approval says so on the check and in
   // the log, in place of the reviewer's. The round limit counts rounds of changes, which sc start
-  // counts from zero again, while the round's own number only goes up.
+  // sets back to the limit, while the round's own number only goes up.
   const before = thread.rounds;
   const round = nextRound(thread);
   const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
@@ -1371,17 +1371,18 @@ export function resumeRound(
     );
 }
 
-// Lets a thread past the round limit go on, for sc start: counts its rounds of changes from
-// zero again, so it no longer needs you for them, and types the changes of the review that
-// reached the limit into the builder, as a round within the limit would have. The rounds' own
-// numbers carry on from where they were.
+// Lets a thread past the round limit go on, for sc start: types the changes of the review that
+// reached the limit into the builder, as a round within the limit would have, and stops it
+// needing you for them. Its rounds of changes stand at the limit, so it is no longer past it,
+// but the next review that asks for changes reaches it again and needs a new decision.
 export function goOn(db: Database, sessions: string, folder: string): void {
-  const { held, host, needs_you_for } = readThread(db, folder);
+  const thread = readThread(db, folder);
+  const { held, host, needs_you_for } = thread;
   // Letting it go on is your or the lead's decision, so it ends a mark for you too. But not the
   // instruction to bring back a missing host plugin, which only you can do.
   const hostGone = host !== null && markBeforeHost(host, needs_you_for) !== undefined;
   const change = {
-    rounds: 0,
+    rounds: roundLimit(thread),
     needs_you: false,
     needs_you_for: hostGone ? hostMissing(host) : null,
     review_failed: false,

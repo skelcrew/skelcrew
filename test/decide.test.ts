@@ -823,9 +823,9 @@ test("a thread's round numbers only go up, through sc start past the limit and a
     saved = { ...saved, rounds, review_round: round, verdict: review.verdict };
     numbers.push(round);
   };
-  // sc start past the limit counts the rounds of changes from zero again.
+  // sc start past the limit sets the rounds of changes back to the limit.
   const goOn = () => {
-    saved = { ...saved, rounds: 0 };
+    saved = { ...saved, rounds: 1 };
   };
   reviewed(changes);
   reviewed(changes);

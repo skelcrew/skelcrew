@@ -80,11 +80,11 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await until(() => read(join(builder(), "typed")).includes("Second problem."), 30_000);
     await until(() => finished("success").length === 1, 30_000);
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 0 });
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 1 });
   }, 90_000);
 
-  // Each sc start counts the rounds of changes from zero again, so the limit holds the changes
-  // anew after as many more. The rounds' own numbers, on the PR's review and in sc ps, only go up.
+  // Each sc start decides only the review that reached the limit: the next review asking for
+  // changes needs you again. The rounds' own numbers, on the PR's review and in sc ps, only go up.
   test("sc start past the round limit, again and again, never takes the round number back", async () => {
     addApp();
     config("max_rounds: 1\n");
@@ -92,28 +92,28 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     verdict(1, "changes", "First problem.");
     verdict(2, "changes", "Second problem.");
     verdict(3, "changes", "Third problem.");
-    verdict(4, "changes", "Fourth problem.");
-    verdict(5, "approve", "Ready to merge.");
+    verdict(4, "approve", "Ready to merge.");
     const ps = async () => JSON.parse((await skel(["ps", "--json"])).out)[0];
     await startApp12();
     await until(() => finished("failure").length === 2 && thread().needs_you === 1, 45_000);
     expect(thread()).toMatchObject({ rounds: 2, review_round: 2 });
     expect((await skel(["start", "app-12"])).out).toContain("APP-12 goes on");
     expect(await ps()).toMatchObject({ needsYou: false });
-    await until(() => finished("failure").length === 4 && thread().needs_you === 1, 60_000);
-    expect(read(join(builder(), "typed"))).toContain("Third problem.");
-    expect(read(join(builder(), "typed"))).not.toContain("Fourth problem.");
-    expect(thread()).toMatchObject({ rounds: 2, review_round: 4 });
+    // The very next review asking for changes is held, and needs you again.
+    await until(() => finished("failure").length === 3 && thread().needs_you === 1, 60_000);
+    expect(read(join(builder(), "typed"))).toContain("Second problem.");
+    expect(read(join(builder(), "typed"))).not.toContain("Third problem.");
+    expect(thread()).toMatchObject({ rounds: 2, review_round: 3 });
     expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
     expect((await skel(["start", "app-12"])).out).toContain("APP-12 goes on");
     await until(() => finished("success").length === 1, 60_000);
     await untilReviewSaved();
-    expect(thread()).toMatchObject({ needs_you: 0, rounds: 0, review_round: 5, held: null });
+    expect(thread()).toMatchObject({ needs_you: 0, rounds: 1, review_round: 4, held: null });
     // The PR's one review said each round's number in turn.
     const posted = asked(plugin)
       .filter((q) => q.ask === "review" || q.ask === "edit review")
       .map((q) => /^Round (\d+)/.exec(String(q.body))?.[1]);
-    expect(posted).toEqual(["1", "2", "3", "4", "5"]);
+    expect(posted).toEqual(["1", "2", "3", "4"]);
   }, 240_000);
 
   // Clearing it is the lead's or your decision that you have nothing to do. A review after it

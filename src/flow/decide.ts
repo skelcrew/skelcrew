@@ -242,7 +242,7 @@ const stuckWaits = [
 // Returns the number the thread's next review round gets, counted from 1 over the thread's whole
 // life, which the PR's review and sc ps show. Only a review that gave a verdict counts, so one
 // that failed is run again under the same number. It never goes down: sc start past the round
-// limit counts the rounds of changes from zero again, but not the rounds themselves.
+// limit sets the count of rounds of changes back, but not the rounds themselves.
 export function nextRound(thread: Pick<Thread, "review_round" | "verdict">): number {
   if (thread.review_round === null) return 1;
   const counted = thread.verdict === "approve" || thread.verdict === "changes";
