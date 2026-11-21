@@ -149,7 +149,10 @@ export function dropCommand(copy: string): string[] {
     'mkdir -p -- "$1" && cd -P -- "$1" && top=$(pwd -P)',
     `mkdir -p ${dropsFolder} && cd -P ${dropsFolder} && [ "$(pwd -P)" = "$top/${dropsFolder}" ]`,
     "set -C",
+    // A .gitignore already there must be a plain file that ignores everything, or the copy would
+    // show to git, and a builder could commit it.
     "{ printf '*\\n' > .gitignore 2>/dev/null; true; }",
+    '[ -f .gitignore ] && [ ! -L .gitignore ] && [ "$(cat .gitignore)" = "*" ]',
     `mkdir -- "$2" && cd -P -- "$2" && [ "$(pwd -P)" = "$top/${dropsFolder}/$2" ]`,
     'cat > "$3"',
   ].join(" && ");
@@ -358,8 +361,13 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       if (end < 0) {
         held = sofar;
         // A paste whose start already shows it isn't only paths, or too long to be, goes on now,
-        // after what was sent of its start, and the rest of it as it comes.
-        if (sofar.length > longestPaths || pastedPaths(sofar.toString(), false) === null) {
+        // after what was sent of its start, and the rest of it as it comes. Bytes at the end that
+        // may be the start of its end are left out of the check, as they aren't the paste's.
+        let ending = Math.min(sofar.length, pasteEnd.length - 1);
+        while (ending > 0 && !sofar.subarray(-ending).equals(pasteEnd.subarray(0, ending)))
+          ending--;
+        const sofarText = sofar.subarray(0, sofar.length - ending).toString();
+        if (sofar.length > longestPaths || pastedPaths(sofarText, false) === null) {
           pass(Buffer.concat([pasteStart.subarray(startSent), sofar]));
           held = null;
           streaming = true;

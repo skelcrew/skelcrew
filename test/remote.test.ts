@@ -1508,6 +1508,17 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
   expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
 });
 
+test("a drops folder on the server whose .gitignore doesn't ignore everything gets no copies", async () => {
+  const drops = join(home, "server", "agent", ".skelcrew-drops");
+  mkdirSync(drops, { recursive: true });
+  writeFileSync(join(drops, ".gitignore"), "*.tmp\n");
+  const shot = join(home, "shot.png");
+  writeFileSync(shot, "pixels");
+  const { got } = await dropOnServer(shot);
+  expect(got).toBe(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${shot}\x1b[201~`);
+  expect(readdirSync(drops)).toEqual([".gitignore"]);
+});
+
 test("a dropped file named .gitignore reaches the server's agent like any other", async () => {
   mkdirSync(join(home, "project"));
   const ignore = join(home, "project", ".gitignore");

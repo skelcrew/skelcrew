@@ -109,15 +109,42 @@ test("a dropped file named .gitignore is copied like any other", async () => {
   expect(readFileSync(copy, "utf8")).toBe("dist\n");
 });
 
-test("a .gitignore the agent made a link out of its folder is never written through", async () => {
-  const yours = file("yours.txt", "yours");
+test("a .gitignore the agent made a link out of its folder is never written through, and nothing is copied", async () => {
+  // Git doesn't read a .gitignore that is a link, so a copy there would show to it.
+  const yours = file("yours.txt", "*\n");
   mkdirSync(join(agent, dropsFolder));
   symlinkSync(yours, join(agent, dropsFolder, ".gitignore"));
   const shot = file("shot.png");
   filter()(Buffer.from(pasted(shot)));
-  const [copy = ""] = copies(await afterCopies());
-  expect(readFileSync(copy, "utf8")).toBe("the text of shot.png");
-  expect(readFileSync(yours, "utf8")).toBe("yours");
+  expect(await afterCopies()).toBe(pasted(shot));
+  expect(readFileSync(yours, "utf8")).toBe("*\n");
+  expect(readdirSync(join(agent, dropsFolder))).toEqual([".gitignore"]);
+});
+
+test("a drops folder whose .gitignore doesn't ignore everything gets no copies, which git would see", async () => {
+  mkdirSync(join(agent, dropsFolder));
+  writeFileSync(join(agent, dropsFolder, ".gitignore"), "*.tmp\n");
+  const shot = file("shot.png");
+  filter()(Buffer.from(pasted(shot)));
+  expect(await afterCopies()).toBe(pasted(shot));
+  expect(readdirSync(join(agent, dropsFolder))).toEqual([".gitignore"]);
+  expect(readFileSync(join(agent, dropsFolder, ".gitignore"), "utf8")).toBe("*.tmp\n");
+});
+
+test("a paste of paths ending in a space, whose end comes cut in two, is still copied", async () => {
+  const shot = file("shot.png");
+  const whole = pasted(`${shot} `);
+  const end = whole.length - "\x1b[201~".length;
+  for (let at = end + 1; at < whole.length; at++) {
+    sent = "";
+    const take = filter();
+    take(Buffer.from(whole.slice(0, at)));
+    take(Buffer.from(whole.slice(at)));
+    const out = await afterCopies();
+    expect(out).toMatch(
+      new RegExp(`^\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png \\x1b\\[201~$`),
+    );
+  }
 });
 
 test("a drops folder the agent made a link out of its folder is never written through", async () => {
