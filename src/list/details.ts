@@ -10,13 +10,14 @@ import { readTask, safeText, type TaskView } from "../flow/list.ts";
 import { threadOn } from "../flow/thread.ts";
 import { threadsDir } from "../paths.ts";
 import { removeControlCodes } from "../screen/look.ts";
-import { ago, type Open } from "./rows.ts";
+import { ago, changedAt, type Open } from "./rows.ts";
 
 // A task's details: sc show's view of it without the logs of failed checks, its description
 // without the lead's updates, which come apart in `updates`, oldest first, what its latest
 // review found, each in a line, and its recent events, oldest first, such as `4m ago` and
-// `submitted`. `changed` is how long ago its thread last changed, `started` how long ago it
-// started, and `flow` the flow it runs, each empty with no thread. `spinner` is a frame of a
+// `submitted`. `changed` says when the task last changed, by the clock and how long ago, such as
+// `last change 09:33, 4m ago`, as its row says only how long ago, or is empty with no time.
+// `started` is how long ago it started, and `flow` the flow it runs, each empty with no thread. `spinner` is a frame of a
 // spinner while its builder works, which moves each second, and empty otherwise.
 export type Details = {
   view: TaskView;
@@ -133,7 +134,17 @@ function eventsOf(folder: string, now: number): Details["events"] {
 // Returns the details of a task of the open repository, by its ID, such as 12, at a moment `now`
 // in milliseconds, or null when Skelcrew has no such task, such as one removed a moment ago. It
 // reads the database, its copy of the forge and the thread's log, never the forge itself.
-export function readDetails(db: Database, open: Open, task: string, now: number): Details | null {
+// `changed` is when the task last changed as its row has it, or null. It comes from the row, not
+// the thread, as a task back in Backlog shows its issue's time, and its ended thread's would differ.
+export function readDetails(
+  db: Database,
+  open: Open,
+  task: string,
+  now: number,
+  changed: number | null,
+): Details | null {
+  const lastChange =
+    changed === null ? "" : `last change ${changedAt(changed, now)}, ${ago(changed, now)}`;
   const repository = `${open.owner}/${open.repo}`;
   let view: TaskView;
   try {
@@ -156,7 +167,7 @@ export function readDetails(db: Database, open: Open, task: string, now: number)
       findings,
       updates: [],
       events: [],
-      changed: "",
+      changed: lastChange,
       started: "",
       flow: "",
       spinner: "",
@@ -170,13 +181,12 @@ export function readDetails(db: Database, open: Open, task: string, now: number)
     ago: ago(update.at, now),
     text: safeText(update.text),
   }));
-  const changed = thread.changed ?? thread.started;
   return {
     view: { ...view, body },
     findings,
     updates,
     events: eventsOf(thread.folder, now),
-    changed: changed === null ? "" : ago(changed, now),
+    changed: lastChange,
     started: thread.started === null ? "" : ago(thread.started, now),
     flow: thread.flow,
     spinner:

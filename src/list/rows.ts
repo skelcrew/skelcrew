@@ -51,8 +51,10 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // `label` is the name the row shows, such as T139, without the repository its tab already names,
 // while `name`, such as APP-T139, is what everything else goes by. `says` is its short word, in
 // `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then its PR, such as
-// `#41`, what its CI says, its review's round and the colour of where that review stands, and
-// when it last changed, such as `14:31`. Each is empty or null where it has none. `needsYou` is whether it waits on you for
+// `#41`, what its CI says, its review's round and the colour of where that review stands, and how
+// long ago it last changed, such as `4m`. Each is empty or null where it has none. `changed` is
+// that moment in milliseconds, or null, which the details pane gives by the clock, so the two
+// always agree. `needsYou` is whether it waits on you for
 // something other than a merge. `session` is the agent's session, which Enter attaches to,
 // `running` whether its agent runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\
 // comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
@@ -81,6 +83,7 @@ export type Row = {
   ci: Ci | null;
   review: { round: number; colour: Colour } | null;
   when: string;
+  changed: number | null;
   needsYou: boolean;
   session: string | null;
   running: boolean;
@@ -121,26 +124,40 @@ const roundLimit = (thread: Thread) => {
   }
 };
 
-// Returns when a task last changed as a clock time for a moment today, such as 14:32, and as a
-// date for an earlier one, such as 12 Nov, in this machine's time zone. It changes only when the
-// task does, or at midnight, so a list left open writes nothing.
+// Returns when something happened as a clock time, such as 14:32, with the date before it for a
+// day before today, such as 12 Nov 23:59, in this machine's time zone. The details pane says when
+// a task last changed with it, beside how long ago.
 export function changedAt(at: number, now: number): string {
   const when = new Date(at);
-  if (when.toDateString() === new Date(now).toDateString())
-    return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })}`;
+  const clock = `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  if (when.toDateString() === new Date(now).toDateString()) return clock;
+  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })} ${clock}`;
 }
 
 // Returns how long ago a moment was, before `now`, both in milliseconds, in its largest whole
 // unit, such as `4m ago`, `2h ago` or `3d ago`, or `just now` within a minute. The details pane
 // says when things happened this way, as a clock time makes you work out how long it has been.
-export function ago(at: number, now: number): string {
+// `short` leaves out the words, as `4m` or `now`, for a row, where room is tight. A moment after
+// `now` counts as just now, as another machine's clock can run ahead.
+export function ago(at: number, now: number, short = false): string {
   const minutes = Math.floor(Math.max(now - at, 0) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}h ago`;
-  return `${Math.floor(minutes / (24 * 60))}d ago`;
+  if (minutes < 1) return short ? "now" : "just now";
+  const unit =
+    minutes < 60
+      ? `${minutes}m`
+      : minutes < 24 * 60
+        ? `${Math.floor(minutes / 60)}h`
+        : `${Math.floor(minutes / (24 * 60))}d`;
+  return short ? unit : `${unit} ago`;
 }
+
+// Returns the time a row shows: how long ago its task last changed, short, such as 4m, and that
+// moment, which the details pane gives by the clock. Both come from here, so a row and its details
+// always agree. A task with no time, or one that can't be read, shows none.
+const shownTime = (at: number | null, now: number) =>
+  at === null || Number.isNaN(at)
+    ? { when: "", changed: null }
+    : { when: ago(at, now, true), changed: at };
 
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.
@@ -178,6 +195,7 @@ function leadRow(db: Database, open: Open): Row {
     ci: null,
     review: null,
     when: "",
+    changed: null,
     needsYou: asking,
     session: lead.name,
     running: runs,
@@ -213,6 +231,7 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     ci: null,
     review: null,
     when: "",
+    changed: null,
     needsYou: false,
     session: lead.session,
     running: lead.running,
@@ -345,7 +364,7 @@ function taskRow(
     pr,
     ci: thread.checks === null ? null : ciOf[thread.checks],
     review: reviewOf(thread),
-    when: changed === null ? "" : changedAt(changed, now),
+    ...shownTime(changed, now),
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
@@ -512,7 +531,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       pr: "",
       ci: null,
       review: null,
-      when: Number.isNaN(changed) ? "" : changedAt(changed, now),
+      ...shownTime(changed, now),
       needsYou: false,
       session: null,
       running: false,
@@ -638,6 +657,7 @@ const emptyRow: Row = {
   ci: null,
   review: null,
   when: "",
+  changed: null,
   needsYou: false,
   session: null,
   running: false,
