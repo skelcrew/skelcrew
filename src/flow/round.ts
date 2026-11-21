@@ -639,7 +639,14 @@ async function actOnVerdict(
   // the thread starts needing you, so one that needed you already, such as for its builder's
   // question, gets its note here.
   if (held !== null && neededYou(thread))
-    noteForLead(db, sessions, repository, `${threadName(db, thread)} needs you: ${outcome.why}`);
+    noteForLead(
+      db,
+      sessions,
+      repository,
+      `${threadName(db, thread)} needs you: ${outcome.why}`,
+      null,
+      true,
+    );
   // A review that failed doesn't need you: the lead hears of it, with the error the harness
   // gave, and can run it again, or mark the thread if only you can fix what stops it.
   if (failed) {
@@ -647,7 +654,7 @@ async function actOnVerdict(
     const said =
       verdict.verdict === "failed" ? `'s review failed: ${verdict.body}` : `: ${verdict.body}`;
     const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
-    noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`);
+    noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`, null, true);
   }
   // The approved commit is kept for the next submit to compare with. It is written at once,
   // with no await since the save, so sc review, which deletes it as it asks for a review, never
@@ -1034,6 +1041,8 @@ function trackRound(
       sessions,
       repositoryOf(db, thread),
       `${line}. sc review ${name} runs it again.`,
+      null,
+      true,
     );
     typeLeadNotes(db, sessions);
   });

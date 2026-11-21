@@ -154,6 +154,7 @@ test("a thread that ends again while its dropped end note is typed still tells t
   const lead = `printf '\\033[?2004h'; stty -echo -icanon min 1; echo '❯'; exec cat >> ${typed}`;
   const seen = withThread(`import { readFileSync } from "node:fs";
 import { leadPlaces } from ${JSON.stringify(source("paths.ts"))};
+import { typeLeadNotes } from ${JSON.stringify(source("flow/messages.ts"))};
 const typedSoFar = () => (existsSync(${JSON.stringify(typed)}) ? readFileSync(${JSON.stringify(typed)}, "utf8") : "");
 const until = async (done) => { for (let i = 0; i < 400 && !done(); i++) await Bun.sleep(25); return done(); };
 const tmux = (...args) => Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args]);
@@ -169,6 +170,11 @@ try {
   const fresh = await startThread(db, { repo: "app", task: "t1" });
   await endThread(db, socket, fresh, "PR #7 was merged", "is done: #7 merged into main");
   const second = db.query("SELECT id FROM notes").get()?.id;
+  // The second end waits for the next digest of routine notes, which the test brings forward
+  // once the first has gone in.
+  await until(() => db.query("SELECT digest_at FROM repositories").get().digest_at > 0);
+  db.run("UPDATE repositories SET digest_at = 0");
+  typeLeadNotes(db, socket);
   // Both are sent, so nothing is left typing once tmux ends.
   const delivered = await until(() => sent() === 2);
   console.log(JSON.stringify({ pasted, newId: second !== undefined && second !== first, delivered }));
