@@ -766,8 +766,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           const lead = await leadSession(db, sessions, owner, repo);
           if (lead === null || !(await agentRuns(lead.host, lead.id)))
             throw new Error(`${repository.name}'s lead isn't running`);
-          const restarted = await leadAgent(owner, repo).restart(leadHost(repository), () => true);
-          if (typeof restarted === "object" && "failed" in restarted) throw restarted.failed;
+          const tabOpen = () =>
+            db
+              .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
+              .get(owner, repo) !== null;
+          const restarted = await leadAgent(owner, repo).restart(leadHost(repository), tabOpen);
+          if (restarted === "refused" || restarted === "stays ended")
+            return { said: `${repository.name} was closed meanwhile, so its lead stays ended.` };
+          if ("failed" in restarted) throw restarted.failed;
           typeLeadNotes(db, sessions);
           return { said: `Restarted ${repository.name}'s lead.` };
         }

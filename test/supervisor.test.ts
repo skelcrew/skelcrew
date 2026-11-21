@@ -220,3 +220,43 @@ test("nothing is typed into an agent from the moment its end is asked for", asyn
   await end;
   expect(held).toEqual(["held", "let go"]);
 });
+
+test("two bring backs at once start one builder", async () => {
+  const { host, asked, hold } = fakeHost();
+  const agent = supervisor("two-bring-backs");
+  const letStart = hold("start");
+  const first = agent.bringBack(host, () => true);
+  const second = agent.bringBack(host, () => true);
+  await settle();
+  letStart();
+  expect(await first).toBeNull();
+  expect(await second).toBeNull();
+  expect(asked).toEqual(["runs", "clear", "start", "runs"]);
+});
+
+test("a bring back no longer wanted once the old session is cleared starts nothing", async () => {
+  const { host, asked, hold } = fakeHost();
+  const agent = supervisor("unwanted-after-clear");
+  const letClear = hold("clear");
+  let wanted = true;
+  const back = agent.bringBack(host, () => wanted);
+  await settle();
+  wanted = false;
+  letClear();
+  await expect(back).rejects.toThrow("stopped or ended");
+  expect(asked).toEqual(["runs", "clear"]);
+});
+
+test("a stop asked for while a bring back clears the old session wins, and nothing starts", async () => {
+  const { host, asked, state, hold } = fakeHost();
+  const agent = supervisor("stop-during-clear");
+  const letClear = hold("clear");
+  const back = agent.bringBack(host, () => true);
+  await settle();
+  const stop = agent.stop(() => agent.end(host));
+  letClear();
+  await expect(back).rejects.toThrow("stopped or ended");
+  await stop;
+  expect(asked).toEqual(["runs", "clear", "stop"]);
+  expect(state.running).toBe(false);
+});

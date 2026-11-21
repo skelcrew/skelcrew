@@ -96,29 +96,30 @@ class Supervisor {
   async bringBack(host: AgentHost, wanted: () => boolean): Promise<string | null> {
     const gone = host.gone?.() ?? null;
     if (gone !== null) return gone;
+    const ours = () => this.#stopping === null && this.#removalEnded === null && wanted();
     let told = false;
     while (true) {
-      try {
-        const runs = await this.#inTurn(async (earlier) => {
-          await earlier;
+      const unreachable = await this.#inTurn(async (earlier) => {
+        await earlier;
+        try {
           if (await host.runs()) {
             this.#seen = true;
-            return true;
+            return null;
           }
           await host.clear();
-          return false;
-        });
-        if (runs) return null;
-        break;
-      } catch (error) {
-        if (host.retry === undefined || !wanted()) throw error;
-        if (!told) host.retry(error);
-        told = true;
-        await Bun.sleep(hostRetryMs);
-      }
+        } catch (error) {
+          return { error };
+        }
+        if (!ours()) throw new Error("it was stopped or ended while it was being brought back");
+        await this.#start(host);
+        return null;
+      });
+      if (unreachable === null) return null;
+      if (host.retry === undefined || !wanted()) throw unreachable.error;
+      if (!told) host.retry(unreachable.error);
+      told = true;
+      await Bun.sleep(hostRetryMs);
     }
-    await this.start(host);
-    return null;
   }
 
   async restart(host: AgentHost, wanted: () => boolean): Promise<Restarted> {
