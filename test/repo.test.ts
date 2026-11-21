@@ -37,6 +37,9 @@ const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 let daemonReply = "";
 // Whether the fake daemon takes a request to end a lead and never answers, as a busy one would.
 let busy = false;
+// Whether the fake daemon, asked to end a lead, has the repository opened again meanwhile and
+// then fails.
+let reopened = false;
 // Repositories the fake daemon hands back for plain sc to ask about their .agents/, in turn,
 // before it answers with the lead.
 let handBack: object[] = [];
@@ -53,6 +56,7 @@ beforeEach(async () => {
   daemonReply = '{"lead":"app-lead","repository":"simon/app"}';
   handBack = [];
   busy = false;
+  reopened = false;
   for (const remote of Object.keys(claimed)) delete claimed[remote];
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-repo-test-")));
   mkdirSync(join(home, "bin"));
@@ -80,6 +84,12 @@ beforeEach(async () => {
       // Answers nothing, as no daemon would, so removing a repository ends its lead itself.
       if (JSON.parse(data.toString()).command === "end lead") {
         appendFileSync(join(home, "calls"), "daemon end lead\n");
+        if (reopened) {
+          const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+          db.run("UPDATE repositories SET tab_closed = 0");
+          db.close();
+          return connection.end('{"error":"the lead\'s host failed"}\n');
+        }
         if (!busy) connection.destroy();
         return;
       }
@@ -460,18 +470,29 @@ test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
   expect(missing.err).toContain("app");
 });
 
-test("repo rm stops when the daemon is too busy to end the lead, and ends nothing itself", async () => {
+test("repo rm stops when the daemon is too busy to end the lead, ends nothing itself and keeps the tab closed", async () => {
   await skel([], "y\n", onGitHub("simon/app"));
   busy = true;
   writeFileSync(join(home, "calls"), "");
   const refused = await skel(["repo", "rm", "app"], "", home, { SKELCREW_END_LEAD_WAIT_MS: "300" });
   expect(refused.code).toBe(1);
   expect(refused.err).toBe(
-    "Skelcrew: the daemon didn't answer in time, so app's lead may still be ending. Remove app again in a moment.\n",
+    "Skelcrew: the daemon didn't answer in time. app's tab stays closed, and the daemon ends its lead in its turn. Remove app again once it has.\n",
   );
   expect(readFileSync(join(home, "calls"), "utf8")).toBe("daemon end lead\n");
   expect(existsSync(clone("simon/app"))).toBe(true);
   const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  expect(db.query("SELECT tab_closed FROM repositories").get()).toEqual({ tab_closed: 1 });
+  db.close();
+});
+
+test("repo rm that fails keeps a tab opened again meanwhile open", async () => {
+  await skel([], "y\n", onGitHub("simon/app"));
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run("UPDATE repositories SET tab_closed = 1");
+  reopened = true;
+  const failed = await skel(["repo", "rm", "app"]);
+  expect(failed.err).toBe("Skelcrew: the lead's host failed\n");
   expect(db.query("SELECT tab_closed FROM repositories").get()).toEqual({ tab_closed: 0 });
   db.close();
 });
