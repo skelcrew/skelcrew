@@ -264,6 +264,17 @@ test("sc task add --issue creates a task in the repository's tracker and prints 
   expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([
     { ask: "create task", repository: "simon/app", title: "Add import", body: "From CSV" },
   ]);
+  // With the title and body on stdin, the options come first.
+  const piped = await runSkel(["task", "add", "app", "--issue"], env(), "# Add notes\n\nAs text\n");
+  expect(piped.err).toBe("");
+  expect(
+    asked(plugin)
+      .filter((q) => q.ask === "create task")
+      .at(-1),
+  ).toMatchObject({
+    title: "Add notes",
+    body: "As text\n",
+  });
 });
 
 // A lead parks work in the backlog, and creates an issue only when the human explicitly asks,
@@ -357,6 +368,24 @@ test("sc rm closes an issue that never started, and the lead needs the human's w
   const failed = await skel("rm", "app-12");
   expect(failed.err).toContain("APP-12's issue didn't close: github failed: GitHub is down");
   expect(failed.err).toContain("Run sc rm APP-12 again to close it");
+}, 60_000);
+
+// The copy is only as fresh as the last poll, so an issue reopened since may be missing from it.
+// Work still under way closes its issue all the same, rather than say it closed and leave it open.
+test("sc rm on work under way closes its issue, though the copy doesn't have it open", async () => {
+  addApp();
+  serve();
+  await untilCloned();
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.exec(threadSql({ task: "14", title: "Reopened", status: "stopped" }));
+  db.close();
+  const removed = await skel("rm", "app-14");
+  expect(removed.err).toBe("");
+  expect(removed.out).toBe("Removed APP-14 and closed issue #14.\n");
+  expect(asked(plugin).filter((q) => q.ask === "close task")).toEqual([
+    { ask: "close task", repository: "simon/app", task: "14", comment: null },
+  ]);
 }, 60_000);
 
 // A builder sees only the title and body. A heredoc that failed inside $(...) leaves the
@@ -1555,6 +1584,10 @@ describe("the backlog", () => {
     // The same task filed again on purpose is a task of its own.
     const again = await skel("task", "add", "app", "Add export", "As JSON");
     expect(again.out).toBe("Filed APP-T3 in the backlog. sc start APP-T3 starts it.\n");
+    // The title and body are the first two words, so a body that reads like an option stays
+    // the body.
+    const flagLike = await skel("task", "add", "app", "Add flags", "--issue");
+    expect(flagLike.out).toBe("Filed APP-T4 in the backlog. sc start APP-T4 starts it.\n");
     // On the remote, under hidden refs, never as a branch, and never in the tracker.
     const refs = git(work, "ls-remote", "origin");
     expect(refs).toContain("refs/skelcrew/tasks/t1");

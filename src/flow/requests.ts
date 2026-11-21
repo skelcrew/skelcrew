@@ -60,15 +60,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("repo named"), word: z.string() }),
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
   z.object({ command: z.literal("task ls"), repo: z.string().optional() }),
-  // A task is named by its ID, or by its PR's number. With a number, `from` is
-  // the remote of the checkout sc ran in, which names the repository when `repo` doesn't.
-  z.object({
-    command: z.literal("task show"),
-    repo: z.string().optional(),
-    from: z.string().optional(),
-    task: TaskId.optional(),
-    pr: z.number().int().positive().optional(),
-  }),
+  z.object({ command: z.literal("task show"), repo: z.string(), task: TaskId }),
   // `asked` is the human's words asking for the issue, exactly, which a lead must give.
   z.object({
     command: z.literal("task create"),

@@ -40,15 +40,15 @@ const asking =
 // with no issue were numbered from t100, and about the sidebar before sc --list, each with what
 // it is told now.
 const leadTasks = [
-  // sc issue and sc pr went: an issue opens with sc task add --issue, sc show takes a PR's
-  // number, and sc rm closes the issue too unless --keep-issue keeps it open.
+  // sc issue and sc pr went: an issue opens with sc task add --issue, sc show names only
+  // tasks, and sc rm closes the issue too unless --keep-issue keeps it open.
   [
     '- sc issue create <repo> "<title>" "<body>" --asked-file asked.txt creates an issue in your repository\'s tracker, such as GitHub, and prints its name, such as app-13. It starts nothing. Create one only when the human explicitly asks for an issue, such as "file an issue" or "add it to GitHub". Write their words exactly as they wrote them to a file in your own folder, such as asked.txt, with your file-writing tool, never with the shell, then add --asked-file asked.txt. Without the human\'s words, Skelcrew refuses it.',
     '- sc task add <repo> "<title>" "<body>" --issue --asked-file asked.txt files the work as an issue in your repository\'s tracker instead, such as GitHub, and prints its name, such as app-13. It starts nothing. Create one only when the human explicitly asks for an issue, such as "file an issue" or "add it to GitHub". Write their words exactly as they wrote them to a file in your own folder, such as asked.txt, with your file-writing tool, never with the shell, then add --asked-file asked.txt. Without the human\'s words, Skelcrew refuses it. A repository with no tracker has no issues: --issue refuses there.',
   ],
   [
     "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc pr show 242 shows the work on PR 242 the same way.\n- A repository with no tracker has no issues: sc issue create refuses there.",
-    "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc show '#242' shows the work on PR 242 the same way.",
+    "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
   ],
   [
     '- sc rm app-13 "<reason>" removes a thread, such as when the human wants it dropped or started over: it ends the builder, closes the PR with the reason as a comment, and deletes its branch and clone. The reason is optional. Issue #13 stays open, and sc start app-13 starts the thread over on it. A thread with no issue, such as app-t100, has nothing that stays open, and sc start app-t100 starts it over. Work in the backlog that never started has no thread or PR: sc rm deletes it, on every machine. Closing a PR can\'t be undone, so before you run sc rm, confirm with the human, naming the PR it will close, such as "This closes PR #14. Go ahead?"',

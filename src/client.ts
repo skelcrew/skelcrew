@@ -81,15 +81,9 @@ export async function askForTasks(repository?: string): Promise<TaskRow[]> {
   return checkReply(z.object({ tasks: z.array(TaskRow) }), reply).tasks;
 }
 
-// Asks the daemon for one task, for sc show, named by its task or by its PR's number. The daemon
-// answers from Skelcrew's copy, and asks the forge for the logs of failed checks, as only it
-// holds the forge's login.
-export async function askForTask(which: {
-  repo?: string;
-  from?: string;
-  task?: string;
-  pr?: number;
-}): Promise<TaskView> {
+// Asks the daemon for one task, for sc show. The daemon answers from Skelcrew's copy, and asks
+// the forge for the logs of failed checks, as only it holds the forge's login.
+export async function askForTask(which: { repo: string; task: string }): Promise<TaskView> {
   const reply = await request({ command: "task show", ...which });
   return checkReply(z.object({ task: TaskView }), reply).task;
 }

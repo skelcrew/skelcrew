@@ -139,7 +139,7 @@ function usage(command?: string): never {
       : first === "remote"
         ? "Skelcrew: sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install."
         : first === "issue" || first === "pr"
-          ? 'Skelcrew: issues and PRs are parts of tasks now: sc ls lists them, sc show <task> or sc show \'#<pr>\' shows one, and sc task add <repo> "<title>" "<body>" --issue opens an issue.'
+          ? 'Skelcrew: issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc task add <repo> "<title>" "<body>" --issue opens an issue.'
           : known.includes(first)
             ? `Skelcrew: sc ${first} was given arguments it doesn't take. Run sc --help to see how to use it.`
             : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
@@ -487,24 +487,12 @@ async function lsCommand(command: string, words: string[], json: boolean): Promi
   printTasks(shown, json);
 }
 
-// Shows one task, for sc show, named such as app-12, or by its PR's number, such as #31 or 31.
-// A number is in the repository of the checkout sc runs in, or the one --from names, which sc
-// --remote passes from your laptop's checkout. For the lead, it is always its own.
+// Shows one task, for sc show, named such as app-12.
 async function showCommand(command: string, words: string[], json: boolean): Promise<void> {
   const { askForTask } = await import("./client.ts");
   const { printTask } = await import("./flow/list.ts");
-  const [named, ...rest] = words;
-  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
-  if (named === undefined || (rest.length > 0 && !given)) usage(command);
-  const number = named.match(/^#?(\d+)$/)?.[1];
-  const task = splitTaskName(named);
-  if (number !== undefined) {
-    const { originHere } = await import("./machine/origin.ts");
-    const from = given ?? originHere() ?? undefined;
-    printTask(await askForTask({ pr: Number(number), ...(from ? { from } : {}) }), json);
-    return;
-  }
-  if (!task || given) usage(command);
+  const task = splitTaskName(words[0]);
+  if (!task || words.length !== 1) usage(command);
   printTask(await askForTask({ repo: task[0], task: task[1] }), json);
 }
 
@@ -516,19 +504,20 @@ async function taskCommand(args: string[]): Promise<void> {
   const [command, sub, repository, ...rest] = args;
   const { createTask, fileTask } = await import("./client.ts");
   if (sub !== "add" || !repository) usage(command);
-  // --issue and --asked-file come after the title and body, each at most once, and
-  // --asked-file only with --issue. A description that reads "--issue" is the task's own words.
+  // The title and body are the first two words, so a body that reads "--issue" stays the
+  // task's own words. Without them, as when they come on stdin, the options come first. After
+  // them come --issue and --asked-file, each at most once, and --asked-file only with --issue.
+  const onStdin = rest[0] === "--issue" || rest[0] === "--asked-file";
+  const words = onStdin ? [] : rest.slice(0, 2);
+  const options = onStdin ? rest : rest.slice(2);
   const flags = new Map<string, string>();
-  let words = rest;
-  while (words.length > 0) {
-    const [flag = "", value = ""] = words.slice(-2);
-    if (words.at(-1) === "--issue" && !flags.has("--issue")) {
-      flags.set("--issue", "");
-      words = words.slice(0, -1);
-    } else if (flag === "--asked-file" && value && !flags.has(flag)) {
+  for (let at = 0; at < options.length; at++) {
+    const [flag = "", value] = [options[at], options[at + 1]];
+    if (flag === "--issue" && !flags.has(flag)) flags.set(flag, "");
+    else if (flag === "--asked-file" && value && !flags.has(flag)) {
       flags.set(flag, value);
-      words = words.slice(0, -2);
-    } else break;
+      at++;
+    } else usage(command);
   }
   const issue = flags.has("--issue");
   const askedFile = flags.get("--asked-file");

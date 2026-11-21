@@ -192,7 +192,8 @@ test("the help has no issue or PR commands, and names tasks and threads as such"
   expect(out).not.toContain("\nPULL REQUESTS\n");
   expect(out).not.toContain("  issue ");
   expect(out).not.toContain("  pr ");
-  expect(out).toContain("  show <task> | <#pr> ");
+  expect(out).toContain("  show <task> ");
+  expect(out).not.toContain("show <task> | <#pr>");
   expect(out).toContain("  --issue ");
   expect(out).toContain("  --keep-issue ");
   for (const command of ["stop", "attach", "peek", "interrupt", "tell"])
@@ -209,7 +210,7 @@ test("sc issue and sc pr say which task commands replaced them", () => {
   ]) {
     const ran = skel(args);
     expect(ran.code).toBe(1);
-    expect(ran.err).toContain("sc show '#<pr>'");
+    expect(ran.err).toContain("sc show <task> shows one with its PR");
     expect(ran.err).toContain("--issue");
   }
 });

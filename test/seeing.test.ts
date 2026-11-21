@@ -812,21 +812,6 @@ ${threadSql({ task: "20", status: "waiting", title: "Docs", pr: 39, verdict: "ap
     tmux("new-session", "-d", "-s", live, "sleep 300");
 }
 
-// Runs sc in a folder, as you would in a checkout.
-async function skelIn(cwd: string, args: string[]) {
-  const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
-    cwd,
-    env: env(),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-  ]);
-  return { out, err, code: await run.exited };
-}
-
 // What sc show prints for app-12, whose PR is 31, from Skelcrew's copy, with the forge's log of
 // its failed check. The colour codes and other control characters from the forge are gone.
 const app12 = `APP-12  Add export
@@ -958,37 +943,16 @@ describe("with a forge", () => {
     );
   }, 40_000);
 
-  test("sc show takes a PR's number, or #N, in a checkout of its repository", async () => {
+  // Tasks are the only names: a PR's number names nothing.
+  test("sc show refuses a PR's number", async () => {
     forgeThreads();
-    const checkout = join(home, "app");
-    mkdirSync(checkout);
-    Bun.spawnSync(["git", "-C", checkout, "init", "-q"]);
-    Bun.spawnSync([
-      "git",
-      "-C",
-      checkout,
-      "remote",
-      "add",
-      "origin",
-      "git@github.com:simon/app.git",
-    ]);
     serve();
     await untilAnswers();
-    expect((await skelIn(checkout, ["show", "#31"])).out).toBe(app12);
-    // A PR no task made has no task to show.
-    const bare = await skelIn(checkout, ["show", "40"]);
-    expect(bare.code).not.toBe(0);
-    expect(bare.err).toBe("Skelcrew: Skelcrew has no task with PR #40 in app\n");
-    // Outside any checkout, a number names no repository.
-    const away = await skelIn(home, ["show", "31"]);
-    expect(away.code).not.toBe(0);
-    expect(away.err).toContain("name the PR's task, such as APP-12");
-    // sc --remote passes the repository of your laptop's checkout as --from.
-    const sent = await skelIn(home, ["show", "31", "--from", "git@github.com:simon/app.git"]);
-    expect(sent.out).toBe(app12);
-    // --from names the repository of a PR's number, and a task names its own.
-    const both = await skelIn(home, ["show", "app-12", "--from", "git@github.com:simon/app.git"]);
-    expect(both.err).toContain("sc show was given arguments it doesn't take");
+    for (const named of ["#31", "31"]) {
+      const shown = await skel(["show", named]);
+      expect(shown.code).toBe(1);
+      expect(shown.err).toContain("sc show was given arguments it doesn't take");
+    }
   });
 
   test("sc show gives JSON for tools, with the task's PR as its page shows it", async () => {
@@ -1044,14 +1008,14 @@ describe("with a forge", () => {
     );
   });
 
-  // The lead has no login to the forge, so it reads PRs here. A number means its own repository,
-  // wherever it runs, and it can't read another repository's.
-  test("the lead runs sc show with a PR's number on its own repository only", async () => {
+  // The lead has no login to the forge, so it reads PRs here, by their tasks, and it can't read
+  // another repository's.
+  test("the lead runs sc show on its own repository only", async () => {
     forgeThreads();
     serve();
     await untilAnswers();
     await openApp();
-    const own = await asAgent(["show", "31"], leadSocket());
+    const own = await asAgent(["show", "app-12"], leadSocket());
     expect(own.err).toBe("");
     expect(own.out).toBe(app12);
     const listed = JSON.parse((await asAgent(["ps", "--json"], leadSocket())).out);
@@ -1065,7 +1029,7 @@ describe("with a forge", () => {
     expect(other.err).toContain("you are the lead of simon/app only");
   });
 
-  test("sc show says when a task has no PR, shows a review without a forge, and that a repository with no forge has no PRs", async () => {
+  test("sc show says when a task has no PR, and shows a review without a forge", async () => {
     forgeThreads();
     serve();
     await untilAnswers();
@@ -1081,9 +1045,6 @@ describe("with a forge", () => {
       "SITE-7  working  Add docs  waiting · approved r1\n",
     );
     expect((await skel(["show", "app-9"])).out).toContain("\nPR      none\n");
-    const none = await skel(["show", "#7", "--from", "https://example.com/simon/site.git"]);
-    expect(none.code).not.toBe(0);
-    expect(none.err).toBe("Skelcrew: site has no forge, so there are no PRs\n");
     const gone = await skel(["show", "app-99"]);
     expect(gone.err).toBe("Skelcrew: there is no task APP-99\n");
     const usage = await skel(["show"]);

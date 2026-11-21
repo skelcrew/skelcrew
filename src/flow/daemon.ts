@@ -171,18 +171,21 @@ function listen(server: Server, path: string): Promise<void> {
 }
 
 // Returns what sc rm would remove of a task: its name, its task in the backlog if it never
-// started, its thread if it has one, its open issue, and the issue sc rm closes, which is that
-// one unless `keepIssue`. A task in stage issue that never started has only its issue. Throws
-// when there is nothing to remove.
+// started, its thread if it has one, its issue while it may be open, and the issue sc rm closes,
+// which is that one unless `keepIssue`. A task in stage issue that never started has only its
+// issue. Throws when there is nothing to remove.
 function removalOf(db: Database, repository: string, task: string, keepIssue: boolean) {
   const { owner, repo, name: repositoryName } = findRepository(db, repository);
   const name = taskName(repositoryName, task);
   const filed = filedOn(db, repository, task);
   const thread = threadOn(db, repository, task);
-  // Only an issue the tracker still has open can close.
-  const open = ownTask(task)
-    ? null
-    : (openTasks(db, owner, repo).find((item) => item.id === task)?.id ?? null);
+  // Work still under way always closes its issue. The copy is only as fresh as the last poll,
+  // and an issue reopened since would otherwise stay open while sc rm says it is done. Closing
+  // one already closed changes nothing. With no work left, only the copy tells whether there is
+  // still an issue to close.
+  const inCopy = openTasks(db, owner, repo).some((item) => item.id === task);
+  const live = thread !== null && thread.status !== "done";
+  const open = !ownTask(task) && (live || inCopy) ? task : null;
   const issue = keepIssue ? null : open;
   if (!filed && !thread && open === null) throw new Error(`there is no task ${name}`);
   if (!filed && !thread && issue === null)
@@ -405,8 +408,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       });
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc ls with no repository mean every repository, which for a lead is its own, and sc show
-  // and sc merge with a PR number mean the lead's own repository, wherever it ran.
+  // sc ls with no repository mean every repository, which for a lead is its own, and sc merge
+  // with a PR number means the lead's own repository, wherever it ran.
   // Your requests and a builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
@@ -417,7 +420,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     if ((request.command === "ps" || request.command === "task ls") && !request.repo)
       return { ...request, repo: own };
     const byNumber =
-      request.command === "task show" ||
       request.command === "merge when ready" ||
       request.command === "merge skip review" ||
       request.command === "merge cancel";
