@@ -352,16 +352,18 @@ Every command an agent can run answers quickly, as Claude Code moves a shell com
 
 ### Installing
 
-`sc install` makes the machine match the files, and is safe to run again:
+`sc install` makes the machine match the files:
 
-1. It checks for the tools Skelcrew needs and every harness a role uses. If one is missing, it says exactly what to install before it asks anything.
-2. On a machine with no harness picked, it picks one. With only one installed, it asks nothing, and reviews run on it too. With both, it asks which agents run on, then which harness reviews run on, offering the other one first, since a second model sees what the builder's misses.
-3. It logs in each harness that has no login yet, with a login of Skelcrew's own, kept readable only by you, so your own login is never touched and a renewal on either side never breaks the other.
-4. It installs each plugin the files name at its locked version, asking as **Trust** says. It refuses a plugin that needs a newer Skelcrew.
-5. It runs each plugin's setup that hasn't run on this machine, in your terminal.
-6. It starts the engine as the background service.
+1. It checks for `tmux`, `bwrap` (0.11 or newer, for reviews, which see a clone through an overlay) or `sandbox-exec`, `git`, and every harness a role uses. If one is missing, it says exactly what to install before it asks anything, as steps to take rather than an error: `Before Skelcrew can start, install:`, then the commands, such as `sudo apt install tmux`, then for a missing harness `a coding agent, one of:` with the command for each, then `Then run sc again.`
+2. On a machine with no harness picked, it saves `harness` in `config.yaml`. With only one installed, it asks nothing: it says which it found and which it didn't, such as `Claude Code detected` and `Codex not found`, then `Agents will run on Claude Code`, and reviews run on it too. With both installed, it asks which agents run on, in a list you move through with the arrow keys and choose from with Enter, each marked `installed`. It then asks the same way which harness reviews run on, offering the other one first, since a second model sees what the builder's misses. It saves that as `roles: { reviewer: { harness: … } }`, and nothing when you pick your own.
+3. It logs in each harness that has no login yet. For Claude Code it asks you to run `claude setup-token` yourself in another terminal, which gives a long-lived token for agents, and to paste it. Over SSH you run that on your laptop, where the browser is. Skelcrew checks that what you paste looks like a token and saves it in `~/.config/skelcrew/`, readable only by you. Nothing renews it, so your own login is never touched. For Codex it runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skelcrew/codex/`, on the terminal's alternate screen, and waits for Enter before switching back if Codex fails. That is a login of Skelcrew's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. Every Codex agent and review shares it, which is safe, as Codex locks it while it renews.
+4. It installs each plugin the files name at its locked version, asking as **Trust** says, into `~/.local/share/skelcrew/plugins/<name>/<version>/`, and runs its `build`. It refuses a plugin that needs a newer Skelcrew, and one named `none`.
+5. It runs each plugin's `setup` that hasn't run on this machine, in your terminal.
+6. It starts the engine as the background service, as `sc up --bg` does.
 
-Each step is skipped when it is already done. A tool or login that goes missing later shows up where it is used. A plugin you are writing can be added from a folder, asking as any install does, used where it is, and rebuilt by `sc update`. Skelcrew never deletes your folder.
+Each step is skipped when it is already done. A tool or login that goes missing later shows up where it is used. A command Skelcrew shows you to run, here and elsewhere, sits on a line of its own, bold, with a blank line above and below, so it reads as a step to take. Only a real error is printed as one.
+
+A plugin you are writing can be added from a folder, such as `sc add -g ./skelcrew-linear`. It is used where it is, with no tag, and asks as any install does. `sc update` then runs its `build` again, so your edits count, and `sc remove` never deletes your folder.
 
 ## The engine
 
