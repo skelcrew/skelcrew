@@ -46,7 +46,7 @@ export const git = (...args: string[]) =>
 
 // Returns the build a copy made from this checkout gets: its commit, marked when changes
 // aren't committed, or null when Skelcrew doesn't run from a checkout.
-export function laptopBuild(): string | null {
+export function checkoutBuild(): string | null {
   // A single-file Skelcrew runs its modules from a folder only it sees, outside any checkout.
   if (singleFile) return null;
   const commit = git("rev-parse", "--short", "HEAD");
@@ -62,7 +62,7 @@ export function laptopBuild(): string | null {
 // more in a repository with many. With changes, +changes or at least the * always stays, as the
 // commit alone would look like a clean checkout. A build with no commit to name, such as a single file nobody
 // stamped, says so rather than pretending.
-function checkoutNames(build: string | null): string[] {
+function checkoutLabels(build: string | null): string[] {
   if (build === null) return ["(checkout, commit unknown)", "checkout, commit unknown"];
   if (build.endsWith(dirty)) {
     const commit = build.slice(0, -dirty.length);
@@ -83,9 +83,9 @@ function checkoutNames(build: string | null): string[] {
 // code that runs doesn't change after it starts. Only when asked, so commands that never draw,
 // such as an agent's sc submit, don't run git for it.
 let shown: string[] = [];
-export function shownVersions(): string[] {
+export function versionLabels(): string[] {
   if (release) return [`v${release}`];
-  if (shown.length === 0) shown = checkoutNames(built ?? laptopBuild());
+  if (shown.length === 0) shown = checkoutLabels(built ?? checkoutBuild());
   return shown;
 }
 
@@ -96,5 +96,5 @@ export function versionLine(): string {
   // matters. The workflow checks for this lowercase skelcrew, so it stays until the workflow
   // changes with it.
   if (release) return `skelcrew ${release}`;
-  return `Skelcrew ${checkoutNames(built ?? laptopBuild())[0]}`;
+  return `Skelcrew ${checkoutLabels(built ?? checkoutBuild())[0]}`;
 }

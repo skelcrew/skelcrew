@@ -38,7 +38,7 @@ import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
-import { shownVersions } from "../version.ts";
+import { versionLabels } from "../version.ts";
 import { dropAnswerOption, dropAsk, escapeTime, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, pad, removeControlCodes } from "./look.ts";
@@ -545,7 +545,7 @@ export async function runSidebar(
       tabs,
       open: empty ? "" : `${open.owner}/${open.repo}`,
       where,
-      versions: shownVersions(),
+      versions: versionLabels(),
       typingRight,
       fullScreen,
     };
