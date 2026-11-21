@@ -521,8 +521,8 @@ test("Done shows the tasks that ended today, or the last ten when fewer ended to
   expect(done().every((row) => /^\d\d:\d\d$/.test(row.when))).toBe(true);
   // Each takes one line: its mark, name and title, then when it ended, lined up.
   const lines = drawn(0, 40, 80, ["done"]).map((line) => line.trimEnd());
-  expect(lines).toContain("   ○ APP-100  Ended 100  14:00");
-  expect(lines).toContain("   ○ APP-308  Ended 308  03:00");
+  expect(lines).toContain("   ○ 100   Ended 100  14:00");
+  expect(lines).toContain("   ○ 308   Ended 308  03:00");
 });
 
 // A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
@@ -707,7 +707,7 @@ test("a ready task whose approved head has no checks yet can't be merged, unless
   expect(row()?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
-  expect(row()?.checks).toBe("");
+  expect(row()?.ci).toBeNull();
   // A wait that ended with no CI on another commit says nothing of this one.
   sql("UPDATE tasks SET no_ci = 'f00d' WHERE task = '14';");
   expect(row()?.merge).toEqual({
@@ -717,7 +717,8 @@ test("a ready task whose approved head has no checks yet can't be merged, unless
   sql(`UPDATE tasks SET no_ci = '${approved}' WHERE task = '14';`);
   const merge = row()?.merge;
   expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main? y/n");
-  expect(row()?.checks).toBe("no CI");
+  // No CI runs there, so the row shows no CI mark.
+  expect(row()?.ci).toBeNull();
 });
 
 test("a forge's base branch reaches the merge question without its control codes", () => {
@@ -795,9 +796,9 @@ test("the list printed without a terminal has every task, however many are at wo
 await runList("skel-test-${process.pid}-none", "simon/app");`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   const printed = run.stdout.toString();
-  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`APP-${task}  Task ${task}`);
-  expect(printed).toContain("APP-14  Fix the export header");
-  expect(printed).toContain("APP-31  Export as CSV");
+  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`${task}    Task ${task}`);
+  expect(printed).toContain("14    Fix the export header");
+  expect(printed).toContain("31    Export as CSV");
 });
 
 // The list reads no settings file, so it knows a thread is past its round limit from the changes
@@ -872,7 +873,7 @@ test("changes held at the round limit say round limit under Building, never chec
   expect(rows().find((row) => row.name === "APP-43")).toMatchObject({
     part: "building",
     says: "round limit",
-    checks: "CI passed",
+    ci: "passed",
   });
 });
 
@@ -930,23 +931,23 @@ test("every section has its heading with its count, only open ones show rows, an
   // The lead and each task at work take two lines: mark, name and title, then the word with a
   // task's PR, CI and when it changed. So what it does sits under its title.
   expect(lines.slice(2, 24).map((line) => line.trimEnd())).toEqual([
-    "   ○ lead    claude",
+    "   ○ lead  claude",
     "     running",
     "",
     "   Needs you 2",
-    " ▸ ● APP-12  Rate limit the API",
+    " ▸ ● 12    Rate limit the API",
     "     question · 14:58",
-    "   ● APP-14  Fix the export header",
-    "     ready to merge · #41 · CI passed",
+    "   ● 14    Fix the export header",
+    "     ready to merge · #41 ✓ r1",
     "",
     "   Up next   1",
-    "   ○ APP-9   Old work",
+    "   ○ 9     Old work",
     "     paused · 14:59",
     "",
     " 1 Backlog   1",
     " 2 Building  1",
-    "   ○ APP-7   Login redirect",
-    "     working · 14:55",
+    "   ○ 7     Login redirect",
+    "     14:55",
     "",
     " 3 Reviewing 0",
     " 4 Checks    0",
@@ -972,7 +973,7 @@ test("many requests of the lead's scroll with the sections, and the one you are 
   const lines = drawn(1, 20);
   expect(lines).toHaveLength(20);
   expect(lines.slice(2, 6).map((line) => line.trimEnd())).toEqual([
-    "   ○ lead    claude",
+    "   ○ lead  claude",
     "     running",
     "",
     " ▸ ● Request 30?",
@@ -991,7 +992,7 @@ test("an open section shows its rows, and its heading is bright while a closed o
     "   Needs you 2",
     "   Up next   1",
     " 1 Backlog   1",
-    " ▸ ○ APP-31  Export as CSV  5 Nov",
+    " ▸ ○ 31    Export as CSV  5 Nov",
     "",
     " 2 Building  1",
     " 3 Reviewing 0",
@@ -1059,7 +1060,7 @@ test("the heading you are on never hides at the bottom edge, as the view goes do
   const heading = plain.findIndex((line) => line.startsWith(" 2 Building"));
   expect(heading).toBeGreaterThan(0);
   expect(lines[heading]).toContain("\x1b[48;5;238m");
-  expect(plain[heading + 1]).toContain("APP-7");
+  expect(plain[heading + 1]).toContain("○ 7 ");
   expect(plain.at(-1)).toStartWith(" ↓");
   expect(plain.at(-1)).not.toContain("Building");
 });
@@ -1186,39 +1187,106 @@ test("each line drawn says what a click on it reaches", () => {
   expect(at("running")).toEqual({ row: 0 });
   expect(at("Backlog")).toEqual({ section: "backlog" });
   expect(at("Ready")).toEqual({ section: "ready" });
-  expect(at("APP-7")).toEqual({ row: shown.findIndex((row) => row.name === "APP-7") });
-  expect(at("working · 14:55")).toEqual(at("APP-7"));
+  expect(at("Login redirect")).toEqual({ row: shown.findIndex((row) => row.name === "APP-7") });
+  expect(at("14:55")).toEqual(at("Login redirect"));
   expect(targets[0]).toBeNull();
   expect(targets.at(-1)).toBeNull();
 });
 
-test("a row's word is in its colour, its step and what follows it are dim, and its title is plain", () => {
+test("a row's word is in its colour, then its step and PR dim, its CI's mark and review round in theirs", () => {
+  const review = { round: 2, colour: "yellow" as const };
   const all = rows().map((row) =>
     row.name === "APP-7"
-      ? { ...row, step: "Editing rows.ts", pr: "#40", checks: "CI running" }
+      ? {
+          ...row,
+          says: "changes",
+          step: "Editing rows.ts",
+          pr: "#40",
+          ci: "running" as const,
+          review,
+        }
       : row,
   );
   const shown = all.filter((row) => row.part === "lead" || row.part === "building");
   const headings = sectionHeadings(all, new Set<Section>(["building"]));
   const size = { width: 80, height: 24 };
   const { lines } = drawList(shown, headings, 1, 0, frame, size);
-  const at = lines.findIndex((line) => line.includes("APP-7"));
+  const at = lines.findIndex((line) => line.includes("Login redirect"));
   expect(lines.slice(at, at + 3)).toEqual([
-    "   \x1b[1m○\x1b[22;39m APP-7   Login redirect",
-    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts · #40 · CI running · 14:55\x1b[22;39m",
+    "   \x1b[1m○\x1b[22;39m 7     Login redirect",
+    "     \x1b[1mchanges\x1b[22;39m\x1b[90m · Editing rows.ts · #40 \x1b[22;39m\x1b[38;5;221m●\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;221mr2\x1b[22;39m\x1b[90m · 14:55\x1b[22;39m",
     "",
   ]);
 });
 
+// Building already says the task works, so the row doesn't say working again. The step its
+// builder is on takes the word's place and colour, and with none, only the time is left.
+test("a row leaves out the word its stage already says, and its builder's step takes its place", () => {
+  const all = rows().map((row) =>
+    row.name === "APP-7" ? { ...row, step: "Editing rows.ts" } : row,
+  );
+  const shown = all.filter((row) => row.part === "lead" || row.part === "building");
+  const headings = sectionHeadings(all, new Set<Section>(["building"]));
+  const { lines } = drawList(shown, headings, 1, 0, frame, { width: 80, height: 24 });
+  const at = lines.findIndex((line) => line.includes("Login redirect"));
+  expect(lines[at + 1]).toBe("     \x1b[1mEditing rows.ts\x1b[22;39m\x1b[90m · 14:55\x1b[22;39m");
+  // The details pane still says the word after the stage, as it says them together.
+  expect(all.find((row) => row.name === "APP-7")?.says).toBe("working");
+  expect(drawn(1, 26).map((line) => line.trimEnd())).toContain("     14:55");
+});
+
+// The tab names the repository, so a row needs only its task's ID. Everything else, such as
+// what Enter and the keys act on, still goes by the whole name.
+test("a task's row shows its ID without the repository, which its tab names", () => {
+  sql(threadSql({ task: "t5", title: "From the backlog", changed: now - 400_000 }));
+  const all = rows();
+  expect(all.find((row) => row.name === "APP-12")?.label).toBe("12");
+  expect(all.find((row) => row.name === "APP-31")?.label).toBe("31");
+  expect(all.find((row) => row.name === "APP-T5")?.label).toBe("T5");
+  expect(all.find((row) => row.name === "lead")?.label).toBe("lead");
+  const lines = drawn(1, 30).map((line) => line.trimEnd());
+  expect(lines).toContain(" ▸ ● 12    Rate limit the API");
+  expect(lines).toContain("   ○ T5    From the backlog");
+  expect(lines.join("\n")).not.toContain("APP-");
+});
+
+// CI shows as a mark that differs in shape too, so it reads without colour: ✓ passed, ● running
+// and ✗ failed. The review shows as its round, green once approved, yellow while it runs or asked
+// for changes, and red when it failed.
+test("a row's CI is a mark and its review is its round, coloured by where it stands", () => {
+  sql(`${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", rounds: 1, top_round: 1, verdict: "changes", review_round: 1, checks: "pending", pr: 45 })}
+${threadSql({ task: "16", title: "Changes", status: "waiting", verdict: "changes", rounds: 3, review_round: 3, top_round: 3, checks: "failing", pr: 46 })}
+${threadSql({ task: "17", title: "Failed review", status: "waiting", review_failed: 1, verdict: "failed", review_round: 2, top_round: 1, pr: 47 })}`);
+  const all = rows();
+  const of = (name: string) => {
+    const row = all.find((candidate) => candidate.name === name);
+    return [row?.ci, row?.review];
+  };
+  expect(of("APP-14")).toEqual(["passed", { round: 1, colour: "green" }]);
+  expect(of("APP-15")).toEqual(["running", { round: 2, colour: "yellow" }]);
+  expect(of("APP-16")).toEqual(["failed", { round: 3, colour: "yellow" }]);
+  expect(of("APP-17")).toEqual([null, { round: 2, colour: "red" }]);
+  expect(of("APP-7")).toEqual([null, null]);
+  const lines = drawn(1, 40, 80, ["needs you", "building", "reviewing"]).map((line) =>
+    line.trimEnd(),
+  );
+  expect(lines).toContain("     ready to merge · #41 ✓ r1");
+  expect(lines).toContain("     changes · #46 ✗ r3");
+  expect(lines).toContain("     #45 ● r2");
+  // On a terminal with colours, each mark is in its own.
+  const coloured = drawnWith(1, frame, { width: 80, height: 40 }, ["needs you"]).join("\n");
+  expect(coloured).toContain("\x1b[38;5;120m✓\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;120mr1");
+});
+
 // A wide terminal used to lose the last letter of whatever reached its right edge.
 test("a row as wide as the terminal stops short of its last column, cutting only its title", () => {
-  const long = "A title long enough to run past the right edge of any terminal here";
+  const long = "A title long enough to run past the right edge of any terminal we test here";
   sql(`UPDATE tasks SET title = '${long}' WHERE task = '7';`);
   for (const width of [60, 61, 80]) {
     const lines = drawnWith(1, frame, { width, height: 24 }).map((line) => Bun.stripANSI(line));
-    const row = lines.find((line) => line.includes("APP-7")) ?? "";
+    const row = lines.find((line) => line.includes("○ 7 ")) ?? "";
     expect(Bun.stringWidth(row)).toBe(width - 1);
-    expect(row).toContain("APP-7   A title");
+    expect(row).toContain("7     A title");
     expect(row).toEndWith("…");
   }
 });
@@ -1301,16 +1369,16 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
   // The lead stays. The headings scroll with their rows, and those out of sight are pinned
   // at the edge they went past, with their counts, so none goes out of sight.
   expect(lines.slice(2, 14).map((line) => line.trimEnd())).toEqual([
-    "   ○ lead    claude",
+    "   ○ lead  claude",
     "     running",
     "",
     " ↑ 11 more   Needs you 2   Up next 1   Backlog 1   Building 11",
-    "   ○ APP-57  Task 57",
-    "     working · 14:43",
-    "   ○ APP-58  Task 58",
-    "     working · 14:42",
-    " ▸ ○ APP-59  Task 59",
-    "     working · 14:41",
+    "   ○ 57    Task 57",
+    "     14:43",
+    "   ○ 58    Task 58",
+    "     14:42",
+    " ▸ ○ 59    Task 59",
+    "     14:41",
     " 3 Reviewing  0",
     " ↓ Checks 0   Ready 0   Done 0",
   ]);
@@ -1322,9 +1390,9 @@ test("on the lead, the list starts at Needs you, with what is below at the botto
   expect(lines.slice(5, 11)).toEqual([
     "",
     "   Needs you 2",
-    "   ● APP-12  Rate limit the API",
+    "   ● 12    Rate limit the API",
     "     question · 14:58",
-    "   ● APP-14  Fix the export header",
+    "   ● 14    Fix the export header",
     " ↓ +3  Next 1  Back 1  Build 1  Rev 0  Chk 0  Ready 0  Done 0",
   ]);
 });
@@ -1346,13 +1414,13 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   const top = at(16, 5);
   expect(top.slice(5, 14)).toEqual([
     " ↑ 2 more in Needs you   Needs you 2   Up next 1",
-    "   ○ APP-9   Old work",
+    "   ○ 9     Old work",
     "     paused · 14:59",
     " 1 Backlog   1",
-    "   ○ APP-31  Export as CSV  5 Nov",
+    "   ○ 31    Export as CSV  5 Nov",
     " 2 Building  7",
-    " ▸ ○ APP-7   Login redirect",
-    "     working · 14:55",
+    " ▸ ○ 7     Login redirect",
+    "     14:55",
     " ↓ 9 more   Reviewing 1   Checks 2   Ready 0   Done 0",
   ]);
   // On the last task in Checks, its heading and both its rows show, and the stages above it are
@@ -1360,13 +1428,13 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   const bottom = at(16, 14);
   expect(bottom.slice(5, 14)).toEqual([
     " ↑ 11 more   Needs you 2   Up next 1   Backlog 1   Building 7   Reviewing 1",
-    "   ○ APP-15  Under review",
-    "     reviewing · #45",
+    "   ○ 15    Under review",
+    "     #45 r1",
     " 4 Checks    2",
-    "   ○ APP-17  Approved too",
-    "     checks · #47 · CI running",
-    " ▸ ○ APP-16  Approved",
-    "     checks · #46 · CI running",
+    "   ○ 17    Approved too",
+    "     #47 ●",
+    " ▸ ○ 16    Approved",
+    "     #46 ●",
     " ↓ Ready 0   Done 0",
   ]);
   // The edges' counts keep their colours: what needs you is yellow.
@@ -1385,14 +1453,11 @@ test("a terminal too short for every heading still shows the row you are on", ()
   const lines = drawn(14, 9, 80, ["needs you", "up next", "building"]);
   expect(lines).toHaveLength(9);
   expect(lines[2]).toMatch(/^ {3}○ lead/);
-  expect(lines.slice(5, 7).map((line) => line.trim())).toEqual([
-    "▸ ○ APP-59  Task 59",
-    "working · 14:41",
-  ]);
+  expect(lines.slice(5, 7).map((line) => line.trim())).toEqual(["▸ ○ 59    Task 59", "14:41"]);
   // Eight leave one: the first line of the row you are on, with its ▸.
   const fewer = drawn(14, 8, 80, ["needs you", "up next", "building"]);
   expect(fewer.filter((line) => line.includes("▸"))).toEqual([
-    expect.stringMatching(/^ ▸ ○ APP-59 +Task 59 *$/),
+    expect.stringMatching(/^ ▸ ○ 59 +Task 59 *$/),
   ]);
 });
 
@@ -1546,7 +1611,7 @@ test("the list opens on the first task that needs you, and q leaves it with ever
   await open();
   expect(seen()).toContain(" Skelcrew ");
   expect(seen()).toContain("site •1");
-  expect(here()).toStartWith("▸ ● APP-12");
+  expect(here()).toStartWith("▸ ● 12 ");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   expect(seen()).toContain("Your agents keep running. Run sc --list to come back.");
@@ -1559,20 +1624,21 @@ test("a task moves into Needs you and back as its mark comes and goes, and you s
   await open();
   expect(seen()).toContain(" Needs you 2");
   // From app-12 down past app-14 and app-9 to app-7, under Building.
-  await arrowTo("▸ ○ APP-7");
+  await arrowTo("▸ ○ 7 ");
   sql(
     `UPDATE threads SET needs_you = 1, needs_you_for = 'apply the split', changed = ${now} WHERE folder = 'app-7';`,
   );
   await until(() => seen().includes(" Needs you 3"), "app-7 under Needs you");
-  expect(here()).toStartWith("▸ ● APP-7");
+  expect(here()).toStartWith("▸ ● 7 ");
   expect(below()).toStartWith("apply the split");
   // It is first under Needs you, as the one that changed last, right under its heading.
   const lines = seen().split("\n");
-  expect(lines[lines.findIndex((line) => line.includes("Needs you")) + 1]).toContain("APP-7");
+  expect(lines[lines.findIndex((line) => line.includes("Needs you")) + 1]).toContain("● 7 ");
   sql("UPDATE threads SET needs_you = 0, needs_you_for = NULL WHERE folder = 'app-7';");
   await until(() => seen().includes(" Needs you 2"), "app-7 back under Building");
-  expect(here()).toStartWith("▸ ○ APP-7");
-  expect(below()).toStartWith("working");
+  expect(here()).toStartWith("▸ ○ 7 ");
+  // Building says it works, so the row says only when it last changed.
+  expect(below()).toMatch(/^(\d\d:\d\d|\d+ \w+)$/);
 });
 
 // Reviewing is closed when the list starts, so a task that leaves Needs you for it opens it,
@@ -1591,11 +1657,12 @@ test("a task leaving Needs you for a closed stage opens it, and you stay on it",
     }),
   );
   await open();
-  await until(() => here().startsWith("▸ ● APP-15"), "APP-15 first under Needs you");
-  expect(seen()).not.toContain("○ APP-15");
+  await until(() => here().startsWith("▸ ● 15 "), "APP-15 first under Needs you");
+  expect(seen()).not.toContain("○ 15 ");
   sql("UPDATE threads SET needs_you = 0, needs_you_for = NULL WHERE folder = 'app-15';");
-  await until(() => here().startsWith("▸ ○ APP-15"), "APP-15 under Reviewing");
-  expect(below()).toStartWith("reviewing");
+  await until(() => here().startsWith("▸ ○ 15 "), "APP-15 under Reviewing");
+  // Reviewing says the review runs, so the row starts with its PR and round.
+  expect(below()).toStartWith("#45 r1");
   const lines = seen().split("\n");
   expect(lines[lines.findIndex((line) => line.includes("▸")) - 1]).toMatch(/^ 3 Reviewing/);
 });
@@ -1603,7 +1670,7 @@ test("a task leaving Needs you for a closed stage opens it, and you stay on it",
 // Leaving gives the terminal back, so a key that came with q must never act after it.
 test("a key that comes with q in one read does nothing once the list has left", async () => {
   await open();
-  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
+  await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   type("q\r");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   await Bun.sleep(500);
@@ -1618,7 +1685,7 @@ for (const [key, name] of [
   test(`${name} leaves the list while a question is open, and answers nothing`, async () => {
     await open();
     type("1");
-    await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+    await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
     press("Enter");
     await until(() => seen().includes("Start APP-31? y/n"), "the question");
     type(key);
@@ -1628,7 +1695,7 @@ for (const [key, name] of [
 
 test("Enter attaches to the builder, every key reaches it, and Ctrl-\\ comes back on the same row", async () => {
   await open();
-  await arrowTo("▸ ○ APP-7");
+  await arrowTo("▸ ○ 7 ");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   // q and m are the list's keys, but the agent has the keyboard now.
@@ -1637,7 +1704,7 @@ test("Enter attaches to the builder, every key reaches it, and Ctrl-\\ comes bac
   await until(() => read(join(home, "app-7.typed")) === "q m hello\n", "what was typed");
   press("C-\\");
   await until(() => seen().includes("q/esc quit"), "the list again");
-  expect(here()).toStartWith("▸ ○ APP-7");
+  expect(here()).toStartWith("▸ ○ 7 ");
   expect(read(join(home, "left"))).toBe("");
 });
 
@@ -1660,10 +1727,10 @@ const sendBytes = async (bytes: string[], split: boolean) => {
 // You may have scrolled an agent back, which puts its session in tmux's copy mode, where keys
 // have a table of their own. Ctrl-\ must leave from there too, and never reach the agent. The
 // lead stands in for Claude Code and app-7 for Codex. Each has its session's name and the name
-// its row shows. APP-7 is six stops down, past Up next's row and the headings between.
+// its row shows. app-7 is six stops down, past Up next's row and the headings between.
 for (const [form, bytes] of Object.entries(back))
   for (const [agent, shown, arrows, mark] of [
-    ["app-7", "APP-7", ["Down", "Down", "Down", "Down", "Down", "Down"], "○"],
+    ["app-7", "7 ", ["Down", "Down", "Down", "Down", "Down", "Down"], "○"],
     ["lead", "lead", ["Up", "Up", "Up"], "○"],
   ] as const)
     test(`Ctrl-\\ as ${form} comes back from ${agent} on its row, in pieces or scrolled back`, async () => {
@@ -1692,7 +1759,7 @@ for (const [form, bytes] of Object.entries(back))
 // now stays with the agent.
 test("Ctrl-Q no longer comes back from an agent", async () => {
   await open();
-  await arrowTo("▸ ○ APP-7");
+  await arrowTo("▸ ○ 7 ");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   press("C-q");
@@ -1700,7 +1767,7 @@ test("Ctrl-Q no longer comes back from an agent", async () => {
   expect(seen()).toContain("I am app-7");
   expect(seen()).not.toContain("q/esc quit");
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
+  await until(() => here().startsWith("▸ ○ 7 "), "the list again");
 });
 
 // Ctrl-\ pressed once too often lands on the list, in whatever form your terminal sends it, and
@@ -1715,7 +1782,7 @@ test("Ctrl-\\ in every form, Alt-Q and Ctrl-Q do nothing on the list", async () 
   press("M-q");
   press("C-q");
   await Bun.sleep(500);
-  expect(here()).toStartWith("▸ ● APP-12");
+  expect(here()).toStartWith("▸ ● 12 ");
   expect(read(join(home, "left"))).toBe("");
 });
 
@@ -1724,7 +1791,7 @@ test("Ctrl-\\ in every form, Alt-Q and Ctrl-Q do nothing on the list", async () 
 test("Ctrl-\\ in every form leaves a question open, and y then answers it", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
   press("Enter");
   await until(() => seen().includes("Start APP-31? y/n"), "the question");
   for (const bytes of Object.values(back)) await sendBytes(bytes, true);
@@ -1741,7 +1808,7 @@ test("s asks to start a task in Backlog, and y starts it", async () => {
   VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-T5"), "the backlog task's row");
+  await until(() => here().startsWith("▸ ○ T5 "), "the backlog task's row");
   expect(seen()).toContain("s start");
   type("s");
   await until(() => seen().includes("Start APP-T5? y/n"), "the question");
@@ -1804,13 +1871,13 @@ test("the details pane on a request of the lead's shows the lead's screen, with 
 test("shift+up on a queued task moves it earlier in the queue, and the line says its place", async () => {
   queueTwo();
   await open();
-  await arrowTo("▸ ○ APP-20");
+  await arrowTo("▸ ○ 20 ");
   expect(seen()).toContain("shift+↑↓ reorder");
   press("S-Up");
   await until(() => asked.includes("queue move simon/app 20 -1"), "the move");
   await until(() => seen().includes("APP-20 starts next"), "its place");
   press("Down");
-  await until(() => here().startsWith("▸ ○ APP-9"), "the paused row");
+  await until(() => here().startsWith("▸ ○ 9 "), "the paused row");
   press("S-Down");
   await until(() => seen().includes("APP-9 is paused: sc start APP-9 brings it back"), "why not");
   expect(asked.filter((line) => line.startsWith("queue move"))).toHaveLength(1);
@@ -1822,7 +1889,7 @@ test("s on Backlog with every builder busy asks to queue it, and says what the d
   queueTwo();
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
   expect(seen()).toContain("s queue");
   type("s");
   await until(() => seen().includes("Queue APP-31? 3 of 3 builders busy"), "the question");
@@ -1849,20 +1916,20 @@ test("while attached the title names the agent and the key back, and the list sh
 
 test("an agent that ends while you are attached brings you back to the list, on its row", async () => {
   await open();
-  await arrowTo("▸ ○ APP-7");
+  await arrowTo("▸ ○ 7 ");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   type("bye");
   press("Enter");
   await until(() => seen().includes("q/esc quit"), "the list again");
-  expect(here()).toStartWith("▸ ○ APP-7");
+  expect(here()).toStartWith("▸ ○ 7 ");
   expect(read(join(home, "left"))).toBe("");
 });
 
 // Keys typed fast, or over a slow link, can reach the list in one read with the Enter before them.
 test("keys that come with Enter reach the agent, not the list", async () => {
   await open();
-  await arrowTo("▸ ○ APP-7");
+  await arrowTo("▸ ○ 7 ");
   // q and m would leave the list or merge, were the list to read them.
   type("\rq m now\r");
   await until(() => read(join(home, "app-7.typed")) === "q m now\n", "what was typed");
@@ -1871,7 +1938,7 @@ test("keys that come with Enter reach the agent, not the list", async () => {
   // screen: pressed earlier, it would land on the list, where it does nothing.
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
+  await until(() => here().startsWith("▸ ○ 7 "), "the list again");
 });
 
 // You may have the agent open in a terminal of your own too, which isn't the list's to close.
@@ -1891,7 +1958,7 @@ test("an agent that ends detaches only the list's own client", async () => {
   const clients = () =>
     Bun.spawnSync(["tmux", "-L", agents, "list-clients", "-F", "#S"]).stdout.toString().trim();
   await until(() => clients() === "app-7", "the other client");
-  await arrowTo("▸ ○ APP-7");
+  await arrowTo("▸ ○ 7 ");
   press("Enter");
   await until(() => clients() === "app-7\napp-7", "both clients");
   type("bye");
@@ -1908,11 +1975,11 @@ test("an arrow whose escape sequence comes in two pieces still moves, and never 
   type("\x1b[");
   await Bun.sleep(40);
   type("B");
-  await until(() => here().startsWith("▸ ● APP-14"), "the row below");
+  await until(() => here().startsWith("▸ ● 14 "), "the row below");
   type("\x1b");
   await Bun.sleep(40);
   type("[A");
-  await until(() => here().startsWith("▸ ● APP-12"), "the row above");
+  await until(() => here().startsWith("▸ ● 12 "), "the row above");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
 });
@@ -1932,7 +1999,7 @@ test("keys the list doesn't read, and a terminal's answers, never leave it", asy
   type("\x1b[?1;2;4c\x1b[>84;0;0c\x1bP>|tmux 3.6\x1b\\");
   // APP-9 is past APP-14 and Up next's heading.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-9"), "the row below");
+  await until(() => here().startsWith("▸ ○ 9 "), "the row below");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
   expect(seen()).not.toContain("y/n");
@@ -1942,14 +2009,14 @@ test("keys the list doesn't read, and a terminal's answers, never leave it", asy
 test("Esc with a question open answers no and stays, and a second Esc leaves", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
   press("Enter");
   await until(() => seen().includes("Start APP-31? y/n"), "the question");
   type("\x1b");
   await until(() => !seen().includes("y/n"), "the question to close");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
-  expect(here()).toStartWith("▸ ○ APP-31");
+  expect(here()).toStartWith("▸ ○ 31 ");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   type("\x1b");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
@@ -1973,50 +2040,50 @@ ${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "
 ${threadSql({ task: "16", title: "Approved", status: "waiting", verdict: "approve", checks: "pending", pr: 46 })}
 ${threadSql({ task: "18", title: "Shipped", status: "done", changed: now })}`);
   await open();
-  await until(() => seen().includes("○ APP-16"), "Checks' rows");
-  expect(seen()).toContain("○ APP-7");
-  expect(seen()).toContain("○ APP-15");
-  expect(seen()).not.toContain("APP-31");
-  expect(seen()).not.toContain("APP-18");
+  await until(() => seen().includes("○ 16 "), "Checks' rows");
+  expect(seen()).toContain("○ 7 ");
+  expect(seen()).toContain("○ 15 ");
+  expect(seen()).not.toContain("○ 31 ");
+  expect(seen()).not.toContain("○ 18 ");
   // They stay toggles: 3 closes Reviewing and opens it again.
   type("3");
-  await until(() => !seen().includes("APP-15"), "Reviewing closed");
-  expect(seen()).toContain("○ APP-16");
+  await until(() => !seen().includes("○ 15 "), "Reviewing closed");
+  expect(seen()).toContain("○ 16 ");
   type("3");
-  await until(() => seen().includes("○ APP-15"), "Reviewing open again");
+  await until(() => seen().includes("○ 15 "), "Reviewing open again");
 });
 
 test("the number keys open and close the stages, which stay so in another repository", async () => {
   await open();
-  expect(seen()).not.toContain("APP-31");
+  expect(seen()).not.toContain("○ 31 ");
   type("1");
-  await until(() => seen().includes("○ APP-31"), "Backlog's rows");
+  await until(() => seen().includes("○ 31 "), "Backlog's rows");
   // Opening a stage moves you to its first row, so it shows wherever the list had scrolled.
-  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
   type("2");
-  await until(() => !seen().includes("APP-7"), "Building closed");
-  expect(seen()).toContain("○ APP-31");
+  await until(() => !seen().includes("○ 7 "), "Building closed");
+  expect(seen()).toContain("○ 31 ");
   press("Tab");
   // The open repository's tab has no badge, so another's shows only while it is open.
   await until(() => seen().includes(" app •"), "site's list");
   press("Tab");
   await until(() => seen().includes(" site •1"), "app's list again");
-  expect(seen()).toContain("○ APP-31");
-  expect(seen()).not.toContain("APP-7");
+  expect(seen()).toContain("○ 31 ");
+  expect(seen()).not.toContain("○ 7 ");
 });
 
 // The arrows stop on a heading, and Enter there opens or closes its stage, as a click does.
 test("Enter on a stage's heading closes it, keeping you there, and opens it on its first row", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-31"), "Backlog's first row");
+  await until(() => here().startsWith("▸ ○ 31 "), "Backlog's first row");
   press("Up");
   await until(() => seen().includes("⏎ open/close"), "Backlog's heading");
   press("Enter");
-  await until(() => !seen().includes("APP-31"), "Backlog to close");
+  await until(() => !seen().includes("○ 31 "), "Backlog to close");
   expect(seen()).toContain("⏎ open/close");
   press("Enter");
-  await until(() => here().startsWith("▸ ○ APP-31"), "Backlog to open, on its first row");
+  await until(() => here().startsWith("▸ ○ 31 "), "Backlog to open, on its first row");
 });
 
 test("a forge's refusal shows as words, its control codes never reaching your terminal", async () => {
@@ -2024,7 +2091,7 @@ test("a forge's refusal shows as words, its control codes never reaching your te
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "the ready row");
+  await until(() => here().startsWith("▸ ● 14 "), "the ready row");
   type("m");
   await until(() => seen().includes("y/n"), "the question");
   type("y");
@@ -2056,7 +2123,7 @@ UPDATE tasks SET merged = 1 WHERE task = '14';
 DELETE FROM items WHERE kind = 'pr';`);
   await open();
   type("6");
-  await until(() => here().startsWith("▸ ○ APP-14"), "the done row");
+  await until(() => here().startsWith("▸ ○ 14 "), "the done row");
   press("Enter");
   await until(() => seen().includes("APP-14's PR #41 has no link saved"), "what Enter says");
 });
@@ -2084,7 +2151,7 @@ test("Enter on a builder on a plugin's host attaches to it through that host", a
   sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
 UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
   await open();
-  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
+  await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   // The host has a key of its own to come back, so the list doesn't offer tmux's.
   expect(seen()).toContain("⏎ attach  ");
   expect(seen()).not.toContain("ctrl+\\ back");
@@ -2092,14 +2159,14 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   press("Enter");
   await until(() => seen().includes("q/esc quit"), "the list again");
-  expect(here()).toStartWith("▸ ● APP-12");
+  expect(here()).toStartWith("▸ ● 12 ");
   expect(read(join(home, "left"))).toBe("");
 });
 
 test("Enter on a builder that isn't running says so, and attaches to nothing", async () => {
   sql(`UPDATE threads SET status = 'failed' WHERE folder = 'app-7'`);
   await open();
-  await arrowTo("▸ ○ APP-7");
+  await arrowTo("▸ ○ 7 ");
   press("Enter");
   await until(
     () => seen().includes("APP-7's builder isn't running: sc start APP-7 brings it back"),
@@ -2112,7 +2179,7 @@ test("Enter on a paused task says how to bring it back, and attaches to nothing"
   await open();
   // Past APP-14 and Up next's heading.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
+  await until(() => here().startsWith("▸ ○ 9 "), "APP-9's row");
   press("Enter");
   await until(
     () => seen().includes("Paused with sc stop: sc start APP-9 brings it back"),
@@ -2123,7 +2190,7 @@ test("Enter on a paused task says how to bring it back, and attaches to nothing"
 test("Enter on an issue asks first: any key but y starts nothing, and y starts it", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
   press("Enter");
   await until(() => seen().includes("Start APP-31? y/n"), "the question");
   type("n");
@@ -2139,7 +2206,7 @@ test("Enter on an issue asks first: any key but y starts nothing, and y starts i
 test("keys that come with Enter on an issue are dropped, so they can't answer its question", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
   type("\ryq");
   await until(() => seen().includes("Start APP-31? y/n"), "the question");
   await Bun.sleep(300);
@@ -2154,7 +2221,7 @@ test("a y that comes with m in one read can't answer the merge question", async 
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "the ready row");
+  await until(() => here().startsWith("▸ ● 14 "), "the ready row");
   type("my");
   await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
   await Bun.sleep(300);
@@ -2170,7 +2237,7 @@ test("a merge whose checks failed while its question was open merges nothing, an
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "the ready row");
+  await until(() => here().startsWith("▸ ● 14 "), "the ready row");
   type("m");
   await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
   const failed = { head: approved, checks: [{ name: "test", id: "1", state: "failed" }] };
@@ -2187,7 +2254,7 @@ test("m on a task ready for review asks first, and y merges it at the commit you
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "the ready row");
+  await until(() => here().startsWith("▸ ● 14 "), "the ready row");
   expect(seen()).toContain("m merge");
   type("m");
   await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
@@ -2198,7 +2265,7 @@ test("m on a task ready for review asks first, and y merges it at the commit you
 test("Tab moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
   await open();
   press("Tab");
-  await until(() => seen().includes("SITE-3"), "site's list");
+  await until(() => seen().includes("● 3     Docs"), "site's list");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });
 
@@ -2206,8 +2273,8 @@ test("Tab moves to the next repository and has the daemon open it, without reope
 // sends them, each way round from the last to the first and back.
 test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wrapping round", async () => {
   await open();
-  const onSite = () => seen().includes("SITE-3");
-  const onApp = () => seen().includes("APP-12");
+  const onSite = () => seen().includes("● 3 ");
+  const onApp = () => seen().includes("● 12 ");
   // app is the first tab, so back from it wraps round to site, the last.
   press("BTab");
   await until(onSite, "site, back from app");
@@ -2240,15 +2307,15 @@ test("Enter on Backlog's last row shows every issue", async () => {
   sql(issuesSql(12));
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-100"), "Backlog's first issue");
+  await until(() => here().startsWith("▸ ○ 100 "), "Backlog's first issue");
   for (const _ of Array.from({ length: 10 })) press("Down");
   await until(() => here().startsWith("▸ … 3 more"), "the row for the rest");
   press("Enter");
-  await until(() => seen().includes("APP-110"), "every issue");
+  await until(() => seen().includes("○ 110 "), "every issue");
   expect(seen()).not.toContain("… 3 more");
   // The last issue is a row further down, which moving there scrolls into view.
   press("Down");
-  await until(() => here().startsWith("▸ ○ APP-111"), "the last issue");
+  await until(() => here().startsWith("▸ ○ 111 "), "the last issue");
 });
 
 // Opening a stage shows its rows, however far the list had scrolled.
@@ -2260,9 +2327,9 @@ test("opening a stage with its key brings its heading and first rows into view",
   sql(`${more.join("\n")}
 UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
   await open();
-  await arrowTo("▸ ○ APP-61");
+  await arrowTo("▸ ○ 61 ");
   type("5");
-  await until(() => here().startsWith("▸ ○ APP-14"), "Ready's first task");
+  await until(() => here().startsWith("▸ ○ 14 "), "Ready's first task");
   const lines = seen()
     .split("\n")
     .map((line) => line.trimEnd());
@@ -2286,16 +2353,16 @@ const mouseOn = () =>
 test("a click on a task selects it, and a second click opens it, as Enter does", async () => {
   await open();
   expect(mouseOn()).toBe(true);
-  clickOn(lineOf("APP-7"));
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7 selected");
+  clickOn(lineOf("○ 7 "));
+  await until(() => here().startsWith("▸ ○ 7 "), "APP-7 selected");
   expect(seen()).not.toContain("I am app-7");
   // Its second line is part of its row too.
-  clickOn(lineOf("APP-7") + 1);
+  clickOn(lineOf("○ 7 ") + 1);
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   // The agent gets the mouse as your terminal would give it: the list's reporting is off.
   expect(mouseOn()).toBe(false);
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ APP-7"), "the list on APP-7's row");
+  await until(() => here().startsWith("▸ ○ 7 "), "the list on APP-7's row");
   expect(mouseOn()).toBe(true);
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
@@ -2307,8 +2374,8 @@ test("a click on a task selects it, and a second click opens it, as Enter does",
 test("a click that asks a question isn't answered by its button's release", async () => {
   await open();
   clickOn(lineOf("Backlog"));
-  await until(() => here().startsWith("▸ ○ APP-31"), "Backlog open, on its issue");
-  const line = lineOf("APP-31");
+  await until(() => here().startsWith("▸ ○ 31 "), "Backlog open, on its issue");
+  const line = lineOf("○ 31 ");
   type(`\x1b[<0;10;${line}M`);
   await until(() => seen().includes("Start APP-31? y/n"), "the question");
   type(`\x1b[<0;10;${line}m`);
@@ -2322,9 +2389,9 @@ test("a click that asks a question isn't answered by its button's release", asyn
 // list's, and never reach the agent's prompt as text.
 test("a click that attaches types no mouse report into the agent", async () => {
   await open();
-  clickOn(lineOf("APP-7"));
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7 selected");
-  const line = lineOf("APP-7");
+  clickOn(lineOf("○ 7 "));
+  await until(() => here().startsWith("▸ ○ 7 "), "APP-7 selected");
+  const line = lineOf("○ 7 ");
   type(`\x1b[<0;10;${line}M\x1b[<0;10;${line}m\x1b[<65;10;3M\x1b[<0;10;${line}M`);
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   type("hello");
@@ -2346,12 +2413,12 @@ UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
       .find((line) => line.startsWith(" ↓")) ?? "";
   await until(() => edge().includes("Ready 1"), "Ready pinned at the bottom edge");
   type(`\x1b[<0;${edge().indexOf("Ready") + 2};${lineOf(" ↓")}M`);
-  await until(() => here().startsWith("▸ ○ APP-14"), "Ready open, on its task");
+  await until(() => here().startsWith("▸ ○ 14 "), "Ready open, on its task");
 });
 
 test("a click on the lead's row opens the lead at once", async () => {
   await open();
-  clickOn(lineOf("lead    claude"));
+  clickOn(lineOf("lead  claude"));
   await until(() => seen().includes("I am lead"), "the lead");
   press("C-\\");
   await until(() => here().startsWith("▸ ○ lead"), "the list on the lead's row");
@@ -2364,24 +2431,24 @@ test("a click on a stage's heading opens or closes it, and the wheel moves a row
   clickOn(lineOf("Needs you"));
   clickOn(lineOf("Up next"));
   await Bun.sleep(300);
-  expect(seen()).toContain("● APP-12");
-  expect(seen()).toContain("○ APP-9");
+  expect(seen()).toContain("● 12 ");
+  expect(seen()).toContain("○ 9 ");
   clickOn(lineOf("Backlog"));
-  await until(() => here().startsWith("▸ ○ APP-31"), "Backlog open, on its issue");
+  await until(() => here().startsWith("▸ ○ 31 "), "Backlog open, on its issue");
   clickOn(lineOf("Building"));
-  await until(() => !seen().includes("APP-7"), "Building closed");
+  await until(() => !seen().includes("○ 7 "), "Building closed");
   clickOn(lineOf("Building"));
-  await until(() => seen().includes("APP-7"), "Building open again");
+  await until(() => seen().includes("○ 7 "), "Building open again");
   // The wheel down, then up, as SGR reports it, with the pointer anywhere.
-  await until(() => here().startsWith("▸ ○ APP-7"), "Building's first task");
+  await until(() => here().startsWith("▸ ○ 7 "), "Building's first task");
   // A row up from Building's first task is Building's heading.
   type("\x1b[<64;10;3M");
   await until(() => seen().includes("⏎ open/close"), "a row up");
   type("\x1b[<65;10;3M");
-  await until(() => here().startsWith("▸ ○ APP-7"), "a row down");
+  await until(() => here().startsWith("▸ ○ 7 "), "a row down");
   // A click on a blank line reaches nothing.
   clickOn(2);
-  expect(here()).toStartWith("▸ ○ APP-7");
+  expect(here()).toStartWith("▸ ○ 7 ");
 });
 
 // A Skelcrew run from a checkout names its commit, read from git as the engine reads it, and says
@@ -2405,9 +2472,9 @@ test("a click on a repository's tab opens it, and a click elsewhere does nothing
   expect(top).toMatch(/^ Skelcrew .+? {3}app {4}site •1$/);
   type(`\x1b[<0;${top.indexOf("site") + 1};2M`);
   type(`\x1b[<0;${top.indexOf("site") + 1};1M\x1b[<0;${top.indexOf("site") + 1};1m`);
-  await until(() => seen().includes("SITE-3"), "site's list");
+  await until(() => seen().includes("● 3     Docs"), "site's list");
   // It opens on site's task that needs you, as the list does on any repository.
-  expect(here()).toStartWith("▸ ● SITE-3");
+  expect(here()).toStartWith("▸ ● 3 ");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });
 
@@ -2435,7 +2502,7 @@ test("the pane follows the row you are on, is empty on the lead's, and never ask
 UPDATE tasks SET review_post = '{"pr":41,"id":"9","verdict":"approve","findings":["Name the limit","Test the header"]}' WHERE task = '14';
 ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved, checks: [...passed, { name: "build", id: "2", state: "failed" }] })}`);
   await open({ width: wide });
-  expect(here()).toStartWith("▸ ● APP-12");
+  expect(here()).toStartWith("▸ ● 12 ");
   await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
   expect(paneSeen().slice(0, 7)).toEqual([
     "Rate limit the API",
@@ -2459,7 +2526,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   await until(() => paneSeen().every((line) => line === ""), "an empty pane");
   // Past Needs you's heading and APP-12.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await until(() => here().startsWith("▸ ● 14 "), "APP-14's row");
   await until(() => paneSeen()[0] === "Fix the export header", "app-14's details");
   expect(paneSeen()).toContain("PR    #41  https://github.com/simon/app/pull/41");
   expect(paneSeen()).toContain("CI failed:  test ✓  build ✗");
@@ -2496,7 +2563,7 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   expect(liveSeen().slice(0, 5)).toContain("step two");
   // It stays as you move, and o brings the strip back.
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await until(() => here().startsWith("▸ ● 14 "), "APP-14's row");
   press("Up");
   await until(() => liveSeen().includes("step one"), "the whole screen on app-12 again");
   type("o");
@@ -2537,7 +2604,7 @@ test("a long description scrolls in the pane by Page Down, Page Up and the wheel
   const atEnd = paneSeen()[0];
   type(`\x1b[<64;${wide - 10};5M`);
   await until(() => paneSeen()[0] !== atEnd, "the wheel to scroll up");
-  expect(here()).toStartWith("▸ ● APP-12");
+  expect(here()).toStartWith("▸ ● 12 ");
   for (const _ of [1, 2, 3, 4]) press("PPage");
   await until(() => paneSeen()[0] === "Rate limit the API", "the top again");
   // Another row starts at the top of its details, and so does coming back.
@@ -2556,10 +2623,10 @@ test("the pane shows only while the terminal is wide enough, and the keys do the
   await until(() => paneSeen()[0] === "Rate limit the API", "the pane");
   // Past APP-14 and Up next's heading.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
+  await until(() => here().startsWith("▸ ○ 9 "), "APP-9's row");
   tmux("resize-window", "-t", "=one:", "-x", "100");
   await until(() => !seen().includes(" │ "), "no pane");
-  expect(here()).toStartWith("▸ ○ APP-9");
+  expect(here()).toStartWith("▸ ○ 9 ");
 });
 
 // A thread's log holds the thread as it was at each change, so its events are where it changed.
@@ -2711,11 +2778,11 @@ test("a tmux slow to capture an agent's screen never holds up the keys", async (
   // Each read of app-12's screen takes 3 seconds. The moves meanwhile still show at once.
   const start = performance.now();
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await until(() => here().startsWith("▸ ● 14 "), "APP-14's row");
   press("Up");
-  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
+  await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await until(() => here().startsWith("▸ ● 14 "), "APP-14's row");
   expect(performance.now() - start).toBeLessThan(1000);
   // Its screen shows once tmux answers. Then app-9 has no agent to read, and the read under way
   // ends, as the test started it.
@@ -2723,7 +2790,7 @@ test("a tmux slow to capture an agent's screen never holds up the keys", async (
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
   // Past APP-14 and Up next's heading.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
+  await until(() => here().startsWith("▸ ○ 9 "), "APP-9's row");
   const reads = slowReads("started");
   await slowReadsEnded(reads);
 });
@@ -2742,20 +2809,20 @@ test("the live view reads only while the list shows with its pane", async () => 
   // On a row with no agent running, there is nothing to read.
   // Past APP-14 and Up next's heading.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
+  await until(() => here().startsWith("▸ ○ 9 "), "APP-9's row");
   expect(await noReads(reads)).toBe(true);
   // While you are attached to an agent, the list isn't showing. A read that began on APP-7's row
   // just before Enter may still be noted, on a slow machine, so the list must first go a second
   // without a read: one that went on reading never would. Then it stays without. APP-7 is past
   // the headings of Backlog and Building.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  await until(() => here().startsWith("▸ ○ 7 "), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   await wait(() => noReads(reads), { what: () => "the reads to stop" });
   expect(await noReads(reads)).toBe(true);
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
+  await until(() => here().startsWith("▸ ○ 7 "), "the list again");
   const back = reads();
   await until(() => reads() > back, "reads again");
   // In a terminal too narrow for the pane, nothing is read. A read under way as the pane went
@@ -2801,10 +2868,10 @@ UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-12'`);
       .split("\n")
       .filter((line) => line === what).length;
   await open({ width: wide });
-  await until(() => here().startsWith("▸ ● APP-12") && count("list") === 1, "APP-12's lookup");
+  await until(() => here().startsWith("▸ ● 12 ") && count("list") === 1, "APP-12's lookup");
   // You move on while the host looks.
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await until(() => here().startsWith("▸ ● 14 "), "APP-14's row");
   await Bun.sleep(2500);
   expect(count("read")).toBe(0);
   // Back on APP-12, the pane goes while the host looks.
@@ -2825,10 +2892,10 @@ test("the list stays quick to move while the live view reads", async () => {
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
   const took: number[] = [];
   for (const [key, row] of [
-    ["Down", "APP-14"],
-    ["Up", "APP-12"],
-    ["Down", "APP-14"],
-    ["Up", "APP-12"],
+    ["Down", "● 14 "],
+    ["Up", "● 12 "],
+    ["Down", "● 14 "],
+    ["Up", "● 12 "],
   ] as const) {
     const start = performance.now();
     press(key);
@@ -2877,7 +2944,7 @@ test("a host slow to read an agent's screen never holds up the keys", async () =
   const start = performance.now();
   // APP-7 is six stops on, past Up next's row and the headings between.
   for (const _ of [1, 2, 3, 4, 5, 6]) press("Down");
-  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  await until(() => here().startsWith("▸ ○ 7 "), "APP-7's row");
   const reads = slowReads("started");
   expect(performance.now() - start).toBeLessThan(1000);
   // The read under way ends with the host's answer, which the test waits for, as it started it.
@@ -2894,7 +2961,7 @@ test("a read that answers after the list left draws nothing over your terminal",
   // A read starts at once on coming back to app-12, and q leaves while it is under way.
   press("Down");
   press("Up");
-  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
+  await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   const reads = slowReads("started");
@@ -2919,9 +2986,9 @@ test("a read under way when you move away and back is dropped, as you moved sinc
   // the move takes 3 seconds, so for 3 seconds from the move the screen stays as it was.
   const moved = performance.now();
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await until(() => here().startsWith("▸ ● 14 "), "APP-14's row");
   press("Up");
-  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
+  await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   const before = screen();
   while (performance.now() - moved < 3000) {
     expect(screen()).toBe(before);
@@ -2931,7 +2998,7 @@ test("a read under way when you move away and back is dropped, as you moved sinc
   // starts again, and waits for the one under way to end, as it started it.
   await until(() => screen() !== before, "a newer screen");
   press("Down");
-  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await until(() => here().startsWith("▸ ● 14 "), "APP-14's row");
   const reads = slowReads("started");
   await slowReadsEnded(reads);
 });
@@ -2946,7 +3013,7 @@ test("a slow read of the row you left never holds up the live view of the row yo
   // Coming back to app-12 starts a read of 3 seconds. app-7, six stops on, is read at once.
   press("Down");
   press("Up");
-  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
+  await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   const start = performance.now();
   // app-7 is six stops on, past Up next's row and the headings between.
   for (const _ of [1, 2, 3, 4, 5, 6]) press("Down");

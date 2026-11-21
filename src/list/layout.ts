@@ -7,16 +7,18 @@ import {
   bright,
   filled,
   fitted,
+  green,
   grey,
   lightGrey,
   markColours,
   paint,
+  red,
   shaded,
   tinted,
   white,
   yellow,
 } from "../screen/look.ts";
-import type { Heading, Row, Section, Tab } from "./rows.ts";
+import type { Ci, Heading, Row, Section, Tab } from "./rows.ts";
 
 // What the list shows besides its rows: the names of the version of Skelcrew running here,
 // longest first, such as v0.4.2 or 6f1c2ab (checkout), where it runs on a remote, or empty on this machine, the open repository's
@@ -38,7 +40,7 @@ export type Size = { width: number; height: number };
 // How wide the list is, in its own window or as the screen's sidebar: a little over a quarter of
 // the terminal, so the pane or the right side has the room for the agent at work. It never gets
 // narrower than a row's name, short title and word need, nor wider than a task's two lines do,
-// such as `working · Editing rows.ts · #40 · CI passed · 14:31`.
+// such as `changes · Editing rows.ts · #40 ✓ r2 · 14:31`.
 export const listShare = { percent: 28, least: 40, most: 58 };
 
 // Returns how many columns the list takes in a terminal `width` columns wide.
@@ -256,7 +258,7 @@ const markStart = (row: Row, pointer: Pointer) =>
 function shortLine(row: Row, pointer: Pointer, columns: Columns, width: number): string {
   const here = pointer === "lit";
   const start = `${pointers[pointer]}${row.mark.sign} `;
-  const name = filled(row.name, columns.name);
+  const name = filled(row.label, columns.name);
   const time = columns.when > 0 ? `  ${filled(row.when, columns.when)}` : "";
   const room = width - Bun.stringWidth(start) - columns.name - 2 - Bun.stringWidth(time);
   const title = room > 0 ? filled(fitted(row.title, room), Math.min(columns.title, room)) : "";
@@ -269,30 +271,73 @@ function shortLine(row: Row, pointer: Pointer, columns: Columns, width: number):
   return `${markStart(row, pointer)} ${shownName}  ${shownTitle}${time && tinted(here, grey, time)}`;
 }
 
+// The mark of what a task's CI says, each in its colour, and of a different shape, so it reads
+// without colours too.
+const ciMarks: Record<Ci, { sign: string; code: string }> = {
+  passed: { sign: "✓", code: green },
+  running: { sign: "●", code: yellow },
+  failed: { sign: "✗", code: red },
+};
+
+// The word of a task that only says what the heading of its stage says already.
+const stageWords: Partial<Record<Row["part"], string>> = {
+  building: "working",
+  reviewing: "reviewing",
+  checks: "checks",
+};
+
 // Returns the lead's row, or a task's in Building, Reviewing, Checks or Ready, as its two lines,
 // so what it does sits under its title. The first line has its mark, its name, padded to
-// `nameWidth` so the titles line up, and its title. The second has its word in its colour, then
-// dim the step its builder is on, its PR, its CI and when it last changed, such as
-// `working · Editing rows.ts · #40 · CI passed · 14:31`, each left out where it has none. Each
-// line is cut with … to fit, and the row you are on is shaded on both its lines.
+// `nameWidth` so the titles line up, and its title. The second has its word in its colour,
+// unless its stage already says it, then dim the step its builder is on and its PR, then its CI's mark and its review's round, each in
+// the colour of where it stands, then dim when it last changed, such as
+// `changes · Editing rows.ts · #40 ✓ r2 · 14:31`, each left out where it has none. Each line is
+// cut with … to fit, and the row you are on is shaded on both its lines.
 function tallLines(row: Row, pointer: Pointer, nameWidth: number, width: number): string[] {
   const here = pointer === "lit";
   const plainStart = `${pointers[pointer]}${row.mark.sign} `;
   const indent = " ".repeat(Bun.stringWidth(plainStart));
   const room = Math.max(width - indent.length, 0);
   // The first line: on a terminal too narrow for the mark, it is cut without its colours.
-  const named = `${filled(row.name, Math.min(nameWidth, room))}  ${row.title}`;
+  const named = `${filled(row.label, Math.min(nameWidth, room))}  ${row.title}`;
   const top = fitted(named, room);
   const first =
     width < indent.length
       ? fitted(`${plainStart}${top}`, width)
       : `${markStart(row, pointer)} ${here ? tinted(here, bright, top) : top}`;
-  // The word keeps its colour and the rest is dim, so each is split back out of the cut line.
-  const parts = [row.says, row.step, row.pr, row.checks, row.when];
-  const doing = fitted(parts.filter(Boolean).join(" · "), room);
-  const word = doing.slice(0, row.says.length);
-  const rest = doing.slice(row.says.length);
-  const second = `${indent}${tinted(here, markColours[row.colour], word)}${rest && tinted(here, grey, rest)}`;
+  // The PR, CI and review go together, apart only by spaces, such as `#40 ✓ r2`.
+  const ci = row.ci === null ? [] : [ciMarks[row.ci]];
+  const review = row.review
+    ? [{ sign: `r${row.review.round}`, code: markColours[row.review.colour] }]
+    : [];
+  const pr = [...(row.pr ? [{ sign: row.pr, code: grey }] : []), ...ci, ...review].flatMap(
+    (piece, at) => (at === 0 ? [piece] : [{ sign: " ", code: grey }, piece]),
+  );
+  // A word the stage's heading already says, such as working under Building, is left out. The
+  // step its builder is on then comes first, in the word's colour, as what is happening beyond
+  // the stage. Under Needs you or Up next the word is what the row is there for, so it stays.
+  const repeats = row.section === row.part && stageWords[row.part] === row.says;
+  const groups = [
+    [{ sign: repeats ? "" : row.says, code: markColours[row.colour] }],
+    [{ sign: row.step, code: repeats ? markColours[row.colour] : grey }],
+    pr,
+    [{ sign: row.when, code: grey }],
+  ].filter((group) => group.some((piece) => piece.sign));
+  const pieces = groups.flatMap((group, at) =>
+    at === 0 ? group : [{ sign: " · ", code: grey }, ...group],
+  );
+  // The line is cut as plain text, then each piece takes its part of what is left, in its
+  // colour, so the … lands where the cut does. Pieces of one colour side by side go as one.
+  let doing = fitted(pieces.map((piece) => piece.sign).join(""), room);
+  const cut: { sign: string; code: string }[] = [];
+  for (const { sign, code } of pieces) {
+    const part = doing.slice(0, sign.length);
+    doing = doing.slice(sign.length);
+    const last = cut.at(-1);
+    if (last && last.code === code) last.sign += part;
+    else if (part) cut.push({ sign: part, code });
+  }
+  const second = `${indent}${cut.map(({ sign, code }) => tinted(here, code, sign)).join("")}`;
   const lines = [first, second].map((line) =>
     width < indent.length ? fitted(Bun.stripANSI(line), width) : line,
   );
@@ -444,7 +489,7 @@ export function drawRows(
   const widest = (of: (row: Row) => string, among = short) =>
     Math.max(...among.map((row) => Bun.stringWidth(of(row))), 0);
   const columns = {
-    name: widest((row) => row.name, tasks),
+    name: widest((row) => row.label, tasks),
     title: widest((row) => row.title),
     when: widest((row) => row.when),
   };

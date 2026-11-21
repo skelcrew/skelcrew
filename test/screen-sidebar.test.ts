@@ -74,7 +74,7 @@ test("Alt-1 to Alt-6 open and close the stages from the lead's row, and the lead
   await until(() => !isOpen("2 Building"), "Building to close");
   // Opening a stage moves you to its first row, whose details show on the right.
   press("M-6");
-  await until(() => isOpen("6 Done") && selected().includes("APP-3"), "Done to open on APP-3");
+  await until(() => isOpen("6 Done") && / 3\b/.test(selected()), "Done to open on APP-3");
   await until(onDetails, "app-3's details");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
@@ -84,7 +84,7 @@ test("on a task's row plain 1 to 6 open and close the stages, and no agent gets 
   open("lead");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
+  await until(() => / 12\b/.test(selected()) && onDetails(), "APP-12's details");
   type("6");
   await until(() => isOpen("6 Done"), "Done to open");
   type("6");
@@ -117,11 +117,11 @@ test("Alt-Shift-Down and Alt-Shift-Up move between the lead, Needs you and the o
   await ready("lead");
   await until(() => isOpen("Needs you 1"), "app-12 under Needs you");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12"), "Needs you's first row");
+  await until(() => / 12\b/.test(selected()), "Needs you's first row");
   press("M-S-Down");
-  await until(() => selected().includes("APP-7"), "Building's first row");
+  await until(() => / 7\b/.test(selected()), "Building's first row");
   press("M-S-Up");
-  await until(() => selected().includes("APP-12"), "back to Needs you");
+  await until(() => / 12\b/.test(selected()), "back to Needs you");
   press("M-S-Up");
   await until(() => onLead(), "back to the lead");
   await until(() => seen().includes("I am lead"), "the lead on the right");
@@ -133,7 +133,7 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   open("lead");
   await ready("lead");
   press("M-1");
-  await until(() => selected().includes("APP-31"), "APP-31 in Backlog");
+  await until(() => / 31\b/.test(selected()), "APP-31 in Backlog");
   await until(onDetails, "app-31's details");
   type("s");
   await until(() => footer().includes("Start APP-31? y/n"), "the question");
@@ -167,7 +167,7 @@ test("Shift-Up on a queued task in Up next moves it in the queue, and the footer
   await ready("lead");
   await until(() => left().some((line) => line.includes("Up next")), "Up next");
   press("M-S-Down");
-  await until(() => selected().includes("APP-20") && onDetails(), "APP-20's details");
+  await until(() => / 20\b/.test(selected()) && onDetails(), "APP-20's details");
   await until(() => footer().includes("⇧↑↓ reorder"), "the key in the footer");
   press("S-Up");
   await until(() => acted.includes("queue move simon/app 20 -1"), "the daemon to move APP-20");
