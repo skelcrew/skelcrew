@@ -47,7 +47,7 @@ import { builtInRole } from "../roles.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
-import { endLeadOfClosedTab, leadOf } from "./lead.ts";
+import { closeTabAndEndLead, leadOf } from "./lead.ts";
 import { taskName } from "./thread.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
@@ -874,7 +874,7 @@ export async function closeRepo(fullName: string, sessions: string): Promise<str
   const db = openDb();
   const found = repositories(db).find((r) => fullNameIs(r, fullName));
   if (!found) throw new Error(`Skelcrew no longer has ${fullName}`);
-  await closeTabAndEndLead(db, sessions, found, "close");
+  await closeThroughDaemon(db, sessions, found, "close");
   return `Closed ${found.name}'s tab. Its tasks keep running.`;
 }
 
@@ -895,7 +895,7 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
   const fullName = `${found.owner}/${found.repo}`;
   const { folder } = leadOf(db, found.owner, found.repo);
-  await closeTabAndEndLead(db, sessions, found, "remove");
+  await closeThroughDaemon(db, sessions, found, "remove");
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
   rmSync(join(folder, dropsFolder), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
@@ -916,18 +916,16 @@ const endLeadWait = z.coerce
   .catch(60_000)
   .parse(process.env.SKELCREW_END_LEAD_WAIT_MS ?? 60_000);
 
-// Closes a repository's tab, then ends its lead and waits for it, for closing and removing a
-// repository, which `verb` names for what it says when it fails. The daemon ends the lead in the
-// lead's own turn, so a start asked for meanwhile comes after it. With no daemon, nothing else
-// starts the lead, so it is ended here. When the lead can't be ended, its tab goes back as it was
-// and this throws, rather than hiding a repository whose lead still runs. A daemon that took the
-// request but gave no reply may still be ending it, and puts the tab back itself if that fails, so
-// this ends nothing and throws, as ending the lead here too could end one opened again meanwhile. A repository you
-// open again before its lead ends keeps its lead, and this throws too. A lead on a plugin no
-// longer installed may still run there, so the repository waits until that host is back. The tab
-// closes first, so an open screen moves on at once, and a lead the daemon is starting meanwhile
-// sees it closed once its session is there, and ends it.
-async function closeTabAndEndLead(
+// Has the daemon close a repository's tab and end its lead, and waits for it, for closing and
+// removing a repository, which `verb` names for what it says when it fails. The daemon ends the
+// lead in the lead's own turn, so a start asked for meanwhile comes after it, and puts the tab back
+// when the lead can't be ended, rather than hiding a repository whose lead still runs. With no
+// daemon, nothing else starts the lead, so this does all that itself. A daemon that took the
+// request but gave no reply may still be at it, so this changes nothing and throws, as acting here
+// too could end a lead opened again meanwhile. A repository you open again before its lead ends
+// keeps its lead, and this throws too. A lead on a plugin no longer installed may still run there,
+// so the repository waits until that host is back.
+async function closeThroughDaemon(
   db: Database,
   sessions: string,
   found: Repository,
@@ -939,39 +937,21 @@ async function closeTabAndEndLead(
     throw new Error(
       `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then ${verb} ${name}.`,
     );
-  const where = "WHERE owner = ? AND repo = ?";
-  const { tab_closed: wasClosed } = z
-    .object({ tab_closed: z.coerce.boolean() })
-    .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(found.owner, found.repo));
   const { askInTime } = await import("../client.ts");
-  db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
   const fullName = `${found.owner}/${found.repo}`;
-  const reply = await askInTime(
-    { command: "end lead", repo: fullName, verb, wasClosed },
-    endLeadWait,
-  );
-  if (reply === "unanswered") {
-    const again = verb === "remove" ? ` Remove ${name} again once it has.` : "";
+  const reply = await askInTime({ command: "end lead", repo: fullName, verb }, endLeadWait);
+  if (reply === "unanswered")
     throw new Error(
-      `the daemon didn't answer, so it may still be ending ${name}'s lead. If that fails, its tab opens again.${again}`,
+      verb === "close"
+        ? `the daemon didn't answer, so ${name}'s lead may still run. If its tab is still open, close it again.`
+        : `the daemon didn't answer, so ${name} isn't removed. Remove it again in a moment.`,
     );
-  }
-  let ended: boolean;
-  try {
-    const Reply = z.union([z.object({ ended: z.boolean() }), z.object({ error: z.string() })]);
-    const read = reply === "absent" ? null : Reply.safeParse(reply.reply);
-    if (read !== null && !read.success)
-      throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
-    const answer = read === null ? null : read.data;
-    if (answer !== null && "error" in answer) throw new Error(answer.error);
-    ended = answer?.ended ?? (await endLeadOfClosedTab(db, sessions, found, verb, wasClosed));
-  } catch (error) {
-    db.run(`UPDATE repositories SET tab_closed = ? ${where} AND tab_closed = 1`, [
-      wasClosed ? 1 : 0,
-      found.owner,
-      found.repo,
-    ]);
-    throw error;
-  }
+  const Reply = z.union([z.object({ ended: z.boolean() }), z.object({ error: z.string() })]);
+  const read = reply === "absent" ? null : Reply.safeParse(reply.reply);
+  if (read !== null && !read.success)
+    throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
+  const answer = read === null ? null : read.data;
+  if (answer !== null && "error" in answer) throw new Error(answer.error);
+  const ended = answer?.ended ?? (await closeTabAndEndLead(db, sessions, found, verb));
   if (!ended) throw new Error(`${name} was opened again meanwhile, so it isn't ${verb}d`);
 }

@@ -449,5 +449,24 @@ export async function endLeadOfClosedTab(
   return ended;
 }
 
+// Closes a repository's tab, then ends its lead as endLeadOfClosedTab does, for closing or removing
+// the repository. The daemon runs this when asked, and sc runs it only with no daemon, so one
+// program alone closes the tab and puts it back. The tab closes first, so an open screen moves on
+// at once, and a lead starting meanwhile sees it closed once its session is there, and ends it.
+export async function closeTabAndEndLead(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+  verb: "close" | "remove",
+): Promise<boolean> {
+  const { owner, repo } = repository;
+  const where = "WHERE owner = ? AND repo = ?";
+  const { tab_closed: wasClosed } = z
+    .object({ tab_closed: z.coerce.boolean() })
+    .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(owner, repo));
+  db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [owner, repo]);
+  return endLeadOfClosedTab(db, sessions, repository, verb, wasClosed);
+}
+
 // Returns the supervisor of a repository's lead, which starts and ends it one at a time.
 export const leadAgent = (owner: string, repo: string) => supervisor(`${owner}/${repo}`);

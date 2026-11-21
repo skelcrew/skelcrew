@@ -36,9 +36,9 @@ const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 // What the fake daemon answers when asked for a lead.
 let daemonReply = "";
 // How the fake daemon takes a request to end a lead: it ends it, never answers as a busy one
-// would, drops the connection, answers in a way sc can't read, or has the repository opened again
-// meanwhile and then fails.
-let endLead: "ends" | "busy" | "drops" | "garbled" | "reopened" = "ends";
+// would, drops the connection, answers in a way sc can't read, or fails while another close has
+// closed the tab meanwhile.
+let endLead: "ends" | "busy" | "drops" | "garbled" | "fails" = "ends";
 // Repositories the fake daemon hands back for plain sc to ask about their .agents/, in turn,
 // before it answers with the lead.
 let handBack: object[] = [];
@@ -84,9 +84,9 @@ beforeEach(async () => {
         if (endLead === "ends") return connection.end('{"ended":true}\n');
         if (endLead === "drops") return connection.destroy();
         if (endLead === "garbled") return connection.end('{"over":"there"}\n');
-        if (endLead === "reopened") {
+        if (endLead === "fails") {
           const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-          db.run("UPDATE repositories SET tab_closed = 0");
+          db.run("UPDATE repositories SET tab_closed = 1");
           db.close();
           return connection.end('{"error":"the lead\'s host failed"}\n');
         }
@@ -469,7 +469,7 @@ test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
   expect(missing.err).toContain("app");
 });
 
-test("repo rm stops when the daemon took the request and gave no reply, ends nothing itself and keeps the tab closed", async () => {
+test("repo rm stops when the daemon took the request and gave no reply, and leaves the lead and its tab to the daemon", async () => {
   await skel([], "y\n", onGitHub("simon/app"));
   for (const how of ["busy", "drops"] as const) {
     endLead = how;
@@ -479,18 +479,17 @@ test("repo rm stops when the daemon took the request and gave no reply, ends not
     });
     expect(refused.code).toBe(1);
     expect(refused.err).toBe(
-      "Skelcrew: the daemon didn't answer, so it may still be ending app's lead. If that fails, its tab opens again. Remove app again once it has.\n",
+      "Skelcrew: the daemon didn't answer, so app isn't removed. Remove it again in a moment.\n",
     );
     expect(readFileSync(join(home, "calls"), "utf8")).toBe("daemon end lead\n");
     expect(existsSync(clone("simon/app"))).toBe(true);
     const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-    expect(db.query("SELECT tab_closed FROM repositories").get()).toEqual({ tab_closed: 1 });
-    db.run("UPDATE repositories SET tab_closed = 0");
+    expect(db.query("SELECT tab_closed FROM repositories").get()).toEqual({ tab_closed: 0 });
     db.close();
   }
 });
 
-test("repo rm puts the tab back when the daemon answers in a way sc can't read", async () => {
+test("repo rm leaves the tab open when the daemon answers in a way sc can't read", async () => {
   await skel([], "y\n", onGitHub("simon/app"));
   endLead = "garbled";
   const failed = await skel(["repo", "rm", "app"]);
@@ -503,14 +502,13 @@ test("repo rm puts the tab back when the daemon answers in a way sc can't read",
   db.close();
 });
 
-test("repo rm that fails keeps a tab opened again meanwhile open", async () => {
+test("repo rm that the daemon fails leaves the tab to the daemon, so it never reopens a newer close", async () => {
   await skel([], "y\n", onGitHub("simon/app"));
   const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  db.run("UPDATE repositories SET tab_closed = 1");
-  endLead = "reopened";
+  endLead = "fails";
   const failed = await skel(["repo", "rm", "app"]);
   expect(failed.err).toBe("Skelcrew: the lead's host failed\n");
-  expect(db.query("SELECT tab_closed FROM repositories").get()).toEqual({ tab_closed: 0 });
+  expect(db.query("SELECT tab_closed FROM repositories").get()).toEqual({ tab_closed: 1 });
   db.close();
 });
 

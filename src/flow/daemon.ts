@@ -48,7 +48,7 @@ import { beingRemoved, removalEnded, removeThread, stopThread } from "./events.t
 import { noCommits } from "./git.ts";
 import {
   closeExitedLeads,
-  endLeadOfClosedTab,
+  closeTabAndEndLead,
   lastOpened,
   leadAgent,
   leadOf,
@@ -696,12 +696,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return {};
       case "end lead":
         return {
-          ended: await endLeadOfClosedTab(
+          ended: await closeTabAndEndLead(
             db,
             sessions,
             findRepository(db, request.repo),
             request.verb,
-            request.wasClosed,
           ),
         };
       // Says only yes or no, so a lead learns no other repository's name from it.
