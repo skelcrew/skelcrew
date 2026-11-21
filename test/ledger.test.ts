@@ -259,7 +259,8 @@ test("without a forge, the verdict is posted at once and brings the note with it
 // note, and the lead gets it only while the limit still holds the changes.
 test("posting the verdict brings the round limit's note, unless a submit came first", () => {
   const before = thread({ rounds: 3 });
-  const past = { ...before, ...reach(before, changes).change };
+  const onPr = { pr: 7, id: "9", verdict: "changes" as const, findings: changes.findings };
+  const past = { ...before, ...reach(before, changes).change, review_post: { ...onPr, round: 4 } };
   const { posting } = past;
   if (posting === null) throw new Error("the verdict saved nothing to post");
   const posted = verdictPosted(past, posting, 2000);
@@ -275,6 +276,12 @@ test("posting the verdict brings the round limit's note, unless a submit came fi
   expect(verdictPosted(resubmitted, posting, 2000).note).toBeNull();
   const decided = { ...past, ...limitDecided(past, 1500) };
   expect(verdictPosted(decided, posting, 2000).note).toBeNull();
+  // A forge that can't edit, with nothing new said, would leave the older round's review on the
+  // PR. The record then says the PR shows that round, and the lead hears nothing of this one.
+  const older = { ...past, review_post: { ...onPr, round: 3 } };
+  const stale = verdictPosted(older, posting, 2000);
+  expect(stale.note).toBeNull();
+  expect(stale.change.round_log?.at(-1)).toMatchObject({ kind: "posted", round: 3 });
 });
 
 // The round limit needs you until you or the lead decide, and each review reaching it asks again.

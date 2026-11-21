@@ -748,7 +748,8 @@ function postVerdict(db: Database, sessions: string, folder: string): Promise<st
     if (posting === null) return null;
     const { commit, check, description, review } = posting;
     try {
-      if (review !== null) await postOrEdit(db, folder, review.pr, review.commit, review);
+      if (review !== null)
+        await postOrEdit(db, folder, review.pr, review.commit, review, posting.note !== null);
       await setStatus(db, repositoryOf(db, thread), { commit, state: check, description });
     } catch (error) {
       return errorText(error);
@@ -813,7 +814,8 @@ export async function retryPost(db: Database, sessions: string, folder: string):
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
 // the latest round rather than a review per round. It edits the review an earlier round posted.
 // When the forge can't edit it, it posts a new one only if the verdict or findings changed, so a
-// round that found the same again adds nothing. One deleted from the PR is posted again. The rounds one by one stay in the thread's log.
+// round that found the same again adds nothing, unless `noted`: the lead is to hear of this
+// round's review, so the PR must show it, not an older round's. One deleted from the PR is posted again. The rounds one by one stay in the thread's log.
 // What it posted is saved on the thread at once, so a later round edits it though this one is
 // cancelled. Two rounds of a thread never post at once: a round's review starts only once the
 // round before has ended, posting included, so the later round always reads what the earlier
@@ -824,10 +826,11 @@ async function postOrEdit(
   pr: number,
   commit: string,
   review: { verdict: "approve" | "changes"; body: string; findings: string[]; round: number },
+  noted: boolean,
 ): Promise<void> {
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
-  const { verdict, findings } = review;
+  const { verdict, findings, round } = review;
   // The body ends with a hidden marker naming the thread. The forge keeps HTML comments, and
   // gives them back unchanged, so Skelcrew can find its review in its copy of the PR.
   const marker = `<!-- skelcrew:review thread=${thread.folder} -->`;
@@ -849,7 +852,7 @@ async function postOrEdit(
       : [];
   const already = marked.find((posted) => posted.text.trim() === body.trim());
   if (already) {
-    const saved = reviewOnPr({ pr, id: already.id, verdict, findings });
+    const saved = reviewOnPr({ pr, id: already.id, verdict, findings, round });
     record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
     return;
   }
@@ -869,13 +872,13 @@ async function postOrEdit(
     earlier !== null &&
     earlier.verdict === verdict &&
     JSON.stringify(earlier.findings) === JSON.stringify(findings);
-  if (edit === "can't" && same) return;
+  if (edit === "can't" && same && !noted) return;
   const id =
     edited && editing !== null
       ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
-  record(db, folder, reviewOnPr({ pr, id, verdict, findings }), `${how} on PR #${pr}`);
+  record(db, folder, reviewOnPr({ pr, id, verdict, findings, round }), `${how} on PR #${pr}`);
 }
 
 // Brings Skelcrew's copy of the PR up to date with its forge, for a review the thread saved no

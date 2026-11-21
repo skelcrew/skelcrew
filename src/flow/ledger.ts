@@ -10,13 +10,15 @@ import { roundLimit } from "../config.ts";
 import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
-// Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict and findings it
-// last said, so each round edits that one review, or posts again only when what it says changed.
+// Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict, findings and
+// round it last said, so each round edits that one review, or posts again only when what it says
+// changed. The round is null in a row from before Skelcrew kept it.
 export const ReviewPost = z.object({
   pr: z.number(),
   id: z.string(),
   verdict: z.enum(["approve", "changes"]),
   findings: z.array(z.string()),
+  round: z.number().nullable().default(null),
 });
 export type ReviewPost = z.infer<typeof ReviewPost>;
 
@@ -439,13 +441,17 @@ export const reviewOnPr = (post: ReviewPost) => ({ review_post: post }) satisfie
 const noteNow = (round: Round, note: string | null) =>
   round.held !== null && !round.limit_decided ? note : null;
 
-// The saved verdict went on the forge: it is no longer to post, and the record keeps the round it
-// put on the PR and its note. Returns the change and the note for the lead, which the caller saves
-// with it, so the two can't come apart.
+// The saved verdict went on the forge: it is no longer to post, and the record keeps the round of
+// the review the PR now shows and the note. Returns the change and the note for the lead, which the
+// caller saves with it, so the two can't come apart. The note goes only when the PR shows this
+// verdict's own round, so it never names a review the PR doesn't show.
 export function verdictPosted(thread: Thread, posting: Posting, now: number) {
-  const round = posting.review?.round ?? null;
+  const shown = posting.review;
+  const onPr = thread.review_post;
+  const round = shown !== null && onPr?.pr === shown.pr ? onPr.round : null;
   const change = logged(thread, { kind: "posted", at: now, round, note: posting.note });
-  return { change, note: noteNow(roundOf(thread), posting.note) };
+  const showsIt = shown !== null && round === shown.round;
+  return { change, note: showsIt ? noteNow(roundOf(thread), posting.note) : null };
 }
 
 // Returns what a reviewer said in words: its body, then each finding numbered, for the builder

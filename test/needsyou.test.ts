@@ -304,6 +304,8 @@ const changesAsked = `const changesAsked = () => {
   const o = verdictReached(t, reached);
   record(db, "app-12", { ...o.change, noting: null }, o.why);
   const unposted = noting();
+  const round = thread().posting.review.round;
+  record(db, "app-12", { review_post: { pr: 7, id: "9", verdict: "changes", findings: ["Fix it."], round } });
   const saved = thread();
   const posted = verdictPosted(saved, saved.posting, Date.now());
   record(db, "app-12", posted.change);
