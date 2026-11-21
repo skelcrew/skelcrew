@@ -908,10 +908,19 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   return `Removed ${name} and Skelcrew's clone of it.`;
 }
 
+// How long to wait for the daemon to end a lead, in milliseconds. Tests set
+// SKELCREW_END_LEAD_WAIT_MS shorter, so they don't each wait a minute.
+const endLeadWait = z.coerce
+  .number()
+  .min(0)
+  .catch(60_000)
+  .parse(process.env.SKELCREW_END_LEAD_WAIT_MS ?? 60_000);
+
 // Closes a repository's tab, then ends its lead and waits for it, for closing and removing a
 // repository, which `verb` names for what it says when it fails. The daemon ends the lead in the
 // lead's own turn, so a start asked for meanwhile comes after it. With no daemon, nothing else
-// starts the lead, so it is ended here. When the lead can't be ended, its tab goes back as it
+// starts the lead, so it is ended here. A daemon too slow to answer may still end it, so this
+// ends nothing and throws, as ending it here too could end a lead reopened meanwhile. When the lead can't be ended, its tab goes back as it
 // was and this throws, rather than hiding a repository whose lead still runs. A repository you
 // open again before its lead ends keeps its lead, and this throws too. A lead on a plugin no
 // longer installed may still run there, so the repository waits until that host is back. The tab
@@ -936,11 +945,15 @@ async function closeTabAndEndLead(
   db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
   let ended: boolean;
   try {
-    const { ask } = await import("../client.ts");
+    const { askInTime } = await import("../client.ts");
     const fullName = `${found.owner}/${found.repo}`;
-    const reply = await ask({ command: "end lead", repo: fullName, verb }, 60_000);
+    const reply = await askInTime({ command: "end lead", repo: fullName, verb }, endLeadWait);
+    if (reply === "slow")
+      throw new Error(
+        `the daemon didn't answer in time, so ${name}'s lead may still be ending. ${verb === "close" ? "Close" : "Remove"} ${name} again in a moment.`,
+      );
     const Reply = z.union([z.object({ ended: z.boolean() }), z.object({ error: z.string() })]);
-    const answer = reply === null ? null : Reply.parse(reply);
+    const answer = reply === "absent" ? null : Reply.parse(reply.reply);
     if (answer !== null && "error" in answer) throw new Error(answer.error);
     ended = answer?.ended ?? (await endLeadOfClosedTab(db, sessions, found, verb));
   } catch (error) {

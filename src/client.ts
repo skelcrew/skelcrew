@@ -8,23 +8,35 @@ import { capture } from "./run.ts";
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
-export function ask(request: DaemonRequest, timeout: number): Promise<unknown> {
+export async function ask(request: DaemonRequest, timeout: number): Promise<unknown> {
+  const answer = await askInTime(request, timeout);
+  return answer === "absent" || answer === "slow" ? null : answer.reply;
+}
+
+// Sends a request to the daemon, as ask does, but tells a daemon that took the request and didn't
+// answer in time, which is slow, from one that isn't there, which is absent.
+export function askInTime(
+  request: DaemonRequest,
+  timeout: number,
+): Promise<{ reply: unknown } | "absent" | "slow"> {
   return new Promise((done) => {
     const connection = createConnection(cliSocket());
-    // A daemon that doesn't answer in time is treated as one that isn't there.
-    const timer = setTimeout(() => connection.destroy(), timeout);
-    // A request and its reply are one JSON line each, so the reply is complete at its line end.
+    let slow = false;
+    const timer = setTimeout(() => {
+      slow = true;
+      connection.destroy();
+    }, timeout);
     let reply = "";
     connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
     connection.on("data", (data) => {
       reply += data.toString();
       if (reply.includes("\n")) connection.end();
     });
-    // A refused or broken connection is followed by close, which answers null.
     connection.on("error", () => {});
     connection.on("close", () => {
       clearTimeout(timer);
-      done(reply ? parseJson(reply) : null);
+      if (reply) done({ reply: parseJson(reply) });
+      else done(slow ? "slow" : "absent");
     });
   });
 }

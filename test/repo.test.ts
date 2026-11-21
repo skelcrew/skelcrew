@@ -35,6 +35,8 @@ const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 
 // What the fake daemon answers when asked for a lead.
 let daemonReply = "";
+// Whether the fake daemon takes a request to end a lead and never answers, as a busy one would.
+let busy = false;
 // Repositories the fake daemon hands back for plain sc to ask about their .agents/, in turn,
 // before it answers with the lead.
 let handBack: object[] = [];
@@ -50,6 +52,7 @@ function fake(name: string, body: string): void {
 beforeEach(async () => {
   daemonReply = '{"lead":"app-lead","repository":"simon/app"}';
   handBack = [];
+  busy = false;
   for (const remote of Object.keys(claimed)) delete claimed[remote];
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-repo-test-")));
   mkdirSync(join(home, "bin"));
@@ -75,7 +78,11 @@ beforeEach(async () => {
       // Plain sc asks what the daemon runs before anything else, which these tests don't follow.
       if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
       // Answers nothing, as no daemon would, so removing a repository ends its lead itself.
-      if (JSON.parse(data.toString()).command === "end lead") return connection.destroy();
+      if (JSON.parse(data.toString()).command === "end lead") {
+        appendFileSync(join(home, "calls"), "daemon end lead\n");
+        if (!busy) connection.destroy();
+        return;
+      }
       // sc repo asks the daemon to rename builders whose names it changed, which answers at once.
       if (JSON.parse(data.toString()).command === "rename builders") {
         appendFileSync(join(home, "calls"), "daemon rename builders\n");
@@ -451,6 +458,22 @@ test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
   const missing = await skel(["repo", "rm", "app"]);
   expect(missing.code).toBe(1);
   expect(missing.err).toContain("app");
+});
+
+test("repo rm stops when the daemon is too busy to end the lead, and ends nothing itself", async () => {
+  await skel([], "y\n", onGitHub("simon/app"));
+  busy = true;
+  writeFileSync(join(home, "calls"), "");
+  const refused = await skel(["repo", "rm", "app"], "", home, { SKELCREW_END_LEAD_WAIT_MS: "300" });
+  expect(refused.code).toBe(1);
+  expect(refused.err).toBe(
+    "Skelcrew: the daemon didn't answer in time, so app's lead may still be ending. Remove app again in a moment.\n",
+  );
+  expect(readFileSync(join(home, "calls"), "utf8")).toBe("daemon end lead\n");
+  expect(existsSync(clone("simon/app"))).toBe(true);
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  expect(db.query("SELECT tab_closed FROM repositories").get()).toEqual({ tab_closed: 0 });
+  db.close();
 });
 
 test("repo rm refuses while the repository has live threads or queued tasks, and names them", async () => {
