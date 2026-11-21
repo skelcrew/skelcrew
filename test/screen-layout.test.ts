@@ -1,9 +1,9 @@
-// How the screen is laid out: the sidebar's width and edge at every size, the top row, and the
-// footer with its keys and load.
+// How the screen is laid out: the sidebar's width and the boxes round the two sides at every
+// size, the top row, and the footer with its keys and load.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sidebarFor } from "../src/screen/screen.ts";
+import { panes, sidebarFor } from "../src/screen/screen.ts";
 import {
   attachTo,
   click,
@@ -11,7 +11,6 @@ import {
   fixedLoad,
   footer,
   given,
-  headerOf,
   home,
   noteRefreshes,
   onLead,
@@ -28,7 +27,6 @@ import {
   sidebarRefreshedTwice,
   sql,
   startTest,
-  tabRow,
   terminal,
   tmux,
   toSecondThread,
@@ -39,22 +37,23 @@ import {
 beforeEach(startTest);
 afterEach(endTest);
 
-// The widths of the sidebar, the right side and the footer, as tmux has them.
+// The widths of the pad at the left, the sidebar, the right side, the pad at the right and the
+// footer, as tmux has them.
 const widths = () => tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
 
 test("resizing the terminal resizes the agent, and the sidebar with the list's rule", async () => {
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "26 79\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "27 77\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "36 107\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "37 105\n",
     "the agent to resize",
   );
-  expect(widths()).toEqual(["42", "107", "150"]);
+  expect(widths()).toEqual(["1", "40", "105", "1", "150"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   await toSecondThread();
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "6");
@@ -64,65 +63,46 @@ test("resizing the terminal resizes the agent, and the sidebar with the list's r
 test("on a narrow terminal the sidebar narrows, so the right side keeps half of it", async () => {
   open("lead", "one", "xterm-256color", "80");
   await ready("lead");
-  await until(() => widths()[0] === "39", "the sidebar to take what is left");
-  expect(widths()).toEqual(["39", "40", "80"]);
+  await until(() => widths()[1] === "37", "the sidebar to take what is left");
+  expect(widths()).toEqual(["1", "37", "38", "1", "80"]);
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "100", "-y", "30");
-  await until(() => widths()[0] === "40", "the sidebar to widen with the terminal");
-  expect(widths()).toEqual(["40", "59", "100"]);
-  // Every line keeps its edge, at the sidebar's new width.
-  await until(() => edge(30, 100).every((columns) => columns === "▕ "), "the sidebar's edge");
+  await until(() => widths()[1] === "38", "the sidebar to widen with the terminal");
+  expect(widths()).toEqual(["1", "38", "57", "1", "100"]);
+  // Both boxes stay whole, at the sidebar's new width.
+  await until(() => boxesWhole(30, 100), "the boxes");
 });
 
-// The columns at the sidebar's edge, on each line of a screen `height` rows high under the header
-// and above the footer, its line and the gap tmux leaves above them: the sidebar's line, where the lines between
-// lists join it, then tmux's border. Blank past the end of a line that holds nothing else.
-// The sidebar is as wide as the list on a terminal `width` columns wide, or narrower, so the
-// right side keeps half of it.
-const sidebarAt = sidebarFor;
-const edge = (height: number, width = 120) =>
-  seen()
+// Returns whether the boxes round the two sides are whole on a screen `height` rows high and
+// `width` wide: on each row, the lines at the sidebar's left, between the two sides and at the
+// right side's right, ┬ on the top row and ┴ on tmux's line above the footer. The sidebar is as
+// wide as the list on a terminal `width` columns wide, or narrower, so the right side keeps half
+// of it, and the line the sides share is right after it.
+const boxesWhole = (height: number, width = 120) => {
+  const lines = seen()
     .split("\n")
-    .slice(1, height - 3)
-    .map((line) => `${line[sidebarAt(width) - 1]}${line[sidebarAt(width)] ?? " "}`);
+    .slice(0, height - 1);
+  const at = (line: string) => `${line[1]}${line[sidebarFor(width)]}${line[width - 2]}`;
+  return lines.every((line, row) => {
+    const shown = at(line);
+    if (row === 0) return shown === "┬┬┬";
+    if (row === height - 2) return shown === "┴┴┴";
+    return shown === "│││";
+  });
+};
 
-test("the sidebar's line runs down to the footer, with a blank column before the agent", async () => {
+test("each side has a whole box, from the top row to the line above the footer, and the agent starts right inside its own", async () => {
   open("lead");
   await ready("lead");
-  expect(new Set(edge(30))).toEqual(new Set(["▕ "]));
+  await until(() => boxesWhole(30), "the boxes");
   expect(seen().split("\n")[1]?.indexOf("I am lead")).toBe(sidebar + 1);
+  // Past the corners, the top row and the line above the footer reach the terminal's edges.
+  for (const row of [0, 28]) {
+    const line = seen().split("\n")[row] ?? "";
+    expect(`${line[0]}${line[119]}`).toBe("──");
+  }
 });
 
-// Puts a tmux ahead of the real one that says it is this version, and is the real one for
-// everything else.
-function tmuxSays(version: string): void {
-  const real = Bun.which("tmux") ?? "tmux";
-  mkdirSync(join(home, "versioned"));
-  writeFileSync(
-    join(home, "versioned", "tmux"),
-    `#!/bin/sh\n[ "$1" = -V ] && echo "${version}" && exit 0\nexec ${real} "$@"\n`,
-    { mode: 0o755 },
-  );
-  given.before = `PATH=${join(home, "versioned")}:$PATH `;
-}
-
-// tmux before 3.6 refuses a blank border, and the screen would never open. There the border is
-// tmux's own thin line. A version that can't be read is taken as new.
-test.each([
-  ["tmux 3.5a", "single"],
-  ["tmux 3.4", "single"],
-  ["tmux 3.6", "spaces"],
-  ["tmux 3.6a", "spaces"],
-  ["tmux next-3.7", "spaces"],
-  ["tmux master", "spaces"],
-  ["tmux openbsd-7.6", "spaces"],
-])("with %p, the border before the agent is %p", async (version, border) => {
-  tmuxSays(version);
-  open("lead");
-  await ready("lead");
-  expect(tmux(screen, "show", "-gv", "pane-border-lines").out.trim()).toBe(border);
-});
-
-test("the sidebar's line stays whole however the terminal is resized", async () => {
+test("the boxes stay whole however the terminal is resized", async () => {
   open("lead");
   await ready("lead");
   for (const [width, height] of [
@@ -135,10 +115,10 @@ test("the sidebar's line stays whole however the terminal is resized", async () 
     tmux(terminal, "resize-window", "-t", "=one:", "-x", `${width}`, "-y", `${height}`);
     // Right after a resize you can see the old frame, cut to the new size.
     const whole = () =>
-      edge(height ?? 0, width).every((columns) => columns === "▕ ") &&
+      boxesWhole(height ?? 0, width) &&
       seen().split("○ lead").length === 2 &&
       seen().includes("⌥Q quit");
-    await until(whole, "the sidebar to be whole");
+    await until(whole, "the boxes to be whole");
   }
 });
 
@@ -149,13 +129,11 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "20", "-y", "30");
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
   }
-  // Right after a resize you can see the old frame, cut to the new size, and the row you are on
-  // can be drawn a moment after the rest. It must come back to the lead's.
+  // Right after a resize you can see the old frame, cut to the new size. tmux draws the boxes'
+  // lines at once, before the sidebar has drawn its rows at the new width, so the wait is for both,
+  // with you still on the lead's row.
   await until(
-    () =>
-      edge(30).every((columns) => columns === "▕ ") &&
-      seen().split("○ lead").length === 2 &&
-      onLead(),
+    () => boxesWhole(30) && seen().split("○ lead").length === 2 && onLead(),
     "the sidebar to be whole, on the lead's row",
   );
 });
@@ -192,7 +170,14 @@ test("the agent's height stays as you switch", async () => {
   open("lead");
   await ready("lead");
   const rightSide = () =>
-    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:.1`, "#{pane_height}").out.trim();
+    tmux(
+      screen,
+      "display",
+      "-p",
+      "-t",
+      `=${screenSessions()[0]}:.${panes.right}`,
+      "#{pane_height}",
+    ).out.trim();
   const heightOf = (file: string) => read(file).split(" ")[0] ?? "";
   await until(() => heightOf("lead.size") === rightSide(), "the lead at the right side's height");
   const height = heightOf("lead.size");
@@ -206,13 +191,14 @@ test("the agent's height stays as you switch", async () => {
 // The row above the footer, as you see it.
 const aboveFooter = () => (seen().split("\n")[28] ?? "").trimEnd();
 
-test("the footer runs across the screen under a thin line, with where you type, move and quit, then what Esc stops", async () => {
+test("the footer runs across the screen under the boxes' line, with where you type, move and quit, then what Esc stops", async () => {
   sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
   open("lead");
   await ready("lead");
   const lead = "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
-  expect(aboveFooter()).toBe("─".repeat(120));
+  expect(aboveFooter()).toMatch(/^─┴─+┴─+┴─$/);
+  expect(aboveFooter()).toHaveLength(120);
   press("M-S-Down");
   await until(
     () =>
@@ -252,14 +238,16 @@ test("the footer ends with the machine's own load, even with no thread working",
   expect(footer()).toBe("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
 });
 
-test("the header and the tabs share one row across the whole width, and the agent starts right under it", async () => {
+test("the header and the tabs share one row, and the agent starts right under it", async () => {
   open("lead");
   await ready("lead");
   await toSecondThread();
   const lines = seen().split("\n");
-  // Skelcrew and its version, then the tab straight after, with no edge across the row and
-  // nothing after the tab.
-  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew [^▕▏]* {4}app$/);
+  // Skelcrew in the top of the sidebar's box, and the tab in the top of the agent's, with only
+  // line after it.
+  expect(lines[0]?.trimEnd()).toMatch(/^─┬─ Skelcrew .* ─*┬ {2}app {2}─+┬─$/);
+  // The open tab's grey starts where the agent's text does, with its name two columns in.
+  expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
   expect(lines[1]).toContain("I am app-7");
 });
 
@@ -273,15 +261,23 @@ function checkoutAt(commit: string, changes = ""): void {
   given.before = `PATH=${join(home, "checkout")}:$PATH `;
 }
 
-test("the header says Skelcrew, in white, and the checkout's commit when no laptop sent you here", async () => {
+// The header, as it reads in the top of the sidebar's box, without the box's line around it, in a
+// terminal `width` columns wide.
+const header = (window = "one", width = 120) =>
+  (seen(window).split("\n")[0] ?? "")
+    .slice(2, sidebarFor(width))
+    .replace(/^─ /, "")
+    .replace(/ ─*$/, "");
+
+test("above the sidebar it says Skelcrew, in white, and the checkout's commit when no laptop sent you here", async () => {
   checkoutAt("6f1c2ab");
   open("lead");
   await ready("lead");
-  await until(() => headerOf() === "  Skelcrew 6f1c2ab (checkout)", "the header");
+  await until(() => header() === "Skelcrew 6f1c2ab (checkout)", "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  const header = colours.split("\n")[0];
-  expect(header).toContain("\x1b[1m");
-  expect(header).toContain("38;5;231m");
+  const topRow = colours.split("\n")[0];
+  expect(topRow).toContain("\x1b[1m");
+  expect(topRow).toContain("38;5;231m");
 });
 
 // git gives a longer commit in a repository with many, or with core.abbrev set. In a terminal
@@ -299,11 +295,11 @@ test.each([
     " M src/main.ts",
     "a6bfe6fe1234567890a6bfe6fe1234567890abcd*",
   ],
-])("commit %p with changes %p shows in the header as %p", async (commit, changes, shown) => {
+])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
   checkoutAt(commit, changes);
   open("lead", "one", "xterm-256color", String(roomy));
   await ready("lead");
-  await until(() => headerOf() === `  Skelcrew ${shown}`, "the header");
+  await until(() => header("one", roomy) === `Skelcrew ${shown}`, "the header");
 });
 
 test("each terminal says where it came from, as they can come from different laptops", async () => {
@@ -312,36 +308,28 @@ test("each terminal says where it came from, as they can come from different lap
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
-  await until(
-    () => headerOf("one").startsWith("  Skelcrew 6f1c2ab (checkout) · s"),
-    "the first place",
-  );
-  await until(
-    () => headerOf("two") === "  Skelcrew 6f1c2ab (checkout)",
-    "the second header",
-    "two",
-  );
+  await until(() => header("one").startsWith("Skelcrew 6f1c2ab (checkout) · s"), "the first place");
+  await until(() => header("two") === "Skelcrew 6f1c2ab (checkout)", "the second header", "two");
 });
 
-test("the sidebar's edge runs from under the header down to the footer, at every width", async () => {
+test("the line the sides share runs from the top row down to the footer's line, at every width", async () => {
   open("lead");
   await ready("lead");
   // The sidebar narrows on a terminal too narrow for it beside half the terminal.
-  let edgeAt = sidebar - 1;
+  let lineAt = sidebar;
   const column = () =>
     seen()
       .split("\n")
-      .slice(1, 27)
-      .map((line) => line[edgeAt]);
-  await until(() => column().every((mark) => mark === "▕" || mark === "┤"), "the edge");
+      .slice(0, 29)
+      .map((line) => line[lineAt])
+      .join("");
+  const whole = `┬${"│".repeat(27)}┴`;
+  await until(() => column() === whole, "the line");
   for (const width of [150, 90, 120]) {
-    edgeAt = Math.min(sidebar, Math.floor((width - 1) / 2)) - 1;
+    lineAt = sidebarFor(width);
     tmux(terminal, "resize-window", "-t", "=one:", "-x", String(width), "-y", "30");
     // tmux stretches the sidebar for a moment before the screen's hook sets its width back.
-    await until(
-      () => column().every((mark) => mark === "▕" || mark === "┤"),
-      `the edge at ${width}`,
-    );
+    await until(() => column() === whole, `the line at ${width}`);
   }
 });
 
@@ -352,7 +340,7 @@ test("clicking the top row past the tabs, or turning the wheel over it, does not
   type("\x1b[<64;100;1M");
   await Bun.sleep(200);
   const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
-  expect(modes).toEqual(["0", "0", "0"]);
+  expect(modes).toEqual(["0", "0", "0", "0", "0"]);
   expect(scrolledBack()).not.toContain("1");
   expect(seen()).toContain("I am lead");
 });

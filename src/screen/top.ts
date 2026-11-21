@@ -1,9 +1,12 @@
-// The top row of the screen, a header across the whole width, above both the sidebar and the right
-// side: Skelcrew, its version and, on a remote, where it runs, then a tab for each repository.
+// The top row of the screen, which is also the top of the box round each side. Above the sidebar,
+// the header says Skelcrew, its version and, on a remote, where it runs. Above the right side, a
+// tab for each repository.
 import type { Tab } from "../list/rows.ts";
 import { fitted, removeControlCodes } from "./look.ts";
+import { dim, lit } from "./screen.ts";
 
-type Size = { left: number; width: number };
+// How wide the sidebar's pane and the right side's are, as tmux has them.
+type Size = { sidebar: number; right: number };
 
 // The sidebar's fixed colours of a tab's badge, as tmux names them.
 const tmuxColours = { green: "colour120", yellow: "colour221", red: "colour210" };
@@ -27,17 +30,22 @@ const escaped = (text: string) => text.replaceAll("#", "##").replaceAll("%", "%%
 // looks the same whatever your theme.
 const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 
-// Returns the start of the header and the columns it takes: Skelcrew's name, in line with the
+// Returns text in a colour, as a tmux format, for the lines of the boxes.
+const inColour = (colour: string, text: string) => `#[fg=${colour}]${text}#[default]`;
+
+// Returns the header above the sidebar's pane, `width` columns wide, set in the top of the
+// sidebar's box, whose lines are in `colour`: a stretch of line, Skelcrew's name in line with the
 // sidebar's marks, then dim the longest name of its version that fits, such as v0.4.2 or 6f1c2ab
-// (checkout), then, on a remote, a dot and where it runs. `where` is empty on this machine. It
-// comes from outside, so it is made safe as a title is. All of it fits in the sidebar's width,
-// stopping two columns before its edge, as the sidebar's text does, so the tabs keep the most room.
+// (checkout), then, on a remote, a dot and where it runs, then line out to the end. `where` is
+// empty on this machine. It comes from outside, so it is made safe as a title is. What follows the
+// name stops a column before the end, so a space always parts it from the corner.
 // The place gives way first. A version is never cut, as half a number would be a different one.
-function header(where: string, left: number, versions: string[]): { text: string; size: number } {
-  // "  Skelcrew" takes ten columns. The sidebar's edge is two columns left of the agent, and text
-  // stops two before it, so what follows the name has `room`.
+function header(where: string, width: number, versions: string[], colour: string): string {
+  // "─ Skelcrew" takes ten columns, and the space at the end one more. A sidebar too narrow for
+  // them has only its line, so the row stays as wide as the terminal.
   const nameWidth = 10;
-  const room = Math.max(left - 4 - nameWidth, 0);
+  if (width < nameWidth + 1) return inColour(colour, "─".repeat(Math.max(width, 0)));
+  const room = Math.max(width - 1 - nameWidth, 0);
   // With no name that fits, the shortest stands in, so the place doesn't take the room either.
   const fits = (name: string) => Bun.stringWidth(name) + 1 <= room;
   const shown = versions.find(fits) ?? versions.at(-1) ?? "";
@@ -46,34 +54,35 @@ function header(where: string, left: number, versions: string[]): { text: string
   // " · " before the place takes three columns.
   const place = fitted(removeControlCodes(where), Math.max(room - 3 - taken, 0));
   const about = `${number}${place && ` · ${place}`}`;
-  const dim = about && `#[fg=brightblack]${escaped(about)}#[default]`;
-  return { text: `  ${skelName}${dim}`, size: nameWidth + Bun.stringWidth(about) };
+  const rest = Math.max(width - nameWidth - Bun.stringWidth(about) - 1, 0);
+  const dimmed = about && `#[fg=brightblack]${escaped(about)}#[default]`;
+  return `${inColour(colour, "─ ")}${skelName}${dimmed} ${inColour(colour, "─".repeat(rest))}`;
 }
 
 // Returns the tabs as a tmux format, given each repository's tab, the open one's owner/name, and
-// the columns left for them. Each tab is the repository's name, with its badge when threads in it
-// need you or are ready, such as site •2 •1, and two spaces on each side, so the open one's grey
-// reads as a tab. The open one is bold white on the grey a picked row
-// has, and the others dim. When they don't fit, those furthest from the open one give way, and a
-// dim count says how many. Each tab is a range of its own, named by its place in the list, so a
-// click on it can say which it was.
-function drawTabs(tabs: Tab[], open: string, width: number): string {
+// the room they have, with how many columns they take, which is never more than the room. Each
+// tab is the repository's name, with its badge when threads in it need you or are ready, such as
+// site •2 •1, and two spaces on each side, so the open one's grey reads as a tab. The open one is
+// bold white on the grey a picked row has, and the others dim. When they don't fit, those
+// furthest from the open one give way, and a dim count says how many. Each tab is a range of its
+// own, named by its place in the list, so a click on it can say which it was.
+function drawTabs(tabs: Tab[], open: string, width: number): { text: string; width: number } {
   // Starts from the open tab, or the first when none is open.
   const at = Math.max(
     tabs.findIndex((tab) => tab.fullName === open),
     0,
   );
-  // Returns a tab's text: its name, with its badge.
-  const label = (tab: Tab) =>
-    `  ${tab.name}${dots(tab)
+  // Returns a tab's name and badge as you read them, such as site •2 •1.
+  const plain = (tab: Tab) =>
+    `${tab.name}${dots(tab)
       .map(([, text]) => ` ${text}`)
-      .join("")}  `;
+      .join("")}`;
   // Returns how many columns the tab at a place in the list takes, or none past either end.
   const tabWidth = (index: number) => {
     const tab = tabs[index];
-    return tab ? Bun.stringWidth(label(tab)) : 0;
+    return tab ? 4 + Bun.stringWidth(plain(tab)) : 0;
   };
-  const all = tabs.reduce((sum, tab) => sum + Bun.stringWidth(label(tab)), 0);
+  const all = tabs.reduce((sum, _, index) => sum + tabWidth(index), 0);
   // The count of those left out goes at the end, and needs its room kept.
   const room = all <= width ? width : width - `  +${tabs.length}`.length;
   // Takes in tabs out from the open one, one on each side at a time, until neither side fits
@@ -87,35 +96,71 @@ function drawTabs(tabs: Tab[], open: string, width: number): string {
     if (left && first > 0 && used + tabWidth(first - 1) <= room) used += tabWidth(--first);
     else left = false;
   }
+  const out = tabs.length - (last - first + 1);
+  const count = out > 0 ? `  +${out}` : "";
   // Tabs have greys of their own, so they stand apart from the sidebar and the agent: the open
   // one bold white on a dark grey, the others dim on a lighter one. A tab's dots are in the
   // sidebar's fixed colours, as a theme's own can look like another colour. A dim count of
   // those left out ends the row.
+  const openStyle = "#[bg=colour234,fg=colour231,bold]";
   const shown = tabs.slice(first, last + 1).map((tab, offset) => {
-    const here = first + offset === at;
-    const style = here ? "#[bg=colour234,fg=colour231,bold]" : "#[bg=colour237,fg=colour245]";
+    const style = first + offset === at ? openStyle : "#[bg=colour237,fg=colour245]";
     const badge = dots(tab)
       .map(([colour, text]) => ` #[fg=${tmuxColours[colour]}]${text}`)
       .join("");
     return `#[range=user|${first + offset}]${style}  ${escaped(tab.name)}${badge}  #[default]#[norange]`;
   });
-  const out = tabs.length - shown.length;
-  const count = out > 0 ? `  +${out}` : "";
-  return `${shown.join("")}${count && `#[fg=brightblack]${count}#[default]`}`;
+  if (used + count.length <= width)
+    return {
+      text: `${shown.join("")}${count && `#[fg=brightblack]${count}#[default]`}`,
+      width: used + count.length,
+    };
+  // Too little room even for the open tab and the count: the count goes, then the open tab's
+  // spaces, and then its name and badge are cut with …, so the row never runs past the terminal
+  // and clips the box's corner. Cut, its badge loses its colours.
+  const tab = tabs[at];
+  if (!tab) return { text: "", width: 0 };
+  if (used <= width) return { text: shown.join(""), width: used };
+  const cut = fitted(plain(tab), Math.max(width, 0));
+  const text = cut && `#[range=user|${at}]${openStyle}${escaped(cut)}#[default]#[norange]`;
+  return { text, width: Bun.stringWidth(cut) };
 }
 
 // What the top row shows: the tabs and the open one's owner/name, the remote Skelcrew runs on, if
-// any, and the names of the version of the Skelcrew running here, longest first, such as v0.4.2.
-export type Top = { tabs: Tab[]; open: string; where: string; versions: string[] };
+// any, the names of the version of the Skelcrew running here, longest first, such as v0.4.2, and
+// whether your typing goes to the right side, whose box is then the lit one, and whether the right
+// side fills the whole terminal.
+export type Top = {
+  tabs: Tab[];
+  open: string;
+  where: string;
+  versions: string[];
+  typingRight: boolean;
+  fullScreen: boolean;
+};
 
-// Returns the top row of the screen as a tmux format, given what it shows, the sidebar's width
-// with its edge, `left`, and the right side's, `width`. tmux's one status line spans the whole
-// terminal, so the header starts it, and the tabs follow two columns after, in what is left. A
-// click on a tab still finds it, as tmux knows each tab's range wherever it is drawn. It reads
-// nothing, so what you see can be tested without a terminal.
+// Returns the top row of the screen as a tmux format, given what it shows and how wide the
+// sidebar's pane and the right side's are. tmux's one status line spans the whole terminal. It
+// draws the top of the box round each side, which tmux's lines between the panes can't: ┬ above
+// each of those lines, the header set in the sidebar's top, the tabs in the right side's, and a
+// stub of dim line above each pad at the outer edges, as tmux's line under the panes has. The box
+// your typing goes to is lit, the line the sides share always, and the rest is dim, as tmux draws
+// the lines below. The tabs start where the right side does. While the right side fills the
+// terminal, tmux hides the panes that draw the box's lines, so the whole row is lit, as the one
+// mark left that your typing goes to the agent, with no corner over lines that aren't there. It
+// reads nothing, so what you see can be tested without a terminal.
 export function drawTop(top: Top, size: Size): string {
-  const { left, width } = size;
-  const start = header(top.where, left, top.versions);
-  const room = Math.max(left + width - start.size - 2, 0);
-  return `${start.text}  ${drawTabs(top.tabs, top.open, room)}`;
+  const [left, right] = top.fullScreen ? [lit, lit] : top.typingRight ? [dim, lit] : [lit, dim];
+  const [outer, corner] = top.fullScreen ? [lit, "─"] : [dim, "┬"];
+  const tabs = drawTabs(top.tabs, top.open, Math.max(size.right - 1, 0));
+  const after = "─".repeat(Math.max(size.right - tabs.width, 0));
+  return [
+    inColour(outer, "─"),
+    inColour(left, corner),
+    header(top.where, size.sidebar, top.versions, left),
+    inColour(lit, corner),
+    tabs.text,
+    inColour(right, `${after}${corner}`),
+    inColour(outer, "─"),
+  ].join("");
 }

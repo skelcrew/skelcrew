@@ -27,8 +27,6 @@ export const paint = (code: string, text: string) => `\x1b[${code}m${text}\x1b[2
 export const shade = "48;5;238";
 export const white = "1;38;5;231";
 export const greyOnShade = "38;5;250";
-// The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
-export const edge = "38;5;237";
 // The padding on each side, in columns, which also starts every heading and mark.
 export const pad = "  ";
 

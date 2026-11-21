@@ -21,6 +21,7 @@ import {
   home,
   labels,
   leaving,
+  litBox,
   onDetails,
   onLead,
   open,
@@ -55,12 +56,12 @@ test("shows the lead, then Needs you, Up next and the stages, beside the agent",
   open("lead");
   await ready("lead");
   const lines = seen().split("\n");
-  const left = (y: number) => lines[y]?.slice(0, sidebar - 1).trimEnd();
+  const left = (y: number) => lines[y]?.slice(2, sidebar).trimEnd();
   // The lead is at the top of the sidebar, below a blank line, then a blank line, Needs you, Up
   // next and the six stages, with only Building open.
   expect(left(1)).toBe("");
   expect(lines[1]).toContain("I am lead");
-  expect(left(2)).toMatch(/^ ▹ ○ lead\b/);
+  expect(left(2)).toMatch(/^ ▸ ○ lead\b/);
   expect(left(3)).toBe("     running");
   expect(left(4)).toBe("");
   expect(left(5)).toBe("   Needs you 0");
@@ -73,7 +74,8 @@ test("shows the lead, then Needs you, Up next and the stages, beside the agent",
   expect(left(13)).toBe("");
   expect(left(14)).toBe(" 3 Reviewing 0");
   expect(left(17)).toBe(" 6 Done      1");
-  expect(selected()).toMatch(/^▹ ○ lead\b/);
+  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  await until(() => litBox() === "right", "the right side's box to light up");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
   expect(panes.sort()).toEqual(["app-12", "app-7", "lead"]);
@@ -311,7 +313,8 @@ test("the screen starts on the lead's row, even while a task needs you", async (
   open("lead");
   await ready("lead");
   await until(() => seen().includes("● APP-12"), "APP-12 under Needs you");
-  expect(selected()).toMatch(/^▹ ○ lead\b/);
+  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  await until(() => litBox() === "right", "the right side's box to light up");
 });
 
 test("updates on its own, with needs you in the sidebar", async () => {
@@ -323,7 +326,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("● APP-12");
   expect(seen()).toContain("Needs you 1");
   // Its tab says so too, as other repositories' tabs would.
-  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew [^▕▏]* {4}app •1$/);
+  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^─┬─ Skelcrew .* ─*┬ {2}app •1 {2}─+┬─$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => !seen().includes("APP-7"), "the done thread to go");
 });
@@ -457,7 +460,8 @@ for (const extended of [false, true])
     // tmux before 3.5 has only the xterm form of an extended key.
     const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
     expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
-    expect(selected()).toMatch(/^▹ ○ lead\b/);
+    expect(selected()).toMatch(/^▸ ○ lead\b/);
+    await until(() => litBox() === "right", "the right side's box to light up");
     expect(seen()).toContain("I am lead");
   });
 
@@ -490,7 +494,7 @@ test("the mouse wheel and a drag over the agent leave you typing to it", async (
   type("\x1b[<0;60;5M\x1b[<32;62;6M\x1b[<0;62;6m");
   await Bun.sleep(200);
   const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
-  expect(modes).toEqual(["0", "0", "0"]);
+  expect(modes).toEqual(["0", "0", "0", "0", "0"]);
   type("hello\r");
   await until(() => existsSync(join(home, "lead.typed")), "the typing");
 });
@@ -889,8 +893,9 @@ test("an agent's own title never reaches the terminal, even after switching", as
   expect(title()).toBe("Skelcrew");
 });
 
+// 22 columns leave the agent 9 inside its box, just enough for its line.
 test("a terminal too narrow for a sidebar still shows the agent", async () => {
-  open("lead", "one", "xterm-256color", "20");
+  open("lead", "one", "xterm-256color", "22");
   await until(() => seen().includes("I am lead"), "the agent");
   expect(seen()).not.toContain("failed");
 });
