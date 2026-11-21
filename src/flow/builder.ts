@@ -16,6 +16,7 @@ import {
 import { approvedAgents } from "../approved-agents.ts";
 import { agentRole, checkFlow, repositoryCommands, roundLimit, sessionHost } from "../config.ts";
 import { flowRoles } from "../flows.ts";
+import { errorText } from "../format.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
@@ -23,7 +24,6 @@ import { needsInstall } from "../plugins/repository.ts";
 import { filesFor, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
 import { capture } from "../run.ts";
-import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";

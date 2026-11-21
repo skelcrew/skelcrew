@@ -21,6 +21,7 @@ import { closeRepo, removeRepo } from "../flow/repo.ts";
 import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { cloneOf, liveThreads } from "../flow/thread.ts";
+import { errorText } from "../format.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
 import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
@@ -37,8 +38,7 @@ import { updateNotice } from "../machine/update.ts";
 import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
-import { shownVersions } from "../version.ts";
+import { versionLabels } from "../version.ts";
 import { dropAnswerOption, dropAsk, escapeTime, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, pad, removeControlCodes } from "./look.ts";
@@ -545,7 +545,7 @@ export async function runSidebar(
       tabs,
       open: empty ? "" : `${open.owner}/${open.repo}`,
       where,
-      versions: shownVersions(),
+      versions: versionLabels(),
       typingRight,
       fullScreen,
     };

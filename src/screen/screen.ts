@@ -6,9 +6,9 @@ import { applyConfig, attachCommand } from "../agents/sessions.ts";
 import { envWithoutTmux, screenSocket } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
+import { windowTitle } from "../format.ts";
 import { listShare, listWidth } from "../list/layout.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
-import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 import {
   answeredFolder,

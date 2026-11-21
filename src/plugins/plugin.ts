@@ -168,10 +168,9 @@ export const installedPlugins = (db: Database): Plugin[] =>
     .all()
     .map((row) => Plugin.parse(row));
 
-// Returns the installed plugin of that name, or throws when there is none.
 export function findPlugin(db: Database, name: string): Plugin {
   const found = installedPlugins(db).find((plugin) => plugin.name === name);
-  if (!found) throw new Error(`there is no plugin named ${name}: sc plugins lists them`);
+  if (!found) throw new Error(`there is no plugin named ${name}: sc plugin ls lists them`);
   return found;
 }
 
@@ -201,16 +200,12 @@ export function commandFor(name: string, words: string[]) {
   return { argv, env };
 }
 
-// The error when a plugin's call exits with code 2, which means the plugin needs its setup
-// again. That happens when its sign-in lapsed, or when GitHub's app isn't on the repository. The
-// message names the command that fixes it. `plugin` lets sc run that setup itself when you are at
-// a terminal.
 export class SetupNeeded extends Error {
   constructor(
     readonly plugin: string,
     reason: string,
   ) {
-    super(`${plugin} failed: ${reason}. Run sc setup ${plugin} to set it up again.`);
+    super(`${plugin} failed: ${reason}. Run sc plugin setup ${plugin} to set it up again.`);
   }
 }
 

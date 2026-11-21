@@ -7,8 +7,8 @@ import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
+import { errorText } from "../format.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { waitsOnFirstCheck } from "./decide.ts";
 import { leadOf } from "./lead.ts";
 import {

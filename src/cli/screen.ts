@@ -3,17 +3,18 @@
 import { usage } from "./input.ts";
 
 export async function leadCommand(list: boolean, from?: string): Promise<void> {
-  const { attachToLead, upInBackground } = await import("../attach.ts");
+  const { attachToLead } = await import("../attach.ts");
   const { openDb } = await import("../db.ts");
   const { bringInFrom, checkoutTop, repositories } = await import("../flow/repo.ts");
   const { originHere } = await import("../machine/origin.ts");
+  const { ensureDaemon } = await import("../machine/service.ts");
   const { firstRun, install, installFinished } = await import("../machine/setup.ts");
   if (installFinished()) firstRun(from);
   else install(from, true);
-  await upInBackground();
+  await ensureDaemon();
   const origin = originHere();
   if (from === undefined && origin === null && checkoutTop() !== null) {
-    const { toRun } = await import("../say.ts");
+    const { toRun } = await import("../format.ts");
     const steps = toRun(["git remote add origin <url>", "git push -u origin HEAD"]);
     console.log(`This git repository has no remote. To add a remote and push it:\n${steps}`);
     console.log("Then run sc again.");

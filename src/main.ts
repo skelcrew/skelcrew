@@ -4,20 +4,20 @@ import { runByAgent } from "./agents/sandbox.ts";
 import { agentCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
 import { usage } from "./cli/input.ts";
 import { machineCommand } from "./cli/machine.ts";
-import { oldPluginCommand, pluginCommand } from "./cli/plugins.ts";
+import { installCommand, pluginCommand } from "./cli/plugins.ts";
 import { repoCommand } from "./cli/repos.ts";
 import { leadCommand, screenCommand } from "./cli/screen.ts";
 import { lsCommand, psCommand, showCommand, taskCommand } from "./cli/tasks.ts";
 import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
+import { errorText } from "./format.ts";
 import { help } from "./help.ts";
 import { outdated, outOfDate, remote, serverName, unfinished } from "./machine/remote.ts";
-import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   "--list": "showing the list",
-  restart: "restarting the engine",
+  restart: "restarting the daemon",
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",
@@ -27,12 +27,7 @@ const agentRefusals: Record<string, string> = {
   sidebar: "showing the sidebar",
   list: "showing a list",
   install: "setting up this machine",
-  add: "adding a plugin",
-  remove: "removing a plugin",
-  update: "updating a plugin",
-  setup: "setting up a plugin",
-  plugins: "listing plugins",
-  "plugin install": "installing a plugin",
+  "plugin add": "adding a plugin",
   "plugin update": "updating a plugin",
   "plugin setup": "setting up a plugin",
   "plugin rm": "removing a plugin",
@@ -137,14 +132,9 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "merge":
       return mergeCommand(words);
     case "install":
-    case "add":
-    case "remove":
-    case "update":
-    case "setup":
-    case "plugins":
-      return pluginCommand(words, json);
+      return installCommand(words.slice(1));
     case "plugin":
-      return oldPluginCommand(words, json);
+      return pluginCommand(words.slice(1), json);
     default:
       usage(first);
   }

@@ -154,7 +154,7 @@ console.log(JSON.stringify({ decided: thread().limit_decided, needsYou: needsYou
 });
 
 // The lead's own mark is still owed once you install the plugin, so the instruction goes first
-// and keeps it, however often the engine starts while the plugin is gone.
+// and keeps it, however often the daemon starts while the plugin is gone.
 test("a missing host plugin puts its instruction before the lead's mark, once", () => {
   const seen = inProcess(`
 record(db, "app-12", { session: "s", host: "gone", host_id: "gone-app-12", needs_you_for: "apply the fix in #463" });

@@ -27,6 +27,7 @@ import {
 import { agentRole } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { builtInFlowText } from "../flows.ts";
+import { errorText, toRun } from "../format.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
@@ -43,7 +44,6 @@ import {
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
-import { errorText, toRun } from "../say.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
@@ -494,11 +494,11 @@ function oldRemoteOf(
   return { old, current, url: url.slice(0, at) + current + url.slice(at + old.length) };
 }
 
-// Asks the engine to rename each running builder on a plugin's host by its title as it is now, as
-// adding or removing a repository can give another's name its owner or take it away. The engine
-// does it, so a host that fails says so in the engine's log, not here among sc repo's output. The
-// engine answers before renaming, so a slow host never holds sc repo up. With no engine running,
-// nothing is renamed now, and the engine renames them all as it starts.
+// Asks the daemon to rename each running builder on a plugin's host by its title as it is now, as
+// adding or removing a repository can give another's name its owner or take it away. The daemon
+// does it, so a host that fails says so in the daemon's log, not here among sc repo's output. The
+// daemon answers before renaming, so a slow host never holds sc repo up. With no daemon running,
+// nothing is renamed now, and the daemon renames them all as it starts.
 async function renameBuilders(): Promise<void> {
   // Imported here, as the client's replies are checked with what sc repo ls lists, which
   // imports this file, and a loop of imports leaves one of them unset as the other loads.
@@ -594,15 +594,6 @@ const starterConfig = [
   "",
 ].join("\n");
 
-// Names the forge's plugin under plugins: in the checkout's skelcrew.yaml and pins it in its
-// skelcrew.lock, as sc add does, so every repository has the same standard setup. The forge is
-// found from the remote alone: GitHub's plugin for github.com, and none for a host Skelcrew has
-// no plugin for. A skelcrew.yaml that names any plugin already chose them, so it is left alone.
-// A skelcrew.lock that pins the plugin already keeps its pin, which sc add would move to the
-// version installed here: only skelcrew.yaml gains its name, and the plugin is installed at that
-// pin as sc install does, after asking, so the repository comes in with its forge. A plugin that
-// can't be added, or that you say no to, is only reported, as the rest of sc init still counts. Returns what it
-// changed: "named" for skelcrew.yaml alone, "pinned" for both files, or null for neither.
 function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
   const onGitHub = parseRemote(remote);
   if (onGitHub?.host !== "github.com") return null;
@@ -617,11 +608,10 @@ function addForgePlugin(root: string, remote: string): "named" | "pinned" | null
     const shown = gitHubShown(`${onGitHub.owner}/${onGitHub.repo}`);
     if (addRepositoryPlugin(githubPlugin, shown) !== null) return "pinned";
   } catch (error) {
-    // The error says what to do, such as which line to add by hand.
     console.log(`Skelcrew couldn't add ${githubPlugin}: ${errorText(error)}.`);
     return null;
   }
-  console.log(`skelcrew.yaml names no forge plugin yet. sc add ${githubPlugin} adds it.`);
+  console.log(`skelcrew.yaml names no forge plugin yet. sc plugin add ${githubPlugin} adds it.`);
   return null;
 }
 
