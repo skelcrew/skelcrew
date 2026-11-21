@@ -449,11 +449,11 @@ test("a PR no longer in the forge's copy shows the link saved on its row", () =>
   );
 });
 
-// A queued task says it is up next, its place, and what it waits on, under its title.
-test("the pane of a queued task says it is up next and what it waits on", () => {
+// A queued task says it is in the task queue, its place, and what it waits on, under its title.
+test("the pane of a queued task says it is in the task queue and what it waits on", () => {
   const queued: Row = {
     ...row,
-    section: "up next",
+    section: "task queue",
     mark: { sign: "○", colour: "dim" },
     says: "3rd in line",
     colour: "dim",
@@ -463,7 +463,7 @@ test("the pane of a queued task says it is up next and what it waits on", () => 
   };
   const waiting: Details = { ...details, view: { ...details.view, prPage: null, pr: null } };
   const lines = plain(drawPane(queued, waiting, null, 50, 30).lines);
-  const at = lines.indexOf("Up next · 3rd in line");
+  const at = lines.indexOf("Task queue · 3rd in line");
   expect(at).toBeGreaterThan(0);
   expect(lines[at + 1]).toBe("3rd in line: 4 of 4 builders busy");
 });
@@ -472,10 +472,10 @@ test("the pane of a queued task says it is up next and what it waits on", () => 
 // brings a paused task back, is never cut off.
 test("a queued task's wait reason wraps whole in a narrow pane", () => {
   const waits = "2nd in line: app-21 waits for its issue's claim to reach the tracker";
-  const queued: Row = { ...row, section: "up next", says: "2nd in line", place: 2, waits };
+  const queued: Row = { ...row, section: "task queue", says: "2nd in line", place: 2, waits };
   const waiting: Details = { ...details, view: { ...details.view, prPage: null, pr: null } };
   const lines = plain(drawPane(queued, waiting, null, 30, 40).lines);
-  const at = lines.indexOf("Up next · 2nd in line");
+  const at = lines.indexOf("Task queue · 2nd in line");
   expect(lines.slice(at + 1, at + 4)).toEqual([
     "2nd in line: app-21 waits for",
     "its issue's claim to reach the",

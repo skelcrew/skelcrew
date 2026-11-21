@@ -63,15 +63,16 @@ const keyPattern = new RegExp(
 );
 // The keys the screen's tmux sends the sidebar from anywhere: Alt with an arrow or a digit, a
 // click, and a message such as a click on a tab. Any other key was typed into the sidebar.
-const altPattern = new RegExp(`^${esc}(\\[1;3[AB]|\\[1;4[A-D]|[1-6]|\\[<|\\])`);
+const altPattern = new RegExp(`^${esc}(\\[1;3[AB]|\\[1;4[A-D]|[0-6]|\\[<|\\])`);
 // A press of the mouse, with its button, column and line, counted from 1. A release ends in m,
 // and does nothing.
 const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // The keys the sidebar acts on, by what they do. The Alt ones come from the screen's tmux, from
 // anywhere. The plain ones come only while your typing goes to the sidebar. Alt with a digit and
-// the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte from anywhere,
-// to bring your typing here, and Shift-Enter as CSI-u, only while your typing is here already.
-// `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain Enter.
+// the digit alone open or close the task queue or a stage. The screen's tmux sends Ctrl-\'s byte
+// from anywhere, to bring your typing here, and Shift-Enter as CSI-u, only while your typing is
+// here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
+// Enter.
 const keyNames: Record<string, string> = {
   "\x1c": "to sidebar",
   "\x1b[13;2u": "full screen",
@@ -98,25 +99,26 @@ const keyNames: Record<string, string> = {
 
 // The keys the footer shows while your typing goes to the sidebar, where the list's keys work
 // without Alt. Enter says what it does on the row: to the lead on the lead's row, open/close on a
-// stage's heading, none on the heading of Needs you or Up next, which never close, attach where it
-// attaches to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter
-// or `a` attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued task in Up next, and s, f or m show
-// only where the row can be started, or queued, started now over limits.threads, or merged. A request of the lead's offers y and
-// n, which answer it, in place of Enter.
+// section's heading, none on the heading of Needs you, which never closes, attach where it attaches
+// to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter or `a`
+// attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued
+// task in the task queue, and s, f or m show only where the row can be
+// started, or queued, started now over limits.threads, or merged.
+// A request of the lead's offers y and n, which answer it, in place of Enter.
 function sidebarFooter(row: Row): string {
-  if (row.part === "lead") return "↑↓ move  ⏎ to lead  ⇧⏎/a full screen  1-6 stages  ⌥Q quit";
-  if (row.part === "request") return "↑↓ move  y yes  n no  1-6 stages  ⌥Q quit";
+  if (row.part === "lead") return "↑↓ move  ⏎ to lead  ⇧⏎/a full screen  0-6 sections  ⌥Q quit";
+  if (row.part === "request") return "↑↓ move  y yes  n no  0-6 sections  ⌥Q quit";
   if (row.part === "heading") {
-    const fixed = row.section === "needs you" || row.section === "up next";
-    return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  1-6 stages  ⌥Q quit`;
+    const fixed = row.section === "needs you";
+    return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  0-6 sections  ⌥Q quit`;
   }
   const scroll = row.task ? " · pgup/pgdn scroll" : "";
-  const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
+  const reorder = row.section === "task queue" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const now = row.startNow ? "  f start now" : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `↑↓ move  ${enter}${scroll}  1-6 stages${reorder}${start}${now}${merge}  ⌥Q quit`;
+  return `↑↓ move  ${enter}${scroll}  0-6 sections${reorder}${start}${now}${merge}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
@@ -199,14 +201,14 @@ export async function runSidebar(
   const rightPane = `=${session}:.${panes.right}`;
   let tty = paneTty(agents, rightPane);
   // The list's rows: every row, those that show, which are the lead's and those of the open
-  // sections, the row you are on among those and how far the sections scrolled. Needs you and
-  // Up next are always open. Of the stages, Building, Reviewing and Checks start open, as that is
-  // where the work under way is. The sections you open or close stay so, whichever repository
-  // you move to, and so does a whole Backlog once you asked for it.
+  // sections, the row you are on among those and how far the sections scrolled. Needs you is always
+  // open, and the task queue, Building, Reviewing and Checks start open, as that is where the work
+  // under way is, and what starts next. The sections you open or close stay so, whichever
+  // repository you move to, and so does a whole Backlog once you asked for it.
   let all: Row[] = [];
   let rows: Row[] = [];
-  const opened = new Set<Section>(["needs you", "up next", "building", "reviewing", "checks"]);
-  // What Up next's heading says of the builders, read with the rows.
+  const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
+  // What Task queue's heading says of the builders, read with the rows.
   let builders = "";
   let wholeBacklog = false;
   let here = 0;
@@ -546,11 +548,11 @@ export async function runSidebar(
       by === 1 ? starts.find((at) => at > here) : starts.filter((at) => at < mine).at(-1);
     if (next !== undefined) moveTo(next);
   };
-  // Opens or closes a stage. Needs you and Up next never close, as they are where you must look.
-  // Opening one moves you to its first row, so its heading and first rows show. Closing the one
-  // you are in moves you to its heading, as your row hides.
+  // Opens or closes a section. Needs you never closes, as it is where you must look. Opening one
+  // moves you to its first row, so its heading and first rows show. Closing the one you are in
+  // moves you to its heading, as your row hides.
   const toggle = (section: Section) => {
-    if (section === "needs you" || section === "up next") return;
+    if (section === "needs you") return;
     const inside = rows[here]?.section === section;
     const closing = opened.delete(section);
     if (!closing) opened.add(section);
@@ -581,7 +583,7 @@ export async function runSidebar(
   // You stay on its row, and the footer says its place. A paused task has no place until sc start
   // queues it, so the footer says that instead.
   const reorder = async (row: Row, by: -1 | 1) => {
-    if (row.task === null || row.section !== "up next") return;
+    if (row.task === null || row.section !== "task queue") return;
     if (row.place === null) {
       said = `${row.name} is paused: sc start ${row.name} brings it back`;
       return;
@@ -611,13 +613,13 @@ export async function runSidebar(
     shown = refused;
   };
 
-  // Opens the row you are on, as Enter does in the list. On the lead's row it gives your typing
-  // to the lead, and on a heading it opens or closes its stage. On a task at work, the builder
-  // takes the right side and your typing, until Ctrl-\ brings back its details, or the right side
-  // says why it can't. `zoom`, from Shift-Enter or `a`, gives the lead or the builder the whole
-  // terminal, and does nothing on a row Enter doesn't attach on. Up next says what the task waits
-  // on. Backlog asks to start the task, and the `… more` row shows every issue. Ready and Done
-  // open the PR, or copy its link. A ready task whose builder needs you reaches the builder
+  // Opens the row you are on, as Enter does in the list. On the lead's row it gives your typing to
+  // the lead, and on a heading it opens or closes its stage. On a task at work, the builder takes
+  // the right side and your typing, until Ctrl-\ brings back its details, or the right side says
+  // why it can't. `zoom`, from Shift-Enter or `a`, gives the lead or the builder the whole
+  // terminal, and does nothing on a row Enter doesn't attach on. Task queue says what the task
+  // waits on. Backlog asks to start the task, and the `… more` row shows every issue. Ready and
+  // Done open the PR, or copy its link. A ready task whose builder needs you reaches the builder
   // instead, so one Enter reaches what it waits on.
   const enter = (zoom = false) => {
     const row = rows[here];
@@ -637,8 +639,8 @@ export async function runSidebar(
       asking = { question: row.start, row: row.name, offer: "start" };
       return;
     }
-    // A task up next has no builder running yet, so the footer says what it waits on.
-    if (row.section === "up next") {
+    // A task in the task queue has no builder running yet, so the footer says what it waits on.
+    if (row.section === "task queue") {
       said = row.waits;
       return;
     }
@@ -729,8 +731,10 @@ export async function runSidebar(
       return refresh();
     }
     if (button && column && line) return click(button, Number(column), Number(line));
-    // 1 to 6, with Alt or without, open or close the stages, in the order they show.
+    // 0, with Alt or without, opens or closes the task queue, and 1 to 6 the stages, in the
+    // order they show.
     const bare = key.startsWith(esc) ? key.slice(1) : key;
+    if (bare === "0") return toggle("task queue");
     const stage = /^[1-6]$/.test(bare) ? ListStage.options[Number(bare) - 1] : undefined;
     if (stage) return toggle(stage);
     if (name === "enter" || name === "full screen") return enter(name === "full screen");

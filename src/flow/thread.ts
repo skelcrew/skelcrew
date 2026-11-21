@@ -8,7 +8,13 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { listSessions, renameSession } from "../agents/sessions.ts";
 import { savedJson, taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
-import { type Host, hostNamed, pluginHost, unknownQuestion } from "../plugins/runtime.ts";
+import {
+  type Host,
+  hostNamed,
+  type PluginHost,
+  pluginHost,
+  unknownQuestion,
+} from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { threadTask } from "./copy.ts";
 import { findRepository } from "./repo.ts";
@@ -288,6 +294,25 @@ export type Thread = z.infer<typeof Thread>;
 // Returns the harness the thread's builder runs on, for starting it again and typing into it.
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
 
+// Returns the sessions on a plugin's host whose labels say they are the thread's builder, for
+// finding a builder whose ID Skelcrew doesn't have. A host can still list an old one that
+// ended beside one that runs, so every match is given. The builder's
+// task label is its thread's name when it started: its repository's short name or, once another
+// repository shares that, its owner and name, then its task's ID. Either is matched whole, so
+// task 12 never takes the builder of task other-12. The case is ignored, as a label is lowercase
+// while a builder started before held its repository's name as it was.
+export async function labelledBuilders(host: PluginHost, thread: Thread) {
+  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`].map(
+    (name) => name.toLowerCase(),
+  );
+  return (await listSessions(host)).filter(
+    ({ labels }) =>
+      labels?.role === "builder" &&
+      labels.repository === fullNameOf(thread) &&
+      names.includes(labels.task?.toLowerCase() ?? ""),
+  );
+}
+
 // Returns the host the thread's builder session runs on and its ID there, for everything that
 // reaches the builder. A stopped thread has no session, and is looked for on tmux, where nothing
 // of it runs. Throws when its host is a plugin no longer installed, as it can't be reached.
@@ -303,19 +328,9 @@ export async function builderSession(
   if (host === null) throw new Error(hostGone(thread));
   if (thread.host_id !== null || typeof host === "string")
     return { host, id: thread.host_id ?? thread.folder };
-  // The builder's task label is its thread's name when it started: its repository's short name
-  // or, once another repository shares that, its owner and name, then its task's ID. Either is
-  // matched whole, so task 12 never takes the builder of task other-12. The case is ignored, as
-  // a label is lowercase while a builder started before held its repository's name as it was.
-  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`].map(
-    (name) => name.toLowerCase(),
-  );
-  const found = (await listSessions(host)).find(
-    ({ labels }) =>
-      labels?.role === "builder" &&
-      labels.repository === fullNameOf(thread) &&
-      names.includes(labels.task?.toLowerCase() ?? ""),
-  );
+  // One that runs is the builder, before any that ended.
+  const matches = await labelledBuilders(host, thread);
+  const found = matches.find(({ running }) => running) ?? matches[0];
   if (!found) return { host, id: thread.folder };
   const now = record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
   // A short title given while its ID was unknown found nothing to rename, so its labels may
