@@ -129,7 +129,7 @@ export async function startOn(
   from?: string,
   short?: string,
   flow?: string,
-  now?: boolean,
+  now?: true,
 ): Promise<string> {
   const reply = await request({
     command: "start",
@@ -138,7 +138,7 @@ export async function startOn(
     ...(from ? { from } : {}),
     ...(short ? { short } : {}),
     ...(flow ? { flow } : {}),
-    ...(now ? { now: true as const } : {}),
+    ...(now ? { now } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }

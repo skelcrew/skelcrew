@@ -745,7 +745,7 @@ async function threadCommand(args: string[]): Promise<void> {
     return;
   }
   if (!asking && command === "start" && task && (words.length === 0 || from)) {
-    console.log(await startOn(...task, from, short, flow, nowAt !== -1));
+    console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true));
     return;
   }
   // --from names the branch an issue's thread starts from. A task with no issue has no such
