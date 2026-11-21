@@ -418,7 +418,9 @@ test("writes down the full commit and checkout it started from", async () => {
 // `hold-fetch` is there. The yes's first push files the task, and as it starts the task, its
 // second takes the task from the backlog and its third, after its thread is recorded, ends that
 // claim. It leaves `held` there once it holds, and `held-<n>` once it holds after push n, and
-// lets go once the file that holds it goes or names another push.
+// lets go once the file that holds it goes or names another push. While `fail-push` is there, a
+// push reaches the remote but fails on its way back, and asking the remote after it fails too, as
+// when the remote goes out of reach.
 function holdGit(): void {
   const real = Bun.which("git") ?? "git";
   const holdWhile = (file: string) =>
@@ -434,7 +436,9 @@ case " $* " in
       touch "$HOME/held" "$HOME/held-$n"
       while [ "$(cat "$HOME/hold-push" 2>/dev/null)" = "$n" ]; do sleep 0.1; done
     fi
+    [ -e "$HOME/fail-push" ] && exit 1
     exit $code ;;
+  *" ls-remote "*) [ -e "$HOME/pushes" ] && [ -e "$HOME/fail-push" ] && exit 1 ;;
   *" fetch "*) [ -e "$HOME/pushes" ] && [ -e "$HOME/hold-fetch" ] && { ${holdWhile("hold-fetch")}; } ;;
 esac
 exec ${real} "$@"
@@ -537,6 +541,59 @@ test("a stop after a yes's start recorded its thread tells the lead, starting no
       text: expect.stringMatching(
         /^Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export\? It had done it already: Started APP-T1\b/,
       ),
+    },
+  ]);
+}, 60_000);
+
+// The push that files the task reached the remote, but its answer and the lookup after it failed,
+// so Skelcrew can't tell whether the task is filed. The yes is kept, and the daemon's next start
+// finds the task filed, starts it once, and tells the lead it started.
+test("a yes whose filing's outcome is unknown keeps its request, and starts the task after a restart", async () => {
+  setUp();
+  addRepository("app");
+  holdGit();
+  serve();
+  await untilAnswers();
+  await until(() => existsSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app")));
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
+    'Start a new task: CSV export?', 1)`),
+  );
+  writeFileSync(join(home, "fail-push"), "");
+  expect(await ask({ command: "answer", repo: "simon/app", id: 1, yes: true })).toHaveProperty(
+    "error",
+  );
+  expect(onDb((db) => db.query("SELECT answered, outcome FROM lead_requests").all())).toEqual([
+    { answered: expect.any(Number), outcome: null },
+  ]);
+  expect(onDb((db) => db.query("SELECT task, request FROM filing_tries").all())).toEqual([
+    { task: "t1", request: 1 },
+  ]);
+  const unsure = onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all());
+  expect(unsure).toEqual([
+    {
+      text: expect.stringMatching(
+        /^The human said yes in the list to your request: Start a new task: CSV export\? Skelcrew couldn't tell whether the task was filed: .* It finishes the yes, and tells you, when it next starts\.$/s,
+      ),
+    },
+  ]);
+  for (const run of running.splice(0)) await stop(run);
+  rmSync(join(home, "fail-push"));
+  serve();
+  await untilAnswers();
+  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
+  expect(
+    onDb((db) => db.query("SELECT task, short FROM task_threads WHERE title = 'CSV export'").all()),
+  ).toEqual([{ task: "t1", short: "CSV" }]);
+  expect(onDb((db) => db.query("SELECT 1 FROM filing_tries").all())).toEqual([]);
+  const notes = onDb((db) =>
+    db.query("SELECT text FROM notes WHERE text LIKE '%request%' ORDER BY id").all(),
+  );
+  expect(notes).toEqual([
+    ...unsure,
+    {
+      text: "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
     },
   ]);
 }, 60_000);

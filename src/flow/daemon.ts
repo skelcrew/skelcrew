@@ -27,7 +27,7 @@ import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
-import { filedTask, fileTask, unfileTask } from "./backlog.ts";
+import { filedTask, fileTask, filingUnsettled, unfileTask } from "./backlog.ts";
 import {
   bringBack,
   endEarlierBuilder,
@@ -534,13 +534,22 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       settle(repository, taken.id, `${yes} ${started}`);
       return started;
     } catch (error) {
+      // A filing that may have reached the remote keeps the request, answered, as its try's
+      // outcome is unknown. The daemon's next start settles it, through the same filing, and the
+      // lead hears then what came of the yes, rather than a failure that may not be one.
+      if (filingUnsettled(db, taken.id)) {
+        const unsure = `${yes} Skelcrew couldn't tell whether the task was filed: ${errorText(error)} It finishes the yes, and tells you, when it next starts.`;
+        noteForLead(db, sessions, repository, unsure);
+        throw error;
+      }
       settle(repository, taken.id, `${yes} It failed: ${errorText(error)}`);
       throw error;
     }
   };
-  // Does again each yes to a lead's request that the last stop of the daemon cut short. One whose
-  // start changed the task already is only reported, with what that start said. Doing any other
-  // again never starts a task twice, and the lead hears what doing it again said.
+  // Does again each yes to a lead's request that the last stop of the daemon cut short, or whose
+  // filing's outcome it couldn't learn. One whose start changed the task already is only
+  // reported, with what that start said. Doing any other again never starts a task twice, and the
+  // lead hears what doing it again said.
   const finishAnswers = async () => {
     for (const taken of answeredRequests(db)) {
       try {

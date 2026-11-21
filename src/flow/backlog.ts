@@ -195,6 +195,13 @@ export function fileTask(
   });
 }
 
+// Whether a filing for your yes to a lead's request left a try whose outcome Skelcrew couldn't
+// learn, such as a push that reached the remote but whose answer and lookup failed. Such a yes is
+// kept, so the next fileTask for it settles the try rather than leaving the task filed, unstarted.
+export function filingUnsettled(db: Database, request: number): boolean {
+  return db.query("SELECT 1 FROM filing_tries WHERE request = ?").get(request) !== null;
+}
+
 // Writes tasks into the daemon's copy of the repository's backlog, over any of the same name.
 function saveFiled(db: Database, repository: Repository, tasks: Filed[]): void {
   for (const t of tasks)
