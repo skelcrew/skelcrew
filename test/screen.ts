@@ -379,6 +379,11 @@ export function daemon(): void {
           now: z.boolean().default(false),
         })
         .parse(JSON.parse(data.toString()));
+      // Answers nothing, as no daemon would, so closing a repository ends its lead itself.
+      if (command === "end lead") {
+        connection.destroy();
+        return;
+      }
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
       if (command === "restart") {
         acted.push(`restart ${repo} ${task}`.trimEnd());

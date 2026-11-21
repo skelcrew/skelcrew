@@ -15,7 +15,6 @@ import { dirname, join, resolve } from "node:path";
 import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
-import { stopSession } from "../agents/sessions.ts";
 import {
   agentsAnswered,
   agentsOnDefaultBranch,
@@ -47,7 +46,7 @@ import { builtInRole } from "../roles.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
-import { closeIfExited, leadOf, leadSession } from "./lead.ts";
+import { closeIfExited, endLeadOfClosedTab, leadOf } from "./lead.ts";
 import { taskName } from "./thread.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
@@ -592,15 +591,6 @@ const starterConfig = [
   "",
 ].join("\n");
 
-// Names the forge's plugin under plugins: in the checkout's skelcrew.yaml and pins it in its
-// skelcrew.lock, as sc add does, so every repository has the same standard setup. The forge is
-// found from the remote alone: GitHub's plugin for github.com, and none for a host Skelcrew has
-// no plugin for. A skelcrew.yaml that names any plugin already chose them, so it is left alone.
-// A skelcrew.lock that pins the plugin already keeps its pin, which sc add would move to the
-// version installed here: only skelcrew.yaml gains its name, and the plugin is installed at that
-// pin as sc install does, after asking, so the repository comes in with its forge. A plugin that
-// can't be added, or that you say no to, is only reported, as the rest of sc init still counts. Returns what it
-// changed: "named" for skelcrew.yaml alone, "pinned" for both files, or null for neither.
 function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
   const onGitHub = parseRemote(remote);
   if (onGitHub?.host !== "github.com") return null;
@@ -615,11 +605,10 @@ function addForgePlugin(root: string, remote: string): "named" | "pinned" | null
     const shown = gitHubShown(`${onGitHub.owner}/${onGitHub.repo}`);
     if (addRepositoryPlugin(githubPlugin, shown) !== null) return "pinned";
   } catch (error) {
-    // The error says what to do, such as which line to add by hand.
     console.log(`Skelcrew couldn't add ${githubPlugin}: ${errorText(error)}.`);
     return null;
   }
-  console.log(`skelcrew.yaml names no forge plugin yet. sc add ${githubPlugin} adds it.`);
+  console.log(`skelcrew.yaml names no forge plugin yet. sc plugin add ${githubPlugin} adds it.`);
   return null;
 }
 
@@ -917,9 +906,14 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
 }
 
 // Closes a repository's tab, then ends its lead and waits for it, for closing and removing a
-// repository, which `verb` names for what it says when it fails. When the lead can't be ended,
-// its tab goes back as it was and this throws, rather than hiding a repository whose lead still
-// runs.
+// repository, which `verb` names for what it says when it fails. The daemon ends the lead in the
+// lead's own turn, so a start asked for meanwhile comes after it. With no daemon, nothing else
+// starts the lead, so it is ended here. When the lead can't be ended, its tab goes back as it
+// was and this throws, rather than hiding a repository whose lead still runs. A repository you
+// open again before its lead ends keeps its lead, and this throws too. A lead on a plugin no
+// longer installed may still run there, so the repository waits until that host is back. The tab
+// closes first, so an open screen moves on at once, and a lead the daemon is starting meanwhile
+// sees it closed once its session is there, and ends it.
 async function closeTabAndEndLead(
   db: Database,
   sessions: string,
@@ -927,31 +921,26 @@ async function closeTabAndEndLead(
   verb: "close" | "remove",
 ): Promise<void> {
   const { name } = found;
-  // A lead on a plugin no longer installed may still run there, using the clone, and forgetting
-  // the repository would forget how to reach it. So it waits until that host is back.
   const { host } = leadOf(db, found.owner, found.repo);
   if (hostNamed(db, sessions, host) === null)
     throw new Error(
       `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then ${verb} ${name}.`,
     );
-  // Its tab closes first, so an open screen moves on at once. A screen that found the lead
-  // gone while its tab was still there would take it for a crash and ask for it back. A lead the
-  // daemon is starting meanwhile sees the tab closed once its session is there, and ends it.
   const where = "WHERE owner = ? AND repo = ?";
   const tab = z
     .object({ tab_closed: z.number() })
     .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(found.owner, found.repo));
   db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
+  let ended: boolean;
   try {
-    // Then find the lead's session: its host, and its ID there, found by its labels when the
-    // daemon stopped before saving it. Looked up only now, so a lead whose start began before
-    // the tab closed is found here, on the host it started on, if its start doesn't end it.
-    const lead = await leadSession(db, sessions, found.owner, found.repo);
-    if (lead === null) throw new Error(`${name}'s lead's host went away while it was ${verb}d`);
-    // Ended as a thread's builder is, and waited for, as removing reads the clone next.
-    await stopSession(lead.host, lead.id);
+    const { ask } = await import("../client.ts");
+    const fullName = `${found.owner}/${found.repo}`;
+    const reply = await ask({ command: "end lead", repo: fullName, verb }, 60_000);
+    const Reply = z.union([z.object({ ended: z.boolean() }), z.object({ error: z.string() })]);
+    const answer = reply === null ? null : Reply.parse(reply);
+    if (answer !== null && "error" in answer) throw new Error(answer.error);
+    ended = answer?.ended ?? (await endLeadOfClosedTab(db, sessions, found, verb));
   } catch (error) {
-    // A host that can't be reached leaves the lead as it was, so its tab goes back as it was too.
     db.run(`UPDATE repositories SET tab_closed = ? ${where}`, [
       tab.tab_closed,
       found.owner,
@@ -959,4 +948,5 @@ async function closeTabAndEndLead(
     ]);
     throw error;
   }
+  if (!ended) throw new Error(`${name} was opened again meanwhile, so it isn't ${verb}d`);
 }

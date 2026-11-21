@@ -32,6 +32,7 @@ import { fetchBranch, noMaintenance } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus, needsYou } from "./status.ts";
+import { type BroughtBack, type Restarted, supervisor } from "./supervisor.ts";
 import { joinsQueue, joinTime } from "./task-queue.ts";
 import {
   builderHarness,
@@ -467,7 +468,18 @@ export function builderInstructions(
 // thread, which keeps it from then on: a conversation can't move to another harness. The session id is stored before the builder starts, so the builder can be
 // brought back after its session is gone. It starts on the session host your config names now,
 // which the thread keeps until its builder ends, and throws when that host isn't installed.
-export async function startBuilder(db: Database, sessions: string, thread: Thread): Promise<void> {
+export function startBuilder(db: Database, sessions: string, thread: Thread): Promise<void> {
+  return supervisor(thread.folder).start(builderHost(db, sessions, thread, false));
+}
+
+// Prepares the builder's start for startBuilder, then starts it on its host, in the turn its
+// supervisor gives. A restart is no new stretch of work, so it keeps the time the sidebar shows.
+async function startOnConfiguredHost(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+  restarting: boolean,
+): Promise<void> {
   const hostName = sessionHost();
   const host = hostNamed(db, sessions, hostName);
   if (host === null)
@@ -475,61 +487,49 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
       `your session host ${hostName} isn't installed as a runtime plugin that provides sessions`,
     );
 
-  // Pick the harness: your config's for a first start, the saved one for a builder coming back.
-  // A saved conversation the harness can't find starts afresh under a new id.
   const clone = cloneOf(thread);
   const stored = thread.session;
   const role = agentRole("builder", thread);
-  // The round limit is checked as the builder starts, so a bad one fails the new thread with
-  // the reason, rather than only its first review once the builder has worked a round.
   roundLimit(thread);
   const harness = stored === null ? harnessNamed(role.harness) : builderHarness(thread);
   const resume = stored === null ? null : harness.saved(thread.folder, clone, stored);
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    // The same task its reviewer gets: the words saved as it started, from Skelcrew's copy
-    // brought up to date just before, with the lead's messages after it. A builder starting afresh on a thread the lead
-    // already steered would otherwise be judged by changes it was never told.
     const { title, body } = threadTask(db, thread);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
-  // Once its session is saved, a restart brings the builder back, so a thread that came from
-  // the queue of limits.threads no longer needs its place there.
   record(db, thread.folder, { session, harness: harness.name, queued_since: null });
-  // Starting the builder starts a stretch of work, which the sidebar times.
-  db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
+  if (!restarting)
+    db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
   const files = filesFor(host);
   const { argv, env } = await harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
-    // A model name belongs to its harness, so a thread on another one than your config now
-    // names for builders gets that harness's default.
     model: role.harness === harness.name ? role.model : undefined,
     thread: clone,
-    // Gone once you remove the repository from Skelcrew, and bwrap can't mount what is missing.
     ...(existsSync(cloneDir(thread.owner, thread.repo))
       ? { origin: cloneDir(thread.owner, thread.repo) }
       : {}),
-    // In the system prompt rather than the first message, so the first message stays the
-    // task in its own words, and the builder still has it after a long conversation is
-    // compacted. It asks the builder to ask you only when it must: its question waits on a
-    // screen nobody watches.
-    // The build stage's role, from the task's flow, and its instructions come from the .agents/
-    // the task started with.
     system: builderInstructions(
       repositoryRole(flowRoles(thread).build, thread).instructions,
       repositoryCommands(thread),
     ),
-    // Its skills come from the same .agents/ as its role.
     skills: thread,
     files,
     ...start,
   });
   const on = { host, name: hostName };
-  await startOnHost(db, thread, on, { folder: clone, command: argv, env, files });
+  await startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
 }
+
+type BuilderSession = {
+  folder: string;
+  command: string[];
+  env: Record<string, string>;
+  files?: string | undefined;
+};
 
 // Starts the thread's builder in a session of its own on the host, running `command`, then
 // watches a moment for it to exit at once, so a broken start fails the thread with a reason. It
@@ -540,134 +540,78 @@ export function startOnHost(
   db: Database,
   thread: Thread,
   on: { host: Host; name: string },
-  session: {
-    folder: string;
-    command: string[];
-    env: Record<string, string>;
-    files?: string | undefined;
-  },
+  session: BuilderSession,
 ): Promise<void> {
-  return inTurn(thread.folder, async (earlier) => {
-    await earlier;
-    // The builder before it, if any, ran: this one hasn't yet.
-    seenRunning.delete(thread.folder);
-    const now = readThread(db, thread.folder);
-    if (now.status !== "working" && now.status !== "waiting")
-      throw new Error(`the thread was ${now.status} while its builder started`);
-    // Its title is read as it is now, as the lead may have given it a short title meanwhile.
-    const repository = `${thread.owner}/${thread.repo}`;
-    const title = sessionTitle(db, now);
-    const labels: Labels = {
-      repository,
-      role: "builder",
-      // A label names the task as Skelcrew stores it, in lowercase, as it finds the builder by it.
-      task: threadName(db, thread).toLowerCase(),
-      title,
-    };
-    // The host is saved before the session starts, so a daemon that stops in between finds the
-    // builder there by its labels, rather than starting it again elsewhere.
-    record(db, thread.folder, { host: on.name, host_id: null });
-    const id = await startSession(on.host, thread.folder, { ...session, labels });
-    forgetStatus(on.name, id);
-    record(db, thread.folder, { host_id: id });
-    // A short title given while the host started the session found no ID to rename, so the
-    // session's labels may name it by the old title.
-    const latest = readThread(db, thread.folder);
-    if (sessionTitle(db, latest) !== title) renameOnHost(db, thread.folder);
-    await checkAgentStarted(on.host, id, "builder");
-    seenRunning.add(thread.folder);
-  });
+  return supervisor(thread.folder).start({ start: () => startSessionOn(db, thread, on, session) });
 }
 
-// The threads whose builder Skelcrew saw running, by folder: one that started, or one found
-// still running, as the daemon started or by a poll. Only such a builder can end outside Skelcrew. One that
-// failed to start never ran, and its start marks the thread failed, a moment after its turn is
-// over: a poll in that moment must not take it for one that ended and mark it stopped.
-export const seenRunning = new Set<string>();
-
-// The starts and ends under way of each thread's builder, by its folder, each settling once it
-// is over.
-const turns = new Map<string, Promise<void>>();
-
-// Runs `work` as the next start or end of the thread's builder, and returns its outcome. `work`
-// is given what settles once every earlier one is over, and waits for it before it asks the
-// host: so one never finishes after a later one, and an end never misses a builder still
-// starting. Its place is taken at once, so the order is the order they were asked for.
-export function inTurn<T>(
-  folder: string,
-  work: (earlier: Promise<void>) => Promise<T>,
-): Promise<T> {
-  const earlier = turns.get(folder) ?? Promise.resolve();
-  const done = work(earlier);
-  const settled = done.then(
-    () => {},
-    () => {},
-  );
-  turns.set(folder, settled);
-  settled.then(() => {
-    if (turns.get(folder) === settled) turns.delete(folder);
-  });
-  return done;
-}
-
-// Ends the builder an earlier start of a thread starting over may have left running, before its
-// clone is set up again, so two builders never share the clone. Such as a builder a host started
-// whose answer was lost, so the thread failed without saving its ID: it is found by its labels.
-// The thread then has no host. A host that can't be reached throws and keeps the thread's host,
-// so the next start tries again.
-export async function endEarlierBuilder(
+async function startSessionOn(
   db: Database,
-  sessions: string,
   thread: Thread,
+  on: { host: Host; name: string },
+  session: BuilderSession,
 ): Promise<void> {
-  if (thread.host === null) return;
-  const { host, id } = await builderSession(db, sessions, thread);
-  if (await hasSession(host, id)) await stopSession(host, id);
-  record(db, thread.folder, { host: null, host_id: null });
+  const now = readThread(db, thread.folder);
+  if (now.status !== "working" && now.status !== "waiting")
+    throw new Error(`the thread was ${now.status} while its builder started`);
+  const repository = `${thread.owner}/${thread.repo}`;
+  const title = sessionTitle(db, now);
+  const labels: Labels = {
+    repository,
+    role: "builder",
+    task: threadName(db, thread).toLowerCase(),
+    title,
+  };
+  record(db, thread.folder, { host: on.name, host_id: null });
+  const id = await startSession(on.host, thread.folder, { ...session, labels });
+  forgetStatus(on.name, id);
+  record(db, thread.folder, { host_id: id });
+  const latest = readThread(db, thread.folder);
+  if (sessionTitle(db, latest) !== title) renameOnHost(db, thread.folder);
+  await checkAgentStarted(on.host, id, "builder");
 }
 
-// Brings back a thread's builder after the daemon restarts, or for sc start after sc stop. A
-// builder still running is left alone, on whichever host it runs. One whose session is gone or
-// ended is started again, on the host your config names now. Throws for a thread with no
-// session: the daemon stopped before its setup finished, and the error says to run sc start
-// again. A builder whose host plugin is gone may still run there, out of reach, so the thread
-// needs you rather than its builder starting a second time elsewhere. A plugin's host that
-// can't be reached for now, such as one restarting with the machine, is asked again every few
-// seconds for as long as the thread stays as it was: its builder may well still run there, and
-// the thread stays live meanwhile, with its round and messages waiting for it.
-// Gives back null once the builder runs, or, for a host plugin that is gone, why nobody can tell
-// whether it does.
-export async function bringBack(
-  db: Database,
-  sessions: string,
-  thread: Thread,
-): Promise<string | null> {
-  if (thread.session === null)
-    throw new Error("the daemon stopped while setting up the thread: run sc start again");
-  // A builder you stopped has no host left to look on.
-  if (thread.host !== null) {
-    if (hostNamed(db, sessions, thread.host) === null) {
-      // A thread marked already, such as after a restart while the plugin stays gone, keeps
-      // the mark it had after the instruction.
-      const had = markBeforeHost(thread.host, thread.needs_you_for);
-      const mark = hostMissing(thread.host, had === undefined ? thread.needs_you_for : had);
-      // A thread that needed you already brings the lead no note that it starts to, so the lead
-      // is told of the plugin itself, once, as the mark first asks for it.
-      if (needsYou(thread) && had === undefined)
-        noteForLead(
-          db,
-          sessions,
-          thread,
-          `${threadName(db, thread)} needs you: ${mark}`,
-          null,
-          true,
-        );
-      record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
-      typeLeadNotes(db, sessions);
-      return hostGone(thread);
-    }
-    // The plugin is back, such as after sc install, so the mark that asked for it goes, and any
-    // mark the thread had before comes back.
+// Returns how the thread's supervisor reaches its builder, wherever it runs now. A builder you
+// stopped has no host left to look on. A builder whose host plugin is gone may still run there,
+// out of reach, so the thread needs you rather than its builder starting a second time
+// elsewhere. Once the plugin is back, such as after sc install, the mark that asked for it goes,
+// and any mark the thread had before comes back. A plugin's host that can't be reached for now,
+// such as one restarting with the machine, is asked again: its builder may well still run there.
+function builderHost(db: Database, sessions: string, thread: Thread, restarting: boolean) {
+  const session = () => builderSession(db, sessions, readThread(db, thread.folder));
+  return {
+    start: () => startOnConfiguredHost(db, sessions, readThread(db, thread.folder), restarting),
+    runs: async () => {
+      if (readThread(db, thread.folder).host === null) return false;
+      const { host, id } = await session();
+      return agentRuns(host, id);
+    },
+    clear: async () => {
+      if (readThread(db, thread.folder).host === null) return;
+      const { host, id } = await session();
+      if (await hasSession(host, id)) await stopSession(host, id);
+    },
+    gone: () => markHostGone(db, sessions, readThread(db, thread.folder)),
+    ...(thread.host === "tmux"
+      ? {}
+      : {
+          retry: (error: unknown) => {
+            log(
+              db,
+              readThread(db, thread.folder),
+              `couldn't reach ${thread.host}, trying again: ${errorText(error)}`,
+            );
+          },
+        }),
+  };
+}
+
+// Marks a thread whose builder's host plugin is gone as needing you, and returns why nobody can
+// tell whether its builder runs, or null once its host is there. A thread marked already, such
+// as after a restart while the plugin stays gone, keeps the mark it had after the instruction.
+function markHostGone(db: Database, sessions: string, thread: Thread): string | null {
+  if (thread.host === null) return null;
+  if (hostNamed(db, sessions, thread.host) !== null) {
     const before = markBeforeHost(thread.host, thread.needs_you_for);
     if (before !== undefined)
       record(
@@ -676,35 +620,72 @@ export async function bringBack(
         { needs_you_for: before },
         `its session host ${thread.host} is back`,
       );
-    let told = false;
-    while (true) {
-      try {
-        // A session whose agent ended is ended too, so the new one can take its name.
-        const { host, id } = await builderSession(db, sessions, thread);
-        if (await agentRuns(host, id)) {
-          seenRunning.add(thread.folder);
-          return null;
-        }
-        // stopSession checks the host no longer has the session, so a host that says it ended
-        // one it didn't never gets a second builder beside it.
-        if (await hasSession(host, id)) await stopSession(host, id);
-        break;
-      } catch (error) {
-        // tmux failing isn't a host that will come back, and a thread stopped or ended
-        // meanwhile isn't this one's to bring back.
-        const now = readThread(db, thread.folder);
-        const live = now.status === "working" || now.status === "waiting";
-        const same = now.started === thread.started && live;
-        if (thread.host === "tmux" || !same) throw error;
-        // Its log says so once, not on every try.
-        if (!told) log(db, now, `couldn't reach ${thread.host}, trying again: ${errorText(error)}`);
-        told = true;
-        await Bun.sleep(hostRetry);
-      }
-    }
+    return null;
   }
-  await startBuilder(db, sessions, thread);
-  return null;
+  const had = markBeforeHost(thread.host, thread.needs_you_for);
+  const mark = hostMissing(thread.host, had === undefined ? thread.needs_you_for : had);
+  if (needsYou(thread) && had === undefined)
+    noteForLead(db, sessions, thread, `${threadName(db, thread)} needs you: ${mark}`, null, true);
+  record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
+  typeLeadNotes(db, sessions);
+  return hostGone(thread);
+}
+
+// Ends the builder an earlier start of a thread starting over may have left running, before its
+// clone is set up again, so two builders never share the clone. Such as a builder a host started
+// whose answer was lost, so the thread failed without saving its ID: it is found by its labels.
+// The thread then has no host. A host that can't be reached throws and keeps the thread's host,
+// so the next start tries again.
+export function endEarlierBuilder(db: Database, sessions: string, thread: Thread): Promise<void> {
+  if (thread.host === null) return Promise.resolve();
+  return supervisor(thread.folder).end({
+    stop: async () => {
+      const { host, id } = await builderSession(db, sessions, thread);
+      if (await hasSession(host, id)) await stopSession(host, id);
+      record(db, thread.folder, { host: null, host_id: null });
+    },
+  });
+}
+
+// Brings back a thread's builder after the daemon restarts, or for sc start after sc stop. A
+// builder still running is left alone, on whichever host it runs. One whose session is gone or
+// ended is started again, on the host your config names now. Throws for a thread with no
+// session: the daemon stopped before its setup finished, and the error says to run sc start
+// again. A host that can't be reached is asked again for as long as the thread stays as it was,
+// which stays live meanwhile, with its round and messages waiting for it. Gives back "back" once
+// the builder runs, or, for a host plugin that is gone, why nobody can tell whether it does. A
+// thread stopped, removed or started over meanwhile is no longer this one's: it gives back "not
+// wanted", having touched nothing of the thread as it is now.
+export async function bringBack(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<BroughtBack> {
+  if (thread.session === null)
+    throw new Error("the daemon stopped while setting up the thread: run sc start again");
+  return supervisor(thread.folder).bringBack(
+    builderHost(db, sessions, thread, false),
+    sameLiveThread(db, thread),
+  );
+}
+
+// Ends the builder's session and starts it again, resuming its conversation, for sc restart. A
+// stop or removal under way, or one that came while the session ended, wins, as does the thread
+// changing: then the builder stays ended. Its round goes on untouched, as nothing cut it short,
+// and the stretch of work the sidebar times goes on too.
+export function restartBuilder(db: Database, sessions: string, thread: Thread): Promise<Restarted> {
+  const same = sameLiveThread(db, thread);
+  const unchanged = () => same() && readThread(db, thread.folder).session === thread.session;
+  return supervisor(thread.folder).restart(builderHost(db, sessions, thread, true), unchanged);
+}
+
+// Returns whether the thread is still the live one it was, by when it started.
+function sameLiveThread(db: Database, thread: Thread) {
+  return () => {
+    const now = readThread(db, thread.folder);
+    const live = now.status === "working" || now.status === "waiting";
+    return now.started === thread.started && live;
+  };
 }
 
 // Throws when a builder of the thread still runs on any host, though the thread keeps none, for
@@ -737,9 +718,6 @@ export async function refuseSecondBuilder(
     );
   }
 }
-
-// How long bringBack waits before asking a plugin's host again, in milliseconds.
-const hostRetry = 5000;
 
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what
 // stopped it and start it again. The lead hears of it in a note that goes ahead of routine

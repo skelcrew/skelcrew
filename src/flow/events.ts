@@ -8,7 +8,7 @@ import { cloneDir } from "../paths.ts";
 import { closePr, failedLog } from "../plugins/ask.ts";
 import { capture } from "../run.ts";
 import { unassignIssue } from "./assign.ts";
-import { baseOf, inTurn, seenRunning } from "./builder.ts";
+import { baseOf } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
@@ -22,6 +22,7 @@ import {
 } from "./messages.ts";
 import { refreshClone } from "./repo.ts";
 import { endRound, resumeRound } from "./round.ts";
+import { supervisor } from "./supervisor.ts";
 import {
   builderSession,
   cloneOf,
@@ -71,20 +72,18 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
 // leaves such a thread alone, so its events are never told twice.
 export const tellingEvents = new Set<string>();
 
-// The threads sc rm is removing, by folder. Only sc rm ends them. Without a forge, sc rm deletes
-// the branch before it ends the thread, and a poll in between would end it as one whose branch
-// someone deleted. With one, a poll would tell the lead the PR sc rm closed was closed.
-export const removing = new Set<string>();
-
-// When each removal under way ends, whether it removed the thread or failed, by folder.
-const removals = new Map<string, Promise<void>>();
-
 // Waits until sc rm is no longer removing the thread in this folder, at once when it isn't. An
 // answer that comes while sc rm waits on the forge, such as the tracker's to a claim, waits for
 // it, then acts on the thread as the removal left it: done, or still queued when it failed.
 export function removalEnded(folder: string): Promise<void> {
-  return removals.get(folder) ?? Promise.resolve();
+  return supervisor(folder).removalEnded();
 }
+
+// Returns whether sc rm is removing the thread in this folder. Only sc rm ends it then. Without a
+// forge, sc rm deletes the branch before it ends the thread, and a poll in between would end it
+// as one whose branch someone deleted. With one, a poll would tell the lead the PR sc rm closed
+// was closed.
+export const beingRemoved = (folder: string) => supervisor(folder).state().removing;
 
 // Cancels the round, any typing under way into the thread's builder and any wake after a usage
 // limit, ends its session, and waits for the builder to exit, so nothing types into it or
@@ -126,6 +125,9 @@ async function endBuilder(
 }
 
 // Ends the builder's session for endBuilder, once its turn comes and the wake's typing is over.
+// Nothing is typed into it while its host ends it, and its messages are dropped only once it has
+// ended: one that can't be ended may still run, and keeps them. Only the session it ended is
+// forgotten: a builder started meanwhile keeps its own, and its thread isn't changed.
 function endInTurn(
   db: Database,
   sessions: string,
@@ -134,37 +136,23 @@ function endInTurn(
   waking: Promise<unknown>,
   then: () => void,
 ) {
-  // It takes its turn with the builder's other starts and ends, so a slow end never finishes
-  // after a later one, nor misses a builder still starting. Nothing is typed into it while its
-  // host ends it, and its messages are dropped only once it has ended: one that can't be ended
-  // may still run, and keeps them, typed in as before.
-  return inTurn(folder, (earlier) =>
-    pauseDelivering(db, folder, async () => {
-      await earlier;
+  return supervisor(folder).end({
+    hold: (work) => pauseDelivering(db, folder, work),
+    stop: async () => {
       await waking;
       const { host, id } = await builderSession(db, sessions, readThread(db, folder));
-      // The session as the thread now holds it, with an ID found by its labels saved.
       const ended = readThread(db, folder);
-      // Claude Code can outlive the end of its session for a few seconds, still writing in the
-      // clone.
       await stopSession(host, id);
       if (drop) stopDelivering(db, folder, true);
-      // Only the session it ended is forgotten: a builder started meanwhile keeps its own, and
-      // its thread isn't changed.
       db.transaction(() => {
         const now = readThread(db, folder);
         if (now.host !== ended.host || now.host_id !== ended.host_id) return;
         record(db, folder, { host: null, host_id: null });
         then();
       })();
-    }),
-  );
+    },
+  });
 }
-
-// The stops under way, by the folder of the thread whose builder they end, each settling once it
-// is over. A builder may submit while it exits, which is refused, as its thread is about to be
-// stopped.
-export const stopping = new Map<string, Promise<void>>();
 
 // Stops the thread for sc stop: ends its builder as a merge would, then marks it stopped, but
 // keeps its clone, branch and PR, so sc start can bring the builder back where it was. A submit,
@@ -204,32 +192,17 @@ export async function noticeEndedBuilder(
   sessions: string,
   thread: Thread,
 ): Promise<void> {
-  // Returns whether the thread still runs a builder this may look at: one with a host, whose
-  // setup is over, which nothing is starting or ending right now.
-  const ours = (now: Thread) =>
-    (now.status === "working" || now.status === "waiting") &&
-    now.host !== null &&
-    now.session !== null &&
-    now.started === thread.started &&
-    !stopping.has(now.folder) &&
-    !removing.has(now.folder);
-  if (!ours(thread)) return;
-  // The look takes its turn with the builder's starts and ends, so it never sees a session a
-  // start hasn't made yet.
-  const ended = await inTurn(thread.folder, async (earlier) => {
-    await earlier;
+  const ours = () => {
     const now = readThread(db, thread.folder);
-    if (!ours(now)) return false;
-    const { host, id } = await builderSession(db, sessions, now);
-    if (!(await agentRuns(host, id))) return seenRunning.has(now.folder);
-    seenRunning.add(now.folder);
-    return false;
-  }).catch(() => false);
-  if (!ended || !ours(readThread(db, thread.folder))) return;
+    const live = now.status === "working" || now.status === "waiting";
+    return live && now.host !== null && now.session !== null && now.started === thread.started;
+  };
+  const runs = async () => {
+    const { host, id } = await builderSession(db, sessions, readThread(db, thread.folder));
+    return agentRuns(host, id);
+  };
+  if (!(await supervisor(thread.folder).lookForEnd({ runs }, ours))) return;
   const name = threadName(db, thread);
-  // The stop ends what the session left behind, such as an agent's last screen. The lead's note
-  // is saved with the stop, so a daemon that stops in between never leaves a stopped thread no
-  // poll looks at again, and a lead that never hears of it.
   const note = `${name}'s builder ended outside Skelcrew, so the thread is stopped. sc start ${name} brings it back.`;
   await stopLiveThread(db, sessions, thread, false, "its builder ended outside Skelcrew", note);
 }
@@ -250,13 +223,7 @@ function stopLiveThread(
   why: string,
   note: string | null = null,
 ): Promise<void> {
-  const under = stopping.get(thread.folder);
-  if (under) return under;
-  const stop = stopNow(db, sessions, thread, drop, why, note).finally(() => {
-    if (stopping.get(thread.folder) === stop) stopping.delete(thread.folder);
-  });
-  stopping.set(thread.folder, stop);
-  return stop;
+  return supervisor(thread.folder).stop(() => stopNow(db, sessions, thread, drop, why, note));
 }
 
 // Ends the builder and marks the thread stopped, for stopLiveThread. The thread is marked only if
@@ -331,7 +298,7 @@ export async function endThread(
   const ours = () => {
     const now = readThread(db, thread.folder);
     if (now.started !== thread.started || now.status === "done") return false;
-    return removal || !removing.has(thread.folder);
+    return removal || !beingRemoved(thread.folder);
   };
   if (!ours()) return;
   await endBuilder(db, sessions, thread.folder, true);
@@ -382,36 +349,21 @@ export async function removeThread(
   reason: string | undefined,
   byLead: boolean,
 ): Promise<void> {
-  // Refuse what can't be removed, then stop a thread still running.
   const name = threadName(db, thread);
   if (thread.status === "done") throw new Error(`${name} is done already`);
-  // One removal at a time: a second would end the first one's wait for answers, such as a
-  // claim's, while the first still waits on the forge.
-  if (removing.has(thread.folder))
+  if (beingRemoved(thread.folder))
     throw new Error(`${name} is being removed already: wait for that sc rm to end`);
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && thread.session === null)
     throw new Error(`${name} is still setting up: remove it once its builder has started`);
-  // Until it ends, a poll leaves the thread to sc rm, which deletes its branch first.
-  removing.add(thread.folder);
-  const ended = Promise.withResolvers<void>();
-  removals.set(thread.folder, ended.promise);
-  try {
-    // A push under way would put back the branch, or open a PR after none was closed, so it is
-    // waited for, and the thread read again for the PR it may have opened.
+  await supervisor(thread.folder).remove(async () => {
     const pushing = endRound(thread.folder);
-    // A thread still running is stopped as sc stop does: live until its builder has ended, and
-    // as it was when that fails. A forge that fails after leaves the thread stopped, and you
-    // off its issue.
     if (live) await stopLiveThread(db, sessions, thread, true, "removing");
     else {
       await endBuilder(db, sessions, thread.folder, true);
       unassignIssue(db, thread.folder);
     }
     await pushing;
-    // Close the PR, which deletes its branch on the forge too. With no PR, as a repository with
-    // no forge has, delete the branch only if this thread pushed it: Skelcrew keeps a ref of each
-    // push in its clone, and a branch of the same name may be someone else's.
     const { pr, branch } = readThread(db, thread.folder);
     const repository = repositoryOf(db, thread);
     const skelcrewClone = cloneDir(thread.owner, thread.repo);
@@ -439,11 +391,7 @@ export async function removeThread(
     const note = `ended: you removed it${closing}${reason ? `: ${reason}` : ""}`;
     const why = reason ? `removed: ${reason}` : "removed";
     await endThread(db, sessions, thread, why, byLead ? null : note, false, true);
-  } finally {
-    removing.delete(thread.folder);
-    removals.delete(thread.folder);
-    ended.resolve();
-  }
+  });
 }
 
 // Makes what the decision tells into messages for the builder, saved to be typed in as soon as

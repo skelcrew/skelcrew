@@ -74,6 +74,8 @@ beforeEach(async () => {
     connection.on("data", (data) => {
       // Plain sc asks what the daemon runs before anything else, which these tests don't follow.
       if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
+      // Answers nothing, as no daemon would, so removing a repository ends its lead itself.
+      if (JSON.parse(data.toString()).command === "end lead") return connection.destroy();
       // sc repo asks the daemon to rename builders whose names it changed, which answers at once.
       if (JSON.parse(data.toString()).command === "rename builders") {
         appendFileSync(join(home, "calls"), "daemon rename builders\n");
@@ -946,7 +948,7 @@ plugins:
   );
 });
 
-// The forge's plugin isn't on this machine yet, so sc init installs it as sc add does: it shows
+// The forge's plugin isn't on this machine yet, so sc init installs it as sc plugin add does: it shows
 // what the plugin runs and asks first.
 test("init installs the forge's plugin after asking, and pins it", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
@@ -1038,7 +1040,7 @@ test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin, 
   expect(await listed()).toEqual([["app", "simon/app", "github"]]);
 });
 
-// sc add would move a pin to the version installed here, so a pin the repository has already
+// sc plugin add would move a pin to the version installed here, so a pin the repository has already
 // stays as it is, and only skelcrew.yaml gains the plugin's name.
 test("init keeps the pin a skelcrew.lock that is there has for the forge's plugin", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
@@ -1455,7 +1457,7 @@ function agentsOnlyOnGitHub(checkout: string): void {
 }
 
 // Makes the fake forge the GitHub plugin installed as yours from skelcrew/skelcrew-github, at a
-// commit of its own, as sc add -g leaves it. Returns that commit.
+// commit of its own, as sc plugin add -g leaves it. Returns that commit.
 function githubInstalledAsYours(): string {
   const folder = join(home, "plugin-github");
   git(folder, "init", "-q", "-b", "main");
@@ -1762,7 +1764,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     const run = await skel([], "\n", checkout);
     expect(run.code).toBe(0);
     expect(run.err).toBe(
-      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc setup github to set it up again.\n",
+      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc plugin setup github to set it up again.\n",
     );
     expect(existsSync(join(forge, "setup-remote"))).toBe(false);
     expect(existsSync(clone("simon/app"))).toBe(false);

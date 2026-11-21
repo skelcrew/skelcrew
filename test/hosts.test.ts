@@ -578,9 +578,9 @@ test("a host that doesn't answer holds up the look for exited leads only a few s
 }, 30_000);
 
 // Runs `code` with simon/app opened, its lead on the fake host as `row` says, and a stand-in for
-// the sandbox on PATH that keeps a lead running. `startLead`, `closeExitedLeads`, `leadOf`, the
-// host, `fake`, its settings folder, `repository` and `tab()`, whether the tab is closed, are at
-// hand.
+// the sandbox on PATH that keeps a lead running. `startLead`, which starts the lead in its
+// supervisor's turn as the daemon does, `closeExitedLeads`, `leadOf`, the host, `fake`, its
+// settings folder, `repository` and `tab()`, whether the tab is closed, are at hand.
 function leadRace(row: string, code: string): string {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   mkdirSync(join(home, "bin"), { recursive: true });
@@ -588,7 +588,9 @@ function leadRace(row: string, code: string): string {
     writeFileSync(join(home, "bin", sandbox), "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
   return runWithFakeHost(
     "sessions",
-    `const { closeExitedLeads, leadOf, startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+    `const lead = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { closeExitedLeads, leadOf } = lead;
+const startLead = (db, sessions, repository) => lead.leadAgent("simon", "app").start({ start: () => lead.startLead(db, sessions, repository) });
 const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
 const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
 const { agentRuns } = await import(${JSON.stringify(source("agents/sessions.ts"))});
@@ -605,6 +607,32 @@ const host = pluginHost(db, "fake");
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
 const tab = () => db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get().tab_closed;
 ${code}
+process.exit(0);`,
+    {},
+  );
+}
+
+// Closing a repository ends its lead in the lead's turn. A host slow to end it can see you open
+// the repository again meanwhile. The start that opening asks for then comes after the end, so it
+// never finds the old lead still running and keeps it, only for the end to take it away.
+function closingLead(body: string): string {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  return runWithFakeHost(
+    "sessions",
+    `const { endLeadOfClosedTab, leadAgent } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, tab_closed, lead_host) VALUES ('app', 'simon', 'app', '', 1, 1, 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "slow-end"))}, "");
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+const reopen = () => {
+  db.run("UPDATE repositories SET tab_closed = 0, opened = 2 WHERE repo = 'app'");
+  let sawOld = null;
+  return leadAgent("simon", "app").start({ start: async () => { sawOld = await hasSession(host, "fake-lead-app"); } }).then(() => sawOld);
+};
+${body}
+console.log(JSON.stringify({ ended, sawOld, running: await hasSession(host, "fake-lead-app") }));
 process.exit(0);`,
     {},
   );
@@ -867,6 +895,21 @@ test("a lead's session asks a plugin's host to keep it when its agent exits, and
     .map((line) => JSON.parse(line).keepOnExit);
   expect(starts).toEqual([true, undefined]);
 });
+
+test("a repository opened again while its lead's host is slow to end it starts the lead only after the end", () => {
+  const said = closingLead(`const ending = endLeadOfClosedTab(db, "unused", repository, "close");
+await Bun.sleep(500);
+const sawOld = await reopen();
+const ended = await ending;`);
+  expect(JSON.parse(said)).toEqual({ ended: true, sawOld: false, running: false });
+}, 40_000);
+
+test("a repository opened again before its lead's end came keeps its lead running", () => {
+  const said = closingLead(`db.run("UPDATE repositories SET tab_closed = 0 WHERE repo = 'app'");
+const ended = await endLeadOfClosedTab(db, "unused", repository, "close");
+const sawOld = await reopen();`);
+  expect(JSON.parse(said)).toEqual({ ended: false, sawOld: true, running: true });
+}, 40_000);
 
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
   const said = runWithFakeHost(
