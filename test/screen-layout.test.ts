@@ -131,12 +131,13 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "20", "-y", "30");
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
   }
-  // Right after a resize you can see the old frame, cut to the new size.
+  // Right after a resize you can see the old frame, cut to the new size. tmux draws the boxes'
+  // lines at once, before the sidebar has drawn its rows at the new width, so the wait is for both,
+  // with you still on the lead's row.
   await until(
-    () => boxesWhole(30) && seen().split("○ lead").length === 2,
-    "the sidebar to be whole",
+    () => boxesWhole(30) && seen().split("○ lead").length === 2 && onLead(),
+    "the sidebar to be whole, on the lead's row",
   );
-  expect(onLead()).toBe(true);
 });
 
 test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves", async () => {
@@ -203,8 +204,7 @@ test("the footer runs across the screen under the boxes' line, with where you ty
   press("M-S-Down");
   await until(
     () =>
-      footer() ===
-      "  ↑↓ move  ⏎ attach  ⇧⏎/a full screen · o output · pgup/pgdn scroll  1-6 stages  ⌥Q quit",
+      footer() === "  ↑↓ move  ⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  1-6 stages  ⌥Q quit",
     "a task's footer",
   );
   press("M-Down");

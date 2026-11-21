@@ -1,12 +1,12 @@
-// The screen's right side on a task's row: the task's details with its builder's screen live
-// under them, read-only, as the list's details pane shows them. Enter attaches to the builder
-// there instead, and Ctrl-\ or the builder ending comes back to the details.
+// The screen's right side on a task's row: the task's details alone, scrollable, as the list's
+// details pane shows them. Enter attaches to the builder there instead, and Ctrl-\ or the builder
+// ending comes back to the details.
 import { attachUntilEnded } from "../agents/sessions.ts";
 import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { type Details, readDetails } from "../list/details.ts";
-import { liveNote, readLead, readLive } from "../list/live.ts";
+import { liveNote, readLead } from "../list/live.ts";
 import { drawPane, type Live } from "../list/pane.ts";
 import { listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
@@ -20,27 +20,15 @@ const esc = "\x1b";
 const scrollKeys = new RegExp(`${esc}\\[([56])~|${esc}\\[<(6[45]);\\d+;\\d+M`, "g");
 
 // Returns the command that runs a task's details in the screen's right pane, by the task's row
-// name, such as app-12, in the repository named by its owner/name. `full` shows its builder's
-// whole screen rather than its last few lines.
-const detailsCommand = (agents: string, repository: string, name: string, full: boolean) =>
-  skelcrewCommand("details", agents, repository, name, full ? "full" : "strip");
+// name, such as app-12, in the repository named by its owner/name.
+const detailsCommand = (agents: string, repository: string, name: string) =>
+  skelcrewCommand("details", agents, repository, name);
 
-// Shows a task's details and its builder's live screen on the right side of the screen whose
-// session is named, by the task's row name, such as app-12: its last few lines, or its whole
-// screen when `full`. What you type stays with the sidebar, so the list's keys work and nothing
-// reaches the builder.
-export function showTask(
-  agents: string,
-  session: string,
-  repository: string,
-  name: string,
-  full: boolean,
-): void {
-  respawnPane(
-    agents,
-    `=${session}:.${panes.right}`,
-    detailsCommand(agents, repository, name, full),
-  );
+// Shows a task's details on the right side of the screen whose session is named, by the task's
+// row name, such as app-12. What you type stays with the sidebar, so the list's keys work and
+// nothing reaches the builder.
+export function showTask(agents: string, session: string, repository: string, name: string): void {
+  respawnPane(agents, `=${session}:.${panes.right}`, detailsCommand(agents, repository, name));
   screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
 }
 
@@ -54,13 +42,12 @@ export function showTask(
 // one on tmux whose session stays with its last screen, the right side shows the task's details
 // again and your typing goes back to the sidebar. Returns why it
 // couldn't attach, such as a builder that isn't running, or null once attached or when you moved
-// to another row before it could. The details come back as `full` says.
+// to another row before it could.
 export async function attachTask(
   agents: string,
   session: string,
   repository: string,
   name: string,
-  full: boolean,
   takeTyping: () => boolean,
   zoom: boolean,
 ): Promise<string | null> {
@@ -84,7 +71,7 @@ export async function attachTask(
     const back = [
       `: ${attachedMark}`,
       `tmux -L ${quoteForSh(screenSocket(agents))} select-pane -t ${quoteForSh(`=${session}:.${panes.sidebar}`)}`,
-      `exec ${detailsCommand(agents, repository, row.name, full).map(quoteForSh).join(" ")}`,
+      `exec ${detailsCommand(agents, repository, row.name).map(quoteForSh).join(" ")}`,
     ].join("; ");
     attach =
       typeof host === "string"
@@ -113,17 +100,15 @@ export async function attachTask(
 }
 
 // Runs a task's details in the screen's right pane until the pane is replaced, by the task's row
-// name in the repository named by its owner/name, with its builder's whole screen when `full`, or
-// its last few lines. It reads the task again each second and its
-// builder's screen 4 times a second, as the list's pane does, and writes only when what shows
-// changed. Your typing stays with the sidebar, which hands on only Page Up and Page Down, and
-// those and the wheel over the pane scroll the details. Each row starts this again, so its
-// details start at their top.
+// name in the repository named by its owner/name. It reads the task again each second and writes
+// only when what shows changed. A request of the lead's has no details, so there it shows the
+// lead's screen, read 4 times a second, as the list's pane does. Your typing stays with the
+// sidebar, which hands on only Page Up and Page Down, and those and the wheel over the pane scroll
+// the details. Each row starts this again, so its details start at their top.
 export async function runTaskDetails(
   agents: string,
   repository: string,
   name: string,
-  full: boolean,
 ): Promise<void> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
@@ -141,16 +126,10 @@ export async function runTaskDetails(
   const draw = () => {
     const width = process.stdout.columns || 80;
     const height = process.stdout.rows || 24;
+    // Only a request's row shows an agent's screen: the lead's, in place of details.
     const note = row ? liveNote(row) : null;
-    const pane = drawPane(
-      row,
-      details,
-      note === null ? live : { note },
-      width,
-      height,
-      full,
-      scroll,
-    );
+    const shown = row?.part !== "request" ? null : note === null ? live : { note };
+    const pane = drawPane(row, details, shown, width, height, false, scroll);
     scroll = pane.scroll;
     room = pane.room;
     const text = `\x1b[?25l\x1b[H${pane.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
@@ -167,14 +146,13 @@ export async function runTaskDetails(
     draw();
   };
 
-  // Reads the builder's screen, or the lead's on a request's row, one read at a time, as a slow
-  // host must never pile reads up.
+  // Reads the lead's screen on a request's row, one read at a time, as a slow host must never
+  // pile reads up.
   let reading = false;
   const look = async () => {
-    if (reading || !row || liveNote(row) !== null) return;
+    if (reading || row?.part !== "request" || liveNote(row) !== null) return;
     reading = true;
-    const read = row.part === "request" ? readLead(db, agents, open) : readLive(db, agents, row);
-    live = (await read) ?? live;
+    live = await readLead(db, agents, open);
     reading = false;
     draw();
   };

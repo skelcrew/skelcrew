@@ -18,7 +18,7 @@ import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
-import { liveThreads } from "../flow/thread.ts";
+import { cloneOf, liveThreads } from "../flow/thread.ts";
 import { type Asking, answerOf, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
 import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
@@ -37,6 +37,7 @@ import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
+import { dropAnswerOption, dropAsk, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, pad, removeControlCodes } from "./look.ts";
 import { attachedMark, leadOnHost, panes } from "./screen.ts";
@@ -99,8 +100,7 @@ const keyNames: Record<string, string> = {
 // without Alt. Enter says what it does on the row: to the lead on the lead's row, open/close on a
 // stage's heading, none on the heading of Needs you or Up next, which never close, attach where it
 // attaches to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter
-// or `a` attach full screen. o shows the agent's whole screen or its last lines, Page Up and Page
-// Down scroll the details, Shift with an arrow moves a queued task in Up next, and s or m show
+// or `a` attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued task in Up next, and s or m show
 // only where the row can be started, or queued, or merged. A request of the lead's offers y and
 // n, which answer it, in place of Enter.
 function sidebarFooter(row: Row): string {
@@ -110,12 +110,12 @@ function sidebarFooter(row: Row): string {
     const fixed = row.section === "needs you" || row.section === "up next";
     return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  1-6 stages  ⌥Q quit`;
   }
-  const output = row.task ? " · o output · pgup/pgdn scroll" : "";
+  const scroll = row.task ? " · pgup/pgdn scroll" : "";
   const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `↑↓ move  ${enter}${output}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
+  return `↑↓ move  ${enter}${scroll}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
@@ -215,9 +215,6 @@ export async function runSidebar(
   let running: string[] = [];
   // What is on the right: an agent's session, or a task's details, by detailsOf.
   let shown: string | null = null;
-  // Whether a task's details show its agent's whole screen, rather than its last few lines. It
-  // stays as you move, as it is how you like the right side.
-  let fullOutput = false;
   // Whether you keep your typing in the sidebar yourself, by Ctrl-\ or by any plain key there.
   // Moving then leaves it there, even onto the lead's row, so a digit or an arrow never lands in
   // an agent. Enter on the lead's row or a click on the lead gives it back. With Alt keys alone,
@@ -257,13 +254,7 @@ export async function runSidebar(
   const show = (next: string) => {
     if (next === shown) return;
     if (next.startsWith("details:"))
-      showTask(
-        agents,
-        session,
-        `${open.owner}/${open.repo}`,
-        next.slice("details:".length),
-        fullOutput,
-      );
+      showTask(agents, session, `${open.owner}/${open.repo}`, next.slice("details:".length));
     else if (
       isDetails(shown) ||
       shownSession(agents, tty) === null ||
@@ -308,6 +299,30 @@ export async function runSidebar(
   // Returns the session of the agent the right side is about: the lead or an agent shown, or on a
   // task's row its builder, whether its details show or you attached to it.
   const about = () => (isDetails(shown) ? (rows[here]?.session ?? null) : shown);
+
+  // Answers a file dropped onto the screen, which asks which agent's folder it goes to: the
+  // folder of the agent your typing goes to now, or nothing while it goes to the sidebar, as on a
+  // task's details. The keys typed before the drop reached the sidebar first, so the answer
+  // follows where they moved you. Each answer starts with a mark of its own, so the screen sees
+  // it change even when the folder stays the same.
+  let answers = 0;
+  const answerDrop = () => {
+    const active = screenTmux(agents, ["display", "-p", "-t", `=${session}:`, "#{pane_index}"]);
+    const agent = Number(active.out) === panes.right ? about() : null;
+    let folder = "";
+    try {
+      if (agent === open.lead) folder = leadOf(db, open.owner, open.repo).folder;
+      else {
+        const thread = liveThreads(db).find((one) => one.folder === agent);
+        if (thread) folder = cloneOf(thread);
+      }
+    } catch {
+      // A repository Skelcrew no longer has has no agent to copy to.
+    }
+    answers++;
+    const answer = `${Date.now()}-${answers} ${folder}`;
+    screenTmux(agents, ["set", "-t", `=${session}:`, dropAnswerOption, answer]);
+  };
 
   // Returns the harness of the agent in the named session, for what Esc stops: the open lead's,
   // or a builder's, which is Claude Code for one from before Skelcrew saved it. Empty for a
@@ -632,12 +647,10 @@ export async function runSidebar(
       held = false;
       // The builder takes your typing as it comes, unless you kept it in the sidebar meanwhile.
       const takeTyping = () => !held;
-      void attachTask(agents, session, repository, row.name, fullOutput, takeTyping, zoom).then(
-        (failed) => {
-          if (failed !== null) refuse(row.name, failed);
-          refresh();
-        },
-      );
+      void attachTask(agents, session, repository, row.name, takeTyping, zoom).then((failed) => {
+        if (failed !== null) refuse(row.name, failed);
+        refresh();
+      });
       return;
     }
     said = openPr(db, open, row, canOpen, (text) => process.stdout.write(text));
@@ -670,6 +683,8 @@ export async function runSidebar(
   // next key, which then does what it does. Nothing acts while the daemon is at work on an
   // answer. s and m work as in the list, and only reach the sidebar on a task's row.
   const press = (key: string) => {
+    // A drop's question is answered whatever else goes on, as the drop waits for it.
+    if (key === dropAsk) return answerDrop();
     const name = keyNames[key] ?? key;
     // Ctrl-\ brings your typing here from anywhere, so it acts before anything else, and leaves a
     // question asked here open.
@@ -718,13 +733,6 @@ export async function runSidebar(
     const stage = /^[1-6]$/.test(bare) ? ListStage.options[Number(bare) - 1] : undefined;
     if (stage) return toggle(stage);
     if (name === "enter" || name === "full screen") return enter(name === "full screen");
-    // o shows the agent's whole screen on the right, or only its last lines again, by starting
-    // the details again that way.
-    if (key === "o" && row?.task && isDetails(shown)) {
-      fullOutput = !fullOutput;
-      shown = null;
-      return follow();
-    }
     // Page Up and Page Down scroll the details on the right, which run in a pane of their own,
     // so they are handed on to it.
     if ((name === "page up" || name === "page down") && row?.task && isDetails(shown)) {
@@ -748,11 +756,29 @@ export async function runSidebar(
   process.stdin.setRawMode(true);
   // Without the cursor hidden it would blink at the end of the sidebar. 1000 and 1006 ask for
   // clicks and the wheel, in the form tmux can give a place of any size.
-  process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h");
+  // 2004 has tmux mark a paste's start and end, so text pasted here, such as a file's path dropped
+  // onto your terminal, is skipped whole rather than pressing the keys its letters and digits are.
+  process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?2004h");
+  let pasting = false;
+  // Acts on each key and click in `text`, but none inside a paste.
+  const act = (text: string) => {
+    for (const [key] of text.matchAll(keyPattern)) {
+      if (key === "\x1b[200~" || key === "\x1b[201~") pasting = key === "\x1b[200~";
+      else if (!pasting) doing("acting on a key", () => press(key));
+    }
+  };
+  // A sequence a read ends inside, such as a paste's start or end cut in two, waits for its rest
+  // in the next read, however late, so it is still seen whole. A lone Esc waits too, as the
+  // sidebar has no use for it: when what comes next doesn't go on with [, the Esc was a key of its
+  // own, and is taken apart from it, so Esc then a stays two keys rather than Alt-a.
+  let cut = "";
   // Acts on each key and click that came together, then redraws.
   process.stdin.on("data", (bytes) => {
-    for (const [key] of bytes.toString().matchAll(keyPattern))
-      doing("acting on a key", () => press(key));
+    let text = bytes.toString();
+    if (cut === esc && !text.startsWith("[")) act(cut);
+    else text = cut + text;
+    cut = unfinished("", text);
+    act(text.slice(0, text.length - cut.length));
     refresh();
   });
   // Draws now, on each resize and each second, until the pane goes and its input closes.

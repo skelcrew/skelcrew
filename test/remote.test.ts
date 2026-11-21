@@ -1456,3 +1456,127 @@ test("an agent can't set up a machine", () => {
   expect(said.toString()).toContain("only for your own terminal");
   expect(calls()).toBe("");
 });
+
+// Drops `shot` onto the server's screen through the laptop's sc --remote, with Enter right after,
+// and returns the line the screen there got and the screen's name. With `cut`, the paste comes
+// in two pieces, cut there, 200 ms apart, as over a slow link. The screen there reads one
+// line, as an agent would, once it knows the name the laptop gave it. The server's sidebar
+// answers that the screen shows the agent whose folder is ~/agent, with a mark that changes at
+// each answer.
+async function dropOnServer(shot: string, cut = 0): Promise<{ got: string; screen: string }> {
+  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
+  writeFileSync(
+    join(home, "server", ".local", "bin", "sc"),
+    `#!/bin/sh\necho "$SKELCREW_SCREEN_NAME" > screen-name\nIFS= read -r line\nprintf '%s\\n' "$line" > got\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(home, "serverbin", "tmux"),
+    `#!/bin/sh\necho "tmux $*" >> "${join(home, "calls")}"\nn=$(($(cat n 2>/dev/null || echo 0) + 1)); echo $n > n\necho "$n $HOME/agent"\n`,
+    { mode: 0o755 },
+  );
+  const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox"], {
+    cwd: home,
+    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    terminal: {},
+  });
+  const named = join(home, "server", "screen-name");
+  for (let waited = 0; !existsSync(named) && waited < 100; waited++) await Bun.sleep(50);
+  const dropped = `\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`;
+  run.terminal?.write(dropped.slice(0, cut));
+  if (cut > 0) await Bun.sleep(200);
+  run.terminal?.write(dropped.slice(cut));
+  await run.exited;
+  run.terminal?.close();
+  const got = readFileSync(join(home, "server", "got"), "utf8").trim();
+  return { got, screen: readFileSync(named, "utf8").trim() };
+}
+
+test("a file dropped onto the server's screen is sent to the agent it shows, and the paste says where", async () => {
+  const shot = join(home, "Screen Shot.png");
+  writeFileSync(shot, "pixels");
+  // Enter pressed right after the drop waits for its paste.
+  const { got, screen } = await dropOnServer(shot);
+  expect(screen).toMatch(/^screen-\w+$/);
+  // It reads the sidebar's answer there, by the screen's name.
+  expect(calls()).toContain(`tmux -L skelcrew-screen display -p -t =${screen}: #{@drop-answer}`);
+  const agent = join(home, "server", "agent", ".skelcrew-drops");
+  // The drop's question, a right click on the top row, goes just ahead of the paste.
+  expect(got.startsWith(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${agent}/`)).toBe(true);
+  expect(got.endsWith("/Screen\\ Shot.png\x1b[201~")).toBe(true);
+  const copy = got
+    .slice(got.indexOf("\x1b[200~") + "\x1b[200~".length, -"\x1b[201~".length)
+    .replaceAll("\\ ", " ");
+  expect(readFileSync(copy, "utf8")).toBe("pixels");
+  // Git never sees the copy, so a builder doesn't commit it.
+  expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
+});
+
+test("a file dropped onto the server's screen is sent though its paste's start comes in two pieces", async () => {
+  const shot = join(home, "shot.png");
+  writeFileSync(shot, "pixels");
+  const { got } = await dropOnServer(shot, 3);
+  const agent = join(home, "server", "agent", ".skelcrew-drops");
+  expect(got.startsWith(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${agent}/`)).toBe(true);
+  expect(got.endsWith("/shot.png\x1b[201~")).toBe(true);
+});
+
+test("a drops folder on the server whose .gitignore doesn't ignore everything gets no copies", async () => {
+  const drops = join(home, "server", "agent", ".skelcrew-drops");
+  mkdirSync(drops, { recursive: true });
+  writeFileSync(join(drops, ".gitignore"), "*.tmp\n");
+  const shot = join(home, "shot.png");
+  writeFileSync(shot, "pixels");
+  const { got } = await dropOnServer(shot);
+  expect(got).toBe(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${shot}\x1b[201~`);
+  expect(readdirSync(drops)).toEqual([".gitignore"]);
+});
+
+test("a dropped file named .gitignore reaches the server's agent like any other", async () => {
+  mkdirSync(join(home, "project"));
+  const ignore = join(home, "project", ".gitignore");
+  writeFileSync(ignore, "dist\n");
+  const { got } = await dropOnServer(ignore);
+  const copy = got.slice(got.indexOf("\x1b[200~") + "\x1b[200~".length, -"\x1b[201~".length);
+  expect(copy.startsWith(join(home, "server", "agent", ".skelcrew-drops"))).toBe(true);
+  expect(copy.endsWith("/.gitignore")).toBe(true);
+  expect(readFileSync(copy, "utf8")).toBe("dist\n");
+});
+
+test("a drops folder on the server that the agent made a link out of its folder is never written through", async () => {
+  // A link out to a folder of yours there, with a .gitignore of its own.
+  const yours = join(home, "server", "yours");
+  mkdirSync(join(home, "server", "agent"), { recursive: true });
+  mkdirSync(yours);
+  writeFileSync(join(yours, ".gitignore"), "node_modules\n");
+  symlinkSync(yours, join(home, "server", "agent", ".skelcrew-drops"));
+  const shot = join(home, "shot.png");
+  writeFileSync(shot, "pixels");
+  const { got } = await dropOnServer(shot);
+  expect(got).toBe(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${shot}\x1b[201~`);
+  expect(readdirSync(yours)).toEqual([".gitignore"]);
+  expect(readFileSync(join(yours, ".gitignore"), "utf8")).toBe("node_modules\n");
+});
+
+test("a text paste reaches the server's screen as it was", async () => {
+  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
+  writeFileSync(
+    join(home, "server", ".local", "bin", "sc"),
+    `#!/bin/sh\ntouch ready\nIFS= read -r line\nprintf '%s\\n' "$line" > got\n`,
+    { mode: 0o755 },
+  );
+  const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox"], {
+    cwd: home,
+    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    terminal: {},
+  });
+  const ready = join(home, "server", "ready");
+  for (let waited = 0; !existsSync(ready) && waited < 100; waited++) await Bun.sleep(50);
+  run.terminal?.write("\x1b[200~/missing.png and text\x1b[201~\r");
+  await run.exited;
+  run.terminal?.close();
+  expect(readFileSync(join(home, "server", "got"), "utf8")).toBe(
+    "\x1b[200~/missing.png and text\x1b[201~\n",
+  );
+  expect(calls()).not.toContain("tmux");
+});

@@ -219,7 +219,8 @@ const threadColumns = {
 // Skelcrew's copy of the forge while the PR is in it, so the list can still open the PR of a task
 // that ended, once the copy has dropped it. `queued_since` is when the task last joined the queue
 // of limits.threads, which goes first come first served, kept until its builder's session is
-// saved.
+// saved. `top_round` is the highest round a review that gave a verdict took on the task's thread,
+// so the next round's number goes on above it.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -261,6 +262,7 @@ export const taskColumns = {
   flow: "TEXT NOT NULL DEFAULT 'default'",
   pr_link: "TEXT",
   queued_since: "INTEGER",
+  top_round: "INTEGER",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -450,6 +452,10 @@ export function finishUpgrade(db: Database): void {
       markCiShown(db);
       db.run("DELETE FROM upgrades WHERE step = 'fill ci shown'");
     }
+    if (db.query("SELECT 1 FROM upgrades WHERE step = 'fill top round'").get()) {
+      fillTopRounds(db);
+      db.run("DELETE FROM upgrades WHERE step = 'fill top round'");
+    }
     if (!db.query("SELECT 1 FROM upgrades WHERE step = 'fill tasks'").get()) return;
     linkIssues(db);
     recoverMerges(db);
@@ -488,6 +494,57 @@ function markCiShown(db: Database): void {
     WHERE ci_shown IS NULL AND pr IS NOT NULL AND (checks IS NOT NULL ${seen}
       OR EXISTS (SELECT 1 ${copy} AND EXISTS (SELECT 1 FROM json_each(i.item, '$.checks') c
         WHERE json_extract(c.value, '$.name') IS NOT 'skelcrew/check')))`);
+}
+
+// Saves on each task the highest round its thread's reviews took, for threads reviewed before
+// Skelcrew kept it, so their next round's number goes on above every round they posted. An
+// earlier release counted the round from the rounds of changes, which sc start past the round
+// limit set back, so the round the task holds now can be lower than one it posted before. The
+// thread's log has the thread as it was at each change. Only its lines since the thread last
+// started count, as one that starts over counts its rounds anew, and only those whose review gave
+// a verdict, as a failed one counts no round. A line cut short by a crash is skipped.
+function fillTopRounds(db: Database): void {
+  const Row = z.object({
+    owner: z.string(),
+    repo: z.string(),
+    task: z.coerce.string(),
+    folder: z.string(),
+    started: z.number().nullable(),
+    review_round: z.number().nullable(),
+    verdict: z.string().nullable(),
+  });
+  const rows = db
+    .query(`SELECT th.owner, th.repo, th.task, th.folder, th.started, k.review_round, k.verdict
+      FROM threads th JOIN tasks k ON k.owner = th.owner AND k.repo = th.repo AND k.task = th.task`)
+    .all();
+  const Line = Row.pick({ started: true, review_round: true, verdict: true });
+  const counted = (line: z.infer<typeof Line>) =>
+    line.verdict === "approve" || line.verdict === "changes" ? (line.review_round ?? 0) : 0;
+  for (const row of z.array(Row).parse(rows)) {
+    let top = counted(row);
+    let text = "";
+    try {
+      text = readFileSync(join(threadsDir(), `${row.folder}.log`), "utf8");
+    } catch {}
+    for (const line of text.split("\n")) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const thread = Line.safeParse(parsed);
+      if (thread.success && thread.data.started === row.started)
+        top = Math.max(top, counted(thread.data));
+    }
+    if (top > 0)
+      db.run("UPDATE tasks SET top_round = ? WHERE owner = ? AND repo = ? AND task = ?", [
+        top,
+        row.owner,
+        row.repo,
+        row.task,
+      ]);
+  }
 }
 
 // Returns whether the table has the column.
@@ -587,11 +644,13 @@ function prepareTables(db: Database): void {
   // A database that gains `ci_shown` fills it once its daemon moved its threads onto tasks, as
   // finishUpgrade says.
   let gainsCiShown = false;
+  let gainsTopRound = false;
   const reviewsFlagged = !hasColumn(db, "threads", "review_failed");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
     if (!hasColumn(db, "threads", column)) {
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
       gainsCiShown ||= column === "ci_shown";
+      gainsTopRound ||= column === "top_round";
       if (column === "merge_noted_for" && !fresh) fillMergeNoted(db);
     }
   if (!fresh && reviewsFlagged) flagFailedReviews(db);
@@ -609,10 +668,13 @@ function prepareTables(db: Database): void {
         if (column === "issue_link" || column === "merged" || column === "closes")
           db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill tasks')");
         gainsCiShown ||= column === "ci_shown";
+        gainsTopRound ||= column === "top_round";
       }
   }
   if (gainsCiShown && !fresh)
     db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill ci shown')");
+  if (gainsTopRound && !fresh)
+    db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill top round')");
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an
   // open_items table, which nothing reads now. It stays, as a daemon of that release may still

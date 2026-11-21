@@ -74,22 +74,26 @@ function drawTabs(tabs: Tab[], open: string, width: number): { text: string; wid
     tabs.findIndex((tab) => tab.fullName === open),
     0,
   );
+  // An open tab too wide to show whole fits in what the count of the others leaves, as none of
+  // them fits beside it then.
+  const others = tabs.length - 1;
+  const limit = width - (others > 0 ? `  +${others}`.length : 0);
+  // Returns how many columns a list of dots takes, each after a space.
+  const dotsWidth = (shown: ReturnType<typeof dots>) =>
+    Bun.stringWidth(shown.map(([, text]) => ` ${text}`).join(""));
   // Returns the dots a tab shows: none on an open tab too narrow for them beside a letter of its
   // name and the four spaces around it.
   const dotsOf = (tab: Tab, index: number) => {
     const all = dots(tab);
-    const wide = Bun.stringWidth(all.map(([, text]) => ` ${text}`).join(""));
-    return index === at && 4 + 1 + wide > width ? [] : all;
+    const whole = 4 + Bun.stringWidth(tab.name) + dotsWidth(all) <= width;
+    return index === at && !whole && 4 + 1 + dotsWidth(all) > limit ? [] : all;
   };
-  // Returns the name a tab shows: the open one's cut to what its spaces and dots leave.
+  // Returns the name a tab shows: the open one's cut, when it doesn't fit whole, to what its
+  // spaces and dots leave.
   const nameOf = (tab: Tab, index: number) => {
-    if (index !== at) return tab.name;
-    const wide = Bun.stringWidth(
-      dotsOf(tab, index)
-        .map(([, text]) => ` ${text}`)
-        .join(""),
-    );
-    return fitted(tab.name, Math.max(width - 4 - wide, 0));
+    const wide = dotsWidth(dotsOf(tab, index));
+    if (index !== at || 4 + Bun.stringWidth(tab.name) + wide <= width) return tab.name;
+    return fitted(tab.name, Math.max(limit - 4 - wide, 0));
   };
   // Returns a tab's text: its name, with its badge.
   const label = (tab: Tab, index: number) =>
