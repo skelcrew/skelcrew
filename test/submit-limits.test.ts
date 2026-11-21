@@ -120,13 +120,13 @@ describe.skipIf(insideSandbox)("sc submit", () => {
   // next review to reach the limit tells the lead only once that review is on the PR and the copy
   // has read it back. Before, the lead could find the round before on the PR beside this one's
   // verdict. The forge here can't edit a review, as GitHub's plugin can't, so each round posts one.
-  test("past the round limit after sc start, the lead hears of the next review only once the PR has it", async () => {
+  test("past the round limit after sc start, the lead hears of the next review only once the PR's copy has it", async () => {
     addApp();
     config("max_rounds: 1\n");
     verdict(1, "changes", "First problem.");
     verdict(2, "changes", "Second problem.");
     verdict(3, "changes", "Third problem.");
-    await startApp12();
+    await startApp12({ every: 2000 });
     await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
     const reached = "APP-12 needs you: changes asked for after 1 rounds of changes";
     const notes = () => read(join(lead(), "typed")).split(reached).length - 1;
@@ -140,20 +140,32 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(thread()).toMatchObject({ verdict: "changes", reviewed_commit: pushed() });
     await Bun.sleep(1500);
     expect(notes()).toBe(1);
+    // The review goes on the PR, but reading the PR back fails, so the lead still waits.
+    const third = (q: Record<string, unknown>) =>
+      q.ask === "review" && String(q.body).startsWith("Round 3 · commit ");
+    const readBacks = () => {
+      const questions = asked(plugin);
+      return questions
+        .slice(questions.findIndex(third) + 1)
+        .filter((q) => q.ask === "changed" && JSON.stringify(q.jobs) === `["forge"]`);
+    };
+    writeFileSync(join(plugin, "fail-changed"), "the forge is down");
     rmSync(hold);
+    await until(() => asked(plugin).some(third) && readBacks().length > 0, 30_000);
+    await Bun.sleep(1500);
+    expect(notes()).toBe(1);
+    expect(thread().posting).not.toBeNull();
+    // Once the forge answers again, a poll reads the PR back, and the lead hears.
+    rmSync(join(plugin, "fail-changed"));
     await until(() => notes() === 2, 30_000);
-    // By the time the note was typed, the review of the commit just submitted was posted, and
-    // Skelcrew had asked the forge for the PR again.
-    const questions = asked(plugin);
-    const posted = questions.findIndex(
-      (q) => q.ask === "review" && String(q.body).startsWith("Round 3 · commit "),
-    );
-    expect(posted).toBeGreaterThan(-1);
-    expect(questions[posted]).toMatchObject({ commit: pushed() });
-    const readBack = questions
-      .slice(posted + 1)
-      .find((q) => q.ask === "changed" && JSON.stringify(q.jobs) === `["forge"]`);
-    expect(readBack).toMatchObject({ jobs: ["forge"], next: null, prs: [7] });
+    expect(thread().posting).toBeNull();
+    expect(readBacks()[0]).toMatchObject({ next: null, prs: [7] });
+    // The review of the commit just submitted was posted once, though its read-back was tried
+    // again.
+    const posted = asked(plugin).filter(third);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ commit: pushed() });
+    expect(readBacks().length).toBeGreaterThan(1);
   }, 120_000);
 
   // Clearing it is the lead's or your decision that you have nothing to do. A review after it

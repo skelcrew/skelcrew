@@ -601,7 +601,7 @@ async function pollRepository(
     if (!hasForge) await actOnBranch(db, sessions, repository, readThread(db, before.folder));
     else {
       // A verdict whose post failed goes on the PR first, so the merge goes by it.
-      await retryPost(db, before.folder);
+      await retryPost(db, sessions, before.folder);
       // From the copy, just brought up to date, rather than from the answer: a forge answers
       // only what changed, and events held back for a thread, such as one stopped, were left
       // out of its `seen`, so its PR is acted on again until they are handed over.
