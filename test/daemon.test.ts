@@ -2128,15 +2128,3 @@ describe.skipIf(insideSandbox)("the lead from before", () => {
     await until(() => read(join(keptLead(), "typed")).includes("you are the lead of app"));
   }, 60_000);
 });
-
-// A lead started by the release before calls it with each message, until it restarts.
-test("Skelcrew attached prints nothing, for a lead from before", async () => {
-  const run = Bun.spawnSync([process.execPath, main, "attached"], {
-    env: { HOME: home, XDG_RUNTIME_DIR: join(home, "run"), PATH: process.env.PATH ?? "" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(run.stdout.toString()).toBe("");
-  expect(run.stderr.toString()).toBe("");
-  expect(run.exitCode).toBe(0);
-});

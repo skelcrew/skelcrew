@@ -361,11 +361,11 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     skipDangerousModePermissionPrompt: true,
     sandbox: { enabled: false },
     hooks: {
-      PreToolUse: [{ matcher: "AskUserQuestion", hooks: [hook("sc question asked")] }],
-      PostToolUse: [{ matcher: "AskUserQuestion", hooks: [hook("sc question closed")] }],
-      UserPromptSubmit: [{ hooks: [hook("sc question answered")] }],
-      StopFailure: [{ hooks: [hook("sc turn failed")] }],
-      Stop: [{ hooks: [hook("sc turn ended")] }],
+      PreToolUse: [{ matcher: "AskUserQuestion", hooks: [hook("sc hook question-asked")] }],
+      PostToolUse: [{ matcher: "AskUserQuestion", hooks: [hook("sc hook question-closed")] }],
+      UserPromptSubmit: [{ hooks: [hook("sc hook prompt")] }],
+      StopFailure: [{ hooks: [hook("sc hook turn-failed")] }],
+      Stop: [{ hooks: [hook("sc hook turn-ended")] }],
     },
   });
 
