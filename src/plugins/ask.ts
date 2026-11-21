@@ -330,7 +330,7 @@ export async function setStatus(
 }
 
 // Returns the end of a failed check's log, as the forge keeps it. `timeout`, in milliseconds,
-// is how long the forge may take, which sc task keeps short, as you wait on it.
+// is how long the forge may take, which sc show keeps short, as you wait on it.
 export async function failedLog(
   db: Database,
   repository: Repository,

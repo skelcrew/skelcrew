@@ -162,7 +162,7 @@ async function recordThread(
       throw new Error(
         tracked
           ? `there is no open issue ${task} in ${name}`
-          : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc task add ${name} "<title>" "<body>" --start`,
+          : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc add ${name} "<title>" "<body>" --start`,
       );
   }
   const slug = title
