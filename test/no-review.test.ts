@@ -62,6 +62,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     reviewer: null,
     reviewed_by: null,
     review_round: null,
+    top_round: null,
     verdict: "not reviewed",
     review_line: null,
     reviewed_commit: head,

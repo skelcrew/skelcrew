@@ -244,6 +244,7 @@ const thread = (change: Partial<Thread>): Thread => ({
   reviewer: "codex",
   reviewed_by: null,
   review_round: null,
+  top_round: null,
   verdict: null,
   review_line: null,
   reviewed_commit: null,

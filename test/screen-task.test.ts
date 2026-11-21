@@ -1,5 +1,5 @@
-// The screen's right side on a task's row: its details with the builder's screen live under them,
-// read-only, and Enter's attachment to the builder there, which Ctrl-\ comes back from.
+// The screen's right side on a task's row: its details alone, and Enter's attachment to the
+// builder there, which Ctrl-\ comes back from.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import {
   env,
   footer,
   home,
+  onDetails,
   open,
   press,
   read,
@@ -62,8 +63,8 @@ function rowCode(action: "show" | "attach", name: string): string {
 const agents = ${JSON.stringify(agents)};
 const session = ${JSON.stringify(session())};
 const name = ${JSON.stringify(name)};
-if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", name, true);
-else console.log((await attachTask(agents, session, "simon/app", name, true, () => true, false)) ?? "");`;
+if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", name);
+else console.log((await attachTask(agents, session, "simon/app", name, () => true, false)) ?? "");`;
 }
 
 // Does what onRow does without waiting for it, and gives what it printed once it ends.
@@ -79,51 +80,29 @@ async function onRowLater(action: "show" | "attach", name: string): Promise<stri
 // Opens the screen on the lead, then moves the right side to app-7's details.
 async function onApp7(): Promise<void> {
   sql("UPDATE tasks SET title = 'Login redirect' WHERE task = '7'");
+  sql("UPDATE tasks SET title = 'Signup form' WHERE task = '12'");
   open("lead");
   await ready("lead");
   onRow("show", "APP-7");
   await until(() => right().includes("Login redirect"), "app-7's details");
 }
 
-test("a task's row shows its details with its builder live under them, and typing never reaches it", async () => {
+test("a task's row shows only its details, never its builder's screen, and typing never reaches it", async () => {
   await onApp7();
   expect(right()).toContain("Building · working");
-  await until(() => right().includes("I am app-7"), "app-7's screen, live");
   expect(typingTo()).toBe("0");
-  // What app-7 prints next reaches the right side without attaching.
+  // What app-7 prints shows nowhere on the right while its details show.
   tmux(agents, "send-keys", "-t", "=app-7:", "-l", "first line\r");
-  await until(() => right().includes("first line"), "app-7's new line");
+  await until(() => read("app-7.typed") === "first line\n", "app-7 to print");
+  await Bun.sleep(500);
+  expect(right()).not.toContain("I am app-7");
+  expect(right()).not.toContain("first line");
   type("hello\r");
   await Bun.sleep(500);
   expect(read("app-7.typed")).toBe("first line\n");
 });
 
-test("o on a task's row shows its builder's whole screen and back, and Enter still attaches", async () => {
-  sql("UPDATE tasks SET title = 'Login redirect' WHERE task = '7'");
-  open("lead");
-  await ready("lead");
-  press("M-S-Down");
-  press("M-Down");
-  await until(() => right().includes("Login redirect"), "app-7's details");
-  await until(() => right().includes("I am app-7"), "app-7's screen");
-  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen · o output");
-  for (const line of ["one", "two", "three", "four"])
-    tmux(agents, "send-keys", "-t", "=app-7:", "-l", `${line}\r`);
-  // By default only the last three lines of the builder's screen show.
-  await until(() => right().includes("four") && !right().includes("I am app-7"), "the strip");
-  expect(right()).not.toContain("one");
-  type("o");
-  await until(() => right().includes("I am app-7") && right().includes("four"), "the whole screen");
-  type("o");
-  await until(() => !right().includes("I am app-7"), "the strip again");
-  // Enter still attaches to the builder.
-  press("Enter");
-  await until(() => typingTo() === "1", "typing to move to the builder");
-  type("hi\r");
-  await until(() => read("app-7.typed").endsWith("four\nhi\n"), "what was typed");
-});
-
-test("a long description scrolls on the right by Page Down, Page Up and the wheel, the strip staying put", async () => {
+test("a long description scrolls on the right by Page Down, Page Up and the wheel", async () => {
   const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}.`).join("\n\n");
   sql(`UPDATE tasks SET title = 'Login redirect', body = '${paragraphs}' WHERE task = '7'`);
   open("lead");
@@ -131,18 +110,17 @@ test("a long description scrolls on the right by Page Down, Page Up and the whee
   press("M-S-Down");
   press("M-Down");
   await until(() => right().includes("Login redirect"), "app-7's details");
-  await until(() => right().includes("I am app-7"), "app-7's screen");
-  expect(footer()).toContain("o output · pgup/pgdn scroll");
-  // Returns the right side's lines, and the one the line over the strip is on.
+  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  1-6 stages");
+  // No key shows the builder's screen under the details, o included.
+  type("o");
+  await Bun.sleep(500);
+  expect(right()).not.toContain("I am app-7");
+  // The details fill the right side, their last line saying there is more.
   const lines = () => right().split("\n");
-  const rule = () => lines().findIndex((line) => line.startsWith("───"));
-  const at = rule();
-  expect(lines()[at - 1]).toBe("↓ more".padEnd(lines()[at - 1]?.length ?? 0));
-  // Page Down shows the details further down, and the strip stays where it was.
+  await until(() => lines().some((line) => line.trimEnd() === "↓ more"), "the more line");
+  // Page Down shows the details further down.
   press("NPage");
   await until(() => !right().includes("Login redirect"), "the details scrolled");
-  expect(rule()).toBe(at);
-  expect(right()).toContain("I am app-7");
   // The wheel over the right side scrolls back up, and Page Up to the top.
   const scrolled = lines()[0];
   wheel(64);
@@ -215,7 +193,7 @@ test("moving to another row while attached comes back from the builder, and show
   onRow("attach", "APP-7");
   await until(() => typingTo() === "1", "typing to move to the builder");
   onRow("show", "APP-12");
-  await until(() => right().includes("I am app-12"), "app-12's details");
+  await until(() => right().includes("Signup form"), "app-12's details");
   expect(typingTo()).toBe("0");
   expect(tmux(agents, "list-clients").out).not.toContain("app-7");
 });
@@ -232,17 +210,17 @@ test("Ctrl-\\ on the lead moves your typing to the sidebar, and on a task's deta
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
   onRow("show", "APP-7");
-  await until(() => right().includes("I am app-7"), "app-7's details");
+  await until(onDetails, "app-7's details");
   press("C-\\");
   await Bun.sleep(500);
-  expect(right()).toContain("I am app-7");
+  expect(onDetails()).toBe(true);
   expect(typingTo()).toBe("0");
 });
 
 test("Enter on a task whose builder isn't running, or that went, says so, and attaches to nothing", async () => {
   sql("UPDATE threads SET status = 'stopped' WHERE folder = 'app-7'");
   await onApp7();
-  expect(right()).toContain("Builder not running");
+  expect(right()).toContain("Paused with sc stop");
   expect(onRow("attach", "APP-7")).toBe(
     "APP-7's builder isn't running: sc start APP-7 brings it back",
   );
@@ -297,9 +275,9 @@ UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-7'`);
   await Bun.sleep(500);
   onRow("show", "APP-12");
   expect(await entered).toBe("");
-  await until(() => right().includes("I am app-12"), "app-12's details");
+  await until(() => right().includes("Signup form"), "app-12's details");
   await Bun.sleep(500);
-  expect(right()).toContain("I am app-12");
+  expect(right()).toContain("Signup form");
   expect(typingTo()).toBe("0");
   expect(read("host.typed")).toBe("");
 });

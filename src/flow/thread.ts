@@ -164,6 +164,9 @@ export const Thread = z.object({
   // reviewer, and goes on to CI as an approval does.
   reviewed_by: HarnessName.nullable(),
   review_round: z.number().nullable(),
+  // The highest round a review that gave a verdict took on this thread, so the next round's
+  // number goes on above it. Null before the first such review.
+  top_round: z.number().nullable(),
   verdict: z.enum(["approve", "changes", "failed", "timed out", "not reviewed"]).nullable(),
   review_line: z.string().nullable(),
   // The commit the latest finished review was about, or the one submitted without a review, so

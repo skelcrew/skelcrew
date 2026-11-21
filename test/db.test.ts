@@ -899,3 +899,75 @@ console.log(JSON.stringify(said));`;
     "app-15": "its conflict with",
   });
 });
+
+// An earlier release counted a review's round from the rounds of changes, which sc start past the
+// round limit set back, so a thread can hold a lower round than one it posted. The daemon's
+// upgrade reads the highest round from the thread's log, since the thread last started, so its
+// next round goes on above every one it posted.
+test("a thread whose round went back before the upgrade goes on above the highest it posted", () => {
+  const threads = join(home, ".local", "share", "skelcrew", "threads");
+  mkdirSync(threads, { recursive: true });
+  // Each line of a thread's log is the thread as it was then.
+  const logged = (folder: string, lines: [number, number, string][]) =>
+    writeFileSync(
+      join(threads, `${folder}.log`),
+      `${lines
+        .map(([started, round, verdict]) =>
+          JSON.stringify({ started, review_round: round, verdict }),
+        )
+        .join("\n")}\n{"cut short`,
+    );
+  // app-12 posted round 5, then sc start set its count back and its next review said round 2.
+  logged("app-12", [
+    [1, 4, "changes"],
+    [1, 5, "changes"],
+    [1, 2, "changes"],
+  ]);
+  // app-13 started over after a thread that reached round 7, and is at round 1 since.
+  logged("app-13", [
+    [1, 7, "changes"],
+    [2, 1, "approve"],
+  ]);
+  // app-14's round 3 review failed, so it counted no round: it runs again as round 3.
+  logged("app-14", [
+    [1, 2, "changes"],
+    [1, 3, "failed"],
+  ]);
+  // app-15 has no log, and app-16 was never reviewed.
+  const rows = [
+    { task: "12", started: 1, review_round: 2, verdict: "changes" },
+    { task: "13", started: 2, review_round: 1, verdict: "approve" },
+    { task: "14", started: 1, review_round: 3, verdict: "failed" },
+    { task: "15", started: 1, review_round: 4, verdict: "approve" },
+    { task: "16", started: 1, review_round: null, verdict: null },
+  ];
+  const folders = rows.map((row) => `app-${row.task}`);
+  const code = `import { finishUpgrade, openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+import { nextRound } from ${JSON.stringify(source("flow/decide.ts"))};
+// The earlier release's database: the same, without the new column.
+const old = openDb();
+old.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+${rows.map((row) => threadSql({ status: "waiting", ...row })).join("\n")}\`);
+old.run("DROP VIEW task_threads");
+old.run("ALTER TABLE tasks DROP COLUMN top_round");
+old.run("ALTER TABLE threads DROP COLUMN top_round");
+old.close();
+const db = openDb();
+finishUpgrade(db);
+const next = Object.fromEntries(${JSON.stringify(folders)}.map((folder) => [folder, nextRound(readThread(db, folder))]));
+console.log(JSON.stringify(next));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    "app-12": 6,
+    "app-13": 2,
+    "app-14": 3,
+    "app-15": 5,
+    "app-16": 1,
+  });
+});

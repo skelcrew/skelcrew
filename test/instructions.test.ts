@@ -151,21 +151,20 @@ test("a builder asks the lead, not the human in its session, with background, op
   expect(told).not.toContain("questions for the human still go to the human");
 });
 
-// The lead answers what the human already decided, and says so in one line. What is the
-// human's by rule goes to them, whatever lead role the repository brings.
-test("a lead answers what the human already decided, and always brings the human's decisions to them, whatever its role", () => {
+// The lead decides most things itself and says so in one line, so the human can change it.
+// What is foundational waits for the human, whatever lead role the repository brings.
+test("a lead decides most things and tells the human, and waits for them only on what is foundational, whatever its role", () => {
+  const decides = [
+    "Decide most questions yourself and answer the builder with sc tell, such as any whose answer follows from what the human already decided",
+    "Decide too a technical call with a clear better answer, another review round when its findings are real, keys, wording and layout that follow a direction the human set, and starting work the human already approved.",
+    "Then tell the human in one line what you decided and why, so they can easily change it",
+  ];
+  const waits =
+    "Wait for the human only on what is foundational, however clear the answer seems: a change to the repository's spec, the document it names as its spec, such as docs/spec.md; product direction; trust and security; any step that can't be undone or that goes out to other people, such as closing a PR, deleting work, filing a public issue or merging without review; and work that grows a thread's scope a lot or costs real money or time.";
+  const framed =
+    "Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option, lettered a, b, c, with what it means for the human, and your recommendation with why, so a one-letter answer settles it.";
   const lead = builtInRole("lead").instructions;
-  expect(lead).toContain(
-    "Answer one yourself with sc tell when the answer follows from what the human already decided",
-  );
-  expect(lead).toContain(
-    "Then tell the human in one line what you answered and why, so they can overrule it",
-  );
-  expect(lead).toContain("The human should never have to open a builder to answer it.");
-  expect(lead).toContain("and your recommendation with why.");
-  const theirs =
-    "Always bring the human a builder's question about editing a spec, trust or security, the work's scope or direction, or merging, however clear the answer seems: these are theirs to decide.";
-  expect(lead).toContain(theirs);
+  expect(lead).not.toContain("Always bring the human a builder's question");
   const custom = leadInstructions(
     "You are our lead. Answer the builders yourself.\n",
     "simon/app",
@@ -173,16 +172,16 @@ test("a lead answers what the human already decided, and always brings the human
     { setup: undefined, test: undefined },
     false,
   );
-  for (const rule of [
-    theirs,
-    "Answer one yourself with sc tell when the answer follows from what the human already decided",
-    "Then tell the human in one line what you answered and why, so they can overrule it",
-    "pass their answer on to the builder with sc tell.",
-    "The human should never have to open a builder to answer it.",
-    "Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option with what it means for the human, and your recommendation with why.",
-    "Leave out file paths and names from the code unless they help.",
-  ])
-    expect(custom).toContain(rule);
+  for (const told of [lead, custom])
+    for (const rule of [
+      ...decides,
+      waits,
+      "pass their answer on to the builder with sc tell.",
+      "The human should never have to open a builder to answer it.",
+      framed,
+      "Leave out file paths and names from the code unless they help.",
+    ])
+      expect(told).toContain(rule);
 });
 
 // The lead can't read the human's config from its sandbox, so it is told which commands are

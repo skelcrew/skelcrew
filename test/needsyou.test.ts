@@ -220,7 +220,7 @@ markNeedsYou(db, "none", thread(), "say whether to go on", "lead");
 await bringBack(db, "none", thread());
 goOn(db, "none", "app-12");
 console.log(JSON.stringify({ mark: thread().needs_you_for, rounds: thread().rounds }));`);
-  expect(seen).toEqual({ mark: "run sc install: its session host gone is missing", rounds: 0 });
+  expect(seen).toEqual({ mark: "run sc install: its session host gone is missing", rounds: 3 });
 });
 
 test("a new submit clears the mark", () => {
@@ -316,7 +316,6 @@ record(db, "app-12", { status: "waiting", rounds: 2, verdict: "changes", pr: 7 }
 const within = changesAsked();
 const first = changesAsked();
 goOn(db, "none", "app-12");
-changesAsked(); changesAsked(); changesAsked();
 const second = changesAsked();
 markNeedsYou(db, "none", thread(), null, "lead");
 const cleared = needsYou(thread());
@@ -340,7 +339,6 @@ record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", pr: 7 }
 armMerge(db, "none", thread(), { asked: "merge app-12 when it's ready" }, false);
 const armedBefore = changesAsked();
 goOn(db, "none", "app-12");
-changesAsked(); changesAsked(); changesAsked();
 const armedAtLastLimit = changesAsked();
 console.log(JSON.stringify({ armedBefore, armedAtLastLimit, plan: thread().merge_plan }));`);
   expect(seen).toEqual({
