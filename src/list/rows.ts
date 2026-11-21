@@ -655,35 +655,17 @@ export function shownRows(all: Row[], opened: Set<Section>, wholeBacklog: boolea
 }
 
 // A section's heading: its section, how many tasks it has, whether it is open, which shows its
-// rows, what it says after its count, dim, which only Up next has: how full the builders are, and
-// the colour its count is in, or null for none.
-export type Heading = {
-  section: Section;
-  count: number;
-  open: boolean;
-  note: string;
-  colour: "red" | "yellow" | "green" | null;
-};
+// rows, and what it says after its count, dim, which only Up next has: how full the builders are.
+export type Heading = { section: Section; count: number; open: boolean; note: string };
 
 // Returns the heading of every section, in order, from all the rows, whether their section is
 // open or not, given the sections that are open. `builders` is what Up next's heading says of
-// the builders, from buildersNote. Needs you's count is yellow while any task waits on you. A
-// closed stage hides its rows' marks, so its count takes the colour of the one that matters
-// most: red when one went wrong, yellow when one needs you, green when one is ready to merge. So
-// a closed Ready or Done never hides work waiting on you.
+// the builders, from buildersNote.
 export function sectionHeadings(rows: Row[], opened: Set<Section>, builders = ""): Heading[] {
   return sections.map((section) => {
-    const marks = rows.filter((row) => row.section === section).map((row) => row.mark);
-    const count = marks.length;
+    const count = rows.filter((row) => row.section === section).length;
     const note = section === "up next" ? builders : "";
-    const open = opened.has(section);
-    let colour: Heading["colour"] = null;
-    if (section === "needs you") colour = count > 0 ? "yellow" : null;
-    else if (open || section === "up next") colour = null;
-    else if (marks.some((mark) => mark.colour === "red")) colour = "red";
-    else if (marks.some((mark) => mark.sign === "●" && mark.colour === "yellow")) colour = "yellow";
-    else if (marks.some((mark) => mark.sign === "●" && mark.colour === "green")) colour = "green";
-    return { section, count, open, note, colour };
+    return { section, count, open: opened.has(section), note };
   });
 }
 

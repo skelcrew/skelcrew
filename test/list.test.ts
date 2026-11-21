@@ -298,47 +298,15 @@ test("a task approved past the round limit waits on you to merge, not on the lim
 test("each section's heading counts its tasks, open or closed", () => {
   const opened = new Set<Section>(["needs you", "up next", "building"]);
   expect(sectionHeadings(rows(), opened, "Building 1/1")).toEqual([
-    { section: "needs you", count: 2, open: true, note: "", colour: "yellow" },
-    { section: "up next", count: 1, open: true, note: "Building 1/1", colour: null },
-    { section: "backlog", count: 1, open: false, note: "", colour: null },
-    { section: "building", count: 1, open: true, note: "", colour: null },
-    { section: "reviewing", count: 0, open: false, note: "", colour: null },
-    { section: "checks", count: 0, open: false, note: "", colour: null },
-    { section: "ready", count: 0, open: false, note: "", colour: null },
-    { section: "done", count: 0, open: false, note: "", colour: null },
+    { section: "needs you", count: 2, open: true, note: "" },
+    { section: "up next", count: 1, open: true, note: "Building 1/1" },
+    { section: "backlog", count: 1, open: false, note: "" },
+    { section: "building", count: 1, open: true, note: "" },
+    { section: "reviewing", count: 0, open: false, note: "" },
+    { section: "checks", count: 0, open: false, note: "" },
+    { section: "ready", count: 0, open: false, note: "" },
+    { section: "done", count: 0, open: false, note: "" },
   ]);
-});
-
-test("a closed stage's count takes the colour of what waits in it: red, then yellow, then green", () => {
-  const [lead, ...rest] = rows();
-  const base = rest.find((row) => row.name === "APP-31");
-  if (!lead || !base) throw new Error("the fixture has no lead or no APP-31");
-  // Returns a row in Ready with a mark, named apart so the list keeps each.
-  const inReady = (name: string, sign: string, colour: Row["mark"]["colour"]): Row => ({
-    ...base,
-    part: "ready",
-    section: "ready",
-    name,
-    mark: { sign, colour },
-  });
-  const ready = (marks: Row[], open: Section[] = []) =>
-    sectionHeadings([lead, ...marks], new Set(open)).find((h) => h.section === "ready")?.colour;
-  const green = inReady("APP-1", "●", "green");
-  const yellow = inReady("APP-2", "●", "yellow");
-  const red = inReady("APP-3", "○", "red");
-  const quiet = inReady("APP-4", "○", "dim");
-  expect(ready([quiet])).toBeNull();
-  expect(ready([quiet, green])).toBe("green");
-  expect(ready([green, yellow])).toBe("yellow");
-  expect(ready([green, yellow, red])).toBe("red");
-  // Open, its rows show their own marks, so the count stays plain.
-  expect(ready([green], ["ready"])).toBeNull();
-  // The count is drawn in that colour, here the green of ready to merge.
-  const headings = sectionHeadings([lead, green], new Set());
-  const drawnLines = drawList([lead], headings, 0, 0, frame, { width: 80, height: 24 }).lines;
-  expect(drawnLines.join("\n")).toContain(
-    "\x1b[90mReady    \x1b[22;39m \x1b[38;5;120m1\x1b[22;39m",
-  );
 });
 
 // app runs three builders at most, and all three run, so app-20 and app-21 wait in its queue.
