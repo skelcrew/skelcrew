@@ -282,10 +282,35 @@ test("sc start --now starts a new task at once over the limit, and a queued one 
 }, 60_000);
 
 // The start that queued a task assigns you its issue once its claim is made, but only while it is
-// still queued. A forced start can come in between, so it assigns you itself.
-test("sc start --now of a queued task whose claim was made assigns you its issue", async () => {
+// still queued. Here its claim is under way, and the tracker answers it just as sc start --now
+// comes in, so the forced start runs before or after the claim's answer. Either way the
+// forced start assigns you, the claim is never left owed, and the queue never starts it again.
+test("sc start --now just as a queued task's claim is answered assigns you its issue", async () => {
   addApp();
-  // app-12 is queued, its claim made, and you not assigned yet.
+  await serveApp();
+  const hold = join(plugin, "hold-took");
+  writeFileSync(hold, "");
+  const queueing = sc("start", "app-12");
+  await until(() => existsSync(join(plugin, "held-took")));
+  rmSync(hold);
+  const forcing = sc("start", "app-12", "--now");
+  expect(await queueing).toContain("APP-12 is queued");
+  expect(await forcing).toContain("Started APP-12 now, out of the queue");
+  const assigns = (on: boolean) =>
+    asked(plugin).filter((q) => q.ask === "assign" && q.on === on && q.task === "12");
+  await until(() => assigns(true).length > 0);
+  await until(() => statuses()["app-12"] === "failed");
+  expect(claimsSaved()).toBe(0);
+  expect(leftQueue("app-12")).toHaveLength(0);
+  // app-11's builder still holds the only place, so the forced start went over the limit.
+  expect(statuses()["app-11"]).toBe("working");
+}, 60_000);
+
+// The state a forced start would find if it came in between the claim's answer and the start
+// that queued the task assigning you: queued, its claim made, and you not assigned yet. The
+// forced start assigns you itself, as it never looks at the claim to decide.
+test("sc start --now of a queued task whose claim was made, with nobody assigned, assigns you", async () => {
+  addApp();
   const queued = threadSql({ task: "12", title: "Add export", status: "queued", queued_since: 1 });
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().exec(${JSON.stringify(queued)});`;
