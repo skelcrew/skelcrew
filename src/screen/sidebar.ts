@@ -109,9 +109,9 @@ const keyNames: Record<string, string> = {
 // task in the task queue, and s or m show only where the row can be started, or queued, or merged.
 // A request of the lead's offers y and n, which answer it, in place of Enter. R shows where the
 // row's agent runs, so it can be restarted. w, which closes or removes the repository, is always
-// there.
+// there, with Alt-W beside it, as that is the key that works while an agent has your typing.
 function sidebarFooter(row: Row, restarts: boolean): string {
-  const end = `${restarts ? "  R restart" : ""}  w close  ⌥Q quit`;
+  const end = `${restarts ? "  R restart" : ""}  w/⌥W close  ⌥Q quit`;
   if (row.part === "lead") return `↑↓ move  ⏎ to lead  ⇧⏎/a full screen  0-6 sections${end}`;
   if (row.part === "request") return `↑↓ move  y yes  n no  0-6 sections${end}`;
   if (row.part === "heading") {

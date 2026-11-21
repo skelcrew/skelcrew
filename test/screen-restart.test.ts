@@ -67,7 +67,7 @@ test("a task whose builder isn't running offers no restart, and R there does not
   press("M-S-Down");
   await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
   // Its row offers no R, though its old session still runs in this test.
-  await until(() => footer().includes("w close"), "the task's keys");
+  await until(() => footer().includes("w/⌥W close"), "the task's keys");
   expect(footer()).not.toContain("R restart");
   type("R");
   await Bun.sleep(500);

@@ -91,7 +91,7 @@ test("w in the sidebar asks, c then y closes app's tab, ending only its lead, an
   await ready("lead");
   // Ctrl-\ gives the sidebar your typing, and the footer offers w there.
   press("C-\\");
-  await until(() => typingToSidebar() && footer().includes("w close"), "the sidebar's keys");
+  await until(() => typingToSidebar() && footer().includes("w/⌥W close"), "the sidebar's keys");
   type("w");
   await until(() => seen().includes("Close app?"), "the question");
   expect(flat()).toContain(question);
