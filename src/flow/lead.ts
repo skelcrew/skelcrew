@@ -14,6 +14,7 @@ import {
   type Labels,
   listSessions,
   startSession,
+  stopSession,
 } from "../agents/sessions.ts";
 import { approvedAgents, approvedRef, markApproved } from "../approved-agents.ts";
 import { agentRole, leadCanMerge, repositoryCommands, sessionHost } from "../config.ts";
@@ -407,6 +408,34 @@ export async function closeExitedLeads(db: Database, sessions: string): Promise<
       },
     });
   }
+}
+
+// Ends a repository's lead and waits for it, once you closed its tab, for closing or removing the
+// repository, which `verb` names. It takes the lead's turn, so a start asked for meanwhile, as
+// when you open the repository again, comes after it and starts the lead afresh. A tab opened
+// again before its turn came ends nothing, and this returns false. Throws when the lead's host
+// can't be reached or won't end it.
+export async function endLeadOfClosedTab(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+  verb: "close" | "remove",
+): Promise<boolean> {
+  const { owner, repo, name } = repository;
+  let ended = false;
+  await leadAgent(owner, repo).end({
+    stop: async () => {
+      const closed = db
+        .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
+        .get(owner, repo);
+      if (!closed) return;
+      const lead = await leadSession(db, sessions, owner, repo);
+      if (lead === null) throw new Error(`${name}'s lead's host went away while it was ${verb}d`);
+      await stopSession(lead.host, lead.id);
+      ended = true;
+    },
+  });
+  return ended;
 }
 
 // Returns the supervisor of a repository's lead, which starts and ends it one at a time.
