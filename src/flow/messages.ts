@@ -760,9 +760,11 @@ async function typeNotes(
     const reading = until > time;
     // What a reading window held is what came before it ended, by itself or as the human wrote
     // to the lead: the notes saved and the threads that started needing you. It goes in at
-    // once, routine notes too, whatever the window open now.
+    // once, routine notes too, whatever the window open now. Only what came strictly before the
+    // end counts: one saved in the same millisecond as the human's message may have come after
+    // it, and waiting for the next window is the safe side.
     const releasedAt = Math.max(last?.reading_released ?? 0, reading ? 0 : until);
-    const held = (at: number | null) => releasedAt > 0 && (at ?? 0) <= releasedAt;
+    const held = (at: number | null) => releasedAt > 0 && (at ?? 0) < releasedAt;
     const released = saved.filter((note) => held(note.at));
     // An open window holds the rest.
     const free = reading ? released : saved;

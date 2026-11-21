@@ -781,3 +781,24 @@ console.log(JSON.stringify(received()));`),
   expect(message).toBeLessThan(second);
   expect(typed.split("\x1b[201~")).toHaveLength(2);
 });
+
+// A note saved in the same millisecond as the human's message may have come after it, so the
+// window the answer opens holds it. The test gives the note that very time.
+test("a note from the same moment as the human's message waits for the next window", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+leadTurnStarted(db, tmux, app, "And now?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+db.run("UPDATE notes SET at = (SELECT reading_released FROM repositories)");
+(await import("node:fs")).rmSync(home + "/draft");
+await Bun.sleep(3000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
+  );
+  expect(seen).toEqual({ received: "", waiting: 1 });
+});
