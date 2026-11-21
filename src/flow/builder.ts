@@ -32,7 +32,7 @@ import { fetchBranch, noMaintenance } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus, needsYou } from "./status.ts";
-import { type Restarted, supervisor } from "./supervisor.ts";
+import { type BroughtBack, type Restarted, supervisor } from "./supervisor.ts";
 import { joinsQueue, joinTime } from "./task-queue.ts";
 import {
   builderHarness,
@@ -652,13 +652,15 @@ export function endEarlierBuilder(db: Database, sessions: string, thread: Thread
 // ended is started again, on the host your config names now. Throws for a thread with no
 // session: the daemon stopped before its setup finished, and the error says to run sc start
 // again. A host that can't be reached is asked again for as long as the thread stays as it was,
-// which stays live meanwhile, with its round and messages waiting for it. Gives back null once
-// the builder runs, or, for a host plugin that is gone, why nobody can tell whether it does.
+// which stays live meanwhile, with its round and messages waiting for it. Gives back "back" once
+// the builder runs, or, for a host plugin that is gone, why nobody can tell whether it does. A
+// thread stopped, removed or started over meanwhile is no longer this one's: it gives back "not
+// wanted", having touched nothing of the thread as it is now.
 export async function bringBack(
   db: Database,
   sessions: string,
   thread: Thread,
-): Promise<string | null> {
+): Promise<BroughtBack> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
   return supervisor(thread.folder).bringBack(

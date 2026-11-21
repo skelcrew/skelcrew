@@ -476,8 +476,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const comeBack = async (thread: Thread) => {
     try {
       await listenFor(thread);
-      await bringBack(db, sessions, thread);
-      resumeRound(db, sessions, thread.folder);
+      if ((await bringBack(db, sessions, thread)) !== "not wanted")
+        resumeRound(db, sessions, thread.folder);
     } catch (error) {
       failThread(db, sessions, thread, error);
     }
@@ -1185,8 +1185,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // After the builder is back, since the round may type into its session.
     // A builder that stopped on a usage limit is woken once it resets, as it would have been.
     bringBack(db, sessions, thread).then(
-      () => {
+      (back) => {
         settled();
+        if (back === "not wanted") return;
         resumeRound(db, sessions, thread.folder);
         if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
       },

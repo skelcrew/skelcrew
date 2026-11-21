@@ -50,7 +50,7 @@ test("a stop that comes while a builder is brought back ends the builder it brou
   const stop = agent.stop(() => agent.end(host));
   expect(agent.state().stopping).toBe(true);
   letStart();
-  expect(await back).toBeNull();
+  expect(await back).toBe("back");
   await stop;
   expect(asked).toEqual(["runs", "clear", "start", "stop"]);
   expect(state.running).toBe(false);
@@ -128,7 +128,7 @@ test("a session that ends while the daemon restarts is found ended once it was s
   await settle();
   const look = agent.lookForEnd(host, () => true);
   letRuns();
-  expect(await back).toBeNull();
+  expect(await back).toBe("back");
   expect(agent.state().seenRunning).toBe(true);
   state.running = false;
   expect(await look).toBe(true);
@@ -144,16 +144,16 @@ test("a host that can't be asked while bringing back is asked again, and a stop 
   await settle();
   expect(tries).toHaveLength(1);
   wanted = false;
-  await expect(back).rejects.toThrow("can't be reached");
+  expect(await back).toBe("not wanted");
   expect(tries).toHaveLength(1);
 }, 10_000);
 
 test("a host plugin that is gone brings nothing back and says why", async () => {
   const { host, asked } = fakeHost();
   const agent = supervisor("gone-host");
-  expect(await agent.bringBack({ ...host, gone: () => "its host is gone" }, () => true)).toBe(
-    "its host is gone",
-  );
+  expect(await agent.bringBack({ ...host, gone: () => "its host is gone" }, () => true)).toEqual({
+    gone: "its host is gone",
+  });
   expect(asked).toEqual([]);
 });
 
@@ -229,8 +229,8 @@ test("two bring backs at once start one builder", async () => {
   const second = agent.bringBack(host, () => true);
   await settle();
   letStart();
-  expect(await first).toBeNull();
-  expect(await second).toBeNull();
+  expect(await first).toBe("back");
+  expect(await second).toBe("back");
   expect(asked).toEqual(["runs", "clear", "start", "runs"]);
 });
 
@@ -243,7 +243,7 @@ test("a bring back no longer wanted once the old session is cleared starts nothi
   await settle();
   wanted = false;
   letClear();
-  await expect(back).rejects.toThrow("stopped or ended");
+  expect(await back).toBe("not wanted");
   expect(asked).toEqual(["runs", "clear"]);
 });
 
@@ -255,8 +255,49 @@ test("a stop asked for while a bring back clears the old session wins, and nothi
   await settle();
   const stop = agent.stop(() => agent.end(host));
   letClear();
-  await expect(back).rejects.toThrow("stopped or ended");
+  expect(await back).toBe("not wanted");
   await stop;
   expect(asked).toEqual(["runs", "clear", "stop"]);
   expect(state.running).toBe(false);
+});
+
+test("a bring back whose thread was stopped and started again while it waited leaves the new builder alone", async () => {
+  const { host, asked, state, hold } = fakeHost();
+  const agent = supervisor("stale-bring-back");
+  const letStart = hold("start");
+  const starting = agent.start(host);
+  let started = 1;
+  const stale = agent.bringBack(host, () => started === 1);
+  started = 2;
+  letStart();
+  await starting;
+  state.running = false;
+  expect(await stale).toBe("not wanted");
+  expect(asked).toEqual(["start"]);
+});
+
+test("a bring back whose thread changes while the host answers clears nothing", async () => {
+  const { host, asked, hold } = fakeHost();
+  const agent = supervisor("changed-while-asking");
+  const letRuns = hold("runs");
+  let wanted = true;
+  const back = agent.bringBack(host, () => wanted);
+  await settle();
+  wanted = false;
+  letRuns();
+  expect(await back).toBe("not wanted");
+  expect(asked).toEqual(["runs"]);
+});
+
+test("a host that fails a bring back no longer wanted fails nothing", async () => {
+  const { host, state, hold } = fakeHost();
+  const agent = supervisor("fails-when-unwanted");
+  state.reachable = false;
+  const letRuns = hold("runs");
+  let wanted = true;
+  const back = agent.bringBack(host, () => wanted);
+  await settle();
+  wanted = false;
+  letRuns();
+  expect(await back).toBe("not wanted");
 });

@@ -13,6 +13,8 @@ export type SessionHost = {
 
 type AgentHost = Omit<SessionHost, "stop" | "hold">;
 
+export type BroughtBack = "back" | "not wanted" | { gone: string };
+
 export type Restarted = "refused" | "stays ended" | { gone: string | null } | { failed: unknown };
 
 const hostRetryMs = 5000;
@@ -93,30 +95,36 @@ class Supervisor {
     return this.#removalEnded ?? Promise.resolve();
   }
 
-  async bringBack(host: AgentHost, wanted: () => boolean): Promise<string | null> {
-    const gone = host.gone?.() ?? null;
-    if (gone !== null) return gone;
+  async bringBack(host: AgentHost, wanted: () => boolean): Promise<BroughtBack> {
     const ours = () => this.#stopping === null && this.#removalEnded === null && wanted();
+    if (!ours()) return "not wanted";
+    const gone = host.gone?.() ?? null;
+    if (gone !== null) return { gone };
     let told = false;
     while (true) {
-      const unreachable = await this.#inTurn(async (earlier) => {
-        await earlier;
-        try {
-          if (await host.runs()) {
-            this.#seen = true;
-            return null;
+      const outcome = await this.#inTurn(
+        async (earlier): Promise<BroughtBack | { error: unknown }> => {
+          await earlier;
+          if (!ours()) return "not wanted";
+          try {
+            const runs = await host.runs();
+            if (!ours()) return "not wanted";
+            if (runs) {
+              this.#seen = true;
+              return "back";
+            }
+            await host.clear();
+          } catch (error) {
+            return ours() ? { error } : "not wanted";
           }
-          await host.clear();
-        } catch (error) {
-          return { error };
-        }
-        if (!ours()) throw new Error("it was stopped or ended while it was being brought back");
-        await this.#start(host);
-        return null;
-      });
-      if (unreachable === null) return null;
-      if (host.retry === undefined || !wanted()) throw unreachable.error;
-      if (!told) host.retry(unreachable.error);
+          if (!ours()) return "not wanted";
+          await this.#start(host);
+          return "back";
+        },
+      );
+      if (typeof outcome === "string" || "gone" in outcome) return outcome;
+      if (host.retry === undefined) throw outcome.error;
+      if (!told) host.retry(outcome.error);
       told = true;
       await Bun.sleep(hostRetryMs);
     }
@@ -125,14 +133,17 @@ class Supervisor {
   async restart(host: AgentHost, wanted: () => boolean): Promise<Restarted> {
     const ours = () => this.#stopping === null && this.#removalEnded === null && wanted();
     if (!ours()) return "refused";
-    await this.#inTurn(async (earlier) => {
+    const cleared = await this.#inTurn(async (earlier) => {
       await earlier;
+      if (!ours()) return false;
       await host.clear();
       this.#seen = false;
+      return true;
     });
-    if (!ours()) return "stays ended";
+    if (!cleared || !ours()) return "stays ended";
     return this.bringBack(host, wanted).then(
-      (gone) => ({ gone }),
+      (back): Restarted =>
+        back === "not wanted" ? "stays ended" : { gone: back === "back" ? null : back.gone },
       (failed: unknown) => ({ failed }),
     );
   }
