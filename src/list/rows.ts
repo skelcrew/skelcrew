@@ -57,8 +57,8 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // that moment in milliseconds, or null, which the details pane gives by the clock, so the two
 // always agree. `needsYou` is whether it waits on you for
 // something other than a merge. `session` is the agent's session, which Enter attaches to,
-// `running` whether its agent runs, `working` whether an agent of its is at work this moment,
-// a builder, its reviewer or the lead, while it doesn't need you and nothing failed, and `tmux` whether Enter attaches to it on tmux, where
+// `running` whether its agent runs, `working` whether its builder or the lead is at work this
+// moment, by what its harness last said, while it doesn't need you and nothing failed, and `tmux` whether Enter attaches to it on tmux, where
 // Ctrl-\ comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
 // Enter does on an issue, `startNow` what f does on a queued task, or on an issue while every
 // builder is busy, which starts it at once over limits.threads, and `merge` what m does on a task ready for review. `link` is its PR's,
@@ -292,11 +292,7 @@ function taskRow(
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
-    working:
-      !ended &&
-      mark.sign === "○" &&
-      mark.colour !== "red" &&
-      (shown.status === "working" || word === "reviewing"),
+    working: !ended && mark.sign === "○" && mark.colour !== "red" && shown.status === "working",
     tmux: !ended && !ready && (thread.host ?? "tmux") === "tmux",
     start: null,
     startNow: null,
@@ -641,13 +637,15 @@ export function shownRows(all: Row[], opened: Set<Section>, wholeBacklog: boolea
 
 // A section's heading: its section, how many tasks it has, whether it is open, which shows its
 // rows, what it says after its count, dim, which only Task queue has: how full the builders
-// are, and how many of its tasks wait only for you to merge them, which only Needs you has.
+// are, how many of its tasks wait only for you to merge them, which only Needs you has, and how
+// many have a builder at work this moment.
 export type Heading = {
   section: Section;
   count: number;
   open: boolean;
   note: string;
   merges: number;
+  working: number;
 };
 
 // Returns the heading of every section, in order, from all the rows, whether their section is open
@@ -661,7 +659,8 @@ export function sectionHeadings(rows: Row[], opened: Set<Section>, builders = ""
     const note = section === "task queue" ? builders : "";
     const merges = ours.filter((row) => row.mark.sign === "●" && row.mark.colour === "green");
     const count = ours.length;
-    return [{ section, count, open: opened.has(section), note, merges: merges.length }];
+    const working = ours.filter((row) => row.working).length;
+    return [{ section, count, open: opened.has(section), note, merges: merges.length, working }];
   });
 }
 

@@ -266,18 +266,19 @@ test("a task approved past the round limit waits on you to merge, not on the lim
   expect(row).toMatchObject({ section: "needs you", says: "ready to merge", needsYou: false });
 });
 
-// Needs you also counts the tasks that wait only for you to merge them, such as APP-14.
+// Needs you also counts the tasks that wait only for you to merge them, such as APP-14, and each
+// section how many of its builders are at work, such as APP-7.
 test("each section's heading counts its tasks, open or closed", () => {
   const opened = new Set<Section>(["needs you", "task queue", "building"]);
   expect(sectionHeadings(rows(), opened, "Building 1/1")).toEqual([
-    { section: "needs you", count: 2, open: true, note: "", merges: 1 },
-    { section: "task queue", count: 1, open: true, note: "Building 1/1", merges: 0 },
-    { section: "backlog", count: 1, open: false, note: "", merges: 0 },
-    { section: "building", count: 1, open: true, note: "", merges: 0 },
-    { section: "reviewing", count: 0, open: false, note: "", merges: 0 },
-    { section: "checks", count: 0, open: false, note: "", merges: 0 },
-    { section: "ready", count: 0, open: false, note: "", merges: 0 },
-    { section: "done", count: 0, open: false, note: "", merges: 0 },
+    { section: "needs you", count: 2, open: true, note: "", merges: 1, working: 0 },
+    { section: "task queue", count: 1, open: true, note: "Building 1/1", merges: 0, working: 0 },
+    { section: "backlog", count: 1, open: false, note: "", merges: 0, working: 0 },
+    { section: "building", count: 1, open: true, note: "", merges: 0, working: 1 },
+    { section: "reviewing", count: 0, open: false, note: "", merges: 0, working: 0 },
+    { section: "checks", count: 0, open: false, note: "", merges: 0, working: 0 },
+    { section: "ready", count: 0, open: false, note: "", merges: 0, working: 0 },
+    { section: "done", count: 0, open: false, note: "", merges: 0, working: 0 },
   ]);
 });
 
@@ -1667,6 +1668,36 @@ test("a terminal too short for every heading still shows the row you are on", ()
   expect(fewer.filter((line) => line.includes("▸"))).toEqual([
     expect.stringMatching(/^ ▸ ○ 59 +Task 59 *$/),
   ]);
+});
+
+// The summary under the lead counts as running only the tasks whose builder works this moment,
+// not every task in Building, Reviewing or Checks: one waiting on its review or CI runs nothing.
+// A review under way doesn't spin either, as nothing says when its reviewer runs rather than
+// waits for CI.
+test("the summary counts as running only the builders at work, and a review waiting doesn't spin", () => {
+  sql(fourStagesSql());
+  const all = rows();
+  expect(all.find((row) => row.name === "APP-15")).toMatchObject({
+    says: "reviewing",
+    working: false,
+  });
+  const opened = new Set<Section>(["needs you", "building", "reviewing", "checks"]);
+  const shown = shownRows(all, opened, false);
+  const { lines } = drawRows(shown, sectionHeadings(all, opened), 0, 0, 80, 60);
+  expect(Bun.stripANSI(lines[3] ?? "").trimEnd()).toBe(
+    "   7 running · 1 queued · 1 ready · 1 needs you",
+  );
+  sql("UPDATE threads SET status = 'waiting' WHERE folder = 'app-7';");
+  const fewer = rows();
+  const drawn = drawRows(
+    shownRows(fewer, opened, false),
+    sectionHeadings(fewer, opened),
+    0,
+    0,
+    80,
+    60,
+  );
+  expect(Bun.stripANSI(drawn.lines[3] ?? "")).toStartWith("   6 running ·");
 });
 
 // However short the place, the lead's block gives way line by line from its end, so the list never
