@@ -2,7 +2,7 @@
 // agent of the row you are on, Shift-Enter or a gives that agent the whole terminal, plain keys
 // work in the sidebar as in sc --list, Enter on a stage's heading opens or closes it, and the
 // screen always shows which side has your typing.
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { itemSql } from "./harness.ts";
@@ -32,8 +32,6 @@ import {
   until,
 } from "./screen.ts";
 
-// Longer than the screen's waits, so a test that fails says what it waited for.
-setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 

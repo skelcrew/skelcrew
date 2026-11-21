@@ -1,6 +1,6 @@
 // What the screen writes to your terminal while nothing changes, and an agent's scrolling after
 // the right side showed something else.
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { threadSql } from "./harness.ts";
@@ -25,8 +25,6 @@ import {
   wheel,
 } from "./screen.ts";
 
-// Longer than the screen's waits, so a test that fails says what it waited for.
-setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 

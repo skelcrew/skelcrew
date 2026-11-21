@@ -504,7 +504,7 @@ export const arm = async () => {
 // Starts app-12 with a reviewer that asks for changes, and waits until its review is in and
 // the forge's copy of its PR shows the reviewed commit, with `checks` on it: CI still
 // running unless a test gives others.
-export const changesApp12 = async (checks: object[] = [check(5, "running")], wait?: number) => {
+export const changesApp12 = async (checks: object[] = [check(5, "running")], ciWait?: number) => {
   script(
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
@@ -513,20 +513,26 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
   );
   addApp();
   changes([issue12()]);
-  serve(200, wait);
+  serve(200, ciWait);
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
   const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
     env: env(),
     stderr: "pipe",
   });
   expect(started.stderr.toString()).toBe("");
-  await until(
+  // As in approvedApp12, a builder and a reviewer start in sandboxes of their own, which CI's
+  // busy machine can take many seconds to do. One that hangs says how far the thread got.
+  await wait(
     () =>
       thread().verdict === "changes" &&
       thread().pr === 7 &&
       thread().reviewing === null &&
       String(thread().review_post).includes("Test the error"),
-    30_000,
+    {
+      timeout: 45_000,
+      what: () =>
+        `${read(join(data(), "threads", "app-12.log"))}\n${read(daemonLog()).slice(-4000)}`,
+    },
   );
   const head = pushed();
   pr({ head, reviews: [skelReview], checks });
