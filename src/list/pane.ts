@@ -119,8 +119,9 @@ function describedLines(body: string, width: number): string[] {
 // Returns the details of a task as lines `width` columns wide at most, from the top: its full
 // title, its issue's and PR's links, its stage and word, what it waits on when it is up next,
 // its CI with each check, its armed merge, its review round with the verdict and the findings in
-// short, its whole description, and its recent events. Each part is left out where the task has
-// none.
+// short, its whole description, then when it last changed, such as `last change 09:33, 4 minutes
+// ago`, as its row says only how long ago, and its recent events. Each part is left out where the
+// task has none.
 function detailLines(row: Row, details: Details, width: number): string[] {
   const { view, findings, events } = details;
   const cut = (text: string) => fitted(text, width);
@@ -186,6 +187,7 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   ];
   // The description, whole and dimmer than the rest.
   const described = describedLines(view.body, width).map((line) => paint(lightGrey, line));
+  const changed = row.lastChange ? [paint(grey, cut(`last change ${row.lastChange}`))] : [];
   const happened = events.length
     ? folded(events.join(" · "), width, eventLines).map((line) => paint(grey, line))
     : [];
@@ -194,7 +196,7 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     [...title, ...links],
     [staged, ...(row.waits ? folded(row.waits, width) : []), ...ci, ...merge, ...rounds, ...found],
     described,
-    happened,
+    [...changed, ...happened],
   ].filter((part) => part.length > 0);
   return parts.flatMap((part, i) => (i === 0 ? part : ["", ...part]));
 }

@@ -38,7 +38,7 @@ export type Size = { width: number; height: number };
 // How wide the list is, in its own window or as the screen's sidebar: a little over a quarter of
 // the terminal, so the pane or the right side has the room for the agent at work. It never gets
 // narrower than a row's name, short title and word need, nor wider than a task's two lines do,
-// such as `working · Editing rows.ts · #40 · CI passed · 14:31`.
+// such as `working · Editing rows.ts · #40 · CI passed · 4m`.
 export const listShare = { percent: 28, least: 40, most: 58 };
 
 // Returns how many columns the list takes in a terminal `width` columns wide.
@@ -143,8 +143,8 @@ const keyOf = (section: Section) =>
 
 // Returns a section's heading as a line: the number key that opens and closes it, dim, then its
 // name, bright while open and dim while closed, then how many tasks it has, lined up under the
-// other headings' counts, such as `2 Building  4`. Needs you's count is yellow while any task
-// waits on you. Up next then says dim how full the builders are, such as `Building 4/4 · 3
+// other headings' counts, such as `2 Building  4`, in the heading's colour, if any. Up next then
+// says dim how full the builders are, such as `Building 4/4 · 3
 // queued`, which goes first on a narrow terminal. Cut to fit, without its colours, on a terminal
 // narrower still.
 function headingLine(heading: Heading, countWidth: number, width: number): string {
@@ -154,10 +154,10 @@ function headingLine(heading: Heading, countWidth: number, width: number): strin
   const plain = ` ${key} ${name} ${count}`;
   if (Bun.stringWidth(plain) > width) return fitted(plain, width);
   const shown = paint(heading.open ? bright : grey, name);
-  const waits = heading.section === "needs you" && heading.count > 0;
   const fits = heading.note && Bun.stringWidth(`${plain}  ${heading.note}`) <= width;
   const note = fits ? `  ${paint(grey, heading.note)}` : "";
-  return ` ${paint(grey, key)} ${shown} ${waits ? paint(yellow, count) : count}${note}`;
+  const counted = heading.colour ? paint(markColours[heading.colour], count) : count;
+  return ` ${paint(grey, key)} ${shown} ${counted}${note}`;
 }
 
 // A repository's tab on the top line, the columns it takes, counted from 1 as your terminal
@@ -273,7 +273,7 @@ function shortLine(row: Row, pointer: Pointer, columns: Columns, width: number):
 // so what it does sits under its title. The first line has its mark, its name, padded to
 // `nameWidth` so the titles line up, and its title. The second has its word in its colour, then
 // dim the step its builder is on, its PR, its CI and when it last changed, such as
-// `working · Editing rows.ts · #40 · CI passed · 14:31`, each left out where it has none. Each
+// `working · Editing rows.ts · #40 · CI passed · 4m`, each left out where it has none. Each
 // line is cut with … to fit, and the row you are on is shaded on both its lines.
 function tallLines(row: Row, pointer: Pointer, nameWidth: number, width: number): string[] {
   const here = pointer === "lit";
@@ -338,8 +338,8 @@ const shortNames: Record<Section, string> = {
 // Returns the line at one edge of the sections when lines are hidden past it, or an empty line
 // when none are. `arrow` is ↑ or ↓. It says how many rows are hidden there, and in which section
 // when they are all in one, then each heading hidden there, short: its name and its count, such
-// as `↓ 5 more in Building   Checks 2`, with Needs you's count in yellow while any task waits on
-// you. So every count stays in sight however the list scrolls. Too wide for the terminal, it is
+// as `↓ 5 more in Building   Checks 2`, each in its heading's colour, such as Needs you's yellow
+// while any task waits on you. So every count stays in sight however the list scrolls. Too wide for the terminal, it is
 // said in fewer letters, as `↓ +5  Chk 2`, then with each stage by its number key, Needs you
 // by `!` and Up next by `>`, as `↓ +5 4:2`, so the counts still fit. Only a terminal too narrow even for that cuts
 // it, without its colours. Gives the line as a line of the body, whose target has the columns of
@@ -382,12 +382,13 @@ function edgeLine(
         words === "keys"
           ? `${key}:${heading.count}`
           : `${(brief ? shortNames : sectionNames)[heading.section]} ${heading.count}`;
-      const waits = heading.section === "needs you" && heading.count > 0;
-      return { section: heading.section, named, waits };
+      return { section: heading.section, named, colour: heading.colour };
     });
     const gap = { full: "   ", short: "  ", keys: " " }[words];
     const plain = ` ${arrow} ${[...more, ...parts.map(({ named }) => named)].join(gap)}`;
-    const coloured = parts.map(({ named, waits }) => paint(waits ? yellow : grey, named));
+    const coloured = parts.map(({ named, colour }) =>
+      paint(colour ? markColours[colour] : grey, named),
+    );
     const items = [...more.map((text) => paint(grey, text)), ...coloured];
     // Each pinned heading's columns: after the arrow, then each item and the gap after it.
     let column = Bun.stringWidth(` ${arrow} `) + 1;

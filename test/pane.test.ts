@@ -20,7 +20,8 @@ const row: Row = {
   step: "",
   pr: "#43",
   checks: "CI running",
-  when: "14:02",
+  when: "4m",
+  lastChange: "14:02, 4 minutes ago",
   needsYou: true,
   session: "app-12",
   running: true,
@@ -101,8 +102,8 @@ test("the pane shows the task's details from the top, then its agent's screen be
     "with a Retry-After header. The limit is set per",
     "repository.",
     "",
+    "last change 14:02, 4 minutes ago",
     "13:40 submitted · 13:52 reviewed · 14:02 submitted",
-    "",
     "",
     "",
     "",
@@ -144,6 +145,14 @@ test("the details take the list's look: bold title, dim labels, verdicts in colo
   // The description is dimmer than the rest, and the events dimmer still.
   expect(line("client can't starve the others.")).toStartWith(`${esc}[38;5;250m`);
   expect(line("13:40 submitted · 13:52 reviewed · 14:02 submitted")).toStartWith(`${esc}[90m`);
+  // When it last changed is dim too, as the row says only how long ago.
+  expect(line("last change 14:02, 4 minutes ago")).toStartWith(`${esc}[90m`);
+});
+
+test("a task with no time for its last change says nothing of it", () => {
+  const lines = plain(drawPane({ ...row, when: "", lastChange: "" }, details, null, 50, 30).lines);
+  expect(lines.some((line) => line.startsWith("last change"))).toBe(false);
+  expect(lines).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
 });
 
 test("a link with control characters in it never reaches your terminal as codes", () => {
@@ -274,7 +283,8 @@ test("with the agent's whole screen, the details take half the pane, and the scr
   // Details that fit in half take only what they need.
   const brief: Details = { ...details, findings: [], view: { ...details.view, body: "" } };
   const short = plain(drawPane(row, brief, { screen }, 50, 22, true).lines);
-  expect(short.slice(8, 11)).toEqual([
+  expect(short.slice(8, 12)).toEqual([
+    "last change 14:02, 4 minutes ago",
     "13:40 submitted · 13:52 reviewed · 14:02 submitted",
     "",
     "─".repeat(50),

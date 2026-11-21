@@ -10,6 +10,7 @@ import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
 import { drawList, drawRows, type Frame, keysFor, paneWidth, tabAt } from "../src/list/layout.ts";
 import {
+  changedAgo,
   cutBacklog,
   type Row,
   type Section,
@@ -140,11 +141,11 @@ test("the lead comes first, then what needs you, then what is up next, then each
   );
   expect(shown).toEqual([
     ["lead", "lead", "lead", "claude", "running", "", ""],
-    ["needs you", "building", "APP-12", "Rate limit the API", "question", "", "14:58"],
+    ["needs you", "building", "APP-12", "Rate limit the API", "question", "", "2m"],
     ["needs you", "ready", "APP-14", "Fix the export header", "ready to merge", "#41", ""],
-    ["up next", "building", "APP-9", "Old work", "paused", "", "14:59"],
-    ["backlog", "backlog", "APP-31", "Export as CSV", "", "", "5 Nov"],
-    ["building", "building", "APP-7", "Login redirect", "working", "", "14:55"],
+    ["up next", "building", "APP-9", "Old work", "paused", "", "1m"],
+    ["backlog", "backlog", "APP-31", "Export as CSV", "", "", "14d"],
+    ["building", "building", "APP-7", "Login redirect", "working", "", "5m"],
   ]);
 });
 
@@ -299,15 +300,47 @@ test("a task approved past the round limit waits on you to merge, not on the lim
 test("each section's heading counts its tasks, open or closed", () => {
   const opened = new Set<Section>(["needs you", "up next", "building"]);
   expect(sectionHeadings(rows(), opened, "Building 1/1")).toEqual([
-    { section: "needs you", count: 2, open: true, note: "" },
-    { section: "up next", count: 1, open: true, note: "Building 1/1" },
-    { section: "backlog", count: 1, open: false, note: "" },
-    { section: "building", count: 1, open: true, note: "" },
-    { section: "reviewing", count: 0, open: false, note: "" },
-    { section: "checks", count: 0, open: false, note: "" },
-    { section: "ready", count: 0, open: false, note: "" },
-    { section: "done", count: 0, open: false, note: "" },
+    { section: "needs you", count: 2, open: true, note: "", colour: "yellow" },
+    { section: "up next", count: 1, open: true, note: "Building 1/1", colour: null },
+    { section: "backlog", count: 1, open: false, note: "", colour: null },
+    { section: "building", count: 1, open: true, note: "", colour: null },
+    { section: "reviewing", count: 0, open: false, note: "", colour: null },
+    { section: "checks", count: 0, open: false, note: "", colour: null },
+    { section: "ready", count: 0, open: false, note: "", colour: null },
+    { section: "done", count: 0, open: false, note: "", colour: null },
   ]);
+});
+
+test("a closed stage's count takes the colour of what waits in it: red, then yellow, then green", () => {
+  const [lead, ...rest] = rows();
+  const base = rest.find((row) => row.name === "APP-31");
+  if (!lead || !base) throw new Error("the fixture has no lead or no APP-31");
+  // Returns a row in Ready with a mark, named apart so the list keeps each.
+  const inReady = (name: string, sign: string, colour: Row["mark"]["colour"]): Row => ({
+    ...base,
+    part: "ready",
+    section: "ready",
+    name,
+    mark: { sign, colour },
+  });
+  const ready = (marks: Row[], open: Section[] = []) =>
+    sectionHeadings([lead, ...marks], new Set(open)).find((h) => h.section === "ready")?.colour;
+  const green = inReady("APP-1", "●", "green");
+  const yellow = inReady("APP-2", "●", "yellow");
+  const red = inReady("APP-3", "○", "red");
+  const quiet = inReady("APP-4", "○", "dim");
+  expect(ready([quiet])).toBeNull();
+  expect(ready([quiet, green])).toBe("green");
+  expect(ready([green, yellow])).toBe("yellow");
+  expect(ready([green, yellow, red])).toBe("red");
+  // Open, its rows show their own marks, so the count stays plain.
+  expect(ready([green], ["ready"])).toBeNull();
+  // The count is drawn in that colour, here the green of ready to merge.
+  const headings = sectionHeadings([lead, green], new Set());
+  const drawnLines = drawList([lead], headings, 0, 0, frame, { width: 80, height: 24 }).lines;
+  expect(drawnLines.join("\n")).toContain(
+    "\x1b[90mReady    \x1b[22;39m \x1b[38;5;120m1\x1b[22;39m",
+  );
 });
 
 // app runs three builders at most, and all three run, so app-20 and app-21 wait in its queue.
@@ -508,21 +541,45 @@ test("Done shows the tasks that ended today, or the last ten when fewer ended to
   expect(done()[0]).toMatchObject({
     says: "merged",
     pr: "#100",
-    when: "14:00",
+    when: "1h",
     mark: { sign: "○", colour: "dim" },
     needsYou: false,
     session: null,
   });
   expect(done()[1]?.says).toBe("closed");
-  expect(done()[3]).toMatchObject({ pr: "#200", when: "18 Nov" });
+  expect(done()[3]).toMatchObject({ pr: "#200", when: "1d" });
   // Twelve today: every one of them, and none from before.
   sql(ended(300, 9, 4));
   expect(done()).toHaveLength(12);
-  expect(done().every((row) => /^\d\d:\d\d$/.test(row.when))).toBe(true);
+  expect(done().every((row) => /^\d+h$/.test(row.when))).toBe(true);
   // Each takes one line: its mark, name and title, then when it ended, lined up.
   const lines = drawn(0, 40, 80, ["done"]).map((line) => line.trimEnd());
-  expect(lines).toContain("   ○ APP-100  Ended 100  14:00");
-  expect(lines).toContain("   ○ APP-308  Ended 308  03:00");
+  expect(lines).toContain("   ○ APP-100  Ended 100  1h");
+  expect(lines).toContain("   ○ APP-308  Ended 308  12h");
+});
+
+test("a row says how long ago its task changed, in minutes, hours or days, never a clock time", () => {
+  const minute = 60_000;
+  expect(changedAgo(now - 30_000, now)).toBe("now");
+  expect(changedAgo(now - 4 * minute, now)).toBe("4m");
+  expect(changedAgo(now - 59 * minute, now)).toBe("59m");
+  expect(changedAgo(now - 2 * 60 * minute, now)).toBe("2h");
+  expect(changedAgo(now - 3 * 24 * 60 * minute, now)).toBe("3d");
+  // A clock that runs ahead of this one still reads as now.
+  expect(changedAgo(now + 5 * minute, now)).toBe("now");
+  // In words, for the details pane.
+  expect(changedAgo(now - 30_000, now, true)).toBe("just now");
+  expect(changedAgo(now - minute, now, true)).toBe("1 minute ago");
+  expect(changedAgo(now - 4 * minute, now, true)).toBe("4 minutes ago");
+  expect(changedAgo(now - 60 * minute, now, true)).toBe("1 hour ago");
+  expect(changedAgo(now - 3 * 24 * 60 * minute, now, true)).toBe("3 days ago");
+});
+
+test("a task's row says when it last changed, with the time, for the details pane", () => {
+  const row = rows().find((candidate) => candidate.name === "APP-7");
+  expect(row).toMatchObject({ when: "5m", lastChange: "14:55, 5 minutes ago" });
+  const issue = rows().find((candidate) => candidate.name === "APP-31");
+  expect(issue?.lastChange).toMatch(/^5 Nov, 1[34] days ago$/);
 });
 
 // A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
@@ -530,7 +587,7 @@ test("a row says one short word, with no merge when ready or messages waiting af
   sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
 INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-7', 'lead', 'one', 'one', 0);`);
   const row = rows().find((candidate) => candidate.name === "APP-7");
-  expect(row).toMatchObject({ says: "working", pr: "", when: "14:55" });
+  expect(row).toMatchObject({ says: "working", pr: "", when: "5m" });
 });
 
 test("an issue whose work ended is back under Backlog, to start again", () => {
@@ -551,9 +608,9 @@ test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest
     ('simon', 'app', 't6', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
   const backlog = rows().filter((row) => row.part === "backlog");
   expect(backlog.map((row) => [row.name, row.title, row.when])).toEqual([
-    ["APP-T5", "Add export", "7 Nov"],
-    ["APP-31", "Export as CSV", "5 Nov"],
-    ["APP-T6", "Add import", "1 Nov"],
+    ["APP-T5", "Add export", "12d"],
+    ["APP-31", "Export as CSV", "14d"],
+    ["APP-T6", "Add import", "18d"],
   ]);
   expect(backlog[0]?.start).toEqual({
     ask: "Start APP-T5? y/n",
@@ -935,18 +992,18 @@ test("every section has its heading with its count, only open ones show rows, an
     "",
     "   Needs you 2",
     " ▸ ● APP-12  Rate limit the API",
-    "     question · 14:58",
+    "     question · 2m",
     "   ● APP-14  Fix the export header",
     "     ready to merge · #41 · CI passed",
     "",
     "   Up next   1",
     "   ○ APP-9   Old work",
-    "     paused · 14:59",
+    "     paused · 1m",
     "",
     " 1 Backlog   1",
     " 2 Building  1",
     "   ○ APP-7   Login redirect",
-    "     working · 14:55",
+    "     working · 5m",
     "",
     " 3 Reviewing 0",
     " 4 Checks    0",
@@ -991,7 +1048,7 @@ test("an open section shows its rows, and its heading is bright while a closed o
     "   Needs you 2",
     "   Up next   1",
     " 1 Backlog   1",
-    " ▸ ○ APP-31  Export as CSV  5 Nov",
+    " ▸ ○ APP-31  Export as CSV  14d",
     "",
     " 2 Building  1",
     " 3 Reviewing 0",
@@ -1187,7 +1244,7 @@ test("each line drawn says what a click on it reaches", () => {
   expect(at("Backlog")).toEqual({ section: "backlog" });
   expect(at("Ready")).toEqual({ section: "ready" });
   expect(at("APP-7")).toEqual({ row: shown.findIndex((row) => row.name === "APP-7") });
-  expect(at("working · 14:55")).toEqual(at("APP-7"));
+  expect(at("working · 5m")).toEqual(at("APP-7"));
   expect(targets[0]).toBeNull();
   expect(targets.at(-1)).toBeNull();
 });
@@ -1205,7 +1262,7 @@ test("a row's word is in its colour, its step and what follows it are dim, and i
   const at = lines.findIndex((line) => line.includes("APP-7"));
   expect(lines.slice(at, at + 3)).toEqual([
     "   \x1b[1m○\x1b[22;39m APP-7   Login redirect",
-    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts · #40 · CI running · 14:55\x1b[22;39m",
+    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts · #40 · CI running · 5m\x1b[22;39m",
     "",
   ]);
 });
@@ -1306,11 +1363,11 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
     "",
     " ↑ 11 more   Needs you 2   Up next 1   Backlog 1   Building 11",
     "   ○ APP-57  Task 57",
-    "     working · 14:43",
+    "     working · 17m",
     "   ○ APP-58  Task 58",
-    "     working · 14:42",
+    "     working · 18m",
     " ▸ ○ APP-59  Task 59",
-    "     working · 14:41",
+    "     working · 19m",
     " 3 Reviewing  0",
     " ↓ Checks 0   Ready 0   Done 0",
   ]);
@@ -1323,7 +1380,7 @@ test("on the lead, the list starts at Needs you, with what is below at the botto
     "",
     "   Needs you 2",
     "   ● APP-12  Rate limit the API",
-    "     question · 14:58",
+    "     question · 2m",
     "   ● APP-14  Fix the export header",
     " ↓ +3  Next 1  Back 1  Build 1  Rev 0  Chk 0  Ready 0  Done 0",
   ]);
@@ -1347,12 +1404,12 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   expect(top.slice(5, 14)).toEqual([
     " ↑ 2 more in Needs you   Needs you 2   Up next 1",
     "   ○ APP-9   Old work",
-    "     paused · 14:59",
+    "     paused · 1m",
     " 1 Backlog   1",
-    "   ○ APP-31  Export as CSV  5 Nov",
+    "   ○ APP-31  Export as CSV  14d",
     " 2 Building  7",
     " ▸ ○ APP-7   Login redirect",
-    "     working · 14:55",
+    "     working · 5m",
     " ↓ 9 more   Reviewing 1   Checks 2   Ready 0   Done 0",
   ]);
   // On the last task in Checks, its heading and both its rows show, and the stages above it are
@@ -1387,7 +1444,7 @@ test("a terminal too short for every heading still shows the row you are on", ()
   expect(lines[2]).toMatch(/^ {3}○ lead/);
   expect(lines.slice(5, 7).map((line) => line.trim())).toEqual([
     "▸ ○ APP-59  Task 59",
-    "working · 14:41",
+    "working · 19m",
   ]);
   // Eight leave one: the first line of the row you are on, with its ▸.
   const fewer = drawn(14, 8, 80, ["needs you", "up next", "building"]);
@@ -2529,9 +2586,14 @@ test("a long description scrolls in the pane by Page Down, Page Up and the wheel
   await until(() => paneSeen()[0]?.startsWith("Paragraph") ?? false, "the details scrolled");
   expect(paneSeen().findIndex((line) => line.startsWith("───"))).toBe(rule);
   expect(liveSeen()).toEqual(strip);
-  // At the end, the last paragraph shows, with nothing more below.
+  // At the end, the last paragraph shows, then when the task last changed, with nothing more below.
   for (const _ of [1, 2, 3]) press("NPage");
-  await until(() => paneSeen()[rule - 1] === "Paragraph 30.", "the end of the description");
+  await until(
+    () =>
+      paneSeen()[rule - 3] === "Paragraph 30." &&
+      (paneSeen()[rule - 1]?.startsWith("last change ") ?? false),
+    "the end of the details",
+  );
   // The wheel over the pane scrolls it back, a few lines each turn, and Page Up a page, while
   // you stay on the same row.
   const atEnd = paneSeen()[0];

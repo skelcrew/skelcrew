@@ -49,8 +49,8 @@ export const sections: Section[] = ["needs you", "up next", ...ListStage.options
 // the section it shows under: Needs you while the task waits on you, Up next while it is queued
 // or paused, its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in, `says` is its short word, in
 // `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then dim its PR,
-// such as `#41`, its CI, such as `CI passed`, and when it last changed, such as `14:31`. Each is
-// empty where it has none. `needsYou` is whether it waits on you for something other than a
+// such as `#41`, its CI, such as `CI passed`, and how long ago it last changed, such as `4m`, with
+// `lastChange` saying when that was, such as `09:33, 4 minutes ago`. Each is empty where it has none. `needsYou` is whether it waits on you for something other than a
 // merge. `session` is the agent's session, which Enter attaches to, `running` whether its agent
 // runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\ comes back, rather than on
 // a runtime plugin's host, which has a key of its own. `start` is what Enter does on an issue,
@@ -77,6 +77,7 @@ export type Row = {
   pr: string;
   checks: string;
   when: string;
+  lastChange: string;
   needsYou: boolean;
   session: string | null;
   running: boolean;
@@ -114,15 +115,44 @@ const roundLimit = (thread: Thread) => {
   }
 };
 
-// Returns when a task last changed as a clock time for a moment today, such as 14:32, and as a
-// date for an earlier one, such as 12 Nov, in this machine's time zone. It changes only when the
-// task does, or at midnight, so a list left open writes nothing.
+// Returns when something happened as a clock time for a moment today, such as 14:32, and as a
+// date for an earlier one, such as 12 Nov, in this machine's time zone. A task's events and the
+// details pane say when they were with it.
 export function changedAt(at: number, now: number): string {
   const when = new Date(at);
   if (when.toDateString() === new Date(now).toDateString())
     return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
   return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })}`;
 }
+
+// Returns how long ago a moment was, in whole minutes, hours or days, short for a row, such as
+// 4m, 2h or 3d, or in words for the details pane, such as 4 minutes ago. A clock time on a row,
+// such as 09:33, could read as a date or a length of time. Under a minute is now, and so is a
+// moment after `now`, as another machine's clock can run ahead.
+export function changedAgo(at: number, now: number, words = false): string {
+  const minutes = Math.floor(Math.max(now - at, 0) / 60_000);
+  if (minutes < 1) return words ? "just now" : "now";
+  const [count, unit] =
+    minutes < 60
+      ? [minutes, "minute"]
+      : minutes < 24 * 60
+        ? [Math.floor(minutes / 60), "hour"]
+        : [Math.floor(minutes / (24 * 60)), "day"];
+  if (!words) return `${count}${unit[0]}`;
+  return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
+}
+
+// Returns a row's two ways of saying when its task last changed: how long ago, short, for the row
+// itself, and the time with how long ago, such as `09:33, 4 minutes ago`, for the details pane.
+// Both are empty for a task with no time. They change each minute, which the list's redraw each
+// second picks up.
+const changeOf = (at: number | null, now: number) =>
+  at === null || Number.isNaN(at)
+    ? { when: "", lastChange: "" }
+    : {
+        when: changedAgo(at, now),
+        lastChange: `${changedAt(at, now)}, ${changedAgo(at, now, true)}`,
+      };
 
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.
@@ -158,6 +188,7 @@ function leadRow(db: Database, open: Open): Row {
     pr: "",
     checks: "",
     when: "",
+    lastChange: "",
     needsYou: asking,
     session: lead.name,
     running: runs,
@@ -191,6 +222,7 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     pr: "",
     checks: "",
     when: "",
+    lastChange: "",
     needsYou: false,
     session: lead.session,
     running: lead.running,
@@ -320,7 +352,7 @@ function taskRow(
     step,
     pr,
     checks: thread.checks === null ? (noCi ? "no CI" : "") : ciWords[thread.checks],
-    when: changed === null ? "" : changedAt(changed, now),
+    ...changeOf(changed, now),
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
@@ -463,7 +495,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       step: "",
       pr: "",
       checks: "",
-      when: Number.isNaN(changed) ? "" : changedAt(changed, now),
+      ...changeOf(changed, now),
       needsYou: false,
       session: null,
       running: false,
@@ -586,6 +618,7 @@ const emptyRow: Row = {
   pr: "",
   checks: "",
   when: "",
+  lastChange: "",
   needsYou: false,
   session: null,
   running: false,
@@ -622,17 +655,35 @@ export function shownRows(all: Row[], opened: Set<Section>, wholeBacklog: boolea
 }
 
 // A section's heading: its section, how many tasks it has, whether it is open, which shows its
-// rows, and what it says after its count, dim, which only Up next has: how full the builders are.
-export type Heading = { section: Section; count: number; open: boolean; note: string };
+// rows, what it says after its count, dim, which only Up next has: how full the builders are, and
+// the colour its count is in, or null for none.
+export type Heading = {
+  section: Section;
+  count: number;
+  open: boolean;
+  note: string;
+  colour: "red" | "yellow" | "green" | null;
+};
 
 // Returns the heading of every section, in order, from all the rows, whether their section is
 // open or not, given the sections that are open. `builders` is what Up next's heading says of
-// the builders, from buildersNote.
+// the builders, from buildersNote. Needs you's count is yellow while any task waits on you. A
+// closed stage hides its rows' marks, so its count takes the colour of the one that matters
+// most: red when one went wrong, yellow when one needs you, green when one is ready to merge. So
+// a closed Ready or Done never hides work waiting on you.
 export function sectionHeadings(rows: Row[], opened: Set<Section>, builders = ""): Heading[] {
   return sections.map((section) => {
-    const count = rows.filter((row) => row.section === section).length;
+    const marks = rows.filter((row) => row.section === section).map((row) => row.mark);
+    const count = marks.length;
     const note = section === "up next" ? builders : "";
-    return { section, count, open: opened.has(section), note };
+    const open = opened.has(section);
+    let colour: Heading["colour"] = null;
+    if (section === "needs you") colour = count > 0 ? "yellow" : null;
+    else if (open || section === "up next") colour = null;
+    else if (marks.some((mark) => mark.colour === "red")) colour = "red";
+    else if (marks.some((mark) => mark.sign === "●" && mark.colour === "yellow")) colour = "yellow";
+    else if (marks.some((mark) => mark.sign === "●" && mark.colour === "green")) colour = "green";
+    return { section, count, open, note, colour };
   });
 }
 
