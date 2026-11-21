@@ -249,7 +249,7 @@ await Bun.write(${JSON.stringify(ready)}, "");`;
 // service manager was asked. `more` adds to its environment.
 async function beforeAttaching(build?: string, more: Record<string, string> = {}) {
   const done = await inProcess(
-    `import { restartStaleDaemon } from ${JSON.stringify(source("attach.ts"))};
+    `import { restartStaleDaemon } from ${JSON.stringify(source("machine/service.ts"))};
 await restartStaleDaemon();`,
     build,
     more,
@@ -347,18 +347,18 @@ async function restart(more: Record<string, string> = {}) {
   return { out, err, code, calls };
 }
 
-test("sc restart restarts the engine's service and says so once the new one answers", async () => {
+test("sc restart restarts the daemon's service and says so once the new one answers", async () => {
   await daemon({}, {});
   const done = await restart();
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
   expect(done.calls).toBe(restartCall);
-  expect(done.out).toBe(`Restarted the engine on simon@${hostname()}. Agents kept running.\n`);
+  expect(done.out).toBe(`Restarted the daemon on simon@${hostname()}. Agents kept running.\n`);
 });
 
-// The service manager can't restart an engine you run in a terminal, and one it started beside
+// The service manager can't restart a daemon you run in a terminal, and one it started beside
 // it would fail on the lock.
-test("sc restart asks you to stop an engine run in a terminal, and starts no service", async () => {
+test("sc restart asks you to stop a daemon run in a terminal, and starts no service", async () => {
   await daemon({ pid: 2 }, {});
   const done = await restart();
   expect(done.code).toBe(1);
@@ -367,8 +367,8 @@ test("sc restart asks you to stop an engine run in a terminal, and starts no ser
   expect(done.calls).toBe("");
 });
 
-// The old engine still answering counts as not back.
-test("sc restart says where to look when no new engine answers", async () => {
+// The old daemon still answering counts as not back.
+test("sc restart says where to look when no new daemon answers", async () => {
   await daemon({}, {}, { restarts: false });
   const done = await restart({ SKELCREW_RESTART_WAIT_MS: "2000" });
   expect(done.code).toBe(1);
@@ -376,9 +376,9 @@ test("sc restart says where to look when no new engine answers", async () => {
   expect(done.err).toContain(daemonLog());
 }, 60_000);
 
-// An engine of an older release reports no process id. One that answers while the service runs
+// A daemon of an older release reports no process id. One that answers while the service runs
 // none runs in a terminal.
-test("sc restart asks you to stop an older engine run in a terminal, with no service running", async () => {
+test("sc restart asks you to stop an older daemon run in a terminal, with no service running", async () => {
   await daemon({ pid: 0 }, {}, { service: 0 });
   const done = await restart();
   expect(done.code).toBe(1);
@@ -386,9 +386,9 @@ test("sc restart asks you to stop an older engine run in a terminal, with no ser
   expect(done.calls).toBe("");
 });
 
-// The service can run an older installed Skelcrew than this sc, whose new engine reports no id
+// The service can run an older installed Skelcrew than this sc, whose new daemon reports no id
 // either.
-test("sc restart restarts an older engine the service runs, which reports no process id", async () => {
+test("sc restart restarts an older daemon the service runs, which reports no process id", async () => {
   await daemon({ pid: 0 }, { pid: 0 });
   const done = await restart();
   expect(done.err).toBe("");
@@ -396,9 +396,9 @@ test("sc restart restarts an older engine the service runs, which reports no pro
   expect(done.calls).toBe(restartCall);
 });
 
-// The service manager can run a process of its own beside an older engine in a terminal, such
-// as one retrying on the lock. The old engine keeps answering on its old socket.
-test("sc restart doesn't take an older engine in a terminal for the new one", async () => {
+// The service manager can run a process of its own beside an older daemon in a terminal, such
+// as one retrying on the lock. The old daemon keeps answering on its old socket.
+test("sc restart doesn't take an older daemon in a terminal for the new one", async () => {
   await daemon({ pid: 0 }, { pid: 0 }, { restarts: false });
   const done = await restart({ SKELCREW_RESTART_WAIT_MS: "2000" });
   expect(done.code).toBe(1);
@@ -428,7 +428,7 @@ test("sc restart is only for your own terminal, not for agents", async () => {
   const done = await restart({ SKELCREW_SANDBOX: "1" });
   expect(done.code).toBe(1);
   expect(done.err).toBe(
-    "Skelcrew: restarting the engine is only for your own terminal, not for agents\n",
+    "Skelcrew: restarting the daemon is only for your own terminal, not for agents\n",
   );
   expect(done.calls).toBe("");
 });

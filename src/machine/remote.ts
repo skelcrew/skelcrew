@@ -28,11 +28,11 @@ import {
 } from "../screen/drops.ts";
 import {
   built,
+  checkoutBuild,
   checkoutFolder,
   dirty,
   git,
   isRelease,
-  laptopBuild,
   mainFile,
   readable,
   release,
@@ -453,7 +453,7 @@ async function runUpToDate(
   where: string,
   there: (env: string[]) => Promise<number>,
   machine: Machine,
-  build = release || laptopBuild(),
+  build = release || checkoutBuild(),
 ): Promise<number> {
   // Loaded only here, as it brings in much of Skelcrew that the check on each command needs
   // only this of.
@@ -619,7 +619,7 @@ async function downloadLinuxSkel(file: string, cpu: string): Promise<void> {
 async function buildLinuxSkel(file: string, cpu: string): Promise<void> {
   console.log("Building Skelcrew for Linux.");
   const target = `--target=bun-linux-${cpu}`;
-  const build = laptopBuild();
+  const build = checkoutBuild();
   const stamp = build ? ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`] : [];
   const argv = ["bun", "build", "--compile", target, ...stamp, mainFile, "--outfile", file];
   if ((await runInTerminal(argv)) !== 0)

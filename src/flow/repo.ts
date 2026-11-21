@@ -27,6 +27,7 @@ import {
 import { agentRole } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { builtInFlowText } from "../flows.ts";
+import { errorText, toRun } from "../format.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
@@ -43,7 +44,6 @@ import {
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
-import { errorText, toRun } from "../say.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
@@ -494,11 +494,11 @@ function oldRemoteOf(
   return { old, current, url: url.slice(0, at) + current + url.slice(at + old.length) };
 }
 
-// Asks the engine to rename each running builder on a plugin's host by its title as it is now, as
-// adding or removing a repository can give another's name its owner or take it away. The engine
-// does it, so a host that fails says so in the engine's log, not here among sc repo's output. The
-// engine answers before renaming, so a slow host never holds sc repo up. With no engine running,
-// nothing is renamed now, and the engine renames them all as it starts.
+// Asks the daemon to rename each running builder on a plugin's host by its title as it is now, as
+// adding or removing a repository can give another's name its owner or take it away. The daemon
+// does it, so a host that fails says so in the daemon's log, not here among sc repo's output. The
+// daemon answers before renaming, so a slow host never holds sc repo up. With no daemon running,
+// nothing is renamed now, and the daemon renames them all as it starts.
 async function renameBuilders(): Promise<void> {
   // Imported here, as the client's replies are checked with what sc repo ls lists, which
   // imports this file, and a loop of imports leaves one of them unset as the other loads.

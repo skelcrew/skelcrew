@@ -6,6 +6,7 @@ import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
+import { errorText, toRun } from "../format.ts";
 import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from "../paths.ts";
 import { addPlugin, installYourPlugins } from "../plugins/install.ts";
 import { yourPlugins } from "../plugins/lock.ts";
@@ -20,7 +21,6 @@ import {
   type Need,
   repositoryNeeds,
 } from "../plugins/repository.ts";
-import { errorText, toRun } from "../say.ts";
 import { readSettings } from "../settings.ts";
 import { originHere, parseRemote } from "./origin.ts";
 import { pick } from "./pick.ts";

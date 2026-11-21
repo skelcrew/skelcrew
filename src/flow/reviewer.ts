@@ -7,7 +7,7 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
-import { errorText } from "../say.ts";
+import { errorText } from "../format.ts";
 import { type SkillsFrom, skillsTold } from "../skills.ts";
 import { limitOn } from "./limits.ts";
 

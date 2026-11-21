@@ -61,7 +61,7 @@ export function nameRepositories(db: Database): void {
 // Moves a review that failed or timed out, saved by a release that had it need you, onto its
 // own flag, once, as the column that holds it is added. The lead can run such a review again, so
 // it no longer needs you. One past the round limit, with changes held, still needs you for the
-// limit, and one with a round under way is carried on as the engine starts, so both are left.
+// limit, and one with a round under way is carried on as the daemon starts, so both are left.
 function flagFailedReviews(db: Database): void {
   const failed = `verdict IN ('failed', 'timed out') AND held IS NULL AND submitting IS NULL AND reviewing IS NULL`;
   const where = hasTasks(db)
@@ -894,7 +894,7 @@ function prepareTables(db: Database): void {
   db.run("DROP TABLE IF EXISTS posted");
   // The claims Skelcrew asked a tracker for, to start a labelled issue, whose outcome it doesn't
   // know yet: saved before it asks, and gone once the task is recorded or the tracker said no.
-  // One still here after a stop of the engine or a failed ask may have been granted to this
+  // One still here after a stop of the daemon or a failed ask may have been granted to this
   // machine, though the tracker now says the issue is taken. A task sc start put in the queue of
   // limits.threads has one too, until its claim is made, and can't leave the queue before.
   db.run(`CREATE TABLE IF NOT EXISTS claims (

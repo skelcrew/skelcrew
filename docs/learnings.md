@@ -632,8 +632,8 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **A clone stopped halfway must not look like one.** Clone outside the folder the lead
   sees, then move it in.
 - **launchd keeps the definition it loaded.** systemd reads a changed service file at the
-  engine's next start. On a Mac the changed file must be loaded at once, which restarts the
-  engine.
+  daemon's next start. On a Mac the changed file must be loaded at once, which restarts the
+  daemon.
 - **`sc init` never switches to the default branch.** Switching could fail where the branch
   tracks a file `sc init` just wrote. On another branch it shows the commands that commit
   there, and says to merge it.
