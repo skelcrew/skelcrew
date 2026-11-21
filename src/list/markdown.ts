@@ -46,7 +46,9 @@ function drawn(text: string): string {
     // An item's lines after its first start under its text, past its marker, so a list item
     // still reads as one. A nested list comes inside its item, so it gets indented with it.
     listItem: (children, meta) => {
-      const marker = meta.ordered ? `${(meta.start ?? 1) + meta.index}. ` : "- ";
+      // A task list's item keeps its box, ticked or not, so done work reads apart from the rest.
+      const box = meta.checked === undefined ? "" : meta.checked ? "[x] " : "[ ] ";
+      const marker = `${meta.ordered ? `${(meta.start ?? 1) + meta.index}. ` : "- "}${box}`;
       const body = children.trim().replace(/\n{3,}/g, "\n\n");
       return `${prefixed(body, marker, " ".repeat(marker.length))}\n`;
     },
@@ -62,6 +64,8 @@ function drawn(text: string): string {
     strikethrough: struck,
     codespan: dim,
     link: (children, meta) => linked(meta.href, children),
+    // An image can't show here, so it shows as its alt text and its address, to open it from.
+    image: (children, meta) => linked(meta.src, children || "image"),
   });
 }
 
@@ -79,8 +83,9 @@ export function markdownLines(text: string, width: number): string[] {
     .filter((line, i, all) => line !== "" || all[i - 1] !== "");
   return lines.flatMap((line) => {
     if (line === "") return [""];
-    // What the line starts with, uncoloured: quote bars, an indent, then a list marker.
-    const found = /^(?:│ )*(?: *(?:[-*+]|\d+[.)]) +| *)/.exec(Bun.stripANSI(line))?.[0] ?? "";
+    // What the line starts with, uncoloured: quote bars, an indent, then a list marker and box.
+    const found =
+      /^(?:│ )*(?: *(?:[-*+]|\d+[.)]) +(?:\[[ x]\] )?| *)/.exec(Bun.stripANSI(line))?.[0] ?? "";
     const start = found.length * 2 <= width ? found : "";
     const hang = start.replace(/[^│]/g, " ");
     const pieces = Bun.wrapAnsi(Bun.sliceAnsi(line, start.length), width - start.length, {

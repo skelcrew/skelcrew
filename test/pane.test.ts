@@ -717,3 +717,22 @@ test("a check too long for the card has its name cut, and keeps its mark's colou
   expect(Bun.stripANSI(ci)).toBe("CI       ✗ end-to-end tests o…");
   expect(ci).toContain("\x1b[38;5;210m✗\x1b[22;39m");
 });
+
+test("a task list keeps its boxes, and an image shows its alt text and address", () => {
+  const body = [
+    "- [ ] Deploy it to every one of the servers",
+    "- [x] Test",
+    "",
+    "![diagram](https://example.com/d.png)",
+  ].join("\n");
+  const listed: Details = { ...details, view: { ...details.view, body } };
+  const lines = plain(drawPane(row, listed, null, 40, 60).lines);
+  const from = lines.indexOf("Task");
+  expect(lines.slice(from + 1, from + 6)).toEqual([
+    "- [ ] Deploy it to every one of the",
+    "      servers",
+    "- [x] Test",
+    "",
+    "diagram (https://example.com/d.png)",
+  ]);
+});
