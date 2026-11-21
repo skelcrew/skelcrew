@@ -287,7 +287,9 @@ export async function runSidebar(
       rightPane,
       "#{pane_start_command}",
     ]).out;
-    if (shown !== open.lead && !command.includes(attachedMark)) return;
+    // The lead's row always shows the lead. Its session isn't what the sidebar last showed when
+    // it runs on a plugin's host, which no tmux client reports, so the row decides.
+    if (rows[here]?.part !== "lead" && !command.includes(attachedMark)) return;
     held = false;
     screenTmux(agents, ["select-pane", "-t", rightPane]);
     if (zoom) screenTmux(agents, ["resize-pane", "-Z", "-t", rightPane]);

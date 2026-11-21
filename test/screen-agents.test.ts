@@ -170,9 +170,10 @@ function fakeHost(listed: string[], attach: string) {
 // Plain sc opens the screen whatever the session host. A lead on a runtime plugin's host shows on
 // the right through the host's own attach, here a script that keeps every byte typed into it and
 // ends at each one. Ctrl-\\ is herdr's key to detach, so it, and Ctrl-4 which sends the same
-// byte, must never reach the host's attach, which would leave the right side empty. An attach
-// that ends anyway is started again.
-test("a lead on a plugin's host shows on the right from the start, and never gets Ctrl-\\", async () => {
+// byte, must never reach the host's attach, which would leave the right side empty. They move
+// your typing to the sidebar, as from a lead on tmux, and Enter on the lead's row gives it back.
+// An attach that ends anyway is started again.
+test("a lead on a plugin's host shows on the right from the start, and Ctrl-\\ moves your typing to the sidebar without reaching it", async () => {
   given.extendedKeys = true;
   const { plugin } = fakeHost(
     ["fake-lead"],
@@ -181,12 +182,21 @@ test("a lead on a plugin's host shows on the right from the start, and never get
   sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
   open("lead");
   await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
+  await until(onLead, "the sidebar on the lead's row");
   expect(seen()).not.toContain("Waiting for the lead");
   const attached = () => read(join("plugin-fake", "attached")).length;
   expect(attached()).toBe(1);
-  press("C-\\");
-  press("C-4");
+  for (const key of ["C-\\", "C-4"]) {
+    press(key);
+    await until(typingToSidebar, `${key} to move your typing to the sidebar`);
+    press("Enter");
+    await until(() => !typingToSidebar(), "the lead to take your typing again");
+  }
+  // Ctrl-\\'s byte typed as text, as a terminal without extended keys sends it, never reaches
+  // the host either.
   type("\x1c");
+  await Bun.sleep(500);
+  expect(attached()).toBe(1);
   type("x");
   await until(() => attached() === 2, "the host's attach to start again");
   type("y");
