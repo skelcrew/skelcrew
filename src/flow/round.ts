@@ -898,7 +898,9 @@ async function postOrEdit(
     earlier !== null &&
     earlier.verdict === verdict &&
     JSON.stringify(earlier.findings) === JSON.stringify(findings);
-  if (edit === "can't" && same && !noted) return;
+  // A forge that can't edit and already took this very review, such as when reading the PR back
+  // failed after the post, gets nothing on a retry, as the PR would show it twice.
+  if (edit === "can't" && (earlier?.text === body || (same && !noted))) return;
   const id =
     edited && editing !== null
       ? editing
