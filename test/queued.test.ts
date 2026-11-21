@@ -5,7 +5,15 @@
 // queue, and when, is tested on the database alone in task-queue.test.ts.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -247,6 +255,85 @@ test("a start over limits.threads waits as queued, and starts in order once a bu
   expect(leftQueue("app-13")).toHaveLength(1);
   expect(leftQueue("app-12")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-11"));
   expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
+}, 60_000);
+
+// sc start --now is your way past the limit: a new task starts at once, and a queued one leaves
+// the queue, while the tasks behind it keep waiting.
+test("sc start --now starts a new task at once over the limit, and a queued one out of the queue", async () => {
+  addApp();
+  await serveApp();
+  // The tracker is down, so app-12 still owes its claim, which doesn't hold back --now.
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  expect(await sc("start", "app-12")).toContain("couldn't claim its issue yet");
+  // A new task never joins the queue.
+  const fresh = await sc("start", "app-13", "--now");
+  expect(fresh).toContain("Started APP-13");
+  expect(logOf("app-13").map((line) => line.status)).not.toContain("queued");
+  expect(statuses()["app-12"]).toBe("queued");
+  // A queued task leaves it, though app-11's builder still works.
+  expect(await sc("start", "APP-12", "--now")).toContain("Started APP-12 now, out of the queue");
+  await until(() => statuses()["app-12"] === "failed");
+  expect(statuses()["app-11"]).toBe("working");
+  expect(logOf("app-12").some((line) => line.why === "started now, over limits.threads")).toBe(
+    true,
+  );
+  expect(leftQueue("app-12")).toHaveLength(0);
+}, 60_000);
+
+// The start that queued a task assigns you its issue once its claim is made, but only while it is
+// still queued. Here its claim is under way, and the tracker answers it just as sc start --now
+// comes in, so the forced start runs before or after the claim's answer. Either way the
+// forced start assigns you, the claim is never left owed, and the queue never starts it again.
+test("sc start --now just as a queued task's claim is answered assigns you its issue", async () => {
+  addApp();
+  await serveApp();
+  const hold = join(plugin, "hold-took");
+  writeFileSync(hold, "");
+  const queueing = sc("start", "app-12");
+  await until(() => existsSync(join(plugin, "held-took")));
+  rmSync(hold);
+  const forcing = sc("start", "app-12", "--now");
+  expect(await queueing).toContain("APP-12 is queued");
+  expect(await forcing).toContain("Started APP-12 now, out of the queue");
+  const assigns = (on: boolean) =>
+    asked(plugin).filter((q) => q.ask === "assign" && q.on === on && q.task === "12");
+  await until(() => assigns(true).length > 0);
+  await until(() => statuses()["app-12"] === "failed");
+  expect(claimsSaved()).toBe(0);
+  expect(leftQueue("app-12")).toHaveLength(0);
+  // app-11's builder still holds the only place, so the forced start went over the limit.
+  expect(statuses()["app-11"]).toBe("working");
+}, 60_000);
+
+// The state a forced start would find if it came in between the claim's answer and the start
+// that queued the task assigning you: queued, its claim made, and you not assigned yet. The
+// forced start assigns you itself, as it never looks at the claim to decide.
+test("sc start --now of a queued task whose claim was made, with nobody assigned, assigns you", async () => {
+  addApp();
+  const queued = threadSql({ task: "12", title: "Add export", status: "queued", queued_since: 1 });
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(queued)});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  await serveApp();
+  expect(await sc("start", "app-12", "--now")).toContain("Started APP-12 now, out of the queue");
+  await until(() =>
+    asked(plugin).some((q) => q.ask === "assign" && q.on === true && q.task === "12"),
+  );
+}, 60_000);
+
+test("sc start --now starts a task its label queued while the start waited for the poll", async () => {
+  addApp(["12"]);
+  answer(plugin, "took", { took: true });
+  // sc start comes in before the first poll queues app-12 from its label, or just after, or
+  // while the start waits for it. Either way it starts now, and never stays queued behind
+  // app-11, which still works.
+  serve();
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+  expect(await sc("start", "app-12", "--now")).toStartWith("Started APP-12");
+  await until(() => statuses()["app-12"] === "failed");
+  expect(statuses()["app-11"]).toBe("working");
+  expect(leftQueue("app-12")).toHaveLength(0);
 }, 60_000);
 
 // Moves app's queued task one place earlier or later, as a key in the list asks the daemon, and

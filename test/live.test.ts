@@ -215,6 +215,7 @@ test("what is left fills the live view from the bottom up", async () => {
     running: true,
     tmux: true,
     start: null,
+    startNow: null,
     merge: null,
     link: null,
     branch: "skelcrew/12",
