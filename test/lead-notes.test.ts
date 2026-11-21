@@ -585,9 +585,9 @@ console.log(JSON.stringify({ during, after: received() }));`,
   expect(seen.after).toContain("Skelcrew digest:\nAPP-12 is done: #7 merged");
 });
 
-// After the lead answers the human, nothing goes in for 5 minutes, urgent or not, so the human
+// After the lead answers the human, nothing goes in for 2 minutes, urgent or not, so the human
 // can read the answer without the chat moving. The test ends the window early by moving its end
-// back in time, as waiting 5 minutes would. What it held then goes in together.
+// back in time, as waiting 2 minutes would. What it held then goes in together.
 test("nothing goes into the lead while the human reads its answer, then it all goes in together", () => {
   const seen = JSON.parse(
     run(`

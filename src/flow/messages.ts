@@ -642,7 +642,7 @@ const digestEvery = 10 * 60_000;
 // How long, after the lead answers the human, nothing more is typed into it, so the human can
 // read the answer without the chat moving on. It needs no look at the screen, so it works on
 // every host, such as a phone app where Skelcrew can't see the human scroll.
-const readingFor = 5 * 60_000;
+const readingFor = 2 * 60_000;
 
 // The leads whose turn under way the human started, by owner/name. Only such a turn's end opens
 // a reading window: a note or a builder's message the lead answers isn't the human reading.
