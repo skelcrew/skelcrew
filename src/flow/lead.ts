@@ -533,7 +533,9 @@ export async function closeIfExited(
     return settled();
   }
   if (!exited) {
-    unended.delete(key);
+    // Only an answer that no start or ending came after says so: a late one may be from before
+    // an ending that failed meanwhile, and the old session is still there.
+    if (!changed()) unended.delete(key);
     return settled();
   }
   // Nothing waits from this look to the ending being queued, so no start or other check can

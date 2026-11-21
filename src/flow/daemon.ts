@@ -833,8 +833,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // From outside any repository Skelcrew has, the one you opened last. A lead you exited
         // this second is closed first, so the daemon's next look can't close the tab again while
         // the lead starts, and a tab can't bring it back. Only the repository asked for is
-        // checked, so a slow host of another repository's lead holds up nothing here. Plain sc
-        // picks again when the one it picked just closed, as it then opens another: each pass
+        // checked, so a slow host of another repository's lead holds up nothing here. It is
+        // checked even with its tab closed, as an ending of its lead may still be under way, and
+        // the tab mustn't open again before that ending worked. Plain sc picks again when the
+        // one it picked had its tab open and just closed, as it then opens another: each pass
         // closes an open tab, so this ends.
         const here = request.from === undefined ? undefined : repositoryAt(db, request.from);
         let repository = here ?? lastOpened(db);
@@ -842,8 +844,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           db
             .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
             .get(one.owner, one.repo) !== null;
-        while (repository && tabOpen(repository) && (await checkLead(repository)) && !here)
+        while (repository) {
+          const wasOpen = tabOpen(repository);
+          if (!(await checkLead(repository)) || here || !wasOpen) break;
           repository = lastOpened(db);
+        }
         if (!repository) throw new Error(noRepositories);
         const { owner, repo } = repository;
         // A tab never brings back a lead you exited, not even from a screen that still shows

@@ -816,6 +816,35 @@ console.log(await hasSession(host, id), tab());`,
   expect(said).toContain(`${failed}\n${failed} 1\nfalse 1\n`);
 }, 30_000);
 
+// A brief checks the lead while it still runs, and the host is slow to say so. The lead exits
+// meanwhile, and the daemon's look fails to end it. The brief's late answer, that the lead runs,
+// must not count as the old session being gone.
+test("a late answer that the lead runs doesn't undo an ending that failed meanwhile", () => {
+  const stop = join(home, "stop-lead");
+  const said = leadRace(
+    "'fake', NULL",
+    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const command = ["sh", "-c", "while [ ! -e ${stop} ]; do sleep 0.05; done"];
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command, env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+fs.writeFileSync(fake + "/late-list", "2");
+const brief = closeIfExited(db, "unused", "simon", "app").then(String, (error) => error.message);
+await Bun.sleep(300);
+fs.rmSync(fake + "/late-list");
+fs.writeFileSync(${JSON.stringify(stop)}, "");
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/say-end", "the host can't end it");
+console.log(await closeIfExited(db, "unused", "simon", "app").then(String, (error) => error.message));
+console.log(await brief);
+console.log(await hasSession(host, id), tab());`,
+  );
+  const failed = "couldn't end simon/app's exited lead: fake couldn't end: the host can't end it";
+  expect(said).toContain(
+    `${failed}\ncouldn't end simon/app's exited lead: its last ending failed, and is tried again each second\ntrue 1\n`,
+  );
+}, 30_000);
+
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
   const lead = { repository: "simon/app", role: "lead" } as const;
   const on = host();
