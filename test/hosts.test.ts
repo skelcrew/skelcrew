@@ -516,6 +516,28 @@ console.log(JSON.stringify(db.query("SELECT repo, tab_closed FROM repositories O
   expect(said).toContain('[{"repo":"app","tab_closed":0},{"repo":"web","tab_closed":1}]');
 });
 
+test("a tab closed again while the daemon's start looks at its lead stays closed", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { closeTabAndEndLead, reopenTabsOfRunningLeads } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, tab_closed, lead_host) VALUES ('app', 'simon', 'app', '', 1, 1, 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "slow-list"))}, "");
+const looking = reopenTabsOfRunningLeads(db, "unused");
+await Bun.sleep(500);
+db.run("UPDATE repositories SET tab_closed = 0");
+const closing = closeTabAndEndLead(db, "unused", { name: "app", owner: "simon", repo: "app", forge: null, remote: "" }, "close");
+await looking;
+console.log("tab", db.query("SELECT tab_closed FROM repositories").get().tab_closed);
+await closing;`,
+    {},
+  );
+  expect(said).toContain("tab 1");
+}, 40_000);
+
 // Closing a repository ends its lead in the lead's turn. A host slow to end it can see you open
 // the repository again meanwhile. The start that opening asks for then comes after the end, so it
 // never finds the old lead still running and keeps it, only for the end to take it away.

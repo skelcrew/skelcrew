@@ -440,23 +440,26 @@ export async function endLeadOfClosedTab(
 }
 
 // Opens again each closed tab whose lead still runs, as the daemon starts. A daemon that stopped
-// while closing a tab could leave it so, and nothing else would show the lead you can't see.
+// while closing a tab could leave it so, and nothing else would show the lead you can't see. A
+// tab closed again while this looked, such as by sc while the daemon wasn't answering yet, stays
+// closed.
 export async function reopenTabsOfRunningLeads(db: Database, sessions: string): Promise<void> {
   const closed = db
-    .query("SELECT owner, repo FROM repositories WHERE tab_closed = 1")
+    .query("SELECT owner, repo, closes FROM repositories WHERE tab_closed = 1")
     .all()
-    .map((row) => z.object({ owner: z.string(), repo: z.string() }).parse(row));
+    .map((row) => z.object({ owner: z.string(), repo: z.string(), closes: z.number() }).parse(row));
   await Promise.all(
-    closed.map(async ({ owner, repo }) => {
+    closed.map(async ({ owner, repo, closes }) => {
       try {
         const lead = await leadSession(db, sessions, owner, repo);
         if (lead === null || !(await agentRuns(lead.host, lead.id))) return;
         if (typeof lead.host === "string" && exitedCleanly(lead.host, lead.id)) return;
-        db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
-          owner,
-          repo,
-        ]);
-        console.log(`${owner}/${repo}'s lead still runs, so its tab is open again.`);
+        const reopened = db.run(
+          "UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ? AND tab_closed = 1 AND closes = ?",
+          [owner, repo, closes],
+        );
+        if (reopened.changes > 0)
+          console.log(`${owner}/${repo}'s lead still runs, so its tab is open again.`);
       } catch (error) {
         console.log(`couldn't look at ${owner}/${repo}'s lead: ${errorText(error)}`);
       }
@@ -492,7 +495,7 @@ export async function closeTabAndEndLead(
   };
   under.count += 1;
   closing.set(key, under);
-  db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [owner, repo]);
+  db.run(`UPDATE repositories SET tab_closed = 1, closes = closes + 1 ${where}`, [owner, repo]);
   try {
     return await endLeadOfClosedTab(db, sessions, repository, verb);
   } catch (error) {
