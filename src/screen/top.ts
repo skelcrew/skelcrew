@@ -114,15 +114,17 @@ function drawTabs(tabs: Tab[], open: string, width: number): { text: string; wid
       text: `${shown.join("")}${count && `#[fg=brightblack]${count}#[default]`}`,
       width: used + count.length,
     };
-  // Too little room even for the open tab and the count: the count goes, then the open tab's
-  // spaces, and then its name and badge are cut with …, so the row never runs past the terminal.
-  // Cut, its badge loses its colours.
+  // Too little room for the open tab with its spaces and the count: its spaces go, and then its
+  // name and badge are cut with …, so the count still says others are hidden and the row never
+  // runs past the terminal. Only a row too narrow for any of the name beside the count loses the
+  // count. Cut, the badge loses its colours.
   const tab = tabs[at];
   if (!tab) return { text: "", width: 0 };
-  if (used <= width) return { text: shown.join(""), width: used };
-  const cut = fitted(plain(tab), Math.max(width, 0));
-  const text = cut && `#[range=user|${at}]${openStyle}${escaped(cut)}#[default]#[norange]`;
-  return { text, width: Bun.stringWidth(cut) };
+  const tail = width > count.length ? count : "";
+  const cut = fitted(plain(tab), Math.max(width - tail.length, 0));
+  const named = cut && `#[range=user|${at}]${openStyle}${escaped(cut)}#[default]#[norange]`;
+  const text = `${named}${tail && `#[fg=brightblack]${tail}#[default]`}`;
+  return { text, width: Bun.stringWidth(cut) + tail.length };
 }
 
 // What the top rows show: the tabs and the open one's owner/name, the remote Skelcrew runs on, if

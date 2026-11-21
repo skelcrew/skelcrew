@@ -205,15 +205,19 @@ test("tabs furthest from the open one give way first, and a dim count says how m
   expect(tabText(tabs, "simon/one", 26, afterName)).toBe("  one    two    three    four    +3");
 });
 
-test("an open tab too wide for the right side loses the count, then its spaces, then is cut with …", () => {
+test("an open tab too wide for the right side loses its spaces, then is cut with …, and keeps the count", () => {
   const long = tab("a-repository-with-a-very-long-name", 2, 1);
   const open = "simon/a-repository-with-a-very-long-name";
   expect(tabText([long], open, 6, afterName)).toBe("a-repository-with-…");
-  expect(tabText([long, tab("site")], open, 6, afterName)).toBe("a-repository-with-…");
-  // One that fits only without the count shows whole, and the count goes.
+  // Another repository's tab is hidden, and the count says so.
+  expect(tabText([long, tab("site")], open, 6, afterName)).toBe("a-repository-w…  +1");
+  expect(headerRow({ tabs: [long, tab("site")], open }, { sidebar: 28, right: 6 })).toContain(
+    "#[fg=brightblack]  +1#[default]",
+  );
+  // One that fits only without its spaces shows whole, with the count.
   expect(
     tabText([tab("sixteen-letters!"), tab("site")], "simon/sixteen-letters!", 7, afterName),
-  ).toBe("  sixteen-letters!");
+  ).toBe("sixteen-letters!  +1");
 });
 
 // The tab sets the widths test draws: one short tab, a long one with a badge, several with the
