@@ -5,7 +5,7 @@
 import type { Database } from "bun:sqlite";
 import type { z } from "zod";
 import { filesPlaceholder } from "../agents/sandbox.ts";
-import { errorText } from "../say.ts";
+import { errorText } from "../format.ts";
 import { commandFor, installedPlugins, type Manifest, quoteForSh, readManifest } from "./plugin.ts";
 
 // A runtime plugin that hosts sessions: its name, its version, its folder, its session and attach

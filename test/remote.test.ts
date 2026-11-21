@@ -233,8 +233,8 @@ test("sc --list goes to the server with the repository you are in", async () => 
   );
 });
 
-// sc restart there restarts the server's engine, with no ssh by hand.
-test("sc restart goes to the server and restarts its engine there", async () => {
+// sc restart there restarts the server's daemon, with no ssh by hand.
+test("sc restart goes to the server and restarts its daemon there", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox", "restart"], "", checkout("simon/app"));
   expect(calls()).toBe(`${onServer(" restart")}\n`);
@@ -273,7 +273,7 @@ test("a command reaches the server exactly as typed", async () => {
   );
 });
 
-test("serve --bg runs the engine on the server, with no repository passed", async () => {
+test("serve --bg runs the daemon on the server, with no repository passed", async () => {
   installed(laptop.commit);
   const run = await skel(["--remote", "simon@workbox", "serve", "--bg"], "", checkout("simon/app"));
   expect(run.out).toBe("Skelcrew on the server got 2 arguments\n[serve]\n[--bg]\n");
@@ -847,10 +847,10 @@ test("Skelcrew from a checkout never says it is out of date", () => {
   expect(farSkel(null, "def5678").out).toContain("USAGE");
 });
 
-// sc update is for plugins now, so the old way of updating Skelcrew on a server reaches nothing.
+// The old way of updating Skelcrew on a server reaches nothing.
 test("Skelcrew update is gone", async () => {
   const run = await skel(["update", "--remote", "simon@workbox"]);
-  expect(run.err).toStartWith("Skelcrew: sc update without -g is for a repository's plugins");
+  expect(run.err).toStartWith("Skelcrew: plugin commands are under sc plugin now");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
 });

@@ -103,7 +103,7 @@ async function queueLooked(): Promise<void> {
   await until(() => polls() >= before + 3);
 }
 
-// Stops the daemon, as a restart of the engine does. Sessions keep running.
+// Stops the daemon, as a restart does. Sessions keep running.
 async function stopDaemon(): Promise<void> {
   for (const serve of running.splice(0)) {
     serve.kill();
@@ -424,9 +424,9 @@ openDb().exec(${JSON.stringify(stopped)});`;
   expect(leftQueue("app-12")).toHaveLength(1);
 }, 60_000);
 
-test("a task the engine stopped while it left the queue goes back in the queue, and starts once", async () => {
+test("a task the daemon stopped while it left the queue goes back in the queue, and starts once", async () => {
   addApp();
-  // app-12 left the queue, but the engine stopped before its builder's session was saved.
+  // app-12 left the queue, but the daemon stopped before its builder's session was saved.
   const cut = threadSql({ task: "12", title: "Add export", queued_since: 1 });
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().exec(${JSON.stringify(cut)});`;
@@ -461,9 +461,9 @@ test("a queued sc start leaves the queue only once its claim is made, across a r
   expect(claims.length).toBeGreaterThanOrEqual(2);
 }, 60_000);
 
-test("a labelled issue whose claim the engine's stop cut short starts nowhere twice, and the lead hears of it", async () => {
+test("a labelled issue whose claim the daemon's stop cut short starts nowhere twice, and the lead hears of it", async () => {
   addApp(["12", "13"]);
-  // The engine stopped after asking to claim issue 12, before it recorded the task. The tracker
+  // The daemon stopped after asking to claim issue 12, before it recorded the task. The tracker
   // now says both issues are taken: 12 maybe by this machine, 13 by another.
   const cut = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12')");`;
@@ -541,7 +541,7 @@ test("a queued task whose issue another machine claimed while its claim failed l
 }, 60_000);
 
 // Which task goes first by these times is tested on the database alone. Here a start through
-// the engine saves its own.
+// the daemon saves its own.
 test("a task joins the queue after every task already in it, though the clock went back", async () => {
   addApp();
   // app-13 joined the queue at a time later than now, as before the clock was set back.
@@ -573,9 +573,9 @@ test("sc rm while a queued sc start waits for its claim leaves the issue unassig
   expect(statuses()["app-12"]).toBe("done");
 }, 60_000);
 
-test("a claim the engine's stop cut short is told to the lead, though its label was removed meanwhile", async () => {
+test("a claim the daemon's stop cut short is told to the lead, though its label was removed meanwhile", async () => {
   addApp();
-  // The engine stopped after asking to claim issue 12 from its label, before it recorded the
+  // The daemon stopped after asking to claim issue 12 from its label, before it recorded the
   // task. Before the restart, someone took the label off.
   const cut = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12')");`;
@@ -609,7 +609,7 @@ test("a task removed and started again while its claim was asked makes a claim o
   expect(leftQueue("app-12")).toHaveLength(1);
 }, 60_000);
 
-test("a claim the engine's stop cut short after sc rm is told to the lead, not forgotten", async () => {
+test("a claim the daemon's stop cut short after sc rm is told to the lead, not forgotten", async () => {
   addApp();
   await serveApp();
   const hold = join(plugin, "hold-took");
@@ -617,7 +617,7 @@ test("a claim the engine's stop cut short after sc rm is told to the lead, not f
   const first = sc("start", "app-12");
   await until(() => asked(plugin).some((q) => q.ask === "took"));
   await sc("rm", "app-12");
-  // The engine stops before the tracker answers, which may have granted the claim.
+  // The daemon stops before the tracker answers, which may have granted the claim.
   await stopDaemon();
   await first.catch(() => "");
   expect(claimsSaved()).toBe(1);

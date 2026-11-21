@@ -2,7 +2,7 @@
 // `limits.checks` suites run at once on this machine, as many at once slow every agent down.
 import type { Socket } from "node:net";
 import { checkLimit } from "../config.ts";
-import { errorText } from "../say.ts";
+import { errorText } from "../format.ts";
 import { Queue } from "./queue.ts";
 
 // The one queue of checks the daemon keeps, for every repository on this machine.

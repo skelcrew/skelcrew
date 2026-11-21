@@ -21,11 +21,11 @@ import { agentsUnanswered } from "../approved-agents.ts";
 import { checkFlow, graceMinutes, leadCanMerge, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
+import { errorText } from "../format.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
 import { closeTask, createTask, mergePr, trackerOf } from "../plugins/ask.ts";
-import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import { filedTask, fileTask, unfileTask } from "./backlog.ts";
@@ -681,7 +681,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const own = leadRepository && `${leadRepository.owner}/${leadRepository.repo}`;
         return { repositories: own ? all.filter((r) => r.repository === own) : all };
       }
-      // Done here, not by sc repo itself, so a host that fails says so in the engine's log, never
+      // Done here, not by sc repo itself, so a host that fails says so in the daemon's log, never
       // in your terminal about a thread you didn't ask about. It answers at once, as a slow host
       // could take a minute over its builders, which sc repo has no reason to wait for.
       case "rename builders":

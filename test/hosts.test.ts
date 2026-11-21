@@ -1494,7 +1494,7 @@ process.exit(0);`,
   expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
 }, 40_000);
 
-// Renames every live builder in a process of its own with the test's home, as an engine started
+// Renames every live builder in a process of its own with the test's home, as a daemon started
 // again would as it starts.
 function renameInNewEngine(): void {
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
@@ -1527,7 +1527,7 @@ process.exit(0);`,
       .filter((line) => JSON.parse(line).ask === "rename").length;
   const title = () =>
     JSON.parse(readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8")).title;
-  // The same version isn't asked again by an engine started again, even one that now could.
+  // The same version isn't asked again by a daemon started again, even one that now could.
   rmSync(join(fake, "unknown-rename"));
   renameInNewEngine();
   expect(renames()).toBe(1);

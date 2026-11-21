@@ -1,9 +1,12 @@
-// The daemon's service: installing it so it runs on its own, and starting it, on systemd or a
-// Mac's launchd.
+// The daemon's service: installing it, starting it on systemd or a Mac's launchd, and keeping
+// the daemon running on this Skelcrew's code.
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
-import { checkoutFolder, singleFile } from "../version.ts";
+import { z } from "zod";
+import { ask } from "../client.ts";
+import { daemonSocket } from "../paths.ts";
+import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import {
   daemonLog,
   launchAgentPid,
@@ -179,10 +182,7 @@ export function startDaemon(): string {
   return "journalctl --user -u skelcrew";
 }
 
-// Restarts the daemon's service on this machine, so it runs the Skelcrew installed now, and returns
-// where its log is, for when it doesn't come back. Agents keep running, as their sessions live
-// in tmux and only the daemon restarts. Throws when the service manager refuses.
-export function restartDaemon(): string {
+export function restartService(): string {
   if (process.platform === "darwin") {
     restartLaunchAgent();
     return daemonLog();
@@ -194,4 +194,101 @@ export function restartDaemon(): string {
       `systemctl couldn't restart Skelcrew's daemon: ${restart.stderr.toString().trim()}`,
     );
   return "journalctl --user -u skelcrew";
+}
+
+const DaemonStatus = z
+  .object({
+    release: z.string().catch(""),
+    folder: z.string().catch(""),
+    commit: z.string().catch(""),
+    pid: z.number().catch(0),
+  })
+  .catch({ release: "", folder: "", commit: "", pid: 0 });
+type DaemonStatus = z.infer<typeof DaemonStatus>;
+
+async function daemonStatus(): Promise<DaemonStatus | null> {
+  const reply = await ask({ command: "status" }, 2000);
+  return reply === null ? null : DaemonStatus.parse(reply);
+}
+
+function daemonShouldRun(running: DaemonStatus): string | null {
+  if (release) return running.release === release ? null : `Skelcrew ${release}`;
+  if (singleFile || running.folder !== checkoutFolder) return null;
+  const commit = git("rev-parse", "--short", "HEAD");
+  return commit === "" || running.commit === commit ? null : `commit ${commit}`;
+}
+
+const restartWait = z.coerce
+  .number()
+  .min(0)
+  .catch(10_000)
+  .parse(process.env.SKELCREW_RESTART_WAIT_MS ?? 10_000);
+
+const outsideService = (running: DaemonStatus) => running.pid !== 0 && running.pid !== servicePid();
+
+const stopItFirst = (want: string) =>
+  new Error(
+    `Skelcrew's daemon runs outside its service, such as with sc serve in a terminal, on other code than ${want}. Stop it, such as with Ctrl-C, then run sc again. Your agents keep running.`,
+  );
+
+export async function restartStaleDaemon(): Promise<void> {
+  const running = await daemonStatus();
+  const want = running && daemonShouldRun(running);
+  if (!want) return;
+  if (outsideService(running)) throw stopItFirst(want);
+  console.log(`Restarting the daemon on ${want}. Your agents keep running.`);
+  const log = restartService();
+  const deadline = Date.now() + restartWait;
+  while (true) {
+    const now = await daemonStatus();
+    if (now && !daemonShouldRun(now)) return;
+    if (Date.now() > deadline)
+      throw new Error(
+        `Skelcrew's daemon didn't come back on ${want} within ${restartWait / 1000} seconds: ${log} shows why`,
+      );
+    await Bun.sleep(100);
+  }
+}
+
+export async function restartDaemon(): Promise<void> {
+  const before = await daemonStatus();
+  const terminal =
+    before !== null && (before.pid === 0 ? servicePid() === 0 : outsideService(before));
+  if (terminal)
+    throw new Error(
+      "Skelcrew's daemon runs in a terminal, with sc serve, not as its service. Stop it there, such as with Ctrl-C, then run sc serve again, or sc serve --bg to run it as the service. Your agents keep running.",
+    );
+  const began = Date.now();
+  const log = restartService();
+  const deadline = began + restartWait;
+  while (true) {
+    const made = statSync(daemonSocket(), { throwIfNoEntry: false })?.ctimeMs ?? 0;
+    if (made >= began && (await daemonStatus())) break;
+    if (Date.now() > deadline)
+      throw new Error(
+        `Skelcrew's daemon didn't come back within ${restartWait / 1000} seconds: ${log} shows why. A daemon from an older release that you ran with sc serve in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
+      );
+    await Bun.sleep(100);
+  }
+  console.log(`Restarted the daemon on ${userInfo().username}@${hostname()}. Agents kept running.`);
+}
+
+export async function ensureDaemon(): Promise<boolean> {
+  const before = await daemonStatus();
+  if (before && outsideService(before)) {
+    const want = daemonShouldRun(before);
+    if (want) throw stopItFirst(want);
+    return true;
+  }
+  installService();
+  await restartStaleDaemon();
+  if (await daemonStatus()) return false;
+  const log = startDaemon();
+  const deadline = Date.now() + 10_000;
+  while (!(await daemonStatus())) {
+    if (Date.now() > deadline)
+      throw new Error(`Skelcrew's daemon didn't answer within 10 seconds: ${log} shows why`);
+    await Bun.sleep(100);
+  }
+  return false;
 }

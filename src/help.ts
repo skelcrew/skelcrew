@@ -1,6 +1,6 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
-import { colorful } from "./say.ts";
+import { colorful } from "./format.ts";
 
 // The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [
@@ -43,12 +43,12 @@ const sections: [string, [string, string][]][] = [
     "PLUGINS",
     [
       ["install", "Set up this machine and the plugins your files name, asking"],
-      ["add <owner/repo>", "Add a plugin to this repository, after asking"],
-      ["add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
-      ["update -g [<name>]", "Move one, or all, to its newest version, after asking"],
-      ["setup <name>", "Run its setup again, such as to sign in again"],
-      ["remove -g <name>", "Remove one, with its settings and tokens"],
-      ["plugins", "Your plugins, and what install would change"],
+      ["plugin add <owner/repo>", "Add a plugin to this repository, after asking"],
+      ["plugin add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
+      ["plugin update -g [<name>]", "Move one, or all, to its newest version, after asking"],
+      ["plugin setup <name>", "Run its setup again, such as to sign in again"],
+      ["plugin rm -g <name>", "Remove one, with its settings and tokens"],
+      ["plugin ls", "Your plugins, and what install would change"],
     ],
   ],
   [

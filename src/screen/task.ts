@@ -5,12 +5,12 @@ import { attachUntilEnded } from "../agents/sessions.ts";
 import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
+import { errorText } from "../format.ts";
 import { type Details, readDetails } from "../list/details.ts";
 import { drawPane } from "../list/pane.ts";
 import { listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { attachedMark, panes, skelcrewCommand } from "./screen.ts";
 
 // What the details pane scrolls by: Page Up, as 5, or Page Down, as 6, then the wheel up, as 64,
