@@ -188,7 +188,8 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
 });
 
 // An issue is only where some tasks come from, and a PR is part of a task, so the help has no
-// commands of their own for them: the task commands cover both. A thread is an agent on a task.
+// commands of their own for them: the task commands cover both. A thread is an agent on a task,
+// named as <task>/<role> wherever a task goes.
 test("the help has no issue or PR commands, and names tasks and threads as such", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("\nISSUES\n");
@@ -199,9 +200,22 @@ test("the help has no issue or PR commands, and names tasks and threads as such"
   expect(out).not.toContain("  show ");
   expect(out).toContain("  --issue ");
   expect(out).toContain("  --keep-issue ");
-  for (const command of ["stop", "attach", "peek", "interrupt", "tell"])
-    expect(out).toContain(`  ${command} <thread>`);
-  for (const command of ["task", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
+  for (const command of [
+    "task",
+    "start",
+    "stop",
+    "rm",
+    "attach",
+    "peek",
+    "interrupt",
+    "tell",
+    "review",
+  ])
+    expect(out).toContain(`  ${command} <task>`);
+  expect(out).not.toContain("<thread>");
+  expect(out).not.toContain("<issue>");
+  expect(out.split("<task>/<role>").length - 1).toBe(1);
+  expect(out).toContain("APP-12/builder");
 });
 
 // sc issue and sc pr are gone. Leads started before then may still type them, so what replaced

@@ -64,6 +64,7 @@ const commands = [
   "ask",
   "review",
   "submit",
+  "hook",
   "check",
   "tell",
   "install",
