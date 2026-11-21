@@ -4,7 +4,7 @@
 // PR's events. They wait in the database until the builder can take them, so none is dropped
 // while it is busy or stopped, or while the daemon restarts, and sc ps and the sidebar can count
 // them. A lead's notes wait there too, until the lead has started and is idle, and the human
-// isn't reading further up or typing in it.
+// isn't reading further up or typing in it. Its routine notes wait for the next digest as well.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
@@ -28,7 +28,13 @@ import {
 
 // A note waiting to be typed into a lead.
 // `wrapped` marks a message Skelcrew wrapped itself, whose tags are its own.
-const Note = z.object({ id: z.number(), text: z.string(), wrapped: z.coerce.boolean() });
+// `urgent` marks one that goes in at once, rather than in the next digest of routine notes.
+const Note = z.object({
+  id: z.number(),
+  text: z.string(),
+  wrapped: z.coerce.boolean(),
+  urgent: z.coerce.boolean(),
+});
 
 // The PR's reviews and comments a message carries, for the forge to mark seen once it is typed.
 const TypedIn = z.array(z.object({ kind: z.enum(["review", "comment"]), id: z.string() }));
@@ -111,7 +117,8 @@ function noteMissing(db: Database, sessions: string, thread: Thread, why: string
   record(db, thread.folder, { status: "waiting" }, missing);
   const name = threadName(db, thread);
   const back = `sc stop ${name}, then sc start ${name}, brings it back`;
-  noteForLead(db, sessions, thread, `${name}'s builder isn't running, so ${wait} for it. ${back}.`);
+  const note = `${name}'s builder isn't running, so ${wait} for it. ${back}.`;
+  noteForLead(db, sessions, thread, note, null, true);
 }
 
 // Returns why the thread's builder can't take a message right now, in plain words, or empty
@@ -627,15 +634,24 @@ export function briefLead(
   saveNote(db, sessions, to, `${rules}${message}`, null, true, true);
 }
 
+// How long Skelcrew's routine notes collect before they go into a lead together. Each note wakes
+// the lead, and its reply scrolls the chat the human may be reading, so reports that need
+// nothing soon, such as a task's end, arrive at most this often.
+const digestEvery = 10 * 60_000;
+
+// What wakes each repository's lead, by its owner/name, once its routine notes are due.
+const digestTimers = new Map<string, Timer>();
+
 // Types the saved notes for a repository's lead into it, such as "started app-12 from github:
 // Fix the login redirect" or "app-12 needs you: its builder asked a question", and forgets each
-// once typed. The lead's chat is the human's too, so typing waits while the lead is busy, while
-// a person's unsent draft is at its prompt, and while the human has scrolled back in it, as the
-// paste would throw them back to the bottom. Everything that waited then goes in as one
-// message, its notes a blank line apart, so the chat jumps once. Threads needing you come first,
-// then urgent notes such as a builder's message, then the rest, as the human must see those
-// soonest. A lead that isn't running, or never started, gets nothing: its notes stay saved until
-// it starts.
+// once typed. Routine notes collect, and go in as one digest at most once every digestEvery,
+// unless something urgent goes first: a thread needing you, or an urgent note such as a
+// builder's message. Then the digest is cut short and goes in ahead of it, so the lead hears
+// things in the order they happened. The lead's chat is the human's too, so typing waits while
+// the lead is busy, while a person's unsent draft is at its prompt, and while the human has
+// scrolled back in it, as the paste would throw them back to the bottom. Everything that waited
+// then goes in as one message, its parts a blank line apart, so the chat jumps once. A lead that
+// isn't running, or never started, gets nothing: its notes stay saved until it starts.
 async function typeNotes(
   db: Database,
   sessions: string,
@@ -645,29 +661,53 @@ async function typeNotes(
   const { harness } = leadOf(db, owner, repo);
   const where = "owner = ? AND repo = ?";
   // Returns what the lead would be told now: the threads needing you, the notes in the order
-  // they go in, and the message they make together.
+  // they go in, and the message they make together. Routine notes left out until their digest
+  // is due give `wait`, how long until it is.
   const batch = () => {
-    const sql = `SELECT id, text, wrapped FROM notes WHERE ${where} ORDER BY urgent DESC, id`;
-    const notes = z.array(Note).parse(db.query(sql).all(owner, repo));
+    const sql = `SELECT id, text, wrapped, urgent FROM notes WHERE ${where} ORDER BY id`;
+    const saved = z.array(Note).parse(db.query(sql).all(owner, repo));
     const rows = db
       .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
       .all(owner, repo);
     const needing = z.array(Thread).parse(rows);
+    const last = z
+      .object({ digest_at: z.number() })
+      .nullable()
+      .parse(db.query(`SELECT digest_at FROM repositories WHERE ${where}`).get(owner, repo));
+    const routine = saved.filter((note) => !note.urgent);
+    const urgent = saved.filter((note) => note.urgent);
+    const wait = (last?.digest_at ?? 0) + digestEvery - Date.now();
+    const due = wait <= 0 || needing.length > 0 || urgent.length > 0;
+    const notes = due ? [...routine, ...urgent] : urgent;
+    // A note Skelcrew didn't write or wrap itself may hold outside text, saved by an older
+    // Skelcrew before it escaped tags, so the start of any tag in it is escaped again.
+    const said = (note: z.infer<typeof Note>) =>
+      note.wrapped ? note.text : tagsEscaped(note.text);
+    const digest = due && routine.length > 0 ? [routine.map(said).join("\n")] : [];
     const lines = [
+      // Each routine note is one line, oldest first.
+      ...digest.map((text) => `Skelcrew digest:\n${text}`),
       // Why a thread needs you can quote its builder, whose words never pass for a tag.
       ...needing.map(
         (thread) => `${threadName(db, thread)} needs you: ${tagsEscaped(thread.noting ?? "")}`,
       ),
-      // A note Skelcrew didn't write or wrap itself may hold outside text, saved by an older
-      // Skelcrew before it escaped tags, so the start of any tag in it is escaped again.
-      ...notes.map(({ text, wrapped }) => (wrapped ? text : tagsEscaped(text))),
+      ...urgent.map(said),
     ];
     // Notes can quote outside text, such as a plugin's or a failed check's, so no control
     // character in them reaches the paste.
-    return { notes, needing, text: controlsAsCodes(lines.join("\n\n")) };
+    const text = controlsAsCodes(lines.join("\n\n"));
+    return { notes, needing, digest: digest.length > 0, text, wait: due ? 0 : wait };
   };
   while (true) {
     const now = batch();
+    // Routine notes not due yet have the lead's notes looked at again once they are. The timer
+    // never keeps a process alive by itself, as the notes stay saved for the next start.
+    const key = `${owner}/${repo}`;
+    clearTimeout(digestTimers.get(key));
+    if (now.wait > 0) {
+      const timer = setTimeout(() => typeLeadNotes(db, sessions), now.wait);
+      digestTimers.set(key, timer.unref());
+    }
     // Stop when nothing is left to say, or nobody is there to hear it.
     if (now.text === "") return;
     const on = await leadSession(db, sessions, owner, repo);
@@ -704,6 +744,8 @@ async function typeNotes(
     if (typed !== "typed") continue;
     // A note's ID is never used twice, so a note saved meanwhile is never deleted as one of these.
     for (const { id } of now.notes) db.run("DELETE FROM notes WHERE id = ?", [id]);
+    if (now.digest)
+      db.run(`UPDATE repositories SET digest_at = ? WHERE ${where}`, [Date.now(), owner, repo]);
     // A thread may have stopped needing you and started again while this was typed.
     for (const thread of now.needing)
       if (readThread(db, thread.folder).noting === thread.noting)
@@ -772,11 +814,12 @@ export function typeLeadNotes(db: Database, sessions: string): void {
 
 // Saves a note for the lead of a repository, and has the daemon type it in. Notes already
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
-// `ended` is the folder of the thread whose end or failure the note reports, if it does. An `urgent` note,
-// such as a builder's message, goes ahead of the rest when several wait. A note can quote outside
-// text, such as an issue's title, which could hold a skelcrew tag and pass for a message from an
-// agent, or a brief marked asked="yes". So the start of any such tag in it is escaped: only
-// Skelcrew's own wrapping of an agent's message, which saveNote keeps, carries one.
+// `ended` is the folder of the thread whose end or failure the note reports, if it does. An
+// `urgent` note, such as a thread needing you or failing, goes in at once. The rest only report,
+// such as a task's end, and wait for the next digest. A note can quote outside text, such as an
+// issue's title, which could hold a skelcrew tag and pass for a message from an agent, or a brief
+// marked asked="yes". So the start of any such tag in it is escaped: only Skelcrew's own wrapping
+// of an agent's message, which saveNote keeps, carries one.
 export function noteForLead(
   db: Database,
   sessions: string,
@@ -790,14 +833,15 @@ export function noteForLead(
 
 // Saves a note Skelcrew wrote itself for a lead, with no outside text in it, which may name a
 // brief's tags, such as one telling a lead running from before briefs how to read them. Its
-// tags are kept, as they are Skelcrew's own words.
+// tags are kept, as they are Skelcrew's own words. It changes how the lead works, so it goes in
+// at once, not in a digest.
 export function skelcrewNoteForLead(
   db: Database,
   sessions: string,
   repository: { owner: string; repo: string },
   text: string,
 ): void {
-  saveNote(db, sessions, repository, text, null, false, true);
+  saveNote(db, sessions, repository, text, null, true, true);
 }
 
 // Saves a note for a lead and has the daemon type it in. `wrapped` marks one of the messages this

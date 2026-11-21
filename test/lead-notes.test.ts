@@ -42,10 +42,13 @@ afterEach(() => {
 });
 
 // Runs the code with the database open as `db`, simon/app and its thread app-12 in it, and
-// returns what it prints. `lead()` starts the stand-in lead, `tmuxLead(...)` runs tmux on the
+// returns what it prints. `again` runs it on the database an earlier run left, as the daemon
+// does when it starts again. `lead()` starts the stand-in lead, `tmuxLead(...)` runs tmux on the
 // lead's pane, and `received()` is what was typed into it. It takes a process of its own with
 // HOME set, as homedir() keeps the HOME this process started with.
-function run(body: string): string {
+function run(body: string, again = false): string {
+  const setup = `db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+${threadSql({ task: "12", status: "working" })}\`);`;
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { leadOf } from ${JSON.stringify(source("flow/lead.ts"))};
 import { briefLead, messageLead, noteForLead, skelcrewNoteForLead, typeLeadNotes } from ${JSON.stringify(source("flow/messages.ts"))};
@@ -54,8 +57,7 @@ import { failThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { existsSync, readFileSync } from "node:fs";
 const db = openDb();
-db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
-${threadSql({ task: "12", status: "working" })}\`);
+${again ? "" : setup}
 const tmux = ${JSON.stringify(socket)};
 const home = ${JSON.stringify(home)};
 const { name } = leadOf(db, "simon", "app");
@@ -122,8 +124,8 @@ console.log(JSON.stringify({
 });
 
 // A paste while the human reads further up would throw them back to the bottom. Back at the
-// bottom, everything that waited goes in as one message, once. A thread needing you goes first,
-// though it came last, then the builder's message, then Skelcrew's routine note.
+// bottom, everything that waited goes in as one message, once. Skelcrew's routine note goes
+// first, in its digest, as it came first, then the thread needing you, then the builder's message.
 test("messages for a lead the human has scrolled back in wait, then go in together", () => {
   const seen = JSON.parse(
     run(`
@@ -143,10 +145,10 @@ console.log(JSON.stringify({ during, after: received(), noting: readThread(db, "
   const typed: string = seen.after;
   expect(typed.split("\x1b[201~")).toHaveLength(2);
   const needs = typed.indexOf("APP-12 needs you: its builder asked a question");
-  const started = typed.indexOf("started app-13 from github: Add import");
-  expect(needs).toBeGreaterThan(-1);
+  const started = typed.indexOf("Skelcrew digest:\nstarted app-13 from github: Add import");
+  expect(started).toBeGreaterThan(-1);
+  expect(started).toBeLessThan(needs);
   expect(needs).toBeLessThan(typed.indexOf("First part done."));
-  expect(typed.indexOf("First part done.")).toBeLessThan(started);
   expect(seen.noting).toBeNull();
 });
 
@@ -210,9 +212,9 @@ console.log(JSON.stringify({ during, after: received() }));`),
   expect(seen.after).not.toContain("needs you");
 });
 
-// A thread that fails while the human reads further up waits like the rest, then comes ahead
-// of Skelcrew's routine notes.
-test("a thread that fails while the human has scrolled back in the lead is told first, once they are back", () => {
+// A thread that fails while the human reads further up waits like the rest, then goes in
+// together with Skelcrew's routine note that came before it, after it.
+test("a thread that fails while the human has scrolled back in the lead is told once they are back, after what came before", () => {
   // failThread logs to the daemon's output too, so only the last line is what the code printed.
   const seen = JSON.parse(
     lastLine(`
@@ -229,7 +231,7 @@ console.log(JSON.stringify({ during, after: received() }));`),
   expect(seen.during).toBe("");
   const failed = seen.after.indexOf("APP-12 failed: its setup command failed");
   expect(failed).toBeGreaterThan(-1);
-  expect(failed).toBeLessThan(seen.after.indexOf("started app-13 from github: Add import"));
+  expect(failed).toBeGreaterThan(seen.after.indexOf("started app-13 from github: Add import"));
   expect(seen.after.split("\x1b[201~")).toHaveLength(2);
 });
 
@@ -496,4 +498,89 @@ console.log(JSON.stringify(received()));`);
   expect(received).toContain(
     "the human's own words in its <asked> element, apart from the brief in its <brief> element",
   );
+});
+
+// Each note wakes the lead, so Skelcrew's routine notes collect and go in as one digest at most
+// once every 10 minutes. The test moves the last digest back in time, as waiting 10 minutes
+// would.
+const windowPassed = `db.run("UPDATE repositories SET digest_at = digest_at - 600000");
+typeLeadNotes(db, tmux);`;
+
+test("routine notes for the lead collect within the window, then go in as one digest, oldest first", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+await until(() => received().includes("APP-11 is done"));
+noteForLead(db, tmux, app, "APP-12 is done: #7 merged");
+noteForLead(db, tmux, app, "Still merging #9 (APP-14) once its checks pass, waiting on CI.");
+await Bun.sleep(3000);
+const during = received();
+${windowPassed}
+await until(() => waiting() === 0 && received().includes("Still merging"));
+await Bun.sleep(500);
+console.log(JSON.stringify({ during, after: received() }));`),
+  );
+  expect(seen.during).toContain("Skelcrew digest:\nAPP-11 is done: #6 merged");
+  expect(seen.during).not.toContain("APP-12");
+  const pastes: string[] = seen.after.split("\x1b[201~");
+  expect(pastes).toHaveLength(3);
+  expect(pastes[1]).toContain(
+    "Skelcrew digest:\nAPP-12 is done: #7 merged\nStill merging #9 (APP-14) once its checks pass, waiting on CI.",
+  );
+});
+
+// A builder's message goes in at once. The digest waiting goes in with it, ahead of it, so the
+// lead hears things in the order they happened.
+test("an urgent note sends the waiting digest at once, ahead of it", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+await until(() => received().includes("APP-11 is done"));
+noteForLead(db, tmux, app, "APP-10 is done: #5 merged");
+noteForLead(db, tmux, app, "started app-13 from github: Add import");
+await Bun.sleep(1500);
+const during = received();
+messageLead(db, tmux, readThread(db, "app-12"), "Should the export be JSON or CSV?");
+await until(() => waiting() === 0 && received().includes("JSON or CSV?"));
+await Bun.sleep(500);
+console.log(JSON.stringify({ during, after: received() }));`),
+  );
+  expect(seen.during).not.toContain("APP-10");
+  const pastes: string[] = seen.after.split("\x1b[201~");
+  expect(pastes).toHaveLength(3);
+  const last = pastes[1] ?? "";
+  const digest = last.indexOf(
+    "Skelcrew digest:\nAPP-10 is done: #5 merged\nstarted app-13 from github: Add import",
+  );
+  expect(digest).toBeGreaterThan(-1);
+  expect(digest).toBeLessThan(last.indexOf("Should the export be JSON or CSV?"));
+});
+
+// The notes and when the last digest went in are kept in the database, so a daemon that starts
+// again neither drops the digest nor sends it early.
+test("a digest waiting when the daemon stops goes in after it starts again, when its time comes", () => {
+  const before = run(`
+await lead();
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+await until(() => received().includes("APP-11 is done"));
+noteForLead(db, tmux, app, "APP-12 is done: #7 merged");
+await Bun.sleep(1000);
+console.log(waiting());`);
+  expect(before.trim()).toBe("1");
+  const seen = JSON.parse(
+    run(
+      `
+typeLeadNotes(db, tmux);
+await Bun.sleep(2000);
+const during = received();
+${windowPassed}
+await until(() => waiting() === 0 && received().includes("APP-12"));
+console.log(JSON.stringify({ during, after: received() }));`,
+      true,
+    ),
+  );
+  expect(seen.during).not.toContain("APP-12");
+  expect(seen.after).toContain("Skelcrew digest:\nAPP-12 is done: #7 merged");
 });
