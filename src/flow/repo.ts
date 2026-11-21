@@ -898,22 +898,26 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   await closeTabAndEndLead(db, sessions, found, "remove");
   const aside = `.removing-${Date.now()}`;
   const moved: string[] = [];
+  db.run("BEGIN IMMEDIATE");
   try {
-    db.transaction(() => {
-      const removed = db.run(
-        "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
-        [found.owner, found.repo],
-      );
-      if (removed.changes === 0)
-        throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
-      for (const place of [cloneDir(found.owner, found.repo), join(folder, dropsFolder)]) {
-        if (!existsSync(place)) continue;
-        renameSync(place, `${place}${aside}`);
-        moved.push(place);
-      }
-    })();
+    const removed = db.run(
+      "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
+      [found.owner, found.repo],
+    );
+    if (removed.changes === 0)
+      throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
+    for (const place of [cloneDir(found.owner, found.repo), join(folder, dropsFolder)]) {
+      if (!existsSync(place)) continue;
+      renameSync(place, `${place}${aside}`);
+      moved.push(place);
+    }
+    db.run("COMMIT");
   } catch (error) {
-    for (const place of moved) renameSync(`${place}${aside}`, place);
+    try {
+      for (const place of moved) renameSync(`${place}${aside}`, place);
+    } finally {
+      if (db.inTransaction) db.run("ROLLBACK");
+    }
     throw error;
   }
   forgetAgents(found);
