@@ -226,7 +226,7 @@ test("f on a queued task in the task queue asks to start it now over the limit, 
   await ready("lead");
   await until(() => left().some((line) => line.includes("Task queue")), "Task queue");
   press("M-S-Down");
-  await until(() => selected().includes("APP-20") && onDetails(), "APP-20's details");
+  await until(() => / 20\b/.test(selected()) && onDetails(), "APP-20's details");
   await until(() => footer().includes("f start now"), "the key in the footer");
   type("f");
   await until(

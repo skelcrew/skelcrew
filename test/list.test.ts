@@ -2001,7 +2001,7 @@ test("shift+up on a queued task moves it earlier in the queue, and the line says
 test("f on a queued task, or on Backlog with every builder busy, asks to start it now over the limit", async () => {
   queueTwo();
   await open();
-  await arrowTo("▸ ○ APP-20");
+  await arrowTo("▸ ○ 20 ");
   expect(seen()).toContain("f start now");
   type("f");
   await until(() => seen().includes("Start APP-20 now, over the limit of 3? y/n"), "the question");
@@ -2009,10 +2009,10 @@ test("f on a queued task, or on Backlog with every builder busy, asks to start i
   await until(() => asked.includes("start simon/app 20 now"), "the start");
   await until(() => seen().includes("Started."), "the daemon's answer");
   press("Down");
-  await until(() => here().startsWith("▸ ○ APP-9"), "the paused row");
+  await until(() => here().startsWith("▸ ○ 9 "), "the paused row");
   expect(seen()).not.toContain("f start now");
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
   expect(seen()).toContain("f start now");
   type("f");
   await until(() => seen().includes("Start APP-31 now, over the limit of 3? y/n"), "the question");
