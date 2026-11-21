@@ -101,7 +101,7 @@ const Owes = z.object({ owes: z.coerce.boolean() });
 // one that still owes its claim. Each also holds back every task of its repository that joined
 // after it, so the queue stays first come first served, even when sc rm then fails. A repository whose limit can't be read keeps its queue
 // until it can, and the daemon's log says why once.
-export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
+export function leaveQueue(db: Database, skip: (folder: string) => boolean): Thread[] {
   const queued = db
     .query(`SELECT *, EXISTS (SELECT 1 FROM claims c WHERE c.owner = t.owner AND c.repo = t.repo
           AND c.task = CAST(t.task AS TEXT)) AS owes
@@ -113,7 +113,7 @@ export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
   const leaving: Thread[] = [];
   for (const { thread, owes } of queued) {
     const repository = `${thread.owner}/${thread.repo}`;
-    if (owes || skip.has(thread.folder)) held.add(repository);
+    if (owes || skip(thread.folder)) held.add(repository);
     if (held.has(repository)) continue;
     let limit: number | undefined;
     try {
