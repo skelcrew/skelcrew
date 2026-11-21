@@ -1,6 +1,6 @@
 // The commands that show tasks and threads, and the one that files a task: sc ps, sc ls, sc show
 // and sc task add.
-import { bodyFor, readAsked, splitTaskName, taskFrom, usage } from "./input.ts";
+import { bodyFor, readAsked, splitTask, splitTaskName, usage } from "./input.ts";
 
 export async function psCommand(args: string[], json: boolean): Promise<void> {
   const { askForRepositories, askForThreads } = await import("../client.ts");
@@ -72,7 +72,7 @@ export async function taskCommand(args: string[]): Promise<void> {
   if (title && body !== undefined && words.length === 2)
     given = { title, body: bodyFor(shown, body) };
   else if (words.length === 0 && !process.stdin.isTTY)
-    given = taskFrom(await Bun.stdin.text(), shown);
+    given = splitTask(await Bun.stdin.text(), shown);
   if (!given) usage(command);
   if (issue) {
     const asked = askedFile === undefined ? undefined : await readAsked(askedFile);

@@ -15,7 +15,7 @@ export function splitThreadName(word?: string): [string, string] | undefined {
   return task;
 }
 
-export function taskFrom(text: string, command = "sc start"): { title: string; body: string } {
+export function splitTask(text: string, command = "sc start"): { title: string; body: string } {
   const [first = "", ...rest] = text.split("\n");
   const title = first.replace(/^#\s+/, "").trim();
   const body = rest.join("\n").replace(/^(?:[ \t]*\n)+/, "");
