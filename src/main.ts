@@ -86,6 +86,17 @@ function bodyFor(command: string, body: string): string {
   return body;
 }
 
+// Returns the human's words a lead gives with --asked-file, read unchanged, a last line break
+// included. The lead writes them to the file with its own file tool, so they never pass through
+// a shell, which could run or change them. Throws when the file holds no words.
+async function readAsked(file: string): Promise<string> {
+  const { readFileSync } = await import("node:fs");
+  const words = readFileSync(file, "utf8");
+  if (!words.trim())
+    throw new Error(`${file} is empty: write the human's words in it, exactly as they wrote them`);
+  return words;
+}
+
 // Prints why a command can't run as given, and exits with an error. For a command Skelcrew
 // knows, it blames the arguments rather than saying the command doesn't exist.
 function usage(command?: string): never {
@@ -99,9 +110,7 @@ function usage(command?: string): never {
     "ps",
     "ls",
     "show",
-    "issue",
     "task",
-    "pr",
     "start",
     "stop",
     "rm",
@@ -129,9 +138,11 @@ function usage(command?: string): never {
       ? "Skelcrew: --remote needs a host, such as sc --remote simon@workbox."
       : first === "remote"
         ? "Skelcrew: sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install."
-        : known.includes(first)
-          ? `Skelcrew: sc ${first} was given arguments it doesn't take. Run sc --help to see how to use it.`
-          : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
+        : first === "issue" || first === "pr"
+          ? 'Skelcrew: issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc task add <repo> "<title>" "<body>" --issue opens an issue.'
+          : known.includes(first)
+            ? `Skelcrew: sc ${first} was given arguments it doesn't take. Run sc --help to see how to use it.`
+            : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
   );
   process.exit(1);
 }
@@ -459,10 +470,10 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
     );
 }
 
-// Prints the tasks, or one repository's, for sc ls and its short name sc issue ls. Merged and
-// closed tasks pile up forever and would bury the rest, so only --all shows them. A task whose
-// work ended without a merge while its issue is open, as after sc rm, is back in stage issue, so
-// it shows, to start again. A merged one stays out even while the tracker hasn't closed its
+// Prints the tasks, or one repository's, for sc ls. Merged and closed tasks pile up forever and
+// would bury the rest, so only --all shows them. A task whose work ended without a merge while
+// its issue is open, as after sc rm --keep-issue, is back in stage issue, so it shows, to start
+// again. A merged one stays out even while the tracker hasn't closed its
 // issue yet. `words` are what follows the command.
 async function lsCommand(command: string, words: string[], json: boolean): Promise<void> {
   const { askForTasks } = await import("./client.ts");
@@ -476,7 +487,7 @@ async function lsCommand(command: string, words: string[], json: boolean): Promi
   printTasks(shown, json);
 }
 
-// Shows one task, for sc show and its short name sc issue show, named such as app-12.
+// Shows one task, for sc show, named such as app-12.
 async function showCommand(command: string, words: string[], json: boolean): Promise<void> {
   const { askForTask } = await import("./client.ts");
   const { printTask } = await import("./flow/list.ts");
@@ -485,80 +496,53 @@ async function showCommand(command: string, words: string[], json: boolean): Pro
   printTask(await askForTask({ repo: task[0], task: task[1] }), json);
 }
 
-// Lists tasks, shows one or creates an issue, for sc issue. sc issue ls and sc issue show are
-// short names for sc ls and sc show, kept while people and leads still type them.
-async function issueCommand(args: string[], json: boolean): Promise<void> {
-  const [command, sub, ...rest] = args;
-  const { createTask } = await import("./client.ts");
-  if (sub === "ls") return lsCommand(command ?? "issue", rest, json);
-  if (sub === "show") return showCommand(command ?? "issue", rest, json);
-  // sc issue create takes a repository with a title and a body, and from a lead, --asked-file
-  // with the human's words asking for it, in a file the lead wrote with its own file tool, so
-  // they never pass through a shell. They are read unchanged.
-  const [repository, title, body, flag, file] = rest;
-  const askedFile = flag === "--asked-file" && file && rest.length === 5 ? file : undefined;
-  if (sub === "create" && repository && title && body !== undefined) {
-    if (rest.length !== 3 && askedFile === undefined) usage(command);
-    let asked: string | undefined;
-    if (askedFile !== undefined) {
-      const { readFileSync } = await import("node:fs");
-      asked = readFileSync(askedFile, "utf8");
-      if (!asked.trim())
-        throw new Error(
-          `${askedFile} is empty: write the human's words in it, exactly as they wrote them`,
-        );
-    }
-    console.log(await createTask(repository, title, bodyFor("sc issue create", body), asked));
-    return;
-  }
-  usage(command);
-}
-
-// Files a task in a repository's backlog, for sc task add, with the title and description as
-// words, or on stdin as sc start <repo> takes them. It starts nothing.
+// Files a task, for sc task add, with the title and description as words, or on stdin as sc
+// start <repo> takes them. It starts nothing. It goes in Skelcrew's backlog, or with --issue in
+// the repository's tracker as an issue, such as on GitHub. From a lead, --issue needs
+// --asked-file, a file holding the human's words asking for an issue.
 async function taskCommand(args: string[]): Promise<void> {
-  const [command, sub, repository, ...words] = args;
-  const { fileTask } = await import("./client.ts");
+  const [command, sub, repository, ...rest] = args;
+  const { createTask, fileTask } = await import("./client.ts");
   if (sub !== "add" || !repository) usage(command);
+  // The title and body are the first two words, so a body that reads "--issue" stays the
+  // task's own words. Without them, as when they come on stdin, the options come first. After
+  // them come --issue and --asked-file, each at most once, and --asked-file only with --issue.
+  const onStdin = rest[0] === "--issue" || rest[0] === "--asked-file";
+  const words = onStdin ? [] : rest.slice(0, 2);
+  const options = onStdin ? rest : rest.slice(2);
+  const flags = new Map<string, string>();
+  for (let at = 0; at < options.length; at++) {
+    const [flag = "", value] = [options[at], options[at + 1]];
+    if (flag === "--issue" && !flags.has(flag)) flags.set(flag, "");
+    else if (flag === "--asked-file" && value && !flags.has(flag)) {
+      flags.set(flag, value);
+      at++;
+    } else usage(command);
+  }
+  const issue = flags.has("--issue");
+  const askedFile = flags.get("--asked-file");
+  if (askedFile !== undefined && !issue) usage(command);
+  const shown = issue ? "sc task add --issue" : "sc task add";
   const [title, body] = words;
   let given: { title: string; body: string } | undefined;
   if (title && body !== undefined && words.length === 2)
-    given = { title, body: bodyFor("sc task add", body) };
+    given = { title, body: bodyFor(shown, body) };
   // A terminal is never waited on: there, a missing title and body is a mistake.
   else if (words.length === 0 && !process.stdin.isTTY)
-    given = taskFrom(await Bun.stdin.text(), "sc task add");
+    given = taskFrom(await Bun.stdin.text(), shown);
   if (!given) usage(command);
+  if (issue) {
+    const asked = askedFile === undefined ? undefined : await readAsked(askedFile);
+    const task = await createTask(repository, given.title, given.body, asked);
+    console.log(`Opened ${task} as an issue in the tracker. sc start ${task} starts it.`);
+    return;
+  }
   const { task, already } = await fileTask(repository, given.title, given.body);
   console.log(
     already
       ? `${task} already holds this task in the backlog, so nothing more was filed. sc start ${task} starts it.`
       : `Filed ${task} in the backlog. sc start ${task} starts it.`,
   );
-}
-
-// Shows the task a PR belongs to, for sc pr show, a short name for sc show. The PR is named by
-// its number, such as 31 or #31, or by its task, such as app-12. A number is in the repository
-// of the checkout sc runs in, or the one --from names, which sc --remote passes from your
-// laptop's checkout. For the lead, it is always its own.
-async function prCommand(args: string[], json: boolean): Promise<void> {
-  const [command, sub, named, ...rest] = args;
-  const { askForTask } = await import("./client.ts");
-  const { printTask } = await import("./flow/list.ts");
-  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
-  if (sub !== "show" || named === undefined || (rest.length > 0 && !given)) usage(command);
-  const number = named.match(/^#?(\d+)$/)?.[1];
-  const task = splitTaskName(named);
-  if (number !== undefined) {
-    const { originHere } = await import("./machine/origin.ts");
-    const from = given ?? originHere() ?? undefined;
-    printTask(await askForTask({ pr: Number(number), ...(from ? { from } : {}) }), json);
-    return;
-  }
-  if (task && !given) {
-    printTask(await askForTask({ repo: task[0], task: task[1] }), json);
-    return;
-  }
-  usage(command);
 }
 
 // Arms a merge when ready or without Skelcrew's approval, or cancels one, for sc merge. The thread
@@ -603,16 +587,8 @@ async function mergeCommand(args: string[]): Promise<void> {
     which = { pr: Number(number), ...(from ? { from } : {}) };
   } else if (task && !given) which = { repo: task[0], task: task[1] };
   else usage("merge");
-  // Your words come in a file the lead wrote with its own file tool, so they never pass through
-  // a shell, which could run or change them. They are read unchanged, a last line break included.
   if (asked !== undefined) {
-    const { readFileSync } = await import("node:fs");
-    const words = readFileSync(asked, "utf8");
-    if (!words.trim())
-      throw new Error(
-        `${asked} is empty: write the human's words in it, exactly as they wrote them`,
-      );
-    console.log(await planMerge(command, { ...which, asked: words }));
+    console.log(await planMerge(command, { ...which, asked: await readAsked(asked) }));
     return;
   }
   if (command !== "merge cancel") {
@@ -802,38 +778,70 @@ async function threadCommand(args: string[]): Promise<void> {
     );
     return;
   }
-  if (command === "rm" && task && rest.length <= 1) {
-    // At a terminal, say what goes and ask first, as closing a PR can't be taken back. An agent,
-    // such as the lead, has no terminal, and confirms with you in its conversation instead. A
-    // thread that is done is left for the daemon to refuse.
+  if (command === "rm" && task) {
+    // --keep-issue and --asked-file go anywhere, each at most once, and leave at most a reason.
+    const keepAt = rest.indexOf("--keep-issue");
+    const askedAt = rest.indexOf("--asked-file");
+    const askedFile = askedAt === -1 ? undefined : rest[askedAt + 1];
+    const reasons = rest.filter(
+      (_, i) => i !== keepAt && (askedAt === -1 || (i !== askedAt && i !== askedAt + 1)),
+    );
+    if (
+      reasons.length > 1 ||
+      (askedAt !== -1 && !askedFile) ||
+      rest.lastIndexOf("--keep-issue") !== keepAt ||
+      rest.lastIndexOf("--asked-file") !== askedAt
+    )
+      usage(command);
+    const keepIssue = keepAt !== -1;
+    // An empty reason is no reason, so the PR and issue close with no comment.
+    const reason = reasons[0] || undefined;
+    // At a terminal, say what goes and ask first, as closing a PR or an issue can't be taken
+    // back. An agent, such as the lead, has no terminal, and confirms with you in its
+    // conversation instead. A thread that is done with no issue to close is left for the daemon
+    // to refuse. GitHub writes a number as #12, while a tracker such as Linear has IDs like
+    // JOTT-12 that stand alone.
+    const issueId = (issue: string) => (/^\d+$/.test(issue) ? `#${issue}` : issue);
     if (process.stdin.isTTY) {
-      const { thread: name, status, pr } = await previewRemoval(...task);
+      const { thread: name, status, pr, issue } = await previewRemoval(...task, keepIssue);
       const goes =
         status === "not started"
-          ? "It never started, and this deletes it from the backlog on every machine."
-          : pr === null
-            ? "This deletes its branch and clone."
-            : `This closes PR #${pr} and deletes its branch and clone.`;
+          ? issue === null
+            ? "It never started, and this deletes it from the backlog on every machine."
+            : `It never started, and this closes issue ${issueId(issue)}.`
+          : status === "done"
+            ? `Its work ended already, and this closes issue ${issueId(issue ?? "")}.`
+            : pr === null
+              ? `This deletes its branch and clone${issue === null ? "" : `, and closes issue ${issueId(issue)}`}.`
+              : issue === null
+                ? `This closes PR #${pr} and deletes its branch and clone.`
+                : `This closes PR #${pr} and issue ${issueId(issue)}, and deletes its branch and clone.`;
       // Bun's prompt answers a bare Enter with null, which is no, as the question says.
-      const answer = status === "done" ? "y" : prompt(`Remove ${name}? ${goes} [y/N]`);
+      const answer =
+        status === "done" && issue === null ? "y" : prompt(`Remove ${name}? ${goes} [y/N]`);
       if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
         console.log(`Skelcrew didn't remove ${name}.`);
         return;
       }
     }
-    // An empty reason is no reason, so the PR closes with no comment.
-    const { removed: name, issue, unfiled } = await removeOn(...task, rest[0] || undefined);
-    if (unfiled) {
-      console.log(`Removed ${name} from the backlog.`);
-      return;
-    }
-    // The issue stays open in the tracker, so starting over needs no new one. GitHub writes a
-    // number as #12, while a tracker such as Linear has IDs like JOTT-12 that stand alone.
-    if (issue === null) console.log(`Removed ${name}. sc start ${name} starts it over.`);
-    else {
-      const id = /^\d+$/.test(issue) ? `#${issue}` : issue;
-      console.log(`Removed ${name}. Issue ${id} stays open, and sc start ${name} starts it over.`);
-    }
+    const asked = askedFile === undefined ? undefined : await readAsked(askedFile);
+    const {
+      removed: name,
+      issue,
+      unfiled,
+      closed,
+    } = await removeOn(...task, {
+      reason,
+      keepIssue,
+      asked,
+    });
+    if (unfiled) console.log(`Removed ${name} from the backlog.`);
+    else if (issue === null) console.log(`Removed ${name}. sc start ${name} starts it over.`);
+    else if (closed) console.log(`Removed ${name} and closed issue ${issueId(issue)}.`);
+    else
+      console.log(
+        `Removed ${name}. Issue ${issueId(issue)} stays open, and sc start ${name} starts it over.`,
+      );
     return;
   }
   if (command === "review" && task && rest.length === 0) {
@@ -910,17 +918,7 @@ async function tellCommand(args: string[]): Promise<void> {
     const brief = words === "-" ? await Bun.stdin.text() : words;
     if (!brief.trim())
       throw new Error(`sc tell lead ${text} needs the brief, as words or on stdin`);
-    // The human's words come in a file the lead wrote with its own file tool, so they never
-    // pass through a shell, which could run or change them. They are read unchanged.
-    let asked: string | undefined;
-    if (askedFile !== undefined) {
-      const { readFileSync } = await import("node:fs");
-      asked = readFileSync(askedFile, "utf8");
-      if (!asked.trim())
-        throw new Error(
-          `${askedFile} is empty: write the human's words in it, exactly as they wrote them`,
-        );
-    }
+    const asked = askedFile === undefined ? undefined : await readAsked(askedFile);
     const name = await briefOtherLead(text, brief, asked);
     console.log(`Telling ${name}'s lead. Skelcrew types it in once that lead is idle.`);
     return;
@@ -1038,12 +1036,8 @@ async function runCommand(args: string[]): Promise<void> {
       return lsCommand(first, words.slice(1), json);
     case "show":
       return showCommand(first, words.slice(1), json);
-    case "issue":
-      return issueCommand(words, json);
     case "task":
       return taskCommand(words);
-    case "pr":
-      return prCommand(words, json);
     case "start":
     case "stop":
     case "rm":

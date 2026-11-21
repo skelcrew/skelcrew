@@ -555,6 +555,6 @@ test("a thread's rounds, PR, review and updates written just before the move sho
   });
   db.close();
   // The lead's update still reaches the task as its reviewer gets it.
-  const shown = await runSkel(["issue", "show", "app-15", "--json"], env());
+  const shown = await runSkel(["show", "app-15", "--json"], env());
   expect(JSON.parse(shown.out).body).toContain("Use the system's theme.");
 }, 60_000);

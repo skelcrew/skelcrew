@@ -1,6 +1,6 @@
 // How the screen is laid out: the sidebar's width and edge at every size, the top row, and the
 // footer with its keys and load.
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sidebarFor } from "../src/screen/screen.ts";
@@ -36,8 +36,6 @@ import {
   until,
 } from "./screen.ts";
 
-// Longer than the screen's waits, so a test that fails says what it waited for.
-setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 
