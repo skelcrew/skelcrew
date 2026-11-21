@@ -687,7 +687,7 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   expect(first.code).toBe(0);
   expect(first.out).toContain(offered("simon/app"));
   expect(first.out).toContain(
-    "Skelcrew won't ask again for simon/app. To install it:\n\n  sc add -g skelcrew/skelcrew-github\n",
+    "Skelcrew won't ask again for simon/app. To install it:\n\n  sc plugin add -g skelcrew/skelcrew-github\n",
   );
   // The offer comes before the first step.
   expect(first.out.indexOf(offered("simon/app"))).toBeLessThan(
@@ -1396,7 +1396,7 @@ test("sc install removes a plugin from GitHub your files don't name", async () =
     readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]", "plugins: []"),
   );
   writeFileSync(lock(), "");
-  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+  expect((await skel("", bin, main(), home, {}, ["plugin", "ls"])).out).toBe(
     "fake 0.1.0 io: tracker. sc install keeps it, as Skelcrew's clone of app isn't there yet.\n",
   );
   const early = await install();
@@ -1406,7 +1406,7 @@ test("sc install removes a plugin from GitHub your files don't name", async () =
   );
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(true);
   cloneEach();
-  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+  expect((await skel("", bin, main(), home, {}, ["plugin", "ls"])).out).toBe(
     "fake 0.1.0 io: tracker. sc install removes it.\n",
   );
   const run = await install();
@@ -1439,7 +1439,7 @@ test("sc install keeps a plugin a repository uses that your files don't name, an
   );
   writeFileSync(lock(), "");
   const configBefore = readFileSync(config(), "utf8");
-  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+  expect((await skel("", bin, main(), home, {}, ["plugin", "ls"])).out).toBe(
     "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other.\n",
   );
   writeFileSync(join(home, "calls"), "");
@@ -1484,7 +1484,7 @@ test("sc install on a machine with no lock pins nothing, and keeps the plugins r
   rmSync(lock());
   writeFileSync(config(), readFileSync(config(), "utf8").replace(/plugins: .*\n/, ""));
   const configBefore = readFileSync(config(), "utf8");
-  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+  expect((await skel("", bin, main(), home, {}, ["plugin", "ls"])).out).toBe(
     [
       "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other.",
       "spare 0.1.0 io: tracker. sc install removes it.",
@@ -1574,11 +1574,11 @@ test("a repository sc install can't reach keeps git's error and the lock", async
   );
   expect(run.err).toContain("Nor its tag v0.1.0:");
   expect(run.err).toContain("does not appear to be a git repository");
-  expect(run.err).not.toContain("sc update -g");
+  expect(run.err).not.toContain("sc plugin update -g");
   expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
 });
 
-test("a locked commit the repository no longer has is refused, and sc update -g moves past it", async () => {
+test("a locked commit the repository no longer has is refused, and sc plugin update -g moves past it", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
@@ -1587,27 +1587,27 @@ test("a locked commit the repository no longer has is refused, and sc update -g 
   const refused = await install("y\n");
   expect(refused.code).toBe(1);
   expect(refused.err).toContain("simon/skelcrew-fake no longer serves commit deadbeefdead");
-  expect(refused.err).toContain("sc update -g moves it to its newest version");
-  const updated = await atTerminal("y\n", home, ["update", "-g", "fake"]);
+  expect(refused.err).toContain("sc plugin update -g moves it to its newest version");
+  const updated = await atTerminal("y\n", home, ["plugin", "update", "-g", "fake"]);
   expect(updated.err).toBe("");
   expect(updated.out).toContain("Installed fake 0.1.0.");
   expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
   expect((await install()).out).toContain("Nothing to install");
 });
 
-test("sc update -g moves an installed plugin to its tag's new commit, after asking", async () => {
+test("sc plugin update -g moves an installed plugin to its tag's new commit, after asking", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
   await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
-  expect((await atTerminal("", home, ["update", "-g", "fake"])).out).toContain(
+  expect((await atTerminal("", home, ["plugin", "update", "-g", "fake"])).out).toContain(
     "fake is at its newest version, 0.1.0.",
   );
   publishFake("0.1.0");
   writeFileSync(join(home, "calls"), "");
-  const moved = await atTerminal("y\n", home, ["update", "-g", "fake"]);
+  const moved = await atTerminal("y\n", home, ["plugin", "update", "-g", "fake"]);
   expect(moved.err).toBe("");
   expect(moved.out).toContain("Update the fake plugin? [Y/n]");
   expect(calls()).toBe("fake setup 0.1.0\n");
@@ -1897,7 +1897,7 @@ test("sc install in a checkout installs the plugins its skelcrew.lock pins after
   expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
   expect(calls()).toBe("");
   // Your own plugins and lock never take it in, even read later on a machine with no lock.
-  await atTerminal("", home, ["plugins"]);
+  await atTerminal("", home, ["plugin", "ls"]);
   expect(readFileSync(config(), "utf8")).not.toContain("plugins");
 });
 
@@ -1996,7 +1996,7 @@ test("sc install leaves out a plugin a repository names without a pin, and one y
   // It fails, so a script running it can tell the repository's plugin isn't in.
   expect(unpinned.code).toBe(1);
   expect(unpinned.out).toContain(
-    "This checkout's skelcrew.yaml names simon/skelcrew-fake, which its skelcrew.lock doesn't pin, so Skelcrew didn't install it. sc add simon/skelcrew-fake pins it.",
+    "This checkout's skelcrew.yaml names simon/skelcrew-fake, which its skelcrew.lock doesn't pin, so Skelcrew didn't install it. sc plugin add simon/skelcrew-fake pins it.",
   );
   expect(unpinned.out).not.toContain("Nothing to install");
   expect(existsSync(fakeFolder())).toBe(false);
@@ -2236,7 +2236,9 @@ test("sc install keeps a plugin a repository's skelcrew.lock pins, though its sk
   writeFileSync(join(clone, "skelcrew.yaml"), "");
   writeFileSync(config(), readFileSync(config(), "utf8").replace(/plugins: .*\n/, ""));
   writeFileSync(lock(), "");
-  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe("fake 0.1.0 io: tracker\n");
+  expect((await skel("", bin, main(), home, {}, ["plugin", "ls"])).out).toBe(
+    "fake 0.1.0 io: tracker\n",
+  );
   const run = await install();
   expect(run.err).toBe("");
   expect(run.code).toBe(0);

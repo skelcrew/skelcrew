@@ -847,10 +847,10 @@ test("Skelcrew from a checkout never says it is out of date", () => {
   expect(farSkel(null, "def5678").out).toContain("USAGE");
 });
 
-// sc update is for plugins now, so the old way of updating Skelcrew on a server reaches nothing.
+// The old way of updating Skelcrew on a server reaches nothing.
 test("Skelcrew update is gone", async () => {
   const run = await skel(["update", "--remote", "simon@workbox"]);
-  expect(run.err).toStartWith("Skelcrew: sc update without -g is for a repository's plugins");
+  expect(run.err).toStartWith("Skelcrew: plugin commands are under sc plugin now");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
 });
