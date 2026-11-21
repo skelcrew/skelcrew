@@ -886,14 +886,6 @@ export async function closeRepo(fullName: string, sessions: string): Promise<str
   return `Closed ${found.name}'s tab. Its tasks keep running.`;
 }
 
-// Removes a repository for sc repo rm and the screen's remove key. Ends its lead, which runs in
-// `sessions`, then deletes Skelcrew's clone, its row, your trust in it and the .agents/ you
-// approved, and names the other repositories again. Refuses while the repository has live
-// threads, or tasks in its queue, naming them. The lead is ended because, left running, it would
-// go on with no repository behind it, and the daemon would never bring it back or end it.
-// Returns what to say, as the screen shows it in its own place rather than printing it. `given`
-// is its name, for sc repo rm, or its owner/name, which the screen gives: a name can pass to
-// another repository while the screen asks, as adding or removing one renames others.
 export async function removeRepo(given: string, sessions: string): Promise<string> {
   const db = openDb();
   const found =
@@ -901,8 +893,6 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
     repositories(db).find((r) => r.name === given);
   if (!found) throw new Error(`there is no repository named ${given}`);
   const { name } = found;
-  // Builders of live threads would keep running with no repository behind them, which
-  // breaks polling, sc ps and cleanup after merge. A queued task would start one later.
   const live = db
     .query(
       "SELECT task FROM threads WHERE owner = ? AND repo = ? AND status IN ('queued', 'working', 'waiting') ORDER BY task",
@@ -914,14 +904,9 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   const fullName = `${found.owner}/${found.repo}`;
   const { folder } = leadOf(db, found.owner, found.repo);
   await closeTabAndEndLead(db, sessions, found, "remove");
-  // Remove the clone, the files you dropped onto its lead, the row, the lead's requests and your
-  // trust in it. A request left behind would come back with the repository, and a yes could start
-  // work its new lead never asked for. The other repositories are named again, as one that shared
-  // a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
   rmSync(join(folder, dropsFolder), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
-  db.run("DELETE FROM lead_requests WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   forgetAgents(found);
   nameRepositories(db);
   await renameBuilders();

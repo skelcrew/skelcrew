@@ -51,7 +51,7 @@ test("a tab for each repository runs across the top, with a badge for what needs
   addSite();
   open("lead");
   await ready("lead");
-  await until(() => /^─┬─ Skelcrew .* ─*┬ {2}app {4}site •1 {2}─+┬─$/.test(tabRow()), "the tabs");
+  await until(() => /^ {4}Skelcrew .* {2}app {4}site •1$/.test(tabRow()), "the tabs");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
   // The open one is on its dark grey, the others on a lighter one.
   expect(colours).toContain("48;5;234");
@@ -139,6 +139,10 @@ test("a click on a tab switches to its repository", async () => {
   click(tabRow().indexOf("site") + 2, 1);
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   await until(() => /[○●] 8\b/.test(seen()), "site's threads");
+  // A click on the row under the tabs, the top of the boxes, switches nothing.
+  click(tabRow().indexOf("app") + 2, 2);
+  await Bun.sleep(300);
+  expect(seen()).toMatch(/[○●] 8\b/);
   click(tabRow().indexOf("app") + 2, 1);
   await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
 });

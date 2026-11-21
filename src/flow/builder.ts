@@ -75,27 +75,6 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
   return waitsOnRound ? "waiting" : "working";
 }
 
-// Records a new thread and returns it. Its task is either one of the tracker's, with its title
-// and body from Skelcrew's copy, which sc start brings up to date first, or a given title and
-// body. A given one becomes a task of the repository's own, named by a t and a number, such as
-// t1, t2 and on, the same on every machine. That works with a tracker too, so you can start
-// work without filing it. Refuses a task the copy doesn't have open. Refuses a task that has a thread already, unless that thread failed or is done,
-// such as after sc rm: then it starts over in the same folder. It only records the thread,
-// since the lead waits on the answer. Setting up its clone and starting its builder come
-// after, and can take minutes. `given` is a start request, so its `repo` is the repository's
-// name in Skelcrew or its owner/name, its `short` the short title the lead gave, if any, and
-// its `flow` the flow the lead picked, `default` when none. A flow checkFlow refuses, such as one
-// the .agents/ you approved doesn't have or one with a bad round limit, refuses the start, from
-// sc start or a label alike, before any work begins. A start over the repository's limits.threads
-// records the thread as queued, to start once its turn comes in the queue, and the caller starts
-// nothing for it now. A task of the tracker that joins the queue is saved as owing its claim,
-// unless `claimed` says the label's start claimed it already, and leaves the queue only once
-// the claim is made. With `now`, it starts at once over the limit, as sc start --now asks.
-// Starts go one at a time: a start over first deletes the old thread's refs, and a second
-// start of the same task, running alongside, could delete the refs of the thread the first
-// just started. One at a time, the second finds that thread and is refused. `recorded` is told
-// the thread in the same step that records it, so a caller can keep that it started, such as
-// your yes to a lead's request, before a stop of the daemon could lose it.
 export function startThread(
   db: Database,
   given:
@@ -115,10 +94,8 @@ export function startThread(
         flow?: string | undefined;
       },
   claimed = false,
-  recorded: (thread: Thread) => void = () => {},
 ): Promise<Thread> {
-  const start = startsBefore.then(() => recordThread(db, given, claimed, recorded));
-  // A start that fails holds up none after it.
+  const start = startsBefore.then(() => recordThread(db, given, claimed));
   startsBefore = start.catch(() => {});
   return start;
 }
@@ -126,26 +103,17 @@ export function startThread(
 // The last start under way, which the next one waits for.
 let startsBefore: Promise<unknown> = Promise.resolve();
 
-// Records a new thread for startThread, which runs one at a time, and returns it.
 async function recordThread(
   db: Database,
   given: Parameters<typeof startThread>[1],
   claimed: boolean,
-  recorded: (thread: Thread) => void,
 ): Promise<Thread> {
-  // Find the repository and whether a tracker holds its tasks, which decides where a named
-  // task's title and body come from.
   const repository = findRepository(db, given.repo);
   const { owner, repo, name } = repository;
   const tracked = trackerOf(db, repository) !== null;
-  // The task keeps the .agents/ you approved as it starts, and runs one of its flows.
   const agents = approvedAgents({ owner, repo });
   const flow = given.flow ?? "default";
   checkFlow({ owner, repo, agents }, name, flow);
-  // A plugin the repository's files name that this machine lacks, such as its forge, would leave
-  // the task without it. Only you can install one, at your terminal, so the start waits for you.
-  // The files are in Skelcrew's clone, so this is run only once the clone is waited for: below for
-  // a new task, before it claims a name, and by the daemon for a task from the tracker.
   const refuseMissingPlugins = () => {
     if (needsInstall(cloneDir(owner, repo)))
       throw new Error(
@@ -156,32 +124,19 @@ async function recordThread(
   let task: string;
   let title: string;
   let body: string;
-  // The link to the issue the task comes from, and the line that closes it, which only a task
-  // from the tracker has.
   let issueLink: string | null = null;
   let closes: string | null = null;
-  // The task of the backlog it starts, which leaves the backlog as the thread is recorded.
   let fromBacklog: Filed | null = null;
   if ("title" in given) {
-    // A name of Skelcrew's own, claimed on the remote, from its clone, which the daemon may
-    // still be making. The refresh also learns the repository's forge the first time, such as
-    // one added before its forge's plugin was installed, which can give it another URL, the one
-    // the forge's login works at. So it is waited for until both are there, and the repository
-    // read again after.
     const clone = cloneDir(owner, repo);
     if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
     const current = findRepository(db, given.repo);
     refuseMissingPlugins();
     task = await claimOwnName(db, current, clone);
     ({ title, body } = given);
-    // It has no issue to close. Saved as empty rather than null, which only a task from before
-    // Skelcrew kept the line has, so a later issue of the same ID is never closed by its PR.
     closes = "";
   } else {
     refuseMissingPlugins();
-    // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
-    // own, or one the tracker no longer has, can only start over on the words its failed or
-    // done thread kept.
     task = given.task;
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
@@ -194,14 +149,12 @@ async function recordThread(
       issueLink = found.link;
       closes = found.closes;
     } else if (filed && !had) {
-      // A task from the backlog leaves it as its thread is recorded, below.
       fromBacklog = filed;
       ({ title, body } = filed);
       closes = "";
     } else if (had?.title) {
       title = had.title;
       body = had.body ?? "";
-      // A task from an issue still came from it, though the repository's tracker is gone now.
       issueLink = had.issue_link;
       closes = had.closes;
     } else
@@ -211,31 +164,17 @@ async function recordThread(
           : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc start ${name} "<title>" "<body>"`,
       );
   }
-  // The branch is named by the task and a short form of its title, so you can tell branches
-  // apart on the forge.
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .slice(0, 40)
     .replace(/^-|-$/g, "");
-  // Returns a folder name no other thread holds, adding a number when needed. Different
-  // names can make the same folder, such as simon/app and simon-app.
   const freeFolder = (folder: string) => {
-    // Whether another thread holds that folder.
     const taken = (f: string) => db.query("SELECT 1 FROM threads WHERE folder = ?").get(f);
     let free = folder;
     for (let n = 2; taken(free); n++) free = `${folder}-${n}`;
     return free;
   };
-  // Skelcrew's clone keeps refs of what a thread pushed and had approved, named by its folder.
-  // A thread starting over in a failed or done thread's folder would be taken for one that
-  // pushed already, and without a forge ended at once, and an old approval could hold for its
-  // work. So they go now, before the new thread is recorded and can push, and a ref git can't
-  // delete refuses the start. Only a ref that is there is deleted: there is none with no
-  // clone, as after a setup that couldn't clone, nor for a folder no ref can be named after,
-  // which setting up refuses later. Ending a thread leaves them, as nothing reads a done
-  // thread's refs, and an end cut short would leave them anyway. A thread that isn't failed or
-  // done keeps them, and is refused below.
   const ended = Thread.nullable().parse(
     db
       .query(`SELECT * FROM task_threads ${where} AND status IN ('failed', 'done')`)
@@ -252,22 +191,17 @@ async function recordThread(
           `couldn't start ${taskName(name, task)} over, as Skelcrew couldn't delete ${ref}: ${said}`,
         );
     }
-  // Check again for a thread and record the new one in one transaction, so a failed or done
-  // thread's row is never removed without the new one taking its place.
   const record = db.transaction(() => {
     const before = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
     if (before && before.status !== "failed" && before.status !== "done")
       throw new Error(`${taskName(name, task)} has a thread already`);
-    // Counted in the same transaction as the thread is recorded, so two starts can't both take
-    // the last place. A start with `now` never joins the queue: you chose to go over the limit.
     const queued = !("now" in given && given.now) && joinsQueue(db, repository);
     const thread: Thread = {
       owner,
       repo,
       task,
-      // A thread that failed or is done starts over in its folder, named when it first started.
       folder: before?.folder ?? freeFolder(`${folderName(name)}-${task}`),
       branch: slug ? `skelcrew/${task}-${slug}` : `skelcrew/${task}`,
       base: "from" in given ? (given.from ?? null) : null,
@@ -281,7 +215,6 @@ async function recordThread(
       queued: null,
       telling: null,
       held: null,
-      // A new thread has no PR yet, so everything on the one it opens is new.
       seen: [],
       last_review: null,
       last_comment: null,
@@ -314,15 +247,10 @@ async function recordThread(
       review_at: null,
       harness: null,
       short: given.short ?? null,
-      // A thread that failed still holds its issue, so starting it over keeps that Skelcrew
-      // assigned you.
       assigned: before?.assigned ?? false,
       changed: null,
       updates: [],
       state: null,
-      // It has no session until its builder starts, on the host your config names then. One
-      // starting over keeps the host the failed thread's builder had, as that builder may still
-      // run there, and is ended before the new one starts.
       host: before?.host ?? null,
       host_id: before?.host_id ?? null,
       merged: false,
@@ -352,15 +280,9 @@ async function recordThread(
       review_findings: null,
       queued_since: queued ? joinTime(db) : null,
     };
-    // A failed or done thread's row gives way to the new one, and messages that waited for its
-    // builder go with it, as they were about the old work. Its task starts afresh too, with no
-    // PR, rounds, review or updates.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
-    // A note that the old thread ended may still wait for a busy lead. The new thread has the
-    // same name, and the lead would drop it from what it holds open, so the note goes too.
     dropEndNotes(db, thread.folder);
-    // Its turn_ended is set, so the daemon's move of an earlier release's threads passes it by.
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, turn_ended, host, host_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
@@ -398,19 +320,13 @@ async function recordThread(
         thread.queued_since,
       ],
     );
-    // Saved with the thread, so a restart can't start it before its claim is made. A claim the
-    // label's start made is forgotten here, with the thread recorded, so a stop between the two
-    // can't leave it to be taken for one cut short.
     const claims = [owner, repo, task];
     if (claimed) db.run("DELETE FROM claims WHERE owner = ? AND repo = ? AND task = ?", claims);
     else if (queued && tracked && !ownTask(task))
       db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", claims);
     log(db, thread);
-    recorded(thread);
     return thread;
   });
-  // A task from the backlog is taken off it for every machine around the thread's record, so it
-  // never starts twice and is never lost, as startFiled says.
   if (fromBacklog)
     return startFiled(db, repository, cloneDir(owner, repo), fromBacklog.task, record);
   return record();

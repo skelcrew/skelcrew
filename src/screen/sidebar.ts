@@ -1,8 +1,9 @@
 // The sidebar: the live left pane of the screen, which is the list of the open repository. Its
 // lead is on top, then Needs you and the six stages, as sc --list shows them. The right side
 // follows the row you are on: the lead's session on the lead's row, a task's details on a task's.
-// The sidebar also keeps the top row up to date, with the header and the tabs, tells the footer
-// what to say, switches tabs, and closes or removes the open repository when you ask.
+// The sidebar also keeps the top rows up to date, the header with its tabs and the top of the
+// boxes, tells the footer what to say, switches tabs, and closes or removes the open repository
+// when you ask.
 import {
   attachCommand,
   attachThen,
@@ -21,7 +22,7 @@ import { closeRepo, removeRepo } from "../flow/repo.ts";
 import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { cloneOf, liveThreads } from "../flow/thread.ts";
-import { type Asking, answerOf, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
+import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
 import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
   buildersNote,
@@ -102,23 +103,10 @@ const keyNames: Record<string, string> = {
   "\x1b[6~": "page down",
 };
 
-// The keys the footer shows while your typing goes to the sidebar, where the list's keys work
-// without Alt. Enter says what it does on the row: to the lead on the lead's row, open/close on a
-// section's heading, none on the heading of Needs you, which never closes, attach where it attaches
-// to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter or `a`
-// attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued
-// task in the task queue, and s, f or m show only where the row can be started, or queued, started
-// now over limits.threads, or merged.
-// A request of the lead's offers y and n, which answer it, in place of Enter. R shows where the
-// row's agent runs, so it can be restarted. w, which closes or removes the repository, is always
-// there, with Alt-W beside it, as that is the key that works while an agent has your typing. It
-// comes right after the moves, so a narrow terminal, which cuts the footer at its end, cuts the
-// row's own keys first.
 function sidebarFooter(row: Row, restarts: boolean): string {
   const first = "↑↓ move  w/⌥W close";
   const end = `${restarts ? "  R restart" : ""}  ⌥Q quit`;
   if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎/a full screen  0-6 sections${end}`;
-  if (row.part === "request") return `${first}  y yes  n no  0-6 sections${end}`;
   if (row.part === "heading") {
     const fixed = row.section === "needs you";
     return `${first}${fixed ? "" : "  ⏎ open/close"}  0-6 sections${end}`;
@@ -280,7 +268,7 @@ export async function runSidebar(
   // an agent. Enter on the lead's row or a click on the lead gives it back. With Alt keys alone,
   // typing follows the row: the lead's row types to the lead.
   let held = false;
-  // Where your typing went at the last look, which the top row's boxes show and the footer says.
+  // Where your typing went at the last look, which the top of the boxes shows and the footer says.
   let typingRight = true;
   // What the footer says in place of its keys until the next key, the question it asks, and
   // whether the daemon is at work on an answer.
@@ -349,10 +337,6 @@ export async function runSidebar(
     screenTmux(agents, ["select-pane", "-t", rightPane]);
     if (zoom) screenTmux(agents, ["resize-pane", "-Z", "-t", rightPane]);
   };
-  // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
-  // task's details on any other. A request of the lead's shows as a task's details do, with the
-  // lead's screen read-only in place of the details, so your typing stays with the sidebar, y and
-  // n answer the request, and nothing, a click included, reaches the lead.
   const follow = () => {
     const row = rows[here];
     if (row) show(row.part === "lead" ? open.lead : detailsOf(row.name));
@@ -401,14 +385,9 @@ export async function runSidebar(
     return thread ? (thread.harness ?? "claude") : "";
   };
 
-  // Returns the question R asks on a row whose agent runs, the lead's or a task's builder, or
-  // null on any other row. A yes has the daemon end the agent's session and start it again on
-  // its harness, with its conversation, so it picks up new skills, settings and environment.
   const restartOf = (row: Row): Question | null => {
     const lead = row.part === "lead";
-    // A builder counts while its thread works or waits and its session runs, as the daemon
-    // restarts no other. A heading or a request of the lead's has no agent of its own.
-    const task = row.part !== "heading" && row.part !== "request" ? row.task : null;
+    const task = row.part !== "heading" ? row.task : null;
     const runs = lead
       ? running.includes(open.lead)
       : task !== null && row.running && row.session !== null && running.includes(row.session);
@@ -522,7 +501,7 @@ export async function runSidebar(
     }
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
-    // anything is drawn, as the top row and the footer show it.
+    // anything is drawn, as the top rows and the footer show it.
     // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it.
     const [active, zoomed] = doing("asking tmux where your typing goes", () =>
       screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active} #{window_zoomed_flag}"])
@@ -576,9 +555,9 @@ export async function runSidebar(
       asked = open.lead;
       openRepository(`${open.owner}/${open.repo}`, true);
     }
-    // The header and the tabs go to tmux's status line, and only when they changed. A right side
-    // that fills the terminal is as wide as it, so the row keeps the sidebar's places and the
-    // tabs take what is left.
+    // The header and the top of the boxes go to tmux's status lines, and only when they changed.
+    // A right side that fills the terminal is as wide as it, so the rows keep the sidebar's places
+    // and the tabs take what is left.
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
     const right = fullScreen ? width - size().width - 5 : width;
     const look = {
@@ -590,8 +569,8 @@ export async function runSidebar(
       fullScreen,
     };
     const top = drawTop(look, { sidebar: size().width, right });
-    if (top !== lastTop) {
-      lastTop = top;
+    if (`${top.header}\n${top.boxes}` !== lastTop) {
+      lastTop = `${top.header}\n${top.boxes}`;
       doing("drawing the top row", () => showTop(agents, session, top));
     }
     // The footer, also only when it changed.
@@ -791,21 +770,9 @@ export async function runSidebar(
     shown = refused;
   };
 
-  // Opens the row you are on, as Enter does in the list. On the lead's row it gives your typing to
-  // the lead, and on a heading it opens or closes its stage. On a task at work, the builder takes
-  // the right side and your typing, until Ctrl-\ brings back its details, or the right side says
-  // why it can't. `zoom`, from Shift-Enter or `a`, gives the lead or the builder the whole
-  // terminal, and does nothing on a row Enter doesn't attach on. Task queue says what the task
-  // waits on. Backlog asks to start the task, and the `… more` row shows every issue. Ready and
-  // Done open the PR, or copy its link. A ready task whose builder needs you reaches the builder
-  // instead, so one Enter reaches what it waits on.
   const enter = (zoom = false) => {
     const row = rows[here];
     if (!row) return;
-    if (row.part === "request") {
-      if (!zoom) said = "Press y to say yes to the lead, or n to say no.";
-      return;
-    }
     if (zoom && !enterAttaches(row)) return;
     if (row.part === "lead") return toRight(zoom);
     if (row.part === "heading" && row.section !== "lead") return toggle(row.section);
@@ -817,7 +784,6 @@ export async function runSidebar(
       asking = { question: row.start, row: row.name, offer: "start" };
       return;
     }
-    // A task in the task queue has no builder running yet, so the footer says what it waits on.
     if (row.section === "task queue") {
       said = row.waits;
       return;
@@ -826,7 +792,6 @@ export async function runSidebar(
     if ((atWork || row.needsYou) && row.session) {
       const repository = `${open.owner}/${open.repo}`;
       held = false;
-      // The builder takes your typing as it comes, unless you kept it in the sidebar meanwhile.
       const takeTyping = () => !held;
       void attachTask(agents, session, repository, row.name, takeTyping, zoom).then((failed) => {
         if (failed !== null) refuse(row.name, failed);
@@ -860,15 +825,9 @@ export async function runSidebar(
     moveTo(target.row);
   };
 
-  // Acts on one key. A question takes only y, and any other key is a no. A line said goes at the
-  // next key, which then does what it does. Nothing acts while the daemon is at work on an
-  // answer. s and m work as in the list, and only reach the sidebar on a task's row.
   const press = (key: string) => {
-    // A drop's question is answered whatever else goes on, as the drop waits for it.
     if (key === dropAsk) return answerDrop();
     const name = keyNames[key] ?? key;
-    // Ctrl-\ brings your typing here from anywhere, so it acts before anything else, and leaves a
-    // question asked here open.
     if (name === "to sidebar") {
       held = true;
       screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
@@ -877,7 +836,6 @@ export async function runSidebar(
     if (working) return;
     if (closing) return answerClosing(closing, name);
     if (name === "close") return askToClose();
-    // A reason shown on the right goes at the next key, which then does what it does.
     if (shown === refused) {
       shown = null;
       follow();
@@ -888,7 +846,6 @@ export async function runSidebar(
       asking = null;
       if (name !== "y") return;
       refresh();
-      // A restart goes ahead as asked: the daemon itself refuses an agent that stopped running.
       if (action.question.request.command === "restart") return void goAhead(action.question);
       const offer = stillOffered(action, all);
       if (typeof offer === "string") said = offer;
@@ -896,8 +853,6 @@ export async function runSidebar(
       return;
     }
     said = null;
-    // A plain key reaches the sidebar only while it has your typing, and keeps it there as you
-    // move. Alt keys, clicks and tabs clicked come through the screen's tmux from anywhere.
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
@@ -908,28 +863,22 @@ export async function runSidebar(
     if (name === "next repository" || name === "previous repository")
       return nextRepository(name === "next repository" ? 1 : -1);
     if (key.startsWith(`${esc}]skel-tab;`)) {
-      const tab = tabs[Number(key.slice(`${esc}]skel-tab;`.length, -1))];
+      const range = key.slice(`${esc}]skel-tab;`.length, -1);
+      const tab = /^\d+$/.test(range) ? tabs[Number(range)] : undefined;
       if (tab) switchTo(tab.fullName);
       return refresh();
     }
     if (button && column && line) return click(button, Number(column), Number(line));
-    // 0, with Alt or without, opens or closes the task queue, and 1 to 6 the stages, in the
-    // order they show.
     const bare = key.startsWith(esc) ? key.slice(1) : key;
     if (bare === "0") return toggle("task queue");
     const stage = /^[1-6]$/.test(bare) ? ListStage.options[Number(bare) - 1] : undefined;
     if (stage) return toggle(stage);
     if (name === "enter" || name === "full screen") return enter(name === "full screen");
-    // Page Up and Page Down scroll the details on the right, which run in a pane of their own,
-    // so they are handed on to it.
     if ((name === "page up" || name === "page down") && row?.task && isDetails(shown)) {
       screenTmux(agents, ["send-keys", "-t", rightPane, name === "page up" ? "PPage" : "NPage"]);
       return;
     }
-    // y and n answer the lead's request you are on at once, as its row is the question.
-    const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
-    if (answer) void goAhead(answer);
-    else if (key === "R" && row && restartOf(row)) {
+    if (key === "R" && row && restartOf(row)) {
       const question = restartOf(row);
       if (question) asking = { question, row: row.name, offer: "start" };
     } else if (key === "s" && row?.part === "backlog" && row.start)

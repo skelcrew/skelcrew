@@ -2154,3 +2154,59 @@ process.exit(0);`,
   expect(said).toContain("last note");
   expect(said).not.toContain("first start");
 }, 30_000);
+
+// A host with its own transport may hold a note already, waiting for the lead to be idle while
+// it answers the human. The answer opens a reading window, so the host must not type it in then.
+test("a reading window cancels a note the host's transport already holds", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const typed = join(home, "typed.txt");
+  const busy = join(home, "busy");
+  writeFileSync(busy, "");
+  const { prompt, busy: mark } = claude.marks;
+  const lead = `#!/bin/sh
+echo "Thinking (${mark})"
+while [ -e ${busy} ]; do sleep 0.1; done
+printf '\\033[2J'
+echo "${prompt}"
+cat >> ${typed}
+`;
+  mkdirSync(join(home, "bin"), { recursive: true });
+  for (const sandbox of ["bwrap", "sandbox-exec"])
+    writeFileSync(join(home, "bin", sandbox), lead, { mode: 0o755 });
+  const said = runWithFakeHost(
+    "sessions, transport",
+    `const { startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { leadTurnEnded, leadTurnStarted, noteForLead, typeLeadNotes } = await import(${JSON.stringify(source("flow/messages.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "config.yaml"))}, "harness: claude\\nsession: fake\\n");
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "claude-token"))}, "sk-ant-oat01-good\\n");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_session) VALUES ('app', 'simon', 'app', '', 1, '6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b')");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+await startLead(db, "unused", repository);
+// The lead answers the human, and a note comes meanwhile, which the host holds.
+leadTurnStarted(db, "unused", repository, "What is left to do?");
+const asked = ${JSON.stringify(join(fake, "asked"))};
+const delivers = () => fs.readFileSync(asked, "utf8").split('"ask":"deliver"').length - 1;
+noteForLead(db, "unused", repository, "held note", null, true);
+for (let i = 0; i < 300 && delivers() === 0; i++) await Bun.sleep(50);
+leadTurnEnded(db, "unused", repository);
+fs.rmSync(${JSON.stringify(busy)});
+await Bun.sleep(3000);
+const typed = () => (fs.existsSync(${JSON.stringify(typed)}) ? fs.readFileSync(${JSON.stringify(typed)}, "utf8") : "");
+const during = typed();
+db.run("UPDATE repositories SET reading_until = ?", [Date.now()]);
+typeLeadNotes(db, "unused");
+for (let i = 0; i < 300 && !typed().includes("held note"); i++) await Bun.sleep(50);
+console.log(JSON.stringify({ during, after: typed() }));
+process.exit(0);`,
+    {},
+  );
+  const seen = JSON.parse(said.trim().split("\n").at(-1) ?? "{}");
+  expect(seen.during).not.toContain("held note");
+  expect(seen.after).toContain("held note");
+}, 30_000);

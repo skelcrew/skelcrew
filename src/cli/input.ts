@@ -1,6 +1,6 @@
-// Reads what a command was given and who gave it: the names of tasks and threads among its
-// arguments, a task's title and body on stdin, the human's words in a file, and whether an
-// agent or your laptop ran it. Says so when a command can't run as given.
+// Reads what a command was given: the names of tasks and threads among its arguments, a task's
+// title and body on stdin, and the human's words in a file. Says so when a command can't run
+// as given.
 
 export function splitTaskName(word?: string): [string, string] | undefined {
   const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/i);
@@ -15,7 +15,7 @@ export function splitThreadName(word?: string): [string, string] | undefined {
   return task;
 }
 
-export function taskFrom(text: string, command = "sc start"): { title: string; body: string } {
+export function parseTask(text: string, command: string): { title: string; body: string } {
   const [first = "", ...rest] = text.split("\n");
   const title = first.replace(/^#\s+/, "").trim();
   const body = rest.join("\n").replace(/^(?:[ \t]*\n)+/, "");
@@ -44,57 +44,49 @@ export async function readAsked(file: string): Promise<string> {
   return words;
 }
 
+const commands = [
+  "serve",
+  "restart",
+  "init",
+  "repo",
+  "ps",
+  "ls",
+  "show",
+  "task",
+  "start",
+  "stop",
+  "rm",
+  "merge",
+  "attach",
+  "peek",
+  "interrupt",
+  "needs-you",
+  "review",
+  "submit",
+  "hook",
+  "check",
+  "tell",
+  "install",
+  "add",
+  "remove",
+  "update",
+  "setup",
+  "plugins",
+  "plugin",
+];
+
+function usageMessage(command: string): string {
+  if (command === "--remote") return "--remote needs a host, such as sc --remote simon@workbox.";
+  if (command === "remote")
+    return "sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install.";
+  if (command === "issue" || command === "pr")
+    return 'issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc task add <repo> "<title>" "<body>" --issue opens an issue.';
+  if (commands.includes(command))
+    return `sc ${command} was given arguments it doesn't take. Run sc --help to see how to use it.`;
+  return "that isn't a Skelcrew command. Run sc --help to see them.";
+}
+
 export function usage(command?: string): never {
-  const known = [
-    "up",
-    "serve",
-    "restart",
-    "init",
-    "repo",
-    "ps",
-    "ls",
-    "show",
-    "task",
-    "start",
-    "stop",
-    "rm",
-    "merge",
-    "attach",
-    "peek",
-    "interrupt",
-    "needs-you",
-    "ask",
-    "review",
-    "submit",
-    "check",
-    "tell",
-    "install",
-    "add",
-    "remove",
-    "update",
-    "setup",
-    "plugins",
-    "plugin",
-  ];
-  const first = command ?? "";
-  console.error(
-    first === "--remote"
-      ? "Skelcrew: --remote needs a host, such as sc --remote simon@workbox."
-      : first === "remote"
-        ? "Skelcrew: sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install."
-        : first === "issue" || first === "pr"
-          ? 'Skelcrew: issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc task add <repo> "<title>" "<body>" --issue opens an issue.'
-          : known.includes(first)
-            ? `Skelcrew: sc ${first} was given arguments it doesn't take. Run sc --help to see how to use it.`
-            : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
-  );
+  console.error(`Skelcrew: ${usageMessage(command ?? "")}`);
   process.exit(1);
-}
-
-export function runByAgent(): boolean {
-  return process.env.SKELCREW_SANDBOX === "1";
-}
-
-export function serverName(): string | undefined {
-  return process.env.SKELCREW_REMOTE_NAME;
 }

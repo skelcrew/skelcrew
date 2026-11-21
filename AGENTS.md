@@ -102,8 +102,8 @@ Each file starts with one or two lines saying what the file is for, in the spec'
 Write no other comments. A function or step that needs one needs a clearer name, or a test
 that pins the trap down.
 
-Files written before this rule still have comments. Remove them from a file when a change
-already touches it, rather than in a sweep. Until then, update or delete any comment your
+Files written before this rule still have comments. Remove the comments in each function
+your change touches, rather than in a sweep. Until then, update or delete any comment your
 change makes wrong. A wrong comment is worse than none.
 
 When you change what a file does, update its opening lines to match.

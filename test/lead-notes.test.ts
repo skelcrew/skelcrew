@@ -42,20 +42,22 @@ afterEach(() => {
 });
 
 // Runs the code with the database open as `db`, simon/app and its thread app-12 in it, and
-// returns what it prints. `lead()` starts the stand-in lead, `tmuxLead(...)` runs tmux on the
+// returns what it prints. `again` runs it on the database an earlier run left, as the daemon
+// does when it starts again. `lead()` starts the stand-in lead, `tmuxLead(...)` runs tmux on the
 // lead's pane, and `received()` is what was typed into it. It takes a process of its own with
 // HOME set, as homedir() keeps the HOME this process started with.
-function run(body: string): string {
+function run(body: string, again = false): string {
+  const setup = `db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+${threadSql({ task: "12", status: "working" })}\`);`;
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { leadOf } from ${JSON.stringify(source("flow/lead.ts"))};
-import { briefLead, messageLead, noteForLead, skelcrewNoteForLead, typeLeadNotes } from ${JSON.stringify(source("flow/messages.ts"))};
+import { briefLead, leadTurnEnded, leadTurnStarted, messageLead, noteForLead, skelcrewNoteForLead, typeLeadNotes } from ${JSON.stringify(source("flow/messages.ts"))};
 import { needsYou, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { failThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { existsSync, readFileSync } from "node:fs";
 const db = openDb();
-db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
-${threadSql({ task: "12", status: "working" })}\`);
+${again ? "" : setup}
 const tmux = ${JSON.stringify(socket)};
 const home = ${JSON.stringify(home)};
 const { name } = leadOf(db, "simon", "app");
@@ -123,7 +125,8 @@ console.log(JSON.stringify({
 
 // A paste while the human reads further up would throw them back to the bottom. Back at the
 // bottom, everything that waited goes in as one message, once. A thread needing you goes first,
-// though it came last, then the builder's message, then Skelcrew's routine note.
+// though it came last, then Skelcrew's routine note in its digest, then the builder's message,
+// so the notes keep the order they came in.
 test("messages for a lead the human has scrolled back in wait, then go in together", () => {
   const seen = JSON.parse(
     run(`
@@ -143,10 +146,10 @@ console.log(JSON.stringify({ during, after: received(), noting: readThread(db, "
   const typed: string = seen.after;
   expect(typed.split("\x1b[201~")).toHaveLength(2);
   const needs = typed.indexOf("APP-12 needs you: its builder asked a question");
-  const started = typed.indexOf("started app-13 from github: Add import");
+  const started = typed.indexOf("Skelcrew digest:\nstarted app-13 from github: Add import");
   expect(needs).toBeGreaterThan(-1);
-  expect(needs).toBeLessThan(typed.indexOf("First part done."));
-  expect(typed.indexOf("First part done.")).toBeLessThan(started);
+  expect(needs).toBeLessThan(started);
+  expect(started).toBeLessThan(typed.indexOf("First part done."));
   expect(seen.noting).toBeNull();
 });
 
@@ -210,9 +213,9 @@ console.log(JSON.stringify({ during, after: received() }));`),
   expect(seen.after).not.toContain("needs you");
 });
 
-// A thread that fails while the human reads further up waits like the rest, then comes ahead
-// of Skelcrew's routine notes.
-test("a thread that fails while the human has scrolled back in the lead is told first, once they are back", () => {
+// A thread that fails while the human reads further up waits like the rest, then goes in
+// together with Skelcrew's routine note that came before it, after it.
+test("a thread that fails while the human has scrolled back in the lead is told once they are back, after what came before", () => {
   // failThread logs to the daemon's output too, so only the last line is what the code printed.
   const seen = JSON.parse(
     lastLine(`
@@ -229,7 +232,7 @@ console.log(JSON.stringify({ during, after: received() }));`),
   expect(seen.during).toBe("");
   const failed = seen.after.indexOf("APP-12 failed: its setup command failed");
   expect(failed).toBeGreaterThan(-1);
-  expect(failed).toBeLessThan(seen.after.indexOf("started app-13 from github: Add import"));
+  expect(failed).toBeGreaterThan(seen.after.indexOf("started app-13 from github: Add import"));
   expect(seen.after.split("\x1b[201~")).toHaveLength(2);
 });
 
@@ -496,4 +499,339 @@ console.log(JSON.stringify(received()));`);
   expect(received).toContain(
     "the human's own words in its <asked> element, apart from the brief in its <brief> element",
   );
+});
+
+// Each note wakes the lead, so Skelcrew's routine notes collect and go in as one digest at most
+// once every 10 minutes. The test moves the last digest back in time, as waiting 10 minutes
+// would.
+const windowPassed = `db.run("UPDATE repositories SET digest_at = digest_at - 600000");
+typeLeadNotes(db, tmux);`;
+
+test("routine notes for the lead collect within the window, then go in as one digest, oldest first", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+await until(() => received().includes("APP-11 is done"));
+noteForLead(db, tmux, app, "APP-12 is done: #7 merged");
+noteForLead(db, tmux, app, "Still merging #9 (APP-14) once its checks pass, waiting on CI.");
+await Bun.sleep(3000);
+const during = received();
+${windowPassed}
+await until(() => waiting() === 0 && received().includes("Still merging"));
+await Bun.sleep(500);
+console.log(JSON.stringify({ during, after: received() }));`),
+  );
+  expect(seen.during).toContain("Skelcrew digest:\nAPP-11 is done: #6 merged");
+  expect(seen.during).not.toContain("APP-12");
+  const pastes: string[] = seen.after.split("\x1b[201~");
+  expect(pastes).toHaveLength(3);
+  expect(pastes[1]).toContain(
+    "Skelcrew digest:\nAPP-12 is done: #7 merged\nStill merging #9 (APP-14) once its checks pass, waiting on CI.",
+  );
+});
+
+// A builder's message goes in at once. The digest waiting goes in with it, ahead of it, so the
+// lead hears things in the order they happened.
+test("an urgent note sends the waiting digest at once, ahead of it", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+await until(() => received().includes("APP-11 is done"));
+noteForLead(db, tmux, app, "APP-10 is done: #5 merged");
+noteForLead(db, tmux, app, "started app-13 from github: Add import");
+await Bun.sleep(1500);
+const during = received();
+messageLead(db, tmux, readThread(db, "app-12"), "Should the export be JSON or CSV?");
+await until(() => waiting() === 0 && received().includes("JSON or CSV?"));
+await Bun.sleep(500);
+console.log(JSON.stringify({ during, after: received() }));`),
+  );
+  expect(seen.during).not.toContain("APP-10");
+  const pastes: string[] = seen.after.split("\x1b[201~");
+  expect(pastes).toHaveLength(3);
+  const last = pastes[1] ?? "";
+  const digest = last.indexOf(
+    "Skelcrew digest:\nAPP-10 is done: #5 merged\nstarted app-13 from github: Add import",
+  );
+  expect(digest).toBeGreaterThan(-1);
+  expect(digest).toBeLessThan(last.indexOf("Should the export be JSON or CSV?"));
+});
+
+// The notes and when the last digest went in are kept in the database, so a daemon that starts
+// again neither drops the digest nor sends it early.
+test("a digest waiting when the daemon stops goes in after it starts again, when its time comes", () => {
+  const before = run(`
+await lead();
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+await until(() => received().includes("APP-11 is done"));
+noteForLead(db, tmux, app, "APP-12 is done: #7 merged");
+await Bun.sleep(1000);
+console.log(waiting());`);
+  expect(before.trim()).toBe("1");
+  const seen = JSON.parse(
+    run(
+      `
+typeLeadNotes(db, tmux);
+await Bun.sleep(2000);
+const during = received();
+${windowPassed}
+await until(() => waiting() === 0 && received().includes("APP-12"));
+console.log(JSON.stringify({ during, after: received() }));`,
+      true,
+    ),
+  );
+  expect(seen.during).not.toContain("APP-12");
+  expect(seen.after).toContain("Skelcrew digest:\nAPP-12 is done: #7 merged");
+});
+
+// Ends the lead's reading window now, as waiting 2 minutes would.
+const windowEnded = `db.run("UPDATE repositories SET reading_until = ?", [Date.now()]);
+typeLeadNotes(db, tmux);`;
+
+// After the lead answers the human, nothing goes in for 2 minutes, urgent or not, so the human
+// can read the answer without the chat moving. What it held then goes in together, needs you
+// first.
+test("nothing goes into the lead while the human reads its answer, then it all goes in together", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+record(db, "app-12", { asking: true }, "its builder asked a question");
+await Bun.sleep(3000);
+const during = { received: received(), waiting: waiting() };
+${windowEnded}
+await until(() => waiting() === 0 && received().includes("First part done."));
+await Bun.sleep(500);
+console.log(JSON.stringify({ during, after: received() }));`),
+  );
+  expect(seen.during).toEqual({ received: "", waiting: 2 });
+  const typed: string = seen.after;
+  expect(typed.split("\x1b[201~")).toHaveLength(2);
+  const needs = typed.indexOf("APP-12 needs you: its builder asked a question");
+  expect(needs).toBeGreaterThan(-1);
+  expect(needs).toBeLessThan(typed.indexOf("Skelcrew digest:\nAPP-11 is done: #6 merged"));
+});
+
+// A digest went in a moment ago, so a routine note alone would wait for the next. One the
+// reading window held goes in as the window ends all the same.
+test("a reading window that ends lets its routine notes in, though a digest just went in", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+noteForLead(db, tmux, app, "APP-10 is done: #5 merged");
+await until(() => waiting() === 0 && received().includes("APP-10"));
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+await Bun.sleep(1000);
+${windowEnded}
+await until(() => waiting() === 0 && received().includes("APP-11"));
+console.log(JSON.stringify({ sent: true }));`),
+  );
+  expect(seen.sent).toBe(true);
+});
+
+// The human writing when nothing waits ends the window with nothing to let in. The lead's
+// answer then opens a new one, which holds even a builder's message.
+test("the window after the human's next answer holds, though the last one ended early with nothing in it", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+await Bun.sleep(200);
+leadTurnStarted(db, tmux, app, "And now?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await Bun.sleep(3000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
+  );
+  expect(seen).toEqual({ received: "", waiting: 1 });
+});
+
+// The human writing to the lead ends its window: what the window held goes in once the lead is
+// idle again, and the answer opens a window for what comes after.
+test("the human writing to the lead ends its reading window early", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await Bun.sleep(1500);
+const before = received();
+leadTurnStarted(db, tmux, app, "And now?");
+await until(() => waiting() === 0 && received().includes("First part done."));
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "Second part done.");
+await Bun.sleep(3000);
+console.log(JSON.stringify({ before, after: received(), waiting: waiting() }));`),
+  );
+  expect(seen.before).toBe("");
+  expect(seen.after).toContain("First part done.");
+  expect(seen.after).not.toContain("Second part done.");
+  expect(seen.waiting).toBe(1);
+});
+
+// The lead's harness reports Skelcrew's own paste as typed in too. A turn started by it is the
+// lead answering a note, not the human reading, so it opens no window.
+test("a turn that a note started opens no reading window", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await until(() => waiting() === 0 && received().includes("First part done."));
+const typed = received();
+const pasted = typed.slice(typed.indexOf("\\x1b[200~") + 6, typed.indexOf("\\x1b[201~"));
+leadTurnStarted(db, tmux, app, pasted);
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "Second part done.");
+await until(() => waiting() === 0 && received().includes("Second part done."));
+console.log(JSON.stringify({ sent: true }));`),
+  );
+  expect(seen.sent).toBe(true);
+});
+
+// A thread that started needing you during the window was held by it, so the human writing to
+// the lead lets it in, though the lead's answer opens a new window.
+test("a thread needing you that the window held goes in once the human writes", () => {
+  const seen = run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+record(db, "app-12", { asking: true }, "its builder asked a question");
+await Bun.sleep(1500);
+const before = received();
+leadTurnStarted(db, tmux, app, "And now?");
+leadTurnEnded(db, tmux, app);
+await until(() => received().includes("needs you"));
+console.log(JSON.stringify(before));`);
+  expect(JSON.parse(seen)).toBe("");
+});
+
+// What the human's message lets in is only what came before it. A thread that starts needing you
+// in the window the answer opens waits for that window, though held notes go in meanwhile.
+test("the human's message lets in only what came before it", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+leadTurnStarted(db, tmux, app, "And now?");
+leadTurnEnded(db, tmux, app);
+await Bun.sleep(50);
+record(db, "app-12", { asking: true }, "its builder asked a question");
+(await import("node:fs")).rmSync(home + "/draft");
+await until(() => received().includes("First part done."));
+await Bun.sleep(2000);
+console.log(JSON.stringify({ received: received(), noting: readThread(db, "app-12").noting }));`),
+  );
+  expect(seen.received).not.toContain("needs you");
+  expect(seen.noting).toBe("its builder asked a question");
+});
+
+// Whether the human started the lead's turn is kept in the database, so a daemon that starts
+// again while the lead answers still opens the window as the answer ends.
+test("a restart while the lead answers the human still opens the reading window", () => {
+  run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");`);
+  const seen = JSON.parse(
+    run(
+      `
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await Bun.sleep(3000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`,
+      true,
+    ),
+  );
+  expect(seen).toEqual({ received: "", waiting: 1 });
+});
+
+// Notes that waited together keep the order they came in: an urgent note between two routine
+// ones splits the digest in two, rather than going after both.
+test("notes that waited together keep the order they came in", () => {
+  const typed: string = JSON.parse(
+    run(`
+await lead();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+noteForLead(db, tmux, app, "APP-10 is done: #5 merged");
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+(await import("node:fs")).rmSync(home + "/draft");
+await until(() => waiting() === 0 && received().includes("APP-11"));
+await Bun.sleep(500);
+console.log(JSON.stringify(received()));`),
+  );
+  const first = typed.indexOf("Skelcrew digest:\nAPP-10 is done: #5 merged");
+  const message = typed.indexOf("First part done.");
+  const second = typed.indexOf("Skelcrew digest:\nAPP-11 is done: #6 merged");
+  expect(first).toBeGreaterThan(-1);
+  expect(first).toBeLessThan(message);
+  expect(message).toBeLessThan(second);
+  expect(typed.split("\x1b[201~")).toHaveLength(2);
+});
+
+// Which window a note belongs to goes by its place among the notes, never by time. The notes
+// either side of the human's message are saved in the same moment, most often the same
+// millisecond: the one before it goes in once the lead has answered, and the one after waits for
+// the window the answer opens.
+test("notes from the same moment as the human's message go by which came first", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "Before.");
+leadTurnStarted(db, tmux, app, "And now?");
+messageLead(db, tmux, readThread(db, "app-12"), "After.");
+leadTurnEnded(db, tmux, app);
+(await import("node:fs")).rmSync(home + "/draft");
+await until(() => received().includes("Before."));
+await Bun.sleep(2000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
+  );
+  expect(seen.received).toContain("Before.");
+  expect(seen.received).not.toContain("After.");
+  expect(seen.waiting).toBe(1);
+});
+
+// A window that ended by itself while its notes wait behind a draft isn't settled yet. The
+// human writing still marks where their message came, so a note after it waits for the window
+// the answer opens.
+test("the human's message keeps its place when the window had ended by itself", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+db.run("UPDATE repositories SET reading_until = ?", [Date.now()]);
+messageLead(db, tmux, readThread(db, "app-12"), "Before.");
+await Bun.sleep(500);
+leadTurnStarted(db, tmux, app, "And now?");
+messageLead(db, tmux, readThread(db, "app-12"), "After.");
+await Bun.sleep(500);
+leadTurnEnded(db, tmux, app);
+(await import("node:fs")).rmSync(home + "/draft");
+await until(() => received().includes("Before."));
+await Bun.sleep(2000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
+  );
+  expect(seen.received).toContain("Before.");
+  expect(seen.received).not.toContain("After.");
+  expect(seen.waiting).toBe(1);
 });

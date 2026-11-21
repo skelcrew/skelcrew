@@ -1,6 +1,7 @@
 // The commands for this machine: plain sc, which opens the lead, the daemon, repositories,
 // plugins and the parts of the screen.
-import { runByAgent, usage } from "./input.ts";
+import { runByAgent } from "../agents/sandbox.ts";
+import { usage } from "./input.ts";
 
 export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { attachToLead, upInBackground } = await import("../attach.ts");
@@ -37,25 +38,21 @@ export async function machineCommand(args: string[]): Promise<void> {
     return;
   }
   const { serve } = await import("../flow/daemon.ts");
-  if (command === "up" && args.length === 1) {
+  const daemon = command === "serve";
+  if (daemon && args.length === 1) {
     await serve("skelcrew");
     return;
   }
-  if (command === "up" && args.length === 2 && args[1] === "--bg") {
+  if (daemon && args.length === 2 && args[1] === "--bg") {
     const { setupDone } = await import("../machine/setup.ts");
     if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
     const { upInBackground } = await import("../attach.ts");
     const outside = await upInBackground();
     console.log(
       outside
-        ? "Skelcrew's daemon already runs outside its service, such as with sc up in a terminal. Stop it to run it in the background."
+        ? "Skelcrew's daemon already runs outside its service, such as with sc serve in a terminal. Stop it to run it in the background."
         : "Skelcrew's daemon is running in the background.",
     );
-    return;
-  }
-  if (command === "serve" && args.length === 1) {
-    console.error("sc serve is now sc up, and sc serve will go in a later release.");
-    await serve("skelcrew");
     return;
   }
   usage(command);
@@ -80,10 +77,10 @@ export async function screenCommand(args: string[]): Promise<void> {
     }
   }
   if (command === "details" && rest.length === 3) {
-    const [agents, repository, name] = rest;
-    if (agents && repository && name) {
+    const [, repository, name] = rest;
+    if (repository && name) {
       const { runTaskDetails } = await import("../screen/task.ts");
-      await runTaskDetails(agents, repository, name);
+      await runTaskDetails(repository, name);
       return;
     }
   }

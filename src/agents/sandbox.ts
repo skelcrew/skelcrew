@@ -319,3 +319,7 @@ export function setupCommand(
   });
   return { argv, env: filterEnv(env) };
 }
+
+export function runByAgent(): boolean {
+  return process.env.SKELCREW_SANDBOX === "1";
+}

@@ -1,4 +1,4 @@
-// Running the daemon in the background, as sc up --bg does, then showing you a repository's
+// Running the daemon in the background, as sc serve --bg does, then showing you a repository's
 // lead or a thread's builder once it runs this Skelcrew's code. Plain sc opens the screen on a
 // lead, sc --list shows the lead's repository as a list, and sc attach attaches to a builder
 // full screen. sc restart restarts the daemon when you ask.
@@ -67,18 +67,15 @@ const restartWait = z.coerce
   .catch(10_000)
   .parse(process.env.SKELCREW_RESTART_WAIT_MS ?? 10_000);
 
-// Reports whether the daemon that answered runs outside its service, such as sc up or an older
-// sc serve in a terminal. Told by its process id, which every daemon reports, so it holds for a
-// daemon of an older release too. One that reports none can't be told, and counts as the service's.
+// Reports whether the daemon that answered runs outside its service, such as sc serve in a
+// terminal. Told by its process id, which every daemon reports, so it holds for a daemon of an
+// older release too. One that reports none can't be told, and counts as the service's.
 const outsideService = (running: z.infer<typeof DaemonBuild>) =>
   running.pid !== 0 && running.pid !== servicePid();
 
-// The error for a daemon outside its service that runs other code than this Skelcrew. Restarting
-// the service can't end it, and a new daemon can't start while it holds the lock, so only you can
-// stop it.
 const stopItFirst = (want: string) =>
   new Error(
-    `Skelcrew's daemon runs outside its service, such as with sc up in a terminal, on other code than ${want}. Stop it, such as with Ctrl-C, then run sc again. Your agents keep running.`,
+    `Skelcrew's daemon runs outside its service, such as with sc serve in a terminal, on other code than ${want}. Stop it, such as with Ctrl-C, then run sc again. Your agents keep running.`,
   );
 
 // Restarts the daemon when it runs another release than this Skelcrew, or another commit of this
@@ -105,35 +102,23 @@ export async function restartStaleDaemon(): Promise<void> {
   }
 }
 
-// Restarts the engine's service on this machine, for sc restart, and returns once a new engine
-// answers. sc --remote runs it on a server too. An engine run in a terminal with sc up is left
-// alone and you are asked to stop it, as the service manager can't restart it and a service
-// started beside it would fail on the lock. Agents keep running, as only the engine restarts.
 export async function restartEngine(): Promise<void> {
   const before = await daemonRuns();
-  // An engine from an older release reports no process id. When the service runs none, it
-  // surely runs in a terminal. Otherwise it may be the service's, so the service restarts, and
-  // the wait below catches one in a terminal: it keeps answering, and with no id.
   const terminal =
     before !== null && (before.pid === 0 ? servicePid() === 0 : outsideService(before));
   if (terminal)
     throw new Error(
-      "Skelcrew's engine runs in a terminal, with sc up, not as its service. Stop it there, such as with Ctrl-C, then run sc up again, or sc up --bg to run it as the service. Your agents keep running.",
+      "Skelcrew's engine runs in a terminal, with sc serve, not as its service. Stop it there, such as with Ctrl-C, then run sc serve again, or sc serve --bg to run it as the service. Your agents keep running.",
     );
   const began = Date.now();
   const log = restartDaemon();
-  // A new engine is told by its socket, which an engine makes once it holds the lock: one made
-  // after the restart began. The process id can't tell, as an engine from an older release
-  // reports none, and the service may run one. The old engine, still answering for a moment
-  // while it stops, and one in a terminal, which keeps a new one from starting, keep the socket
-  // they made before.
   const deadline = began + restartWait;
   while (true) {
     const made = statSync(daemonSocket(), { throwIfNoEntry: false })?.ctimeMs ?? 0;
     if (made >= began && (await daemonRuns())) break;
     if (Date.now() > deadline)
       throw new Error(
-        `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why. An engine from an older release that you ran with sc up in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
+        `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why. An engine from an older release that you ran with sc serve in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
       );
     await Bun.sleep(100);
   }
@@ -141,7 +126,7 @@ export async function restartEngine(): Promise<void> {
 }
 
 // Runs the daemon as the background service on this Skelcrew's code, and returns once it
-// answers. This is sc up --bg, and plain sc and sc attach do it before attaching. The service is
+// answers. This is sc serve --bg, and plain sc and sc attach do it before attaching. The service is
 // installed first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another
 // release or commit is restarted, and one that doesn't answer is started. A daemon outside the
 // service is left running, and true comes back to say so: a service started beside it would

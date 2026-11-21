@@ -436,18 +436,10 @@ test("repo ls says how to bring a repository in while there is none", async () =
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });
 
-test("repo rm removes Skelcrew's clone and the lead's requests, and forgets the trust", async () => {
+test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
   const checkout = onGitHub("simon/app");
   await skel([], "y\n", checkout);
-  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  const requests = `INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
-  ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12?', 1),
-  ('simon', 'site', '{"kind":"start","task":"3"}', 'Start SITE-3?', 2)`;
-  db.run(requests);
   const removed = await skel(["repo", "rm", "app"]);
-  // Another repository's requests stay.
-  expect(db.query("SELECT repo FROM lead_requests").all()).toEqual([{ repo: "site" }]);
-  db.close();
   expect(removed.err).toBe("");
   expect(existsSync(clone("simon/app"))).toBe(false);
   expect(readFileSync(trustFile(), "utf8")).toBe("");

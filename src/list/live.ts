@@ -3,16 +3,14 @@
 import type { Database } from "bun:sqlite";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { readSession } from "../agents/sessions.ts";
-import { leadOf, leadSession } from "../flow/lead.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import type { Live } from "./pane.ts";
-import type { Open, Row } from "./rows.ts";
+import type { Row } from "./rows.ts";
 
 // Returns the line the live view shows on a task's row with no agent running, such as an issue
 // not started or a builder that stopped, or null when its builder runs and its screen can be
 // read. It reads nothing, so the pane says it at once.
 export function liveNote(row: Row): string | null {
-  if (row.part === "request") return row.running ? null : "Lead not running";
   if (row.part === "backlog") return "No builder yet";
   if (row.session === null || !row.running) return "Builder not running";
   return null;
@@ -52,19 +50,5 @@ export async function readLive(
     return { screen: agentOutput(thread.harness, await readSession(host, id, true)) };
   } catch {
     return { note: "Builder not running" };
-  }
-}
-
-// Returns what the live view shows of a repository's lead, for a request's row: its screen, colours
-// kept, without its harness's input area, read without attaching, so nothing you type reaches it.
-// A lead whose host is gone, or whose screen can't be read, says so in a line.
-export async function readLead(db: Database, agents: string, open: Open): Promise<Live> {
-  try {
-    const found = await leadSession(db, agents, open.owner, open.repo);
-    if (found === null) return { note: "Lead not running" };
-    const { harness } = leadOf(db, open.owner, open.repo);
-    return { screen: agentOutput(harness, await readSession(found.host, found.id, true)) };
-  } catch {
-    return { note: "Lead not running" };
   }
 }

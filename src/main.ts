@@ -1,6 +1,8 @@
 // Skelcrew's command line: reads the command and hands it to the file that does it.
-import { agentCommand, askCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
-import { runByAgent, serverName, usage } from "./cli/input.ts";
+
+import { runByAgent } from "./agents/sandbox.ts";
+import { agentCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
+import { usage } from "./cli/input.ts";
 import {
   leadCommand,
   machineCommand,
@@ -12,14 +14,13 @@ import {
 import { lsCommand, psCommand, showCommand, taskCommand } from "./cli/tasks.ts";
 import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
 import { help } from "./help.ts";
-import { outdated, outOfDate, remote, unfinished } from "./machine/remote.ts";
+import { outdated, outOfDate, remote, serverName, unfinished } from "./machine/remote.ts";
 import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   "--list": "showing the list",
-  up: "running the daemon",
   restart: "restarting the engine",
   serve: "running the daemon",
   "repo add": "adding a repository",
@@ -98,7 +99,6 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     return leadCommand(list, lead[1]);
 
   switch (first) {
-    case "up":
     case "serve":
     case "restart":
       return machineCommand(words);
@@ -110,9 +110,9 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "init":
       return repoCommand(words, json);
     case "submit":
+    case "hook":
     case "question":
     case "turn":
-    case "attached":
       return agentCommand(words);
     case "ps":
       return psCommand(words, json);
@@ -123,7 +123,7 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "task":
       return taskCommand(words);
     case "start":
-      return startCommand(words, false);
+      return startCommand(words);
     case "stop":
     case "rm":
     case "review":
@@ -131,8 +131,6 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "interrupt":
     case "attach":
       return threadCommand(words);
-    case "ask":
-      return askCommand(words);
     case "needs-you":
       return needsYouCommand(words);
     case "tell":

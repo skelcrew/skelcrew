@@ -288,7 +288,7 @@ console.log(JSON.stringify({ early, notes: texts(${JSON.stringify(lead)}) }));`)
   expect(JSON.parse(seen)).toEqual({
     early: 0,
     notes: [
-      "APP-12's builder hasn't got your message after 10 minutes: it is mid-turn (it shows ✻). Skelcrew types it in once it can. To have it sooner, ask the human to press Esc in APP-12.",
+      "Skelcrew digest:\nAPP-12's builder hasn't got your message after 10 minutes: it is mid-turn (it shows ✻). Skelcrew types it in once it can. To have it sooner, ask the human to press Esc in APP-12.",
     ],
   });
 });
@@ -337,6 +337,6 @@ const after = { typed: texts(${JSON.stringify(lead)}), saved: db.query("SELECT 1
 console.log(JSON.stringify({ before, after }));`);
   expect(JSON.parse(seen)).toEqual({
     before: { typed: [], saved: 1 },
-    after: { typed: ["app-12 is ready for review."], saved: 0 },
+    after: { typed: ["Skelcrew digest:\napp-12 is ready for review."], saved: 0 },
   });
 });
