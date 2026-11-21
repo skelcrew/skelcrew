@@ -3,25 +3,21 @@
 import { runByAgent } from "./agents/sandbox.ts";
 import { agentCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
 import { usage } from "./cli/input.ts";
-import {
-  leadCommand,
-  machineCommand,
-  oldPluginCommand,
-  pluginCommand,
-  repoCommand,
-  screenCommand,
-} from "./cli/machine.ts";
+import { machineCommand } from "./cli/machine.ts";
+import { oldPluginCommand, pluginCommand } from "./cli/plugins.ts";
+import { repoCommand } from "./cli/repos.ts";
+import { leadCommand, screenCommand } from "./cli/screen.ts";
 import { lsCommand, psCommand, showCommand, taskCommand } from "./cli/tasks.ts";
 import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
+import { errorText } from "./format.ts";
 import { help } from "./help.ts";
 import { outdated, outOfDate, remote, serverName, unfinished } from "./machine/remote.ts";
-import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   "--list": "showing the list",
-  restart: "restarting the engine",
+  restart: "restarting the daemon",
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",
@@ -119,9 +115,10 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "ls":
       return lsCommand(first, words.slice(1), json);
     case "show":
-      return showCommand(first, words.slice(1), json);
+      console.error("sc show is now sc task.");
+      return showCommand(words.slice(1), json);
     case "task":
-      return taskCommand(words);
+      return words[1] === "add" ? taskCommand(words) : showCommand(words.slice(1), json);
     case "start":
       return startCommand(words);
     case "stop":

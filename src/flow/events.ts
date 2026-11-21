@@ -3,10 +3,10 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { agentRuns, stopSession } from "../agents/sessions.ts";
+import { errorText } from "../format.ts";
 import { cloneDir } from "../paths.ts";
 import { closePr, failedLog } from "../plugins/ask.ts";
-import { quietly } from "../run.ts";
-import { errorText } from "../say.ts";
+import { capture } from "../run.ts";
 import { unassignIssue } from "./assign.ts";
 import { baseOf, inTurn, seenRunning } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";
@@ -62,7 +62,7 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
   // Refreshing brings the default branch up to date. Any other base is fetched on its own.
   await refreshClone(db, repository);
   if (base !== baseOf({ ...thread, base: null })) await fetchInto(db, repository, clone, base);
-  const read = await quietly(["git", "-C", clone, "rev-parse", "--verify", `refs/heads/${base}`]);
+  const read = await capture(["git", "-C", clone, "rev-parse", "--verify", `refs/heads/${base}`]);
   if (!read.ok) throw new Error(`git rev-parse ${base} failed: ${read.err.trim()}`);
   return read.out.trim();
 }
@@ -417,7 +417,7 @@ export async function removeThread(
     const skelcrewClone = cloneDir(thread.owner, thread.repo);
     const threadPushedBranch = async () =>
       (
-        await quietly([
+        await capture([
           "git",
           "-C",
           skelcrewClone,

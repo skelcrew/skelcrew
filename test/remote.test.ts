@@ -233,8 +233,8 @@ test("sc --list goes to the server with the repository you are in", async () => 
   );
 });
 
-// sc restart there restarts the server's engine, with no ssh by hand.
-test("sc restart goes to the server and restarts its engine there", async () => {
+// sc restart there restarts the server's daemon, with no ssh by hand.
+test("sc restart goes to the server and restarts its daemon there", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox", "restart"], "", checkout("simon/app"));
   expect(calls()).toBe(`${onServer(" restart")}\n`);
@@ -250,14 +250,14 @@ test("passes no repository from outside one", async () => {
 
 // Only plain sc and sc --list pass the repository you are in. A task's name already names its
 // repository.
-test("sc show passes no repository, as a task's name names its own", async () => {
+test("sc task passes no repository, as a task's name names its own", async () => {
   installed();
   const named = await skel(
-    ["--remote", "simon@workbox", "show", "app-12"],
+    ["--remote", "simon@workbox", "task", "app-12"],
     "",
     checkout("simon/app"),
   );
-  expect(named.out).toBe("Skelcrew on the server got 2 arguments\n[show]\n[app-12]\n");
+  expect(named.out).toBe("Skelcrew on the server got 2 arguments\n[task]\n[app-12]\n");
 });
 
 test("a command reaches the server exactly as typed", async () => {
@@ -273,7 +273,7 @@ test("a command reaches the server exactly as typed", async () => {
   );
 });
 
-test("serve --bg runs the engine on the server, with no repository passed", async () => {
+test("serve --bg runs the daemon on the server, with no repository passed", async () => {
   installed(laptop.commit);
   const run = await skel(["--remote", "simon@workbox", "serve", "--bg"], "", checkout("simon/app"));
   expect(run.out).toBe("Skelcrew on the server got 2 arguments\n[serve]\n[--bg]\n");

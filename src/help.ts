@@ -1,6 +1,6 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
-import { colorful } from "./say.ts";
+import { colorful } from "./format.ts";
 
 // The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [
@@ -10,7 +10,7 @@ const sections: [string, [string, string][]][] = [
       ["(no command)", "Open this repository's lead, with the sidebar"],
       ["--list", "This repository's list. ctrl+\\ comes back to it from an agent"],
       ["ls [<repo>]", "Tasks, with each one's stage, status, PR, CI and review"],
-      ["show <task>", "A task: stage, description, threads, PR, checks, review"],
+      ["task <task>", "A task: stage, description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
       ["start <task> [--from <branch>]", "Start, resume, or go on past the limit"],
       ['start <repo> "<title>" "<body>"', "Start a thread, with no issue in the tracker"],

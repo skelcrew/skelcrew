@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import type { Repository } from "../db.ts";
-import { errorText } from "../say.ts";
+import { errorText } from "../format.ts";
 import {
   claimedAt,
   claimedNames,

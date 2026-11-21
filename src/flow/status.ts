@@ -8,8 +8,8 @@ import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { roundLimit } from "../config.ts";
+import { errorText } from "../format.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { passedReviewStage, pastRoundLimit, waitsOnFirstCheck } from "./decide.ts";
 import { leadOf } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
@@ -54,7 +54,7 @@ export const needsYou = (thread: Thread) =>
   (thread.needs_you && !decided(thread));
 
 // Returns why the thread needs you, as its word says, such as "question" or the action a mark
-// asks of you, or null when it doesn't. sc ps and sc show print it, so you read what to do. A
+// asks of you, or null when it doesn't. sc ps and sc task print it, so you read what to do. A
 // round limit that can't be read, from settings that aren't valid, counts as none, as on the list.
 export function needsYouFor(thread: Thread): string | null {
   if (!needsYou(thread)) return null;

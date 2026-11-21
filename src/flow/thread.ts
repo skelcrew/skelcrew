@@ -7,6 +7,7 @@ import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { listSessions, renameSession } from "../agents/sessions.ts";
 import { nextSequence, savedJson, taskColumns } from "../db.ts";
+import { errorText } from "../format.ts";
 import { threadsDir } from "../paths.ts";
 import {
   type Host,
@@ -15,7 +16,6 @@ import {
   pluginHost,
   unknownQuestion,
 } from "../plugins/runtime.ts";
-import { errorText } from "../say.ts";
 import { threadTask } from "./copy.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
@@ -198,7 +198,7 @@ export const Thread = z.object({
   changed: z.number().nullable(),
   // The lead's messages to the builder, oldest first, with when each was typed in. They change
   // the task after the thread started, such as a new design you agreed to, so the reviewer and
-  // sc show get them with the task. Only the lead's count: a builder must never change
+  // sc task get them with the task. Only the lead's count: a builder must never change
   // what it is reviewed against. A row from before Skelcrew kept them holds null, read as none.
   updates: savedJson("tasks.updates", TaskUpdate.array(), []),
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
@@ -488,8 +488,8 @@ export function record(
 // herdr's before it could rename, is asked once, with no error shown: it only keeps its old
 // titles. That is saved with the plugin's version, so it isn't asked again after a restart,
 // and is asked once more when another version is installed. Any other failure costs only that
-// new name, goes to the log, and the next title is still sent. sc repo asks the engine to
-// rename, so that log is the engine's. Each rename waits for the one before on the same session
+// new name, goes to the log, and the next title is still sent. sc repo asks the daemon to
+// rename, so that log is the daemon's. Each rename waits for the one before on the same session
 // and sends the title as it is then, so two quick changes can't reach the host out of order and
 // leave it on the older title. It gives back a promise that settles once the host answered, for
 // a command that ends before it would.
@@ -537,7 +537,7 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
   return settled;
 }
 
-// The plugins that renamed a session since the engine started, by name and version, whose
+// The plugins that renamed a session since the daemon started, by name and version, whose
 // renames no longer wait for each other.
 const renamed = new Set<string>();
 

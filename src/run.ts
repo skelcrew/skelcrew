@@ -1,7 +1,7 @@
 // Runs a short program outside your terminal and reads what it printed, for git, gh and ssh
 // commands. remote.ts uses it on your laptop, so it loads nothing else of Skelcrew.
 
-// What `quietly` can change about a run. No `env` hands on the environment Skelcrew started
+// What `capture` can change about a run. No `env` hands on the environment Skelcrew started
 // with, which leaves out any later change to process.env, so a command that needs those
 // passes `env: process.env`.
 type Options = {
@@ -15,7 +15,7 @@ type Options = {
 // and together in `said`, and whether it succeeded. It never throws on a failed program, as
 // each caller has its own words for that. A program gets no input unless handed `stdin`,
 // and an output set to "ignore" comes back empty.
-export async function quietly(argv: string[], options: Options = {}) {
+export async function capture(argv: string[], options: Options = {}) {
   const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", ...options });
   // Both outputs are read while the program runs: one that fills a pipe nobody reads never ends.
   const [out, err, code] = await Promise.all([

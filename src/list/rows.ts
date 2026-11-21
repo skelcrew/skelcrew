@@ -218,7 +218,7 @@ const SavedLink = z.object({ pr_link: z.string().nullable() });
 // An ended task says whether it merged. A builder at work, or at work while its review runs, also
 // has the step it is on, as the sidebar shows it.
 // Then come its PR, its CI, its review's round and when it last changed. The rest, such as a
-// merge when ready or messages waiting, is for sc show, so a row stays short. A task ready for
+// merge when ready or messages waiting, is for sc task, so a row stays short. A task ready for
 // review offers m when it has a PR to merge.
 function taskRow(
   db: Database,

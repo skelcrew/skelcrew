@@ -7,6 +7,7 @@ import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
+import { errorText } from "../format.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import {
   askWhatChanged,
@@ -18,8 +19,7 @@ import {
   setStatus,
 } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
-import { quietly } from "../run.ts";
-import { errorText } from "../say.ts";
+import { capture } from "../run.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, saveItems, threadTask } from "./copy.ts";
 import {
@@ -57,7 +57,7 @@ import {
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails. Never with maintenance in the background, which a fetch could otherwise start.
 async function git(folder: string, ...args: string[]): Promise<string> {
-  const { out, err, ok } = await quietly(["git", ...noMaintenance, "-C", folder, ...args], {
+  const { out, err, ok } = await capture(["git", ...noMaintenance, "-C", folder, ...args], {
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
   if (!ok) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
