@@ -736,3 +736,33 @@ test("a task list keeps its boxes, and an image shows its alt text and address",
     "diagram (https://example.com/d.png)",
   ]);
 });
+
+// A task approved and green waits on you to merge it, though its thread needs you for nothing
+// else.
+test("a task ready to merge says so in the callout", () => {
+  const ready: Row = {
+    ...row,
+    part: "ready",
+    section: "needs you",
+    mark: { sign: "●", colour: "green" },
+    says: "ready to merge",
+    colour: "green",
+    needsYou: false,
+  };
+  const approved: Details = {
+    ...details,
+    view: {
+      ...details.view,
+      threads: [
+        { thread: "app-12/builder", status: "waiting", needsYou: false, needsYouFor: null },
+      ],
+    },
+  };
+  const lines = plain(drawPane(ready, approved, null, 50, 40).lines);
+  expect(lines[2]).toBe("Needs you: ready to merge");
+  // A task ready and waiting on nothing of yours, such as one whose merge is armed, has none.
+  const armed: Row = { ...ready, section: "ready", says: "merges when ready" };
+  expect(plain(drawPane(armed, approved, null, 50, 40).lines)).not.toContain(
+    "Needs you: merges when ready",
+  );
+});

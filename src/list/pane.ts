@@ -178,7 +178,11 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   });
   const top = [...title, paint(grey, "─".repeat(width))];
   // What it needs of you, as sc show says it, such as `question` or `ready to merge`.
-  const needed = view.threads.find((thread) => thread.needsYouFor !== null)?.needsYouFor;
+  // A task approved and green waits on you to merge it, and shows under Needs you with its word
+  // saying so, though its thread may not count as needing you for anything else.
+  const needed =
+    view.threads.find((thread) => thread.needsYouFor !== null)?.needsYouFor ??
+    (row.section === "needs you" ? row.says : null);
   const callout = needed
     ? folded(`Needs you: ${needed}`, width).map((line) => paint(`${bright};${yellow}`, line))
     : [];
