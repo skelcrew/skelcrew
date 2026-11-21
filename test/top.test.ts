@@ -175,6 +175,21 @@ test("tabs furthest from the open one give way first, and a dim count says how m
   expect(tabText(tabs, "simon/one", 40)).toBe("  one    two    three    four    +3");
 });
 
+test("an open tab too wide for the right side is cut to fit, so the row ends with its corner", () => {
+  const long = [tab("a-repository-with-a-very-long-name", 2, 1)];
+  const narrow = { sidebar: 27, right: 20 };
+  const line = seen(top({ tabs: long, open: "simon/a-repository-with-a-very-long-name" }, narrow));
+  expect(line).toHaveLength(2 + narrow.sidebar + 1 + narrow.right + 2);
+  expect(line).toEndWith("┬─");
+  // Its badge stays while a letter of the name fits beside it, and the name is cut with …. Too
+  // narrow for that, the badge goes first.
+  expect(line).toContain("  a-reposi… •2 •1  ");
+  const tiny = { sidebar: 27, right: 9 };
+  const cut = seen(top({ tabs: long, open: "simon/a-repository-with-a-very-long-name" }, tiny));
+  expect(cut).toHaveLength(2 + tiny.sidebar + 1 + tiny.right + 2);
+  expect(cut).toContain("  a-r…  ");
+});
+
 test("a repository's name is shown, never read as a format", () => {
   const tabs = [tab("a#[fg=red]b")];
   expect(top({ tabs, open: "simon/a#[fg=red]b" })).toContain("  a##[fg=red]b  ");

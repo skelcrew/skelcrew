@@ -64,25 +64,44 @@ function header(where: string, width: number, versions: string[], colour: string
 // need you or are ready, such as site •2 •1, and two spaces on each side, so the open one's grey
 // reads as a tab. The open one is bold white on the grey a picked row
 // has, and the others dim. When they don't fit, those furthest from the open one give way, and a
-// dim count says how many. Each tab is a range of its own, named by its place in the list, so a
-// click on it can say which it was.
+// dim count says how many. An open tab wider than the room alone is cut to fit, its name with …
+// and then its badge, so the row never runs past the terminal and clips the box's corner. Each
+// tab is a range of its own, named by its place in the list, so a click on it can say which it
+// was.
 function drawTabs(tabs: Tab[], open: string, width: number): { text: string; width: number } {
   // Starts from the open tab, or the first when none is open.
   const at = Math.max(
     tabs.findIndex((tab) => tab.fullName === open),
     0,
   );
+  // Returns the dots a tab shows: none on an open tab too narrow for them beside a letter of its
+  // name and the four spaces around it.
+  const dotsOf = (tab: Tab, index: number) => {
+    const all = dots(tab);
+    const wide = Bun.stringWidth(all.map(([, text]) => ` ${text}`).join(""));
+    return index === at && 4 + 1 + wide > width ? [] : all;
+  };
+  // Returns the name a tab shows: the open one's cut to what its spaces and dots leave.
+  const nameOf = (tab: Tab, index: number) => {
+    if (index !== at) return tab.name;
+    const wide = Bun.stringWidth(
+      dotsOf(tab, index)
+        .map(([, text]) => ` ${text}`)
+        .join(""),
+    );
+    return fitted(tab.name, Math.max(width - 4 - wide, 0));
+  };
   // Returns a tab's text: its name, with its badge.
-  const label = (tab: Tab) =>
-    `  ${tab.name}${dots(tab)
+  const label = (tab: Tab, index: number) =>
+    `  ${nameOf(tab, index)}${dotsOf(tab, index)
       .map(([, text]) => ` ${text}`)
       .join("")}  `;
   // Returns how many columns the tab at a place in the list takes, or none past either end.
   const tabWidth = (index: number) => {
     const tab = tabs[index];
-    return tab ? Bun.stringWidth(label(tab)) : 0;
+    return tab ? Bun.stringWidth(label(tab, index)) : 0;
   };
-  const all = tabs.reduce((sum, tab) => sum + Bun.stringWidth(label(tab)), 0);
+  const all = tabs.reduce((sum, _, index) => sum + tabWidth(index), 0);
   // The count of those left out goes at the end, and needs its room kept.
   const room = all <= width ? width : width - `  +${tabs.length}`.length;
   // Takes in tabs out from the open one, one on each side at a time, until neither side fits
@@ -103,10 +122,11 @@ function drawTabs(tabs: Tab[], open: string, width: number): { text: string; wid
   const shown = tabs.slice(first, last + 1).map((tab, offset) => {
     const here = first + offset === at;
     const style = here ? "#[bg=colour234,fg=colour231,bold]" : "#[bg=colour237,fg=colour245]";
-    const badge = dots(tab)
+    const badge = dotsOf(tab, first + offset)
       .map(([colour, text]) => ` #[fg=${tmuxColours[colour]}]${text}`)
       .join("");
-    return `#[range=user|${first + offset}]${style}  ${escaped(tab.name)}${badge}  #[default]#[norange]`;
+    const name = escaped(nameOf(tab, first + offset));
+    return `#[range=user|${first + offset}]${style}  ${name}${badge}  #[default]#[norange]`;
   });
   const out = tabs.length - shown.length;
   const count = out > 0 ? `  +${out}` : "";

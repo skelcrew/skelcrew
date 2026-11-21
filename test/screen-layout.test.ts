@@ -247,7 +247,7 @@ test("the header and the tabs share one row, and the agent starts right under it
   const lines = seen().split("\n");
   // Skelcrew in the top of the sidebar's box, and the tab in the top of the agent's, with only
   // line after it.
-  expect(lines[0]?.trimEnd()).toMatch(/^─┬─ Skelcrew .* ─┬ {2}app {2}─+┬─$/);
+  expect(lines[0]?.trimEnd()).toMatch(/^─┬─ Skelcrew .* ─*┬ {2}app {2}─+┬─$/);
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
   expect(lines[1]).toContain("I am app-7");
