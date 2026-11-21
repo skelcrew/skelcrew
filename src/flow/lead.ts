@@ -203,7 +203,7 @@ const generations = new Map<string, number>();
 
 // The ending of each lead a check found exited, by its repository's owner/name, while it runs,
 // for other checks of that lead to wait for.
-const endings = new Map<string, Promise<void>>();
+const endings = new Map<string, Promise<unknown>>();
 
 // The last work in each lead's queue, by its repository's owner/name, while there is any.
 const leadQueues = new Map<string, Promise<unknown>>();
@@ -427,7 +427,9 @@ export function closeExitedLeads(db: Database, sessions: string, atStart = false
   looking ??= Promise.all(
     openedRepositories(db).map(async ({ owner, repo }) => {
       if (atStart) await leadSession(db, sessions, owner, repo).catch(() => null);
-      if (await closeIfExited(db, sessions, owner, repo, atStart))
+      // A check that waited for another's ending that failed has nothing to close: that one
+      // said why.
+      if (await closeIfExited(db, sessions, owner, repo, atStart).catch(() => false))
         console.log(
           `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
         );
@@ -462,10 +464,14 @@ export async function closeIfExited(
   const key = `${owner}/${repo}`;
   const generation = generations.get(key) ?? 0;
   const changed = () => leadQueues.has(key) || (generations.get(key) ?? 0) !== generation;
-  // A check that finds another one ending the lead waits for that ending, so whoever asked, such
-  // as a brief about to open the tab again, carries on only once the old session is gone.
+  // A check that finds another one ending the lead waits for that ending, whatever its host said,
+  // so whoever asked, such as a brief about to open the tab again, carries on only once the old
+  // session is gone. An ending that failed may have left that session, and a daemon started
+  // then would close the tab again with the brief waiting, so this then fails too.
   const settled = async () => {
-    await endings.get(key);
+    await endings.get(key)?.catch((error) => {
+      throw new Error(`couldn't end ${key}'s exited lead: ${errorText(error)}`);
+    });
     return false;
   };
   if (endings.has(key)) return settled();
@@ -475,7 +481,7 @@ export async function closeIfExited(
     return false;
   const id = lead.hostId ?? lead.name;
   const goneIsExited = !atStart && lead.hostId !== null;
-  if (!(await agentExited(host, id, goneIsExited).catch(() => false))) return false;
+  if (!(await agentExited(host, id, goneIsExited).catch(() => false))) return settled();
   // Nothing waits from this look to the ending being queued, so no start or other check can
   // come in between.
   if (changed()) return settled();
@@ -483,13 +489,14 @@ export async function closeIfExited(
   // The host may have forgotten the session already, so only a session still there is ended.
   // The tab is closed either way, and opening the lead again ends whatever is left of it. A lead
   // has one ending at a time, as a second check sees the generation change and waits for this.
-  const ending = inLeadQueue(key, () =>
-    stopSession(host, id).catch((error) =>
-      console.log(`couldn't end ${key}'s exited lead: ${errorText(error)}`),
-    ),
-  );
+  const ending = inLeadQueue(key, () => stopSession(host, id));
   endings.set(key, ending);
-  await ending;
-  endings.delete(key);
+  try {
+    await ending;
+  } catch (error) {
+    console.log(`couldn't end ${key}'s exited lead: ${errorText(error)}`);
+  } finally {
+    endings.delete(key);
+  }
   return true;
 }
