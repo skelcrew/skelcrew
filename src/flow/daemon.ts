@@ -1005,9 +1005,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (!unchanged())
           return { said: `${name} was stopped or removed meanwhile, so its builder stays ended.` };
         // Brought back as after the daemon's restart, but its round goes on untouched, as
-        // nothing cut it short.
+        // nothing cut it short. Starting a builder starts the stretch of work the sidebar times,
+        // and a restart is no new stretch, so the time it began is put back.
+        const since = z
+          .object({ working_since: z.number().nullable() })
+          .parse(
+            db.query("SELECT working_since FROM threads WHERE folder = ?").get(thread.folder),
+          ).working_since;
         try {
           const gone = await bringBack(db, sessions, readThread(db, thread.folder));
+          db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [since, thread.folder]);
           return { said: gone === null ? `Restarted ${name}'s builder.` : cantTell(gone) };
         } catch (error) {
           failThread(db, sessions, thread, error);

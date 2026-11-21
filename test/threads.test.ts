@@ -980,10 +980,20 @@ c.on("data", (d) => process.stdout.write(d));`;
     await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
     expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
     expect(hasSession("app-12")).toBe(true);
-    // The thread is as it was: its status, its conversation, its folder and its round.
+    // The thread is as it was: its status, its conversation, its folder, its round and the time
+    // its stretch of work began, which the sidebar shows.
     const after = thread();
-    for (const key of ["status", "session", "folder", "branch", "rounds", "pr", "started"])
-      expect(after[key]).toEqual(before[key]);
+    const timed = [
+      "status",
+      "session",
+      "folder",
+      "branch",
+      "rounds",
+      "pr",
+      "started",
+      "working_since",
+    ];
+    for (const key of timed) expect(after[key]).toEqual(before[key]);
   }, 60_000);
 
   test("a builder starts on the session host your config names, which hears its status", async () => {
