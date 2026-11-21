@@ -92,7 +92,9 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // the claim is made.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
-// just started. One at a time, the second finds that thread and is refused.
+// just started. One at a time, the second finds that thread and is refused. `recorded` is told
+// the thread in the same step that records it, so a caller can keep that it started, such as
+// your yes to a lead's request, before a stop of the daemon could lose it.
 export function startThread(
   db: Database,
   given:
@@ -111,8 +113,9 @@ export function startThread(
         flow?: string | undefined;
       },
   claimed = false,
+  recorded: (thread: Thread) => void = () => {},
 ): Promise<Thread> {
-  const start = startsBefore.then(() => recordThread(db, given, claimed));
+  const start = startsBefore.then(() => recordThread(db, given, claimed, recorded));
   // A start that fails holds up none after it.
   startsBefore = start.catch(() => {});
   return start;
@@ -126,6 +129,7 @@ async function recordThread(
   db: Database,
   given: Parameters<typeof startThread>[1],
   claimed: boolean,
+  recorded: (thread: Thread) => void,
 ): Promise<Thread> {
   // Find the repository and whether a tracker holds its tasks, which decides where a named
   // task's title and body come from.
@@ -399,6 +403,7 @@ async function recordThread(
     else if (queued && tracked && !ownTask(task))
       db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", claims);
     log(db, thread);
+    recorded(thread);
     return thread;
   });
   // A task from the backlog is taken off it for every machine around the thread's record, so it
@@ -699,7 +704,13 @@ export async function endEarlierBuilder(
 // can't be reached for now, such as one restarting with the machine, is asked again every few
 // seconds for as long as the thread stays as it was: its builder may well still run there, and
 // the thread stays live meanwhile, with its round and messages waiting for it.
-export async function bringBack(db: Database, sessions: string, thread: Thread): Promise<void> {
+// Gives back null once the builder runs, or, for a host plugin that is gone, why nobody can tell
+// whether it does.
+export async function bringBack(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<string | null> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
   // A builder you stopped has no host left to look on.
@@ -722,7 +733,7 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
         );
       record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
       typeLeadNotes(db, sessions);
-      return;
+      return hostGone(thread);
     }
     // The plugin is back, such as after sc install, so the mark that asked for it goes, and any
     // mark the thread had before comes back.
@@ -739,7 +750,7 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
       try {
         // A session whose agent ended is ended too, so the new one can take its name.
         const { host, id } = await builderSession(db, sessions, thread);
-        if (await agentRuns(host, id)) return;
+        if (await agentRuns(host, id)) return null;
         if (await hasSession(host, id)) await endSession(host, id);
         break;
       } catch (error) {
@@ -757,6 +768,7 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
     }
   }
   await startBuilder(db, sessions, thread);
+  return null;
 }
 
 // How long bringBack waits before asking a plugin's host again, in milliseconds.

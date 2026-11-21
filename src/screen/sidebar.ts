@@ -19,7 +19,7 @@ import { leadOf } from "../flow/lead.ts";
 import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { liveThreads } from "../flow/thread.ts";
-import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
+import { type Asking, answerOf, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
 import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
   buildersNote,
@@ -101,9 +101,11 @@ const keyNames: Record<string, string> = {
 // attaches to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter
 // or `a` attach full screen. o shows the agent's whole screen or its last lines, Page Up and Page
 // Down scroll the details, Shift with an arrow moves a queued task in Up next, and s or m show
-// only where the row can be started, or queued, or merged.
+// only where the row can be started, or queued, or merged. A request of the lead's offers y and
+// n, which answer it, in place of Enter.
 function sidebarFooter(row: Row): string {
   if (row.part === "lead") return "↑↓ move  ⏎ to lead  ⇧⏎/a full screen  1-6 stages  ⌥Q quit";
+  if (row.part === "request") return "↑↓ move  y yes  n no  1-6 stages  ⌥Q quit";
   if (row.part === "heading") {
     const fixed = row.section === "needs you" || row.section === "up next";
     return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  1-6 stages  ⌥Q quit`;
@@ -295,7 +297,9 @@ export async function runSidebar(
     if (zoom) screenTmux(agents, ["resize-pane", "-Z", "-t", rightPane]);
   };
   // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
-  // task's details on any other.
+  // task's details on any other. A request of the lead's shows as a task's details do, with the
+  // lead's screen read-only in place of the details, so your typing stays with the sidebar, y and
+  // n answer the request, and nothing, a click included, reaches the lead.
   const follow = () => {
     const row = rows[here];
     if (row) show(row.part === "lead" ? open.lead : detailsOf(row.name));
@@ -599,7 +603,12 @@ export async function runSidebar(
   // instead, so one Enter reaches what it waits on.
   const enter = (zoom = false) => {
     const row = rows[here];
-    if (!row || (zoom && !enterAttaches(row))) return;
+    if (!row) return;
+    if (row.part === "request") {
+      if (!zoom) said = "Press y to say yes to the lead, or n to say no.";
+      return;
+    }
+    if (zoom && !enterAttaches(row)) return;
     if (row.part === "lead") return toRight(zoom);
     if (row.part === "heading" && row.section !== "lead") return toggle(row.section);
     if (row.more > 0) {
@@ -720,7 +729,10 @@ export async function runSidebar(
       screenTmux(agents, ["send-keys", "-t", rightPane, name === "page up" ? "PPage" : "NPage"]);
       return;
     }
-    if (key === "s" && row?.part === "backlog" && row.start)
+    // y and n answer the lead's request you are on at once, as its row is the question.
+    const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
+    if (answer) void goAhead(answer);
+    else if (key === "s" && row?.part === "backlog" && row.start)
       asking = { question: row.start, row: row.name, merge: false };
     else if (key === "m" && row?.merge) {
       if ("refused" in row.merge) said = row.merge.refused;

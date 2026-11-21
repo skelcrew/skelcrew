@@ -17,7 +17,7 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { shownVersions } from "../version.ts";
-import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
+import { type Asking, answerOf, canOpenLinks, openPr, stillOffered } from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
@@ -28,7 +28,7 @@ import {
   type Target,
   tabAt,
 } from "./layout.ts";
-import { liveNote, readLive } from "./live.ts";
+import { liveNote, readLead, readLive } from "./live.ts";
 import { drawPane, type Live } from "./pane.ts";
 import {
   buildersNote,
@@ -193,11 +193,18 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Returns the details pane's lines for a terminal of this size, or null when it is too narrow
   // for the pane. A task's details are read only when you move onto it or the rows are read again.
   // Its agent's screen is the last one read for this row, or blank until the first read comes.
-  // A row with no agent running says so at once.
+  // A row with no agent running says so at once. A request of the lead's shows the lead's screen,
+  // read-only, with no details.
   const paneFor = (size: { width: number; height: number }) => {
     const beside = paneWidth(size.width);
     if (beside === 0) return null;
     const row = rows[here];
+    if (row?.part === "request") {
+      const note = liveNote(row);
+      const shown =
+        note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
+      return drawPane(row, null, shown, beside, size.height - 2).lines;
+    }
     if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2).lines;
     if (details?.name !== row.name)
       details = { name: row.name, read: readDetails(db, open, row.task, Date.now()) };
@@ -376,10 +383,10 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   // Opens a row with Enter: opens or closes a stage on its heading, attaches to the lead,
   // starting it first when it isn't running, or to the builder of a task at work. Says what a task
-  // up next waits on. Asks before starting an issue. Opens the PR of a task ready for review or
-  // ended, or copies its link, or without a forge says which branch waits for you. A ready task
-  // whose builder needs you, such as for a question, attaches to the builder, so one Enter
-  // reaches what it waits on.
+  // up next waits on, and that a request of the lead's is answered with y or n. Asks before
+  // starting an issue. Opens the PR of a task ready for review or ended, or copies its link, or
+  // without a forge says which branch waits for you. A ready task whose builder needs you, such
+  // as for a question, attaches to the builder, so one Enter reaches what it waits on.
   const openRow = async (row: Row) => {
     if (row.part === "heading" && row.section !== "lead") return toggleSection(row.section);
     // The daemon starts the lead first if it isn't running, such as one you exited or one that
@@ -398,6 +405,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       wholeBacklog = true;
       return reshow();
     }
+    if (row.part === "request") return say("Press y to say yes to the lead, or n to say no.");
     if (row.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
       return draw();
@@ -549,7 +557,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   const reading = new Set<string>();
   const look = async () => {
     const row = rows[here];
-    if (attached || left || !row || row.task === null || liveNote(row) !== null) return;
+    const agent = row?.task !== null || row?.part === "request";
+    if (attached || left || !row || !agent || liveNote(row) !== null) return;
     if (reading.has(row.name) || paneWidth(process.stdout.columns || 80) === 0) return;
     reading.add(row.name);
     const asked = selections;
@@ -558,7 +567,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     // these can change meanwhile, so it is asked again before the screen is read.
     const wanted = () =>
       !attached && !left && selections === asked && paneWidth(process.stdout.columns || 80) > 0;
-    const shown = await readLive(db, agents, row, wanted);
+    // A request's row shows the lead, read as sc peek reads it.
+    const shown =
+      row.part === "request"
+        ? await readLead(db, agents, open)
+        : await readLive(db, agents, row, wanted);
     reading.delete(row.name);
     // A read the list stopped wanting read nothing and shows nothing, and so is one that came
     // back once it was no longer wanted, such as after you left and the terminal is your shell's.
@@ -602,6 +615,9 @@ export async function runList(agents: string, repository: string): Promise<void>
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) return toggleSection(stage);
     if (key === "enter" && row) return openRow(row);
+    // y and n answer the lead's request you are on at once, as its row is the question.
+    const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
+    if (answer) return goAhead(answer);
     // o shows the agent's whole screen in the details pane, or only its last lines again. It
     // stays as you move, as it is how you like the pane.
     if (key === "o" && row?.task && paneWidth(process.stdout.columns || 80) > 0) {

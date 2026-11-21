@@ -274,3 +274,37 @@ test("Enter on a stage's heading closes it, keeping you there, and opens it on i
   expect(read("lead.typed")).toBe("");
   expect(read("app-12.typed")).toBe("");
 });
+
+// A request of the lead's is answered with y or n, so on its row Enter only says so, and Shift-Enter
+// and a give the lead nothing. Your typing stays in the sidebar there, as on a task's details.
+test("on a request of the lead's, the focus keys keep your typing in the sidebar for y and n", async () => {
+  sql(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start","task":"31"}', 'Start APP-31 Export as CSV?', 1);`);
+  given.extendedKeys = true;
+  open("lead");
+  await ready("lead");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar to take your typing");
+  await step("Down");
+  expect(selected()).toContain("Start APP-31");
+  await until(
+    () => footer() === "  ↑↓ move  y yes  n no  1-6 stages  ⌥Q quit",
+    "the request's keys",
+  );
+  for (const key of ["a", "S-Enter", "C-\\"]) {
+    press(key);
+    await Bun.sleep(300);
+    expect(fullScreen()).toBe(false);
+    expect(typingToSidebar()).toBe(true);
+  }
+  press("Enter");
+  await until(
+    () => footer().includes("Press y to say yes to the lead, or n to say no."),
+    "how to answer",
+  );
+  await step("Up");
+  expect(onLead()).toBe(true);
+  press("Enter");
+  await until(() => !typingToSidebar(), "the lead to take your typing");
+  expect(read("lead.typed")).toBe("");
+});

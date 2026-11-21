@@ -156,7 +156,7 @@ function startServer(socket: string): void {
 // Starts a named agent session with only its supplied environment, its labels and Skelcrew's
 // terminal settings, starting Skelcrew's tmux server first if it isn't up, and returns the
 // session's ID on its host. On tmux the ID is the name. A plugin's host gives its own, and is
-// handed the name and labels to show. With `keepOnExit`, the session stays when its agent exits
+// handed the name and labels to show, with a colour terminal added to the environment. With `keepOnExit`, the session stays when its agent exits
 // cleanly too, so Skelcrew can tell a lead you exited from one that crashed: the first closes its
 // tab, the second doesn't. Only leads ask for that, and only tmux keeps it: a plugin's host isn't
 // asked to. A plugin's host that provides files is handed `files`, the placeholder in the
@@ -174,7 +174,12 @@ export async function startSession(
   },
 ): Promise<string> {
   if (typeof host !== "string") {
-    const { folder, command, env, labels, files } = session;
+    const { folder, command, labels, files } = session;
+    // A plugin's host hands the agent exactly this environment, with no terminal of its own,
+    // as tmux sets in its panes. The daemon's own terminal is no guide: under systemd it has
+    // none, and Claude Code then draws without colour. One started from your terminal has that
+    // terminal's, not the host's. So the agent always gets a colour terminal.
+    const env = { ...session.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
     const question = { ask: "start", name, folder, command, env, labels, ...(files && { files }) };
     return (await askHost(host, question, z.object({ id: z.string().min(1) }))).id;
   }

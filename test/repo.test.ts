@@ -74,6 +74,11 @@ beforeEach(async () => {
     connection.on("data", (data) => {
       // Plain sc asks what the daemon runs before anything else, which these tests don't follow.
       if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
+      // sc repo asks the daemon to rename builders whose names it changed, which answers at once.
+      if (JSON.parse(data.toString()).command === "rename builders") {
+        appendFileSync(join(home, "calls"), "daemon rename builders\n");
+        return connection.end("{}\n");
+      }
       appendFileSync(join(home, "calls"), "daemon lead\n");
       writeFileSync(join(home, "asked"), data.toString());
       const next = handBack.shift();
@@ -431,10 +436,18 @@ test("repo ls says how to bring a repository in while there is none", async () =
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });
 
-test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
+test("repo rm removes Skelcrew's clone and the lead's requests, and forgets the trust", async () => {
   const checkout = onGitHub("simon/app");
   await skel([], "y\n", checkout);
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  const requests = `INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12?', 1),
+  ('simon', 'site', '{"kind":"start","task":"3"}', 'Start SITE-3?', 2)`;
+  db.run(requests);
   const removed = await skel(["repo", "rm", "app"]);
+  // Another repository's requests stay.
+  expect(db.query("SELECT repo FROM lead_requests").all()).toEqual([{ repo: "site" }]);
+  db.close();
   expect(removed.err).toBe("");
   expect(existsSync(clone("simon/app"))).toBe(false);
   expect(readFileSync(trustFile(), "utf8")).toBe("");
@@ -527,36 +540,16 @@ test("names two repositories that share a name with their owners", async () => {
 
 // A builder's title on its plugin's host starts with its task's name, which gains its owner once
 // another repository shares its name, and loses it once none does. The host keeps the title
-// while the builder runs, so adding and removing a repository rename it.
-test("adding or removing a repository renames the running builders whose names it changes", async () => {
+// while the builder runs, so adding and removing a repository has the engine rename them. The
+// engine does it, so a host that fails says so in its log, not in sc repo's output.
+test("adding or removing a repository asks the engine to rename the running builders", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
-  // A builder of simon/app's runs on a fake plugin host, under the title it started with.
-  const plugin = join(home, "plugin-fake");
-  mkdirSync(plugin, { recursive: true });
-  writeFileSync(
-    join(plugin, "skelcrew-plugin.yaml"),
-    `name: fake
-version: 0.1.0
-skelcrew: 0.1.0
-about: A session host for tests
-kind: runtime
-provides: [sessions]
-session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
-attach: ["true"]
-`,
-  );
-  const session = join(home, ".config", "skelcrew", "plugins", "fake", "sessions", "fake-app-12");
-  mkdirSync(session, { recursive: true });
-  writeFileSync(join(session, "labels.json"), JSON.stringify({ title: "APP-12 Add export" }));
-  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [plugin]);
-  db.run(threadSql({ task: "12", title: "Add export", host: "fake", host_id: "fake-app-12" }));
-  db.close();
-  const title = () => JSON.parse(readFileSync(join(session, "labels.json"), "utf8")).title;
+  writeFileSync(join(home, "calls"), "");
   await skel([], "", onGitHub("other/app", "WRITE"));
-  expect(title()).toBe("SIMON/APP-12 Add export");
+  expect(calls()).toContain("daemon rename builders\n");
+  writeFileSync(join(home, "calls"), "");
   expect((await skel(["repo", "rm", "other/app"])).err).toBe("");
-  expect(title()).toBe("APP-12 Add export");
+  expect(calls()).toContain("daemon rename builders\n");
 });
 
 // Names are typed in any case, so App and app would name both.
@@ -702,7 +695,7 @@ test("repo add adds the checkout you are in, and attaches to nothing", async () 
   expect(run.code).toBe(0);
   expect(run.out).toBe("Adding simon/app to Skelcrew...\nAdded simon/app, as app.\n");
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
-  expect(calls()).not.toContain("daemon");
+  expect(calls()).not.toContain("daemon lead");
 });
 
 test("repo add takes a checkout's path, or a repository's name on its forge", async () => {

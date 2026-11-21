@@ -10,6 +10,7 @@ import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
 import { passedReviewStage, reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
+import { type LeadRequest, requestsOf } from "../flow/lead-requests.ts";
 import {
   type Badge,
   badgeOf,
@@ -60,9 +61,11 @@ export const sections: Section[] = ["needs you", "up next", ...ListStage.options
 // which the details pane reads it by, or null on a row that isn't a task. `place` is a queued
 // task's place in its repository's queue, 1 for the one that starts next, or null. `waits` says
 // what a queued or paused task waits on, such as `3rd in line: 4 of 4 builders busy`, for the
-// details pane, and is empty on every other row.
+// details pane, and is empty on every other row. `request` is the ID of the lead's request a row
+// stands for, which y and n answer, or null on every other row. A request's row is in the lead's
+// part of the list, under the lead, so it never scrolls away.
 export type Row = {
-  part: "lead" | "heading" | ListStage;
+  part: "lead" | "request" | "heading" | ListStage;
   section: "lead" | Section;
   name: string;
   task: string | null;
@@ -85,6 +88,7 @@ export type Row = {
   more: number;
   place: number | null;
   waits: string;
+  request: number | null;
 };
 
 // The repository the list shows, by its owner/name.
@@ -165,6 +169,40 @@ function leadRow(db: Database, open: Open): Row {
     more: 0,
     place: null,
     waits: "",
+    request: null,
+  };
+}
+
+// Returns the row of a request of the lead's that waits for your yes, such as `Start APP-12 Fix
+// login?`, with a filled yellow mark, as it waits on you. Its title is the request, whose task
+// title comes from the tracker, so its control codes go. Its agent is the lead, given as its row,
+// whose screen the sidebar shows read-only beside it.
+function requestRow(request: LeadRequest, lead: Row): Row {
+  return {
+    part: "request",
+    section: "lead",
+    name: `request-${request.id}`,
+    task: null,
+    title: removeControlCodes(request.says),
+    mark: { sign: "●", colour: "yellow" },
+    says: "",
+    colour: "yellow",
+    step: "",
+    pr: "",
+    checks: "",
+    when: "",
+    needsYou: false,
+    session: lead.session,
+    running: lead.running,
+    tmux: false,
+    start: null,
+    merge: null,
+    link: null,
+    branch: null,
+    more: 0,
+    place: null,
+    waits: "",
+    request: request.id,
   };
 }
 
@@ -297,6 +335,7 @@ function taskRow(
     more: 0,
     place: null,
     waits: "",
+    request: null,
   };
 }
 
@@ -448,6 +487,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       more: 0,
       place: null,
       waits: "",
+      request: null,
     };
   };
   // The open issues no thread works on, and the tasks filed in the backlog, newest first.
@@ -493,8 +533,10 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         (a.place ?? Number.POSITIVE_INFINITY) - (b.place ?? Number.POSITIVE_INFINITY) ||
         startedOf(b) - startedOf(a),
     );
+  const lead = leadRow(db, open);
   return [
-    leadRow(db, open),
+    lead,
+    ...requestsOf(db, open.owner, open.repo).map((request) => requestRow(request, lead)),
     ...live("needs you"),
     ...upNext,
     ...waiting,
@@ -555,6 +597,7 @@ const emptyRow: Row = {
   more: 0,
   place: null,
   waits: "",
+  request: null,
 };
 
 // Returns the rows the list shows, in the order it shows them: the lead's, then each section's
