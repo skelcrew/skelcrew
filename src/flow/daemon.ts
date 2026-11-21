@@ -23,7 +23,7 @@ import { flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
-import { createTask, mergePr } from "../plugins/ask.ts";
+import { closeTask, createTask, mergePr, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
@@ -39,7 +39,7 @@ import {
   statusOnceBack,
 } from "./builder.ts";
 import { holdCheckSlot, slotHolders } from "./checks.ts";
-import { ownTask, prOf, saveItems } from "./copy.ts";
+import { openTasks, ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
 import { removeThread, removing, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
@@ -168,6 +168,28 @@ function listen(server: Server, path: string): Promise<void> {
       done();
     });
   });
+}
+
+// Returns what sc rm would remove of a task: its name, its task in the backlog if it never
+// started, its thread if it has one, its open issue, and the issue sc rm closes, which is that
+// one unless `keepIssue`. A task in stage issue that never started has only its issue. Throws
+// when there is nothing to remove.
+function removalOf(db: Database, repository: string, task: string, keepIssue: boolean) {
+  const { owner, repo, name: repositoryName } = findRepository(db, repository);
+  const name = taskName(repositoryName, task);
+  const filed = filedOn(db, repository, task);
+  const thread = threadOn(db, repository, task);
+  // Only an issue the tracker still has open can close.
+  const open = ownTask(task)
+    ? null
+    : (openTasks(db, owner, repo).find((item) => item.id === task)?.id ?? null);
+  const issue = keepIssue ? null : open;
+  if (!filed && !thread && open === null) throw new Error(`there is no task ${name}`);
+  if (!filed && !thread && issue === null)
+    throw new Error(
+      `${name} never started, and --keep-issue keeps its issue open, so there is nothing to remove`,
+    );
+  return { name, filed, thread, open, issue };
 }
 
 // Returns the thread whose builder is calling, or null when you, a lead or a reviewer call.
@@ -383,7 +405,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       });
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show
+  // sc ls with no repository mean every repository, which for a lead is its own, and sc show
   // and sc merge with a PR number mean the lead's own repository, wherever it ran.
   // Your requests and a builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
@@ -447,7 +469,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const wanted = flowRoles({ ...now, flow }).build;
     if (wanted !== building)
       throw new Error(
-        `${name} keeps the flow ${now.flow}: its builder already runs as ${building}, and ${flow} builds as ${wanted}. To run ${flow}, start it over: sc rm ${name}, then sc start ${name} --flow ${flow}.`,
+        `${name} keeps the flow ${now.flow}: its builder already runs as ${building}, and ${flow} builds as ${wanted}. To run ${flow}, start it over: sc rm ${name} --keep-issue, then sc start ${name} --flow ${flow}.`,
       );
     record(db, now.folder, { flow, ...(short ? { short } : {}) }, `given the flow ${flow}`);
   };
@@ -858,14 +880,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { tasks: listTasks(db, request.repo) };
       case "task show":
         return { task: await showTask(db, request) };
-      // A lead files an issue only when the human explicitly asks for one, and gives their
-      // words, which the log keeps exactly. Otherwise it parks work in the backlog.
+      // A task that is also an issue in the tracker, for sc task add --issue. A lead files an
+      // issue only when the human explicitly asks for one, and gives their words, which the log
+      // keeps exactly. Otherwise it parks work in the backlog.
       case "task create": {
         const repository = findRepository(db, request.repo);
+        if (trackerOf(db, repository) === null)
+          throw new Error(
+            `${repository.name} has no tracker, so --issue can't open an issue there. Without --issue, sc task add files the task in Skelcrew's backlog`,
+          );
         if (leadOfCaller(caller) !== null) {
           if (request.asked === undefined)
             throw new Error(
-              "a lead creates an issue only when the human explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, use sc task add instead.",
+              "a lead creates an issue only when the human explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, leave out --issue, and sc task add files it in the backlog.",
             );
           console.log(
             `${repository.name}'s lead creates an issue, as the human asked: ${JSON.stringify(request.asked)}`,
@@ -935,26 +962,63 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         await interruptSession(host, id);
         return { interrupted: name };
       }
-      // A task in the backlog never started, so removing it deletes only the task itself.
+      // What sc rm asks you about at your terminal before it removes anything.
       case "rm preview": {
-        const filed = filedOn(db, request.repo, request.task);
-        if (filed) return { thread: filed.name, status: "not started", pr: null };
-        const thread = findThread(db, request.repo, request.task);
-        return { thread: threadName(db, thread), status: thread.status, pr: thread.pr };
+        const { name, thread, issue } = removalOf(
+          db,
+          request.repo,
+          request.task,
+          request.keepIssue,
+        );
+        const status = thread?.status ?? "not started";
+        return { thread: name, status, pr: thread?.pr ?? null, issue };
       }
+      // A task in the backlog never started, so removing it deletes only the task itself. On a
+      // task with an open issue, the work ends first, then the issue closes. An issue that fails
+      // to close leaves the work removed, and sc rm run again closes it.
       case "rm": {
-        const filed = filedOn(db, request.repo, request.task);
+        const { name, filed, thread, open, issue } = removalOf(
+          db,
+          request.repo,
+          request.task,
+          request.keepIssue,
+        );
+        const repository = findRepository(db, request.repo);
         if (filed) {
-          const repository = findRepository(db, request.repo);
           await unfileTask(db, repository, cloneDir(repository.owner, repository.repo), filed.task);
-          return { removed: filed.name, issue: null, unfiled: true };
+          return { removed: name, issue: null, unfiled: true, closed: false };
         }
-        const thread = findThread(db, request.repo, request.task);
-        const name = threadName(db, thread);
-        await removeThread(db, sessions, thread, request.reason, leadOfCaller(caller) !== null);
-        // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
-        // started on what you told the lead, such as app-t1, has none.
-        return { removed: name, issue: ownTask(thread.task) ? null : thread.task };
+        // Closing an issue goes out to other people, so a lead does it only when the human
+        // explicitly asks, and gives their words, which the log keeps exactly. Refused before
+        // anything is removed.
+        const lead = leadOfCaller(caller) !== null;
+        if (issue !== null && lead) {
+          if (request.asked === undefined)
+            throw new Error(
+              `a lead closes an issue only when the human explicitly asks for it: write their words to a file with your file-writing tool and add --asked-file <file>. To end the work and keep the issue open, add --keep-issue: sc rm ${name} --keep-issue`,
+            );
+          console.log(
+            `${repository.name}'s lead closes ${name}'s issue, as the human asked: ${JSON.stringify(request.asked)}`,
+          );
+        }
+        // A thread that is done has no work left to end, so only its issue closes.
+        if (thread && (thread.status !== "done" || issue === null))
+          await removeThread(db, sessions, thread, request.reason, lead);
+        if (issue !== null) {
+          const comment = request.reason ? `Closed by Skelcrew: ${request.reason}` : null;
+          await closeTask(db, repository, { task: issue, comment }).catch((error) => {
+            const which = thread ? `${name}'s work is removed, but its issue` : `${name}'s issue`;
+            throw new Error(
+              `${which} didn't close: ${errorText(error)}. Run sc rm ${name} again to close it`,
+            );
+          });
+          // Polled now, so the task shows closed at once. A poll that fails changes nothing
+          // about the issue, which is closed.
+          await (await polling.promise)(`${repository.owner}/${repository.repo}`).catch((error) =>
+            console.log(errorText(error)),
+          );
+        }
+        return { removed: name, issue: open, unfiled: false, closed: issue !== null };
       }
       case "merge": {
         const repository = findRepository(db, request.repo);

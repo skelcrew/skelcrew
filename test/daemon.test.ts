@@ -1060,7 +1060,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await until(() => claudeCalls().includes("--resume"));
     for (const line of claudeLines()) {
       expect(line).toContain("told: You are a lead");
-      expect(line).toContain("sc issue create");
+      expect(line).toContain('sc task add <repo> "<title>" "<body>" --issue');
       // The lead talks to the human, who sees issues and threads, never Skelcrew's word task. The
       // command that files work in the backlog is named sc task add, which the lead runs.
       expect(line.replaceAll("sc task add", "")).not.toMatch(/\btasks?\b/i);

@@ -60,7 +60,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("repo named"), word: z.string() }),
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
   z.object({ command: z.literal("task ls"), repo: z.string().optional() }),
-  // A task is named by its ID, or by its PR's number for sc pr show. With a number, `from` is
+  // A task is named by its ID, or by its PR's number. With a number, `from` is
   // the remote of the checkout sc ran in, which names the repository when `repo` doesn't.
   z.object({
     command: z.literal("task show"),
@@ -126,16 +126,21 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     repo: z.string(),
     task: TaskId,
   }),
+  // `keepIssue` leaves the task's issue open, so it can start over. Without it, sc rm closes
+  // the issue, which from a lead needs `asked`, the human's words asking for it, exactly.
   z.object({
     command: z.literal("rm preview"),
     repo: z.string(),
     task: TaskId,
+    keepIssue: z.boolean().default(false),
   }),
   z.object({
     command: z.literal("rm"),
     repo: z.string(),
     task: TaskId,
     reason: z.string().min(1).optional(),
+    keepIssue: z.boolean().default(false),
+    asked: z.string().regex(/\S/).optional(),
   }),
   z.object({
     command: z.literal("tell"),

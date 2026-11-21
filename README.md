@@ -105,10 +105,12 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | `sc` | Opens the lead of the repository you are in, with the sidebar of its tasks. Alt+Q quits, and the agents run on. |
 | `sc --list` | Shows the repository as a list. Enter opens a row, such as an agent or a PR. Ctrl+\ comes back from an agent. In a wide terminal, a pane beside the list shows the task you are on and its agent at work. |
 | `sc ls` | Lists the tasks, with each one's stage, status, PR, CI and review. |
-| `sc show <task>` | Shows one task: its description, threads, PR, checks and review. |
+| `sc show <task>` | Shows one task: its description, threads, PR, checks and review. `sc show '#242'` shows the task of PR 242. |
 | `sc ps` | Lists the threads, with their status and which need you. |
 | `sc start <issue>` | Starts a thread on an issue, resumes a stopped one, or lets one go on past the round limit. |
+| `sc task add <repo> "<title>" "<body>"` | Files a task in the backlog. `--issue` files it as an issue in the tracker instead. |
 | `sc stop <thread>` | Ends a thread's agent and keeps its clone, branch and PR. |
+| `sc rm <task>` | Ends the work on a task, closing its PR and its issue. `--keep-issue` keeps the issue open, to start over. |
 | `sc merge --when-ready <thread>` | Merges the PR once it is approved and green. `--cancel` disarms it. |
 | `sc add <owner/repo>` | Adds a plugin to this repository, after asking. `-g` adds one of your own. |
 

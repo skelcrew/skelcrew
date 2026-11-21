@@ -462,7 +462,7 @@ async function checkLogs(db: Database, repository: Repository, number: number) {
 }
 
 // What names a task for sc show: its repository, by `repo` or by `from`, the remote of the
-// checkout sc ran in, and the task, or its PR's number for sc pr show.
+// checkout sc ran in, and the task, or its PR's number.
 type Which = {
   repo?: string | undefined;
   from?: string | undefined;
@@ -480,14 +480,14 @@ function repositoryOfTask(db: Database, which: Which): Repository {
         : undefined;
   if (!repository)
     throw new Error(
-      "name the PR's task, such as APP-12, or run sc pr show in a checkout of its repository",
+      "name the PR's task, such as APP-12, or run sc show with its number in a checkout of its repository",
     );
   return repository;
 }
 
 // Returns one task as sc show shows it, but without the logs of failed checks, so it reads
 // Skelcrew's database and copy alone and never asks the forge. The list's details pane shows it
-// so. It is named by its task, or by its PR's number for sc pr show. A task with a thread still
+// so. It is named by its task, or by its PR's number. A task with a thread still
 // at work, or stopped, is shown as its reviewer gets it, with the lead's messages to the builder
 // after the description, so the lead sees what the builder is judged by. A thread that is done or
 // failed starts over fresh, without them, so they aren't shown then. Throws when there is no

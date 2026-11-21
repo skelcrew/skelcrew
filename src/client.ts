@@ -95,7 +95,7 @@ export async function askForTask(which: {
 }
 
 // Has the daemon create a task in the repository's tracker, such as a GitHub issue, for sc
-// issue create, and returns the task's name, such as app-13. The daemon asks the tracker, since
+// task add --issue, and returns the task's name, such as app-13. The daemon asks the tracker, since
 // agents never hold its login. `asked` is the human's words asking for it, which a lead gives.
 export async function createTask(
   repository: string,
@@ -278,31 +278,44 @@ export async function interruptOn(repository: string, task: string): Promise<str
   return checkReply(z.object({ interrupted: z.string() }), reply).interrupted;
 }
 
-// Asks the daemon what sc rm would remove: the thread's name, its status, and its PR, if it has
-// one, so sc rm can say so before asking you.
-export async function previewRemoval(repository: string, task: string) {
-  const reply = await request({ command: "rm preview", repo: repository, task });
+// Asks the daemon what sc rm would remove: the thread's name, its status, its PR, if it has
+// one, and the issue it would close, unless `keepIssue`, so sc rm can say so before asking you.
+export async function previewRemoval(repository: string, task: string, keepIssue: boolean) {
+  const reply = await request({ command: "rm preview", repo: repository, task, keepIssue });
   return checkReply(
-    z.object({ thread: z.string(), status: z.string(), pr: z.number().nullable() }),
+    z.object({
+      thread: z.string(),
+      status: z.string(),
+      pr: z.number().nullable(),
+      issue: z.string().nullable(),
+    }),
     reply,
   );
 }
 
-// Has the daemon remove a thread, for sc rm, with the reason its PR's comment gives, and
-// returns the thread's name and the ID of the issue it worked on, or null when it had none.
-// `unfiled` says it was a task of the backlog that never started, which is now gone.
-// The daemon answers once the PR is closed and the clone removed.
-export async function removeOn(repository: string, task: string, reason?: string) {
+// Has the daemon remove a task, for sc rm, with the reason its PR's and issue's comments give,
+// and returns the task's name and the ID of its open issue, or null when it has none. `closed`
+// says the issue closed, which it does unless `keepIssue`. `asked` is the human's words asking
+// for that, which a lead gives. `unfiled` says it was a task of the backlog that never started,
+// which is now gone. The daemon answers once the PR and issue are closed and the clone removed.
+export async function removeOn(
+  repository: string,
+  task: string,
+  how: { reason?: string | undefined; keepIssue: boolean; asked?: string | undefined },
+) {
   const reply = await request({
     command: "rm",
     repo: repository,
     task,
-    ...(reason ? { reason } : {}),
+    keepIssue: how.keepIssue,
+    ...(how.reason ? { reason: how.reason } : {}),
+    ...(how.asked === undefined ? {} : { asked: how.asked }),
   });
   const removed = z.object({
     removed: z.string(),
     issue: z.string().nullable(),
     unfiled: z.boolean().default(false),
+    closed: z.boolean().default(false),
   });
   return checkReply(removed, reply);
 }
