@@ -69,11 +69,11 @@ async function step(key: string): Promise<void> {
   await until(() => selected() !== before, `${key} to move`);
 }
 
-test("Ctrl-\\ moves your typing from the lead to the sidebar, and the screen shows it", async () => {
+test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sidebar, and the screen shows it", async () => {
   open("lead");
   await ready("lead");
-  // At the start your typing goes to the lead: the lead's row is only outlined, the edge leans
-  // to the right side, the footer says so, and the lead's cursor shows.
+  // At the start your typing goes to the lead, with no key pressed: the lead's row is only
+  // outlined, the edge leans to the right side, the footer says so, and the lead's cursor shows.
   expect(selected()).toMatch(/^▹ ○ lead\b/);
   await until(
     () => footer() === "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude",
@@ -81,6 +81,8 @@ test("Ctrl-\\ moves your typing from the lead to the sidebar, and the screen sho
   );
   expect(edge()).toBe("▕");
   expect(cursorShows()).toBe(true);
+  type("hi\r");
+  await until(() => read("lead.typed") === "hi\n", "the typing to reach the lead");
   press("C-\\");
   await until(typingToSidebar, "the sidebar to take your typing");
   await until(
@@ -92,7 +94,7 @@ test("Ctrl-\\ moves your typing from the lead to the sidebar, and the screen sho
   expect(cursorShows()).toBe(false);
   // The lead still shows on the right side, only to look at, and never saw the key.
   expect(seen()).toContain("I am lead");
-  expect(read("lead.typed")).toBe("");
+  expect(read("lead.typed")).toBe("hi\n");
 });
 
 test("in the sidebar plain keys work as in the list, keep your typing there, and Enter on the lead gives it back", async () => {
