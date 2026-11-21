@@ -483,6 +483,31 @@ console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
   expect(said).toBe("refused\ntrue 0\n");
 });
 
+test("a clone that can't be deleted keeps its repository, so removing it can be tried again", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const fs = require("node:fs");
+const path = require("node:path");
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES ('app', 'simon', 'app', '', 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("DELETE FROM threads");
+const clone = cloneDir("simon", "app");
+fs.mkdirSync(path.join(clone, "src"), { recursive: true });
+fs.writeFileSync(path.join(clone, "src", "app.ts"), "");
+fs.chmodSync(clone, 0o500);
+console.log(await removeRepo("app", "unused").then(() => "removed", () => "refused"));
+fs.chmodSync(clone, 0o700);
+console.log(db.query("SELECT 1 FROM repositories WHERE repo = 'app'").get() !== null);
+console.log(await removeRepo("app", "unused"));`,
+    {},
+  );
+  expect(said).toBe("refused\ntrue\nRemoved app and Skelcrew's clone of it.\n");
+});
+
 test("removing a repository ends its lead on a plugin's host, found by its labels", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(

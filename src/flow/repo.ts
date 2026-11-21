@@ -896,14 +896,16 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   const fullName = `${found.owner}/${found.repo}`;
   const { folder } = leadOf(db, found.owner, found.repo);
   await closeTabAndEndLead(db, sessions, found, "remove");
-  const removed = db.run(
-    "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
-    [found.owner, found.repo],
-  );
-  if (removed.changes === 0)
-    throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
-  rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
-  rmSync(join(folder, dropsFolder), { recursive: true, force: true });
+  db.transaction(() => {
+    const removed = db.run(
+      "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
+      [found.owner, found.repo],
+    );
+    if (removed.changes === 0)
+      throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
+    rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
+    rmSync(join(folder, dropsFolder), { recursive: true, force: true });
+  })();
   forgetAgents(found);
   nameRepositories(db);
   await renameBuilders();
