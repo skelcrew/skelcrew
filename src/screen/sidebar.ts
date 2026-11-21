@@ -397,7 +397,7 @@ export async function runSidebar(
     }
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
-    // anything is drawn, as the sidebar and the top row show it.
+    // anything is drawn, as the sidebar shows it.
     typingRight = doing(
       "asking tmux where your typing goes",
       () =>
@@ -454,7 +454,6 @@ export async function runSidebar(
       open: `${open.owner}/${open.repo}`,
       where,
       versions: shownVersions(),
-      typingRight,
     };
     const top = drawTop(look, { left, width });
     if (top !== lastTop) {

@@ -1,5 +1,5 @@
-// The top row of the screen. Above the sidebar, the header says Skelcrew, its version and, on a
-// remote, where it runs. Above the right side, a tab for each repository.
+// The top row of the screen, a header across the whole width, above both the sidebar and the right
+// side: Skelcrew, its version and, on a remote, where it runs, then a tab for each repository.
 import type { Tab } from "../list/rows.ts";
 import { fitted, removeControlCodes } from "./look.ts";
 
@@ -27,13 +27,13 @@ const escaped = (text: string) => text.replaceAll("#", "##").replaceAll("%", "%%
 // looks the same whatever your theme.
 const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 
-// Returns the header above the sidebar: Skelcrew's name, in line with the sidebar's marks, then dim
-// the longest name of its version that fits, such as v0.4.2 or 6f1c2ab (checkout), then, on a
-// remote, a dot and where it runs, then spaces out to the sidebar's edge. `where` is empty on this
-// machine. It comes from outside, so it is made safe as a
-// title is, and cut to stop two columns before the sidebar's edge, as all the sidebar's text does.
+// Returns the start of the header and the columns it takes: Skelcrew's name, in line with the
+// sidebar's marks, then dim the longest name of its version that fits, such as v0.4.2 or 6f1c2ab
+// (checkout), then, on a remote, a dot and where it runs. `where` is empty on this machine. It
+// comes from outside, so it is made safe as a title is. All of it fits in the sidebar's width,
+// stopping two columns before its edge, as the sidebar's text does, so the tabs keep the most room.
 // The place gives way first. A version is never cut, as half a number would be a different one.
-function header(where: string, left: number, versions: string[]): string {
+function header(where: string, left: number, versions: string[]): { text: string; size: number } {
   // "  Skelcrew" takes ten columns. The sidebar's edge is two columns left of the agent, and text
   // stops two before it, so what follows the name has `room`.
   const nameWidth = 10;
@@ -46,13 +46,12 @@ function header(where: string, left: number, versions: string[]): string {
   // " · " before the place takes three columns.
   const place = fitted(removeControlCodes(where), Math.max(room - 3 - taken, 0));
   const about = `${number}${place && ` · ${place}`}`;
-  const spare = " ".repeat(Math.max(left - 2 - nameWidth - Bun.stringWidth(about), 0));
   const dim = about && `#[fg=brightblack]${escaped(about)}#[default]`;
-  return `  ${skelName}${dim}${spare}`;
+  return { text: `  ${skelName}${dim}`, size: nameWidth + Bun.stringWidth(about) };
 }
 
 // Returns the tabs as a tmux format, given each repository's tab, the open one's owner/name, and
-// the right side's width. Each tab is the repository's name, with its badge when threads in it
+// the columns left for them. Each tab is the repository's name, with its badge when threads in it
 // need you or are ready, such as site •2 •1, and two spaces on each side, so the open one's grey
 // reads as a tab. The open one is bold white on the grey a picked row
 // has, and the others dim. When they don't fit, those furthest from the open one give way, and a
@@ -106,24 +105,17 @@ function drawTabs(tabs: Tab[], open: string, width: number): string {
 }
 
 // What the top row shows: the tabs and the open one's owner/name, the remote Skelcrew runs on, if
-// any, the names of the version of the Skelcrew running here, longest first, such as v0.4.2, and
-// whether your typing goes to the right side, which the sidebar's edge leans to.
-export type Top = {
-  tabs: Tab[];
-  open: string;
-  where: string;
-  versions: string[];
-  typingRight: boolean;
-};
+// any, and the names of the version of the Skelcrew running here, longest first, such as v0.4.2.
+export type Top = { tabs: Tab[]; open: string; where: string; versions: string[] };
 
-// Returns the top row of the screen as a tmux format, given what it shows and where the right
-// side's pane is, `left` columns in and `width` wide. tmux's one status line spans the whole
-// terminal. Above the sidebar is the header, with the sidebar's edge carried up through the row,
-// so the edge runs from top to bottom, leaning to the side your typing goes to, as the sidebar
-// draws it. Above the right side are the tabs. It reads nothing, so what you see can be tested
-// without a terminal.
+// Returns the top row of the screen as a tmux format, given what it shows, the sidebar's width
+// with its edge, `left`, and the right side's, `width`. tmux's one status line spans the whole
+// terminal, so the header starts it, and the tabs follow two columns after, in what is left. A
+// click on a tab still finds it, as tmux knows each tab's range wherever it is drawn. It reads
+// nothing, so what you see can be tested without a terminal.
 export function drawTop(top: Top, size: Size): string {
   const { left, width } = size;
-  const edge = `#[fg=colour250]${top.typingRight ? "▕" : "▏"}#[default] `;
-  return `${header(top.where, left, top.versions)}${edge}${drawTabs(top.tabs, top.open, width)}`;
+  const start = header(top.where, left, top.versions);
+  const room = Math.max(left + width - start.size - 2, 0);
+  return `${start.text}  ${drawTabs(top.tabs, top.open, room)}`;
 }

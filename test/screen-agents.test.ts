@@ -325,7 +325,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("● APP-12");
   expect(seen()).toContain("Needs you 1");
   // Its tab says so too, as other repositories' tabs would.
-  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*▕ {3}app •1$/);
+  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew [^▕▏]* {4}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => !seen().includes("APP-7"), "the done thread to go");
 });

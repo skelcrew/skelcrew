@@ -1,4 +1,5 @@
-// What the top row says: the header above the sidebar, then the tabs above the right side.
+// What the top row says: the header across the whole width, Skelcrew and its version, then the
+// tabs.
 import { expect, test } from "bun:test";
 import type { Tab } from "../src/list/rows.ts";
 import { drawTop, type Top } from "../src/screen/top.ts";
@@ -17,22 +18,21 @@ const base: Top = {
   open: "simon/app",
   where: "",
   versions: ["v0.1.0"],
-  typingRight: true,
 };
 // Returns the top row as a tmux format, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
 // Returns a line as you see it, without tmux's styles. A ## is how tmux is told to show one #.
 const seen = (line: string) => line.replace(/#\[[^\]]*\]/g, "").replaceAll("##", "#");
-// What is above the sidebar, up to its edge.
+// The header as you read it: what comes before the first tab.
 const above = (more: Partial<Top> = {}, given = size) =>
-  seen(top(more, given)).slice(0, given.left - 2);
+  seen(top(more, given).split("#[range=")[0] ?? "").trimEnd();
 
 // A sidebar wide enough for the version and a whole place after it.
 const roomy = { left: 40, width: 99 };
 
 test("above the sidebar, Skelcrew in white in line with the marks, then dim a dot and where it runs", () => {
   const line = top({ where: "simon@workbox" }, roomy);
-  expect(above({ where: "simon@workbox" }, roomy)).toStartWith("  Skelcrew v0.1.0 · simon@workbox");
+  expect(above({ where: "simon@workbox" }, roomy)).toBe("  Skelcrew v0.1.0 · simon@workbox");
   expect(line).toContain("#[bold,fg=colour231]Skelcrew#[default]");
   expect(line).toContain("#[fg=brightblack] v0.1.0 · simon@workbox#[default]");
 });
@@ -55,7 +55,7 @@ test("the version shows dim right after the name, here and on a remote", () => {
 
 test("the place is cut before the version, which stays whole", () => {
   const where = "simon@a-very-long-server-name.example.com";
-  expect(above({ where, versions: ["v0.4.2"] })).toBe("  Skelcrew v0.4.2 · simon…  ");
+  expect(above({ where, versions: ["v0.4.2"] })).toBe("  Skelcrew v0.4.2 · simon…");
 });
 
 test("with no room for both, the place goes first, and then the version, never half of it", () => {
@@ -79,17 +79,15 @@ test("a narrow sidebar shows the longest name of the version that fits", () => {
   expect(above({ versions }, { left: 38, width: 99 }).trimEnd()).toBe("  Skelcrew");
 });
 
-test("the sidebar's edge runs up through the row, leaning to where you type, and the tabs start where the right side does", () => {
+test("the tabs follow the header two columns after it, in one row with no edge across it", () => {
   for (const more of [
     {},
     { where: "simon@a-very-long-server-name.example.com", versions: ["v0.4.2"] },
   ]) {
     const line = seen(top(more));
-    expect(line[size.left - 2]).toBe("▕");
-    expect(line.indexOf("app")).toBe(size.left + 2);
+    expect(line.indexOf("app")).toBe(above(more).length + 4);
+    expect(line).not.toMatch(/[▕▏]/);
   }
-  expect(top()).toContain("#[fg=colour250]▕#[default]");
-  expect(top({ typingRight: false })).toContain("#[fg=colour250]▏#[default]");
 });
 
 test("where Skelcrew runs can't run commands, restyle the row or reach your terminal", () => {
@@ -98,13 +96,15 @@ test("where Skelcrew runs can't run commands, restyle the row or reach your term
   expect(line).not.toMatch(/\p{Cc}/u);
 });
 
-// The tabs as you read them, with tmux's styles and click ranges left out.
-const tabText = (tabs: Tab[], open: string, width: number) =>
-  seen(top({ tabs, open }, { left: 30, width }))
-    .slice(30)
+// The tabs as you read them, with tmux's styles and click ranges left out, given the columns
+// left for them. The header, "  Skelcrew v0.1.0", takes 17 columns and the gap after it 2, out
+// of the sidebar's 30 and the right side's.
+const tabText = (tabs: Tab[], open: string, room: number) =>
+  seen(top({ tabs, open }, { left: 30, width: room - 30 + 19 }))
+    .slice(19)
     .trimEnd();
 
-test("tabs name each repository in order, above the right side, with a badge for what needs you", () => {
+test("tabs name each repository in order, after the header, with a badge for what needs you", () => {
   const tabs = [tab("app"), tab("site", 1)];
   expect(tabText(tabs, "simon/app", 120)).toBe("  app    site •1");
   // Tabs have greys of their own, apart from the rest of the screen: the open one is bold white
@@ -140,7 +140,7 @@ test("the row is there with one repository too, so nothing moves when a second c
 test("tabs furthest from the open one give way first, and a dim count says how many", () => {
   const tabs = ["one", "two", "three", "four", "five", "six", "seven"].map((name) => tab(name));
   expect(tabText(tabs, "simon/four", 40)).toBe("  three    four    five    six    +3");
-  expect(top({ tabs, open: "simon/four" }, { left: 30, width: 40 })).toContain(
+  expect(top({ tabs, open: "simon/four" }, { left: 30, width: 29 })).toContain(
     "#[fg=brightblack]  +3",
   );
   expect(tabText(tabs, "simon/one", 40)).toBe("  one    two    three    four    +3");

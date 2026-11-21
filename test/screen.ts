@@ -58,8 +58,13 @@ export const seen = (window = "one") =>
 // Returns how wide the sidebar is now, from how wide the terminal is, as a test may resize it.
 const sidebarNow = (window = "one") =>
   sidebarFor(Number(tmux(terminal, "display", "-p", "-t", `=${window}:`, "#{window_width}").out));
-// The top row as you see it: Skelcrew above the sidebar, then the tabs above the right side.
+// The top row as you see it: the header across the whole width, Skelcrew and its version, then
+// the tabs.
 export const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
+// The header as you see it in a terminal: the top row up to the tab of app, the first repository.
+// The gap after the header and the tab's own spaces make the four spaces before its name.
+export const headerOf = (window = "one") =>
+  (seen(window).split("\n")[0] ?? "").split(/ {4}app\b/)[0] ?? "";
 // The row you are looking at, as the sidebar shows it: the line it starts with ▸, lit while your
 // typing goes to the sidebar, or the outline ▹ while it goes to the right side, or a heading with
 // the grey background. Below the status line, where the open tab has the same grey, and left of

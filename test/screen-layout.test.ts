@@ -11,6 +11,7 @@ import {
   fixedLoad,
   footer,
   given,
+  headerOf,
   home,
   noteRefreshes,
   onLead,
@@ -74,8 +75,8 @@ test("on a narrow terminal the sidebar narrows, so the right side keeps half of 
   await until(() => edge(30, 100).every((columns) => columns === "▕ "), "the sidebar's edge");
 });
 
-// The columns at the sidebar's edge, on each line of a screen `height` rows high above the
-// footer, its line and the gap tmux leaves above them: the sidebar's line, where the lines between
+// The columns at the sidebar's edge, on each line of a screen `height` rows high under the header
+// and above the footer, its line and the gap tmux leaves above them: the sidebar's line, where the lines between
 // lists join it, then tmux's border. Blank past the end of a line that holds nothing else.
 // The sidebar is as wide as the list on a terminal `width` columns wide, or narrower, so the
 // right side keeps half of it.
@@ -83,7 +84,7 @@ const sidebarAt = sidebarFor;
 const edge = (height: number, width = 120) =>
   seen()
     .split("\n")
-    .slice(0, height - 3)
+    .slice(1, height - 3)
     .map((line) => `${line[sidebarAt(width) - 1]}${line[sidebarAt(width)] ?? " "}`);
 
 test("the sidebar's line runs down to the footer, with a blank column before the agent", async () => {
@@ -250,15 +251,14 @@ test("the footer ends with the machine's own load, even with no thread working",
   expect(footer()).toBe("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
 });
 
-test("the header and the tabs share one row, and the agent starts right under it", async () => {
+test("the header and the tabs share one row across the whole width, and the agent starts right under it", async () => {
   open("lead");
   await ready("lead");
   await toSecondThread();
   const lines = seen().split("\n");
-  // Skelcrew above the sidebar, its edge, and the tab above the agent, with nothing after it.
-  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*▕ {3}app$/);
-  // The open tab's grey starts where the agent's text does, with its name two columns in.
-  expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
+  // Skelcrew and its version, then the tab straight after, with no edge across the row and
+  // nothing after the tab.
+  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew [^▕▏]* {4}app$/);
   expect(lines[1]).toContain("I am app-7");
 });
 
@@ -272,12 +272,11 @@ function checkoutAt(commit: string, changes = ""): void {
   given.before = `PATH=${join(home, "checkout")}:$PATH `;
 }
 
-test("above the sidebar it says Skelcrew, in white, and the checkout's commit when no laptop sent you here", async () => {
+test("the header says Skelcrew, in white, and the checkout's commit when no laptop sent you here", async () => {
   checkoutAt("6f1c2ab");
   open("lead");
   await ready("lead");
-  const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
-  await until(() => above() === "  Skelcrew 6f1c2ab (checkout)", "the header");
+  await until(() => headerOf() === "  Skelcrew 6f1c2ab (checkout)", "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   const header = colours.split("\n")[0];
   expect(header).toContain("\x1b[1m");
@@ -299,12 +298,11 @@ test.each([
     " M src/main.ts",
     "a6bfe6fe1234567890a6bfe6fe1234567890abcd*",
   ],
-])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
+])("commit %p with changes %p shows in the header as %p", async (commit, changes, shown) => {
   checkoutAt(commit, changes);
   open("lead", "one", "xterm-256color", String(roomy));
   await ready("lead");
-  const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebarFor(roomy) - 1).trimEnd();
-  await until(() => above() === `  Skelcrew ${shown}`, "the header");
+  await until(() => headerOf() === `  Skelcrew ${shown}`, "the header");
 });
 
 test("each terminal says where it came from, as they can come from different laptops", async () => {
@@ -313,19 +311,18 @@ test("each terminal says where it came from, as they can come from different lap
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
-  const place = (window: string) => (seen(window).split("\n")[0] ?? "").slice(0, sidebar - 1);
   await until(
-    () => place("one").startsWith("  Skelcrew 6f1c2ab (checkout) · s"),
+    () => headerOf("one").startsWith("  Skelcrew 6f1c2ab (checkout) · s"),
     "the first place",
   );
   await until(
-    () => place("two").trimEnd() === "  Skelcrew 6f1c2ab (checkout)",
+    () => headerOf("two") === "  Skelcrew 6f1c2ab (checkout)",
     "the second header",
     "two",
   );
 });
 
-test("the sidebar's edge runs from the top row down to the footer, at every width", async () => {
+test("the sidebar's edge runs from under the header down to the footer, at every width", async () => {
   open("lead");
   await ready("lead");
   // The sidebar narrows on a terminal too narrow for it beside half the terminal.
@@ -333,7 +330,7 @@ test("the sidebar's edge runs from the top row down to the footer, at every widt
   const column = () =>
     seen()
       .split("\n")
-      .slice(0, 27)
+      .slice(1, 27)
       .map((line) => line[edgeAt]);
   await until(() => column().every((mark) => mark === "▕" || mark === "┤"), "the edge");
   for (const width of [150, 90, 120]) {
