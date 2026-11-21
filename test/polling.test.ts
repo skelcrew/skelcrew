@@ -188,7 +188,7 @@ test("a labeled task on an empty repository is neither claimed nor started until
   // can on a slow remote.
   script(
     "git",
-    `case "$*" in *"clone --quiet https://github.com/"*)
+    `case "$*" in *"clone --quiet "*" https://github.com/"*)
   touch "$HOME/held"
   while [ ! -e "$HOME/go" ] && [ -d "$HOME" ]; do sleep 0.05; done ;;
 esac
