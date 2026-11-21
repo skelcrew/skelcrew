@@ -34,7 +34,6 @@ import {
   reviewComment,
   whoRunsTheSuite,
 } from "./decide.ts";
-import { stopping } from "./events.ts";
 import { fetchInto, noMaintenance, pushCommit } from "./git.ts";
 import {
   approvalFound,
@@ -54,6 +53,7 @@ import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messa
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
 import { needsYou as neededYou } from "./status.ts";
+import { supervisor } from "./supervisor.ts";
 import {
   cloneOf,
   hostMissing,
@@ -1089,7 +1089,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
   // A flow with no review stage saves its verdict as the submit starts, so the thread waits on
   // checks from then on, rather than showing a review no reviewer will run.
   const unreviewed = flowRoles(thread).review === null;
-  if (thread.status === "stopped" || stopping.has(folder))
+  if (thread.status === "stopped" || supervisor(folder).state().stopping)
     throw new Error("this thread was stopped, so Skelcrew won't push it");
   record(
     db,

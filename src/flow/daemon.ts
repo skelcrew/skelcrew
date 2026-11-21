@@ -33,9 +33,8 @@ import {
   bringBack,
   endEarlierBuilder,
   failThread,
-  inTurn,
   refuseSecondBuilder,
-  seenRunning,
+  restartBuilder,
   setUpThread,
   startBuilder,
   startChoice,
@@ -45,11 +44,13 @@ import {
 import { holdCheckSlot, slotHolders } from "./checks.ts";
 import { openTasks, ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
-import { removalEnded, removeThread, removing, stopping, stopThread } from "./events.ts";
+import { beingRemoved, removalEnded, removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import {
   closeExitedLeads,
+  endLeadOfClosedTab,
   lastOpened,
+  leadAgent,
   leadOf,
   leadPrompted,
   leadSession,
@@ -344,35 +345,34 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     await open(socket, thread);
     await open(reviewSocket(thread.folder), { review: thread });
   };
-  // The lead start under way for each repository, by its owner/name.
-  const leadStarts = new Map<string, Promise<void>>();
-  // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
-  // keeps the lead running or starts it. One at a time for each repository, so two requests at
-  // once can't start two sessions, while a host that hangs holds up no other repository's lead.
-  // `first` runs in the same turn, before the start, such as ending the lead to restart it, so
-  // no other start comes between.
-  const ensureLead = (repository: Repository, first?: () => Promise<void>) => {
+  // Returns how a repository's supervisor reaches its lead. Starting it opens the lead's own
+  // socket first, so the daemon knows which lead calls on it, then keeps the lead running or
+  // starts it. The supervisor starts one at a time for each repository, so two requests at once
+  // can't start two sessions, while a host that hangs holds up no other repository's lead.
+  const leadHost = (repository: Repository) => {
     const { owner, repo } = repository;
-    const key = `${owner}/${repo}`;
-    const start = (leadStarts.get(key) ?? Promise.resolve())
-      .catch(() => {})
-      .then(async () => {
+    const session = () => leadSession(db, sessions, owner, repo);
+    return {
+      start: async () => {
         const { socket } = leadOf(db, owner, repo);
         if (!listening.has(socket)) {
           listening.add(socket);
           await open(socket, { lead: { owner, repo } });
         }
-        await first?.();
         await startLead(db, sessions, repository);
-      });
-    leadStarts.set(key, start);
-    start
-      .finally(() => {
-        if (leadStarts.get(key) === start) leadStarts.delete(key);
-      })
-      .catch(() => {});
-    return start;
+      },
+      runs: async () => {
+        const lead = await session();
+        return lead !== null && (await agentRuns(lead.host, lead.id));
+      },
+      clear: async () => {
+        const lead = await session();
+        if (lead !== null) await stopSession(lead.host, lead.id);
+      },
+    };
   };
+  const ensureLead = (repository: Repository) =>
+    leadAgent(repository.owner, repository.repo).start(leadHost(repository));
   // Starts a repository's lead, then types its notes in, such as a brief another lead sent it.
   // A lead that can't start, such as one whose clone is missing for now, would leave its notes
   // waiting with nobody told. So `from`, the lead that sent a brief, if one did, hears why, once,
@@ -477,8 +477,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const comeBack = async (thread: Thread) => {
     try {
       await listenFor(thread);
-      await bringBack(db, sessions, thread);
-      resumeRound(db, sessions, thread.folder);
+      if ((await bringBack(db, sessions, thread)) !== "not wanted")
+        resumeRound(db, sessions, thread.folder);
     } catch (error) {
       failThread(db, sessions, thread, error);
     }
@@ -495,7 +495,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const switching = before !== null && request.flow !== undefined && request.flow !== before.flow;
     const startNowFromQueue = (queued: Thread) => {
       const name = threadName(db, queued);
-      if (removing.has(queued.folder)) throw new Error(`${name} is being removed`);
+      if (beingRemoved(queued.folder)) throw new Error(`${name} is being removed`);
       const { owner, repo, task } = queued;
       const where = "WHERE owner = ? AND repo = ? AND task = ?";
       const owed = db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) !== null;
@@ -687,6 +687,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "rename builders":
         renameBuilders(db);
         return {};
+      case "end lead":
+        return {
+          ended: await endLeadOfClosedTab(
+            db,
+            sessions,
+            findRepository(db, request.repo),
+            request.verb,
+          ),
+        };
       // Says only yes or no, so a lead learns no other repository's name from it.
       case "repo named":
         return { named: repositoryNamed(db, request.word) !== undefined };
@@ -767,7 +776,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           const lead = await leadSession(db, sessions, owner, repo);
           if (lead === null || !(await agentRuns(lead.host, lead.id)))
             throw new Error(`${repository.name}'s lead isn't running`);
-          await ensureLead(repository, () => stopSession(lead.host, lead.id));
+          const tabOpen = () =>
+            db
+              .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
+              .get(owner, repo) !== null;
+          const restarted = await leadAgent(owner, repo).restart(leadHost(repository), tabOpen);
+          if (restarted === "refused" || restarted === "stays ended")
+            return { said: `${repository.name} was closed meanwhile, so its lead stays ended.` };
+          if ("failed" in restarted) throw restarted.failed;
           typeLeadNotes(db, sessions);
           return { said: `Restarted ${repository.name}'s lead.` };
         }
@@ -777,48 +793,20 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const live = thread.status === "working" || thread.status === "waiting";
         if (!live || !(await agentRuns(host, id)))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        // A stop or removal under way, or one that came while the session ended, wins: the
-        // builder comes back only if its thread is still the same live one, with no stop or
-        // removal under way, so a stopped task never gets a builder again.
-        const unchanged = () => {
-          const now = readThread(db, thread.folder);
-          const same = now.started === thread.started && now.session === thread.session;
-          const live = now.status === "working" || now.status === "waiting";
-          return same && live && !stopping.has(thread.folder) && !removing.has(thread.folder);
-        };
-        if (!unchanged()) throw new Error(`${name} is being stopped, so it isn't restarted`);
-        // The end takes its turn with the builder's starts and ends. A builder started a moment
-        // ago is still watched for exiting at once, and an end in that moment would fail it.
-        // Once ended, it no longer counts as seen running, so a poll that looks before the new
-        // start doesn't take it for one that ended outside Skelcrew and stop the thread. The
-        // new start counts it again.
-        await inTurn(thread.folder, async (earlier) => {
-          await earlier;
-          await stopSession(host, id);
-          seenRunning.delete(thread.folder);
-        });
-        if (!unchanged())
+        const restarted = await restartBuilder(db, sessions, thread);
+        if (restarted === "refused")
+          throw new Error(`${name} is being stopped, so it isn't restarted`);
+        if (restarted === "stays ended")
           return { said: `${name} was stopped or removed meanwhile, so its builder stays ended.` };
-        // Brought back as after the daemon's restart, but its round goes on untouched, as
-        // nothing cut it short. Starting a builder starts the stretch of work the sidebar times,
-        // and a restart is no new stretch, so the time it began is put back.
-        const since = z
-          .object({ working_since: z.number().nullable() })
-          .parse(
-            db.query("SELECT working_since FROM threads WHERE folder = ?").get(thread.folder),
-          ).working_since;
-        try {
-          const gone = await bringBack(db, sessions, readThread(db, thread.folder));
-          db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [since, thread.folder]);
-          const said =
-            gone === null
-              ? `Restarted ${name}'s builder.`
-              : `Skelcrew can't tell whether its builder runs, as ${gone}.`;
-          return { said };
-        } catch (error) {
-          failThread(db, sessions, thread, error);
-          return { said: `${name}'s builder couldn't start again: ${errorText(error)}` };
+        if ("failed" in restarted) {
+          failThread(db, sessions, thread, restarted.failed);
+          return { said: `${name}'s builder couldn't start again: ${errorText(restarted.failed)}` };
         }
+        const said =
+          restarted.gone === null
+            ? `Restarted ${name}'s builder.`
+            : `Skelcrew can't tell whether its builder runs, as ${restarted.gone}.`;
+        return { said };
       }
       case "queue move":
         return { said: moveInQueue(db, findThread(db, request.repo, request.task), request.by) };
@@ -1207,8 +1195,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // After the builder is back, since the round may type into its session.
     // A builder that stopped on a usage limit is woken once it resets, as it would have been.
     bringBack(db, sessions, thread).then(
-      () => {
+      (back) => {
         settled();
+        if (back === "not wanted") return;
         resumeRound(db, sessions, thread.folder);
         if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
       },
@@ -1231,7 +1220,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const startFromQueue = () => {
     try {
       claimOwed(db, sessions);
-      for (const thread of leaveQueue(db, removing))
+      for (const thread of leaveQueue(db, beingRemoved))
         if (thread.session === null) setUpAndStart(thread);
         else comeBack(thread);
     } catch (error) {

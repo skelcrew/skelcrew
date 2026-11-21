@@ -74,6 +74,8 @@ beforeEach(async () => {
     connection.on("data", (data) => {
       // Plain sc asks what the daemon runs before anything else, which these tests don't follow.
       if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
+      // Answers nothing, as no daemon would, so removing a repository ends its lead itself.
+      if (JSON.parse(data.toString()).command === "end lead") return connection.destroy();
       // sc repo asks the daemon to rename builders whose names it changed, which answers at once.
       if (JSON.parse(data.toString()).command === "rename builders") {
         appendFileSync(join(home, "calls"), "daemon rename builders\n");

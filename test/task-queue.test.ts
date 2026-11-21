@@ -30,7 +30,7 @@ import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 db.exec("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");
 db.exec(${JSON.stringify(sql)});
-const leave = (skip = []) => leaveQueue(db, new Set(skip)).map((thread) => thread.folder);
+const leave = (skip = []) => leaveQueue(db, (folder) => skip.includes(folder)).map((thread) => thread.folder);
 ${code}`;
   const run = Bun.spawnSync([process.execPath, "-e", script], {
     env: { PATH: process.env.PATH ?? "", HOME: home },
