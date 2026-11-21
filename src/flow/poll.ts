@@ -17,7 +17,7 @@ import {
   repositoryPlugins,
   trackerOf,
 } from "../plugins/ask.ts";
-import { quietly } from "../run.ts";
+import { capture } from "../run.ts";
 import { errorText } from "../say.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
@@ -212,7 +212,7 @@ async function movedOnRemote(thread: Thread, head: string | null): Promise<boole
   if (head === null || pushed === null || head === pushed) return false;
   // A commit Skelcrew's clone never fetched is no ancestor either, so git failing counts.
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  const older = await quietly([
+  const older = await capture([
     "git",
     "-C",
     skelcrewClone,
@@ -260,7 +260,7 @@ async function actOnBranchHead(
     () => false,
   );
   if (!fetched) return;
-  const head = await quietly(["git", "-C", skelcrewClone, "rev-parse", "--verify", ref]);
+  const head = await capture(["git", "-C", skelcrewClone, "rev-parse", "--verify", ref]);
   if (head.ok) await actOnMovedBranch(db, sessions, thread, head.out.trim());
 }
 
@@ -357,7 +357,7 @@ async function saveAgentsChanges(
 ): Promise<void> {
   const { owner, repo } = repository;
   const skelcrewClone = cloneDir(owner, repo);
-  const git = (...args: string[]) => quietly(["git", "-C", skelcrewClone, ...args]);
+  const git = (...args: string[]) => capture(["git", "-C", skelcrewClone, ...args]);
   const prs = openPrs(db, owner, repo);
   // PRs that left the copy need nothing saved.
   const open = prs.map((pr) => pr.id);
@@ -413,7 +413,7 @@ const uncheckable = new Set<string>();
 async function actOnBranch(db: Database, sessions: string, repository: Repository, thread: Thread) {
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = (kind: string) => `refs/skelcrew/${kind}/${thread.folder}`;
-  const git = (...args: string[]) => quietly(["git", "-C", skelcrewClone, ...args]);
+  const git = (...args: string[]) => capture(["git", "-C", skelcrewClone, ...args]);
   // A push under way has saved its local ref before the remote has the branch, and a failed
   // one keeps its submit, so only a thread with nothing being pushed can end. Its branch can
   // still have moved, which a push that failed may never have told the builder.

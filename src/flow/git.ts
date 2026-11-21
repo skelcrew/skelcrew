@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import type { Repository } from "../db.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { gitCredentials } from "../plugins/plugin.ts";
-import { quietly } from "../run.ts";
+import { capture } from "../run.ts";
 
 // The settings that keep git from changing a clone's object files on its own after a fetch or
 // a commit. Such work holds lock and temporary files in the clone a while, and a clone copying
@@ -40,7 +40,7 @@ async function git(
   // With no forge, git uses your own login, as it would in your terminal.
   const forge = forgeOf(db, repository);
   const login = forge === null ? [] : gitCredentials(db, forge);
-  const { out, err, ok } = await quietly(["git", ...noMaintenance, ...login, ...args], {
+  const { out, err, ok } = await capture(["git", ...noMaintenance, ...login, ...args], {
     env: { ...env, GIT_TERMINAL_PROMPT: "0" },
     ...(input === undefined ? {} : { stdin: new Blob([input]) }),
   });
