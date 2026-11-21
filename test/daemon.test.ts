@@ -480,6 +480,29 @@ async function restartDuring(hold: { file: "hold-push" | "hold-fetch"; text?: st
   return { left, threadsLeft, threads, backlog, notes };
 }
 
+// A request the lead made, that waits for your answer, waits through a restart: the daemon does
+// nothing of it until you answer.
+test("a request that waits for your answer still waits after a restart, with nothing done", async () => {
+  setUp();
+  addRepository("app");
+  serve();
+  await untilAnswers();
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it."}',
+    'Start a new task: CSV export?', 1)`),
+  );
+  for (const run of running.splice(0)) await stop(run);
+  serve();
+  await untilAnswers();
+  await Bun.sleep(500);
+  expect(onDb((db) => db.query("SELECT id, answered, outcome FROM lead_requests").all())).toEqual([
+    { id: 1, answered: null, outcome: null },
+  ]);
+  expect(onDb((db) => db.query("SELECT task FROM task_threads").all())).toEqual([]);
+  expect(onDb((db) => db.query("SELECT task FROM backlog").all())).toEqual([]);
+});
+
 // The push that files the task went through, but the daemon stopped before it heard. Its filing's
 // note finds the task again, so the yes starts it, and files nothing more.
 test.skipIf(insideSandbox)(

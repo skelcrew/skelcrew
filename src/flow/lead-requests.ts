@@ -93,22 +93,30 @@ export function requestAnswered(db: Database, id: number): void {
   db.run("DELETE FROM lead_requests WHERE id = ?", [id]);
 }
 
-// Returns the requests you said yes to that a stop of the daemon cut short, with their repository
-// and what the yes's start said, when it changed the task already, or null. A no is never left
-// here, as it goes in one step.
-export function answeredRequests(
-  db: Database,
-): (LeadRequest & { owner: string; repo: string; outcome: string | null })[] {
+// Returns the requests you said yes to that a stop of the daemon cut short, oldest first, with
+// their repository, when you answered, in milliseconds, and what the yes's start said, when it
+// changed the task already, or null. A no is never left here, as it goes in one step.
+export function answeredRequests(db: Database): (LeadRequest & {
+  owner: string;
+  repo: string;
+  answered: number;
+  outcome: string | null;
+})[] {
   return db
     .query(
-      "SELECT id, owner, repo, action, says, outcome FROM lead_requests WHERE answered IS NOT NULL",
+      "SELECT id, owner, repo, action, says, answered, outcome FROM lead_requests WHERE answered IS NOT NULL ORDER BY id",
     )
     .all()
     .flatMap((row) => {
-      const { owner, repo, outcome } = z
-        .object({ owner: z.string(), repo: z.string(), outcome: z.string().nullable() })
+      const { owner, repo, answered, outcome } = z
+        .object({
+          owner: z.string(),
+          repo: z.string(),
+          answered: z.number(),
+          outcome: z.string().nullable(),
+        })
         .parse(row);
-      return readBack(row).map((request) => ({ ...request, owner, repo, outcome }));
+      return readBack(row).map((request) => ({ ...request, owner, repo, answered, outcome }));
     });
 }
 

@@ -161,9 +161,13 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
       `#!/bin/sh\necho start >> "$CLAUDE_CONFIG_DIR/starts"\nexec ${join(bin, "claude-fake")} "$@"\n`,
       { mode: 0o755 },
     );
+    // Answered after the thread started, as a yes to bring it back is.
     const db = new Database(join(data(), "skelcrew.db"));
-    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
-      ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12 Add export?', 1, 1)`);
+    db.run(
+      `INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
+      ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12 Add export?', 1, ?)`,
+      [Date.now()],
+    );
     db.close();
     serve();
     await until(() => read(join(builder(), "starts")) !== "", 30_000);
@@ -233,6 +237,49 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
       "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-12 Add export? It failed: ";
     await until(() => read(join(lead(), "typed")).includes(failed), 30_000);
     expect(read(join(lead(), "typed"))).not.toContain("It had done it already");
+  }, 60_000);
+
+  // A stop after your yes's start saved the thread's session, and maybe started its builder, but
+  // before the lead heard. The task has a thread started since your answer, so the yes counts as
+  // done: the daemon brings the builder back once, as for any live task, and tells the lead it
+  // started, starting nothing again.
+  test("a yes whose thread started before a stop counts as started once the daemon is back", async () => {
+    addApp();
+    await startApp12();
+    for (const run of running.splice(0)) {
+      run.kill();
+      await run.exited;
+    }
+    const bin = join(home, "bin");
+    renameSync(join(bin, "claude"), join(bin, "claude-fake"));
+    writeFileSync(
+      join(bin, "claude"),
+      `#!/bin/sh\necho start >> "$CLAUDE_CONFIG_DIR/starts"\nexec ${join(bin, "claude-fake")} "$@"\n`,
+      { mode: 0o755 },
+    );
+    // Your answer came just before the thread it started.
+    const started = Number(threadOf("12")?.started);
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run(
+      `INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
+      ('simon', 'app', '{"kind":"start","task":"12","short":"Export"}', 'Start APP-12 Add export?', 1, ?)`,
+      [started - 1],
+    );
+    db.close();
+    serve();
+    await until(
+      () =>
+        read(join(lead(), "typed")).includes(
+          "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-12 Add export? It had done it already: Started APP-12.",
+        ),
+      30_000,
+    );
+    // Long enough for a second start, had the yes been done again.
+    await Bun.sleep(3000);
+    expect(read(join(builder(), "starts")).split("\n").filter(Boolean).length).toBeLessThanOrEqual(
+      1,
+    );
+    expect(threadOf("12")).toMatchObject({ status: "working" });
   }, 60_000);
 
   test("a yes to a new task starts it with its title, description, short title and flow", async () => {
