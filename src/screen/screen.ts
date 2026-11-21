@@ -74,14 +74,16 @@ export function screenName(given: string | undefined): string {
 // before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf
 // never applies.
 const config = [
-  // tmux's one status line is at the top, so the agent's height stays the same on every
-  // session. The header and the tabs share it. It starts empty, as the sidebar fills
-  // it in, and has no clock to redraw for.
-  ["set", "-g", "status", "on"],
+  // tmux's two status lines are at the top, so the agent's height stays the same on every
+  // session. The first is the header, with the tabs. The second is the top of the boxes, as tmux
+  // draws no line above a pane. They start empty, as the sidebar fills them in, and have no clock
+  // to redraw for.
+  ["set", "-g", "status", "2"],
   ["set", "-g", "status-position", "top"],
   ["set", "-g", "status-interval", "0"],
   ["set", "-g", "status-style", "default"],
   ["set", "-g", "status-format[0]", ""],
+  ["set", "-g", "status-format[1]", ""],
   // tmux writes the title to your terminal, over whatever your shell put there. An agent's own
   // title stops at its pane, on the agents' server: Claude Code changes its title as it works,
   // and the title says where you are, which switching agents doesn't change. tmux saves your
@@ -205,10 +207,10 @@ const config = [
   ["bind", "-n", "MouseDrag1Pane", "send-keys", "-M"],
   ["bind", "-n", "SecondClick1Pane", "send-keys", "-M"],
   ["bind", "-n", "TripleClick1Pane", "send-keys", "-M"],
-  // A drag over the agent that is let go over the sidebar, the footer or the top row would end in
-  // that other place, and the agents' server would wait for a release that never comes, copying
+  // A drag over the agent that is let go over the sidebar, the footer or the top rows would end
+  // in that other place, and the agents' server would wait for a release that never comes, copying
   // nothing. So the agent's pane gets the drag's end at its nearest edge: the start of the same row
-  // beside the sidebar or the pad at its left, the top left under the top row, the end of its last
+  // beside the sidebar or the pad at its left, the top left under the top rows, the end of its last
   // row above the footer. It is a move there and a release, as tmux ends a selection where the last
   // move was, and ignores a place outside its window. Lists and the sidebar act only on presses, so
   // a stray release there does nothing.
@@ -260,8 +262,8 @@ const config = [
   ["set", "-g", "pane-border-status", "off"],
   // The box that shows where your typing goes is tmux's own lines between the panes, which tmux
   // draws in the active style all round the pane you type to, corners included, and dim
-  // elsewhere. The top row carries them up, as tmux draws no line above a pane. An older
-  // Skelcrew's screen, still open in another terminal, may have made the lines blank.
+  // elsewhere. The boxes' row at the top carries them up, as tmux draws no line above a pane.
+  // An older Skelcrew's screen, still open in another terminal, may have made the lines blank.
   ["set", "-g", "pane-border-lines", "single"],
   ["set", "-g", "pane-active-border-style", `fg=${lit}`],
   ["set", "-g", "pane-border-style", `fg=${dim}`],

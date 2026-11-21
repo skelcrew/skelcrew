@@ -67,10 +67,16 @@ export const paneTty = (agents: string, target: string) =>
 export const paneWidth = (agents: string, target: string) =>
   Number(screenTmux(agents, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
 
-// Sets the status line of a screen's session, as a tmux format: the header and the tabs. Each
-// set makes tmux redraw the whole screen, so the sidebar calls this only when the line changed.
-export function showTop(agents: string, session: string, line: string): void {
-  screenTmux(agents, ["set", "-t", `=${session}:`, "status-format[0]", escapeSemicolon(line)]);
+// Sets the two status lines of a screen's session, as tmux formats: the header with the tabs, and
+// the top of the boxes under it. Each set makes tmux redraw the whole screen, so the sidebar calls
+// this only when a line changed.
+export function showTop(
+  agents: string,
+  session: string,
+  { header, boxes }: { header: string; boxes: string },
+): void {
+  screenTmux(agents, ["set", "-t", `=${session}:`, "status-format[0]", escapeSemicolon(header)]);
+  screenTmux(agents, ["set", "-t", `=${session}:`, "status-format[1]", escapeSemicolon(boxes)]);
 }
 
 // Replaces what a pane on the screen's server runs with a command. Its terminal is a new one,

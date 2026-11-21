@@ -57,7 +57,7 @@ export function laptopBuild(): string | null {
 // Returns how a build from a checkout is named after "Skelcrew": its commit, such as
 // 6f1c2ab (checkout), with a * that the name explains when it held uncommitted changes, which
 // sc --version and the list show, then shorter names for
-// the sidebar's header, which may have little room. Each shorter one drops words around
+// the screen's header, which may have little room. Each shorter one drops words around
 // the commit, never a character of it, as git gives as many as it takes to name one commit, and
 // more in a repository with many. With changes, +changes or at least the * always stays, as the
 // commit alone would look like a clean checkout. A build with no commit to name, such as a single file nobody

@@ -1,8 +1,9 @@
 // The sidebar: the live left pane of the screen, which is the list of the open repository. Its
 // lead is on top, then Needs you and the six stages, as sc --list shows them. The right side
 // follows the row you are on: the lead's session on the lead's row, a task's details on a task's.
-// The sidebar also keeps the top row up to date, with the header and the tabs, tells the footer
-// what to say, switches tabs, and closes or removes the open repository when you ask.
+// The sidebar also keeps the top rows up to date, the header with its tabs and the top of the
+// boxes, tells the footer what to say, switches tabs, and closes or removes the open repository
+// when you ask.
 import {
   attachCommand,
   attachThen,
@@ -276,7 +277,7 @@ export async function runSidebar(
   // an agent. Enter on the lead's row or a click on the lead gives it back. With Alt keys alone,
   // typing follows the row: the lead's row types to the lead.
   let held = false;
-  // Where your typing went at the last look, which the top row's boxes show and the footer says.
+  // Where your typing went at the last look, which the top of the boxes shows and the footer says.
   let typingRight = true;
   // What the footer says in place of its keys until the next key, the question it asks, and
   // whether the daemon is at work on an answer.
@@ -503,7 +504,7 @@ export async function runSidebar(
     }
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
-    // anything is drawn, as the top row and the footer show it.
+    // anything is drawn, as the top rows and the footer show it.
     // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it.
     const [active, zoomed] = doing("asking tmux where your typing goes", () =>
       screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active} #{window_zoomed_flag}"])
@@ -557,9 +558,9 @@ export async function runSidebar(
       asked = open.lead;
       openRepository(`${open.owner}/${open.repo}`, true);
     }
-    // The header and the tabs go to tmux's status line, and only when they changed. A right side
-    // that fills the terminal is as wide as it, so the row keeps the sidebar's places and the
-    // tabs take what is left.
+    // The header and the top of the boxes go to tmux's status lines, and only when they changed.
+    // A right side that fills the terminal is as wide as it, so the rows keep the sidebar's places
+    // and the tabs take what is left.
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
     const right = fullScreen ? width - size().width - 5 : width;
     const look = {
@@ -571,8 +572,8 @@ export async function runSidebar(
       fullScreen,
     };
     const top = drawTop(look, { sidebar: size().width, right });
-    if (top !== lastTop) {
-      lastTop = top;
+    if (`${top.header}\n${top.boxes}` !== lastTop) {
+      lastTop = `${top.header}\n${top.boxes}`;
       doing("drawing the top row", () => showTop(agents, session, top));
     }
     // The footer, also only when it changed.
@@ -889,7 +890,10 @@ export async function runSidebar(
     if (name === "next repository" || name === "previous repository")
       return nextRepository(name === "next repository" ? 1 : -1);
     if (key.startsWith(`${esc}]skel-tab;`)) {
-      const tab = tabs[Number(key.slice(`${esc}]skel-tab;`.length, -1))];
+      // A click on the top rows away from any tab names no range, which must not read as the
+      // first tab.
+      const range = key.slice(`${esc}]skel-tab;`.length, -1);
+      const tab = /^\d+$/.test(range) ? tabs[Number(range)] : undefined;
       if (tab) switchTo(tab.fullName);
       return refresh();
     }
