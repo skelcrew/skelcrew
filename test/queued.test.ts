@@ -628,9 +628,10 @@ test("a claim that answers while sc rm waits on the forge doesn't assign the iss
   const removal = runSkel(["rm", "app-12"], env());
   await until(() => asked(plugin).some((q) => q.ask === "close pr"));
   rmSync(hold);
-  expect(await starting).toContain("APP-12 is queued");
+  // sc start waits for sc rm, so the forge is let go first.
   rmSync(join(plugin, "hold-close-pr"));
   expect((await removal).code).toBe(0);
+  expect(await starting).toContain("APP-12 is queued");
   // sc start's work with the tracker comes after its answer, so a few polls give it time.
   await queueLooked();
   expect(asked(plugin).filter((q) => q.ask === "assign" && q.on === true)).toHaveLength(0);
@@ -684,4 +685,28 @@ openDb().exec(${JSON.stringify(rows)});`;
   await until(() => claimsSaved() === 0);
   expect(statuses()["app-12"]).toBe("done");
   expect(leadHears()).not.toContain("APP-12 left the queue");
+}, 60_000);
+
+test("a claim that fails while sc rm waits on the forge doesn't assign the issue again", async () => {
+  addApp();
+  await serveApp();
+  // The tracker takes its time to answer the claim, then fails.
+  const hold = join(plugin, "hold-took");
+  writeFileSync(hold, "");
+  writeFileSync(join(plugin, "fail-took"), "network is down");
+  const starting = sc("start", "app-12");
+  await until(() => asked(plugin).some((q) => q.ask === "took"));
+  // sc rm takes you off the issue, then waits on the forge to close the task's PR.
+  givePr("12", 7);
+  writeFileSync(join(plugin, "hold-close-pr"), "");
+  const removal = runSkel(["rm", "app-12"], env());
+  await until(() => asked(plugin).some((q) => q.ask === "close pr"));
+  rmSync(hold);
+  await queueLooked();
+  rmSync(join(plugin, "hold-close-pr"));
+  expect((await removal).code).toBe(0);
+  expect(await starting).toContain("couldn't claim its issue yet");
+  await queueLooked();
+  expect(asked(plugin).filter((q) => q.ask === "assign" && q.on === true)).toHaveLength(0);
+  expect(statuses()["app-12"]).toBe("done");
 }, 60_000);
