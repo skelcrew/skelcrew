@@ -6,13 +6,18 @@ import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { type Details, readDetails } from "../list/details.ts";
-import { liveNote, readLive } from "../list/live.ts";
+import { liveNote, readLead, readLive } from "../list/live.ts";
 import { drawPane, type Live } from "../list/pane.ts";
 import { listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { attachedMark, skelcrewCommand } from "./screen.ts";
+
+// What the details pane scrolls by: Page Up, as 5, or Page Down, as 6, then the wheel up, as 64,
+// or down, as 65, as your terminal reports a press of the mouse.
+const esc = "\x1b";
+const scrollKeys = new RegExp(`${esc}\\[([56])~|${esc}\\[<(6[45]);\\d+;\\d+M`, "g");
 
 // Returns the command that runs a task's details in the screen's right pane, by the task's row
 // name, such as app-12, in the repository named by its owner/name. `full` shows its builder's
@@ -98,7 +103,9 @@ export async function attachTask(
 // name in the repository named by its owner/name, with its builder's whole screen when `full`, or
 // its last few lines. It reads the task again each second and its
 // builder's screen 4 times a second, as the list's pane does, and writes only when what shows
-// changed. It reads no keys: the sidebar has your typing while this shows.
+// changed. Your typing stays with the sidebar, which hands on only Page Up and Page Down, and
+// those and the wheel over the pane scroll the details. Each row starts this again, so its
+// details start at their top.
 export async function runTaskDetails(
   agents: string,
   repository: string,
@@ -112,6 +119,9 @@ export async function runTaskDetails(
   let details: Details | null = null;
   let live: Live = { screen: "" };
   let lastFrame = "";
+  // How far the details are scrolled, and how many lines of them the pane last had room for.
+  let scroll = 0;
+  let room = 0;
 
   // Draws the pane, filling it, only when it changed. The cursor stays hidden, as nothing here
   // is typed into.
@@ -119,8 +129,18 @@ export async function runTaskDetails(
     const width = process.stdout.columns || 80;
     const height = process.stdout.rows || 24;
     const note = row ? liveNote(row) : null;
-    const lines = drawPane(row, details, note === null ? live : { note }, width, height, full);
-    const text = `\x1b[?25l\x1b[H${lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
+    const pane = drawPane(
+      row,
+      details,
+      note === null ? live : { note },
+      width,
+      height,
+      full,
+      scroll,
+    );
+    scroll = pane.scroll;
+    room = pane.room;
+    const text = `\x1b[?25l\x1b[H${pane.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
     if (text === lastFrame) return;
     lastFrame = text;
     process.stdout.write(text);
@@ -134,16 +154,31 @@ export async function runTaskDetails(
     draw();
   };
 
-  // Reads the builder's screen, one read at a time, as a slow host must never pile reads up.
+  // Reads the builder's screen, or the lead's on a request's row, one read at a time, as a slow
+  // host must never pile reads up.
   let reading = false;
   const look = async () => {
     if (reading || !row || liveNote(row) !== null) return;
     reading = true;
-    live = (await readLive(db, agents, row)) ?? live;
+    const read = row.part === "request" ? readLead(db, agents, open) : readLive(db, agents, row);
+    live = (await read) ?? live;
     reading = false;
     draw();
   };
 
+  // Page Up and Page Down scroll a page, keeping a line of the last one, and the wheel 3 lines.
+  // 1000 and 1006 ask tmux for the wheel over this pane, and a click reaches nothing here.
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdout.write("\x1b[?1000h\x1b[?1006h");
+    process.stdin.on("data", (bytes) => {
+      for (const [, pageKey, wheel] of bytes.toString().matchAll(scrollKeys)) {
+        const by = pageKey ? Math.max(room - 1, 1) : 3;
+        scroll += pageKey === "5" || wheel === "64" ? -by : by;
+      }
+      draw();
+    });
+  }
   process.on("SIGWINCH", () => {
     lastFrame = "";
     draw();

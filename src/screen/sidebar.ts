@@ -19,7 +19,7 @@ import { leadOf } from "../flow/lead.ts";
 import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { cloneOf, liveThreads } from "../flow/thread.ts";
-import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
+import { type Asking, answerOf, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
 import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
   buildersNote,
@@ -84,14 +84,18 @@ const keyNames: Record<string, string> = {
   "\x1b[Z": "previous repository",
   "\r": "enter",
   "\n": "enter",
+  "\x1b[5~": "page up",
+  "\x1b[6~": "page down",
 };
 
 // The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, as
 // attach where it attaches to the builder, o to show the agent's whole screen or its last lines,
-// the stages' numbers, Shift with an arrow only on a queued task in Up next, which it moves in
-// the queue, and s or m only where the row can be started, or queued, or merged.
+// Page Up and Page Down to scroll the details, the stages' numbers, Shift with an arrow only on a queued task in Up next, which it moves in
+// the queue, and s or m only where the row can be started, or queued, or merged. A request of
+// the lead's offers y and n, which answer it, in place of Enter.
 function taskFooter(row: Row): string {
-  const output = row.task ? " · o output" : "";
+  if (row.part === "request") return "⌥↑↓ move  y yes  n no  1-6 stages  ⌥Q quit";
+  const output = row.task ? " · o output · pgup/pgdn scroll" : "";
   const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
@@ -251,7 +255,9 @@ export async function runSidebar(
     shown = next;
   };
   // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
-  // task's details on any other.
+  // task's details on any other. A request of the lead's shows as a task's details do, with the
+  // lead's screen read-only in place of the details, so your typing stays with the sidebar, y and
+  // n answer the request, and nothing, a click included, reaches the lead.
   const follow = () => {
     const row = rows[here];
     if (row) show(row.part === "lead" ? open.lead : detailsOf(row.name));
@@ -561,6 +567,10 @@ export async function runSidebar(
   const enter = () => {
     const row = rows[here];
     if (!row || row.part === "lead") return;
+    if (row.part === "request") {
+      said = "Press y to say yes to the lead, or n to say no.";
+      return;
+    }
     if (row.more > 0) {
       wholeBacklog = true;
       return reshow();
@@ -655,7 +665,16 @@ export async function runSidebar(
       shown = null;
       return follow();
     }
-    if (key === "s" && row?.part === "backlog" && row.start)
+    // Page Up and Page Down scroll the details on the right, which run in a pane of their own,
+    // so they are handed on to it.
+    if ((name === "page up" || name === "page down") && row?.task && isDetails(shown)) {
+      screenTmux(agents, ["send-keys", "-t", rightPane, name === "page up" ? "PPage" : "NPage"]);
+      return;
+    }
+    // y and n answer the lead's request you are on at once, as its row is the question.
+    const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
+    if (answer) void goAhead(answer);
+    else if (key === "s" && row?.part === "backlog" && row.start)
       asking = { question: row.start, row: row.name, merge: false };
     else if (key === "m" && row?.merge) {
       if ("refused" in row.merge) said = row.merge.refused;

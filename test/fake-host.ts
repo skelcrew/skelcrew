@@ -6,11 +6,15 @@
 // own transport, when the test's manifest says it provides one, takes an agent as idle unless
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
-// garble-<question> it answers that question with nothing, with fail-<question> it fails it
-// once, with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
+// garble-<question> it answers that question with nothing, with down it fails every question
+// alike, with say-<question> it fails it with the file's words, with fail-<question> it fails it
+// once, with unknown-<question> it fails it every time as an older plugin that doesn't know it,
+// with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
 // from a given time on. With a file lose-start, it starts the
-// next session but fails before saying its ID. Its one argument, its settings folder, is only
-// there so a test's clean-up can find its calls with ps.
+// next session but fails before saying its ID. Given `files` as it starts a session, it does as
+// a host that provides files: it makes the session a folder of dropped files, `files` in the
+// session's folder, and swaps the placeholder for it wherever it appears in the command. Its one
+// argument, its settings folder, is only there so a test's clean-up can find its calls with ps.
 import {
   appendFileSync,
   existsSync,
@@ -74,6 +78,11 @@ const answers: Record<string, () => unknown> = {
     writeFileSync(join(folder(id), "labels.json"), JSON.stringify(question.labels));
     writeFileSync(join(folder(id), "screen"), "");
     Bun.spawnSync(["mkfifo", join(folder(id), "input")]);
+    const drops = join(folder(id), "files");
+    if (question.files) mkdirSync(drops);
+    const command = question.command.map((word: string) =>
+      question.files ? word.replaceAll(question.files, drops) : word,
+    );
     const env = Object.entries(question.env).map(([key, value]) => `${key}=${value}`);
     // The session's folder comes in as $0, then the agent's folder and the pipe, then the
     // environment and the command, which env -i runs with nothing else.
@@ -87,7 +96,7 @@ const answers: Record<string, () => unknown> = {
         question.folder,
         join(folder(id), "input"),
         ...env,
-        ...question.command,
+        ...command,
       ],
       { detached: true, stdio: ["ignore", "ignore", "ignore"] },
     );
@@ -181,6 +190,24 @@ if (from > 0) {
 }
 // With a file slow-<question>, it takes two seconds over that question, as a slow host would.
 if (existsSync(join(dir, `slow-${question.ask}`))) await Bun.sleep(2000);
+// With a file down, it fails every question in the same words, as a host that is down would.
+if (existsSync(join(dir, "down"))) {
+  console.error("the host is down");
+  process.exit(1);
+}
+// A question it doesn't know, or one with a file unknown-<question>, fails every time, listing
+// the questions it does know in Zod's words, as herdr's plugin 0.1.4 does asked to rename.
+if (!answers[question.ask] || existsSync(join(dir, `unknown-${question.ask}`))) {
+  const known = Object.keys(answers).filter((ask) => !existsSync(join(dir, `unknown-${ask}`)));
+  const expected = known.map((ask) => `'${ask}'`).join(" | ");
+  console.error(`✖ Invalid discriminator value. Expected ${expected}; → at ask`);
+  process.exit(1);
+}
+// With a file say-<question>, it fails that question every time, writing what the file holds.
+if (existsSync(join(dir, `say-${question.ask}`))) {
+  process.stderr.write(readFileSync(join(dir, `say-${question.ask}`), "utf8"));
+  process.exit(1);
+}
 // With a file fail-<question>, it fails that question once, as a host down for a moment would.
 if (existsSync(join(dir, `fail-${question.ask}`))) {
   rmSync(join(dir, `fail-${question.ask}`));

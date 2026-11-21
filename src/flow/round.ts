@@ -32,6 +32,7 @@ import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
+import { needsYou as neededYou } from "./status.ts";
 import {
   cloneOf,
   hostMissing,
@@ -621,6 +622,11 @@ async function actOnVerdict(
     posting,
   };
   record(db, folder, change, outcome.why);
+  // Changes held at the round limit always reach the lead. Saving them leaves a note only when
+  // the thread starts needing you, so one that needed you already, such as for its builder's
+  // question, gets its note here.
+  if (held !== null && neededYou(thread))
+    noteForLead(db, sessions, repository, `${threadName(db, thread)} needs you: ${outcome.why}`);
   // A review that failed doesn't need you: the lead hears of it, with the error the harness
   // gave, and can run it again, or mark the thread if only you can fix what stops it.
   if (failed) {

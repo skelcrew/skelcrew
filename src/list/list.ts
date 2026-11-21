@@ -17,7 +17,7 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { shownVersions } from "../version.ts";
-import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
+import { type Asking, answerOf, canOpenLinks, openPr, stillOffered } from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
@@ -28,7 +28,7 @@ import {
   type Target,
   tabAt,
 } from "./layout.ts";
-import { liveNote, readLive } from "./live.ts";
+import { liveNote, readLead, readLive } from "./live.ts";
 import { drawPane, type Live } from "./pane.ts";
 import {
   buildersNote,
@@ -79,6 +79,8 @@ const keyNames: Record<string, string> = {
   "\x1b[1;4:1D": "back tab",
   "\x1b[57417;4u": "back tab",
   "\x1b[57417;4:1u": "back tab",
+  "\x1b[5~": "page up",
+  "\x1b[6~": "page down",
   "\x03": "q",
   "\x1b": "escape",
 };
@@ -156,6 +158,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   let live: { name: string; shown: Live } | null = null;
   // Whether the details pane shows its agent's whole screen, rather than its last few lines.
   let fullOutput = false;
+  // How far the details pane's details are scrolled, and how many lines of them it last had room
+  // for. Another row starts at its top.
+  let paneScroll = 0;
+  let paneRoom = 0;
   // How many times the row you are on changed, and the row it last was, so a read of the live
   // view knows when you moved while it waited, though you came back to the same row since.
   let selections = 0;
@@ -190,17 +196,35 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Returns the details pane's lines for a terminal of this size, or null when it is too narrow
   // for the pane. A task's details are read only when you move onto it or the rows are read again.
   // Its agent's screen is the last one read for this row, or blank until the first read comes.
-  // A row with no agent running says so at once.
+  // A row with no agent running says so at once. A request of the lead's shows the lead's screen,
+  // read-only, with no details.
   const paneFor = (size: { width: number; height: number }) => {
     const beside = paneWidth(size.width);
     if (beside === 0) return null;
     const row = rows[here];
-    if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2);
+    if (row?.part === "request") {
+      const note = liveNote(row);
+      const shown =
+        note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
+      return drawPane(row, null, shown, beside, size.height - 2).lines;
+    }
+    if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2).lines;
     if (details?.name !== row.name)
       details = { name: row.name, read: readDetails(db, open, row.task, Date.now()) };
     const note = liveNote(row);
     const shown = note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
-    return drawPane(row, details.read, shown, beside, size.height - 2, fullOutput);
+    const pane = drawPane(
+      row,
+      details.read,
+      shown,
+      beside,
+      size.height - 2,
+      fullOutput,
+      paneScroll,
+    );
+    paneScroll = pane.scroll;
+    paneRoom = pane.room;
+    return pane.lines;
   };
 
   // Draws what shows, filling the terminal, only when it changed.
@@ -209,6 +233,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (rows[here]?.name !== selected) {
       selected = rows[here]?.name;
       selections++;
+      paneScroll = 0;
     }
     if (attached) return;
     // What the bottom line says can come from outside, such as a forge's reason for refusing a
@@ -360,8 +385,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Opens a row with Enter: attaches to the lead, starting it first when it isn't running, or to
-  // the builder of a task at work. Says what a task up next waits on. Asks before starting an
-  // issue. Opens the PR of a task ready
+  // the builder of a task at work. Says what a task up next waits on, and that a request of the
+  // lead's is answered with y or n. Asks before starting an issue. Opens the PR of a task ready
   // for review or ended, or copies its link, or without a forge says which branch waits for you.
   // A ready task whose builder needs you, such as for a question, attaches to the builder, so one
   // Enter reaches what it waits on.
@@ -382,6 +407,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       wholeBacklog = true;
       return reshow();
     }
+    if (row.part === "request") return say("Press y to say yes to the lead, or n to say no.");
     if (row.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
       return draw();
@@ -469,19 +495,30 @@ export async function runList(agents: string, repository: string): Promise<void>
     void look();
   };
 
+  // Scrolls the details pane's details `by` lines, down when more than 0, as far as they go.
+  const scrollPane = (by: number) => {
+    paneScroll += by;
+    draw();
+  };
+
   // Acts on the mouse, by what was drawn where it was pressed. The left button on a repository's
   // tab opens that repository, and on a section's heading, or its name pinned at an edge, opens
   // or closes the section. On a task's row it moves you there, and on the row you are on already
   // it opens it, as Enter does, so a double click opens a row too. The lead's row opens the lead at
   // once. The wheel moves you a row up or down, which scrolls the list, as the row you are on
-  // always stays in view. Another button, or a click on nothing, does nothing.
+  // always stays in view. Over the details pane, the wheel scrolls its details 3 lines instead.
+  // Another button, or a click on nothing, does nothing.
   const click = (sent: string) => {
     const [, button, column, line] = clickPattern.exec(sent) ?? [];
+    const width = process.stdout.columns || 80;
+    const beside = paneWidth(width);
+    const overPane = beside > 0 && Number(column) > width - 1 - beside - paneEdge.length;
+    if ((button === "64" || button === "65") && overPane)
+      return scrollPane(button === "64" ? -3 : 3);
     if (button === "64") return move(-1);
     if (button === "65") return move(1);
     if (button !== "0") return draw();
     if (line === "1") {
-      const width = process.stdout.columns || 80;
       const tab = tabAt(
         frameWith(() => "", ""),
         width,
@@ -490,9 +527,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       return tab ? goTo(tab) : draw();
     }
     // The pane beside the list is only to look at, so a click on it reaches nothing.
-    const width = process.stdout.columns || 80;
-    const beside = paneWidth(width);
-    if (beside > 0 && Number(column) > width - 1 - beside - paneEdge.length) return draw();
+    if (overPane) return draw();
     const target = targets[Number(line) - 1] ?? null;
     if (target === null) return draw();
     if ("section" in target) return toggleSection(target.section);
@@ -520,7 +555,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   const reading = new Set<string>();
   const look = async () => {
     const row = rows[here];
-    if (attached || left || !row || row.task === null || liveNote(row) !== null) return;
+    const agent = row?.task !== null || row?.part === "request";
+    if (attached || left || !row || !agent || liveNote(row) !== null) return;
     if (reading.has(row.name) || paneWidth(process.stdout.columns || 80) === 0) return;
     reading.add(row.name);
     const asked = selections;
@@ -529,7 +565,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     // these can change meanwhile, so it is asked again before the screen is read.
     const wanted = () =>
       !attached && !left && selections === asked && paneWidth(process.stdout.columns || 80) > 0;
-    const shown = await readLive(db, agents, row, wanted);
+    // A request's row shows the lead, read as sc peek reads it.
+    const shown =
+      row.part === "request"
+        ? await readLead(db, agents, open)
+        : await readLive(db, agents, row, wanted);
     reading.delete(row.name);
     // A read the list stopped wanting read nothing and shows nothing, and so is one that came
     // back once it was no longer wanted, such as after you left and the terminal is your shell's.
@@ -573,12 +613,18 @@ export async function runList(agents: string, repository: string): Promise<void>
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) return toggleSection(stage);
     if (key === "enter" && row) return openRow(row);
+    // y and n answer the lead's request you are on at once, as its row is the question.
+    const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
+    if (answer) return goAhead(answer);
     // o shows the agent's whole screen in the details pane, or only its last lines again. It
     // stays as you move, as it is how you like the pane.
     if (key === "o" && row?.task && paneWidth(process.stdout.columns || 80) > 0) {
       fullOutput = !fullOutput;
       return draw();
     }
+    // Page Up and Page Down scroll the details pane a page, keeping a line of the last one.
+    if ((key === "page up" || key === "page down") && row?.task)
+      return scrollPane((key === "page up" ? -1 : 1) * Math.max(paneRoom - 1, 1));
     // s starts a task not started yet, an issue or one of the backlog, as Enter does there. With
     // every builder busy, its question says it queues the task instead.
     if (key === "s" && row?.part === "backlog" && row.start) {

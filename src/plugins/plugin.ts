@@ -17,19 +17,20 @@ export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version su
 
 // What a plugin can provide, by its kind. An I/O plugin is where work comes from and where it
 // goes. A runtime plugin is about where agents run: the sessions they run in, the transport that
-// types into them, their status, and machine, how to reach a machine that runs Skelcrew. Skelcrew
-// uses a plugin's transport and status only for the sessions it hosts, so one that provides
-// either without sessions is never used.
+// types into them, their status, the files you drop onto them in the host's apps, and machine,
+// how to reach a machine that runs Skelcrew. Skelcrew uses a plugin's transport, status and files
+// only for the sessions it hosts, so one that provides any of them without sessions is never used.
 const provided = {
   io: ["tracker", "forge", "chat"],
-  runtime: ["sessions", "transport", "status", "machine"],
+  runtime: ["sessions", "transport", "status", "files", "machine"],
 } as const;
 const Provided = z.enum([...provided.io, ...provided.runtime]);
 type Provided = z.infer<typeof Provided>;
 
 // The commands a plugin must have for each thing it provides. Chat needs none yet. Its
 // commands come with the first chat plugin. Sessions, transport and status are each a set of
-// functions run through one session command, and sessions also attaches your terminal.
+// functions run through one session command, and sessions also attaches your terminal. Files is
+// part of the session command's start.
 const commandsFor = {
   tracker: ["call"],
   forge: ["call", "git_credentials"],
@@ -37,6 +38,7 @@ const commandsFor = {
   sessions: ["session", "attach"],
   transport: ["session"],
   status: ["session"],
+  files: ["session"],
   machine: ["add", "exec", "push"],
 } as const;
 

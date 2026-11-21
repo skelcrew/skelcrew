@@ -14,6 +14,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
+import { filesPlaceholder } from "../src/agents/sandbox.ts";
 import {
   agentRuns,
   failedScreen,
@@ -27,7 +28,7 @@ import {
   stopSession,
 } from "../src/agents/sessions.ts";
 import { deliver, forQuestion, idle, whyBusy } from "../src/agents/transport.ts";
-import type { PluginHost } from "../src/plugins/runtime.ts";
+import { filesFor, type PluginHost } from "../src/plugins/runtime.ts";
 import {
   endFakeSessions,
   fakeHostCommand,
@@ -59,13 +60,17 @@ afterEach(async () => {
 });
 
 // The fake host, providing sessions and, when asked, its own transport and status.
-const host = (own: { transport?: boolean; status?: boolean } = {}): PluginHost => ({
+const host = (
+  own: { transport?: boolean; status?: boolean; files?: boolean } = {},
+): PluginHost => ({
   plugin: name,
+  version: "0.1.0",
   folder: home,
   session: fakeHostCommand(settings()),
   attach: ["true"],
   transport: own.transport ?? false,
   status: own.status ?? false,
+  files: own.files ?? false,
 });
 
 // A stand-in for Claude Code: busy for a while, losing what is typed then, as the real one can,
@@ -127,6 +132,54 @@ test("a session on the host runs its command, carries its labels and can be read
   expect(await listSessions(on)).toEqual([{ name: id, running: true, labels }]);
   expect(await hasSession(on, id)).toBe(true);
   expect(await agentRuns(on, id)).toBe(true);
+});
+
+test("only a host that provides files is handed a placeholder for them, new for each start", async () => {
+  expect(filesFor("skelcrew-test")).toBeUndefined();
+  expect(filesFor(host())).toBeUndefined();
+  // A Mac's sandbox can't show dropped files yet, so there it gets none.
+  if (process.platform === "darwin") expect(filesFor(host({ files: true }))).toBeUndefined();
+  else {
+    expect(filesFor(host({ files: true }))).toMatch(/^\/skelcrew-files-[0-9a-f]{32}$/);
+    expect(filesFor(host({ files: true }))).not.toBe(filesFor(host({ files: true })));
+  }
+  const files = filesPlaceholder();
+  const starts = () =>
+    readFileSync(join(settings(), "asked"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((question) => question.ask === "start");
+  // The host swaps the placeholder in the command for the session's own folder of drops.
+  const on = host({ files: true });
+  const session = { folder: home, env: {}, labels, files };
+  const id = await startSession(on, "app-12", {
+    ...session,
+    command: ["sh", "-c", 'echo "$0"; sleep 30', files],
+  });
+  expect(starts()[0].files).toBe(files);
+  const drops = join(settings(), "sessions", id, "files");
+  await until(async () => (await readSession(on, id)).includes(drops));
+  // A session started with none asks the host for none.
+  await startSession(host(), "app-13", { ...session, files: undefined, command: ["true"] });
+  expect(starts()[1]).not.toHaveProperty("files");
+});
+
+test("a session on the host gets a colour terminal, whatever terminal the daemon has", async () => {
+  const starts = () =>
+    readFileSync(join(settings(), "asked"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((question) => question.ask === "start");
+  // A daemon under systemd has no terminal at all.
+  const session = { folder: home, command: ["true"], labels };
+  await startSession(host(), "app-12", { ...session, env: { PATH: "/bin" } });
+  expect(starts()[0].env).toEqual({ PATH: "/bin", TERM: "xterm-256color", COLORTERM: "truecolor" });
+  // One started from your terminal has that terminal's, which isn't the host's.
+  const yours = { PATH: "/bin", TERM: "xterm-ghostty", COLORTERM: "24bit" };
+  await startSession(host(), "app-13", { ...session, env: yours });
+  expect(starts()[1].env).toEqual({ PATH: "/bin", TERM: "xterm-256color", COLORTERM: "truecolor" });
 });
 
 test("an agent that ended is no longer running, and its last screen says why", async () => {
@@ -1263,6 +1316,153 @@ process.exit(0);`,
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
   expect(JSON.parse(labels).title).toBe("SIMON/APP-12 login redirect");
   expect(said).not.toContain("couldn't rename");
+}, 40_000);
+
+test("a host that doesn't know rename is asked once for all its builders, and shows no error", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const labels = (task: string) =>
+    `{ repository: "simon/app", role: "builder", task: "app-${task}", title: "Fix ${task}" }`;
+  const said = runWithFakeHost(
+    "sessions",
+    `db.exec(${JSON.stringify(threadSql({ task: "13", session: "s", host: "fake", host_id: "fake-app-13", title: "Fix 13" }))});
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: ${labels("12")} });
+await startSession(host, "app-13", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: ${labels("13")} });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "unknown-rename"))}, "");
+await renameBuilders(db);
+record(db, "app-12", { short: "login redirect" });
+await renameBuilders(db);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix 12" },
+  );
+  const renames = readFileSync(join(fake, "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => JSON.parse(line).ask === "rename");
+  expect(renames).toHaveLength(1);
+  // A plugin without rename is no error, only titles that stay as they started.
+  expect(said).toBe("");
+}, 40_000);
+
+test("a rename that fails for another reason goes to the log, and the next is still asked", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "fail-rename"))}, "");
+record(db, "app-12", { short: "first" });
+await renameBuilders(db);
+record(db, "app-12", { short: "second" });
+await renameBuilders(db);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  expect(said).toBe(
+    "couldn't rename SIMON/APP-12 on fake: fake couldn't rename: the host is down for a moment\n",
+  );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
+}, 40_000);
+
+// Renames every live builder in a process of its own with the test's home, as an engine started
+// again would as it starts.
+function renameInNewEngine(): void {
+  const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { renameBuilders } from ${JSON.stringify(source("flow/thread.ts"))};
+await renameBuilders(openDb());`;
+  const run = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { ...process.env, ...homeEnv(home) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!run.success) throw new Error(run.stderr.toString());
+}
+
+test("a plugin without rename isn't asked again after a restart, but is once it updates", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const manifest = join(home, "plugin-fake", "skelcrew-plugin.yaml");
+  runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "unknown-rename"))}, "");
+await renameBuilders(db);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const renames = () =>
+    readFileSync(join(fake, "asked"), "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => JSON.parse(line).ask === "rename").length;
+  const title = () =>
+    JSON.parse(readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8")).title;
+  // The same version isn't asked again by an engine started again, even one that now could.
+  rmSync(join(fake, "unknown-rename"));
+  renameInNewEngine();
+  expect(renames()).toBe(1);
+  expect(title()).toBe("Fix the login redirect");
+  // Another version is asked again, and renames.
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace("version: 0.1.0", "version: 0.2.0"),
+  );
+  renameInNewEngine();
+  expect(renames()).toBe(2);
+  expect(title()).toBe("SIMON/APP-12 Fix the login redirect");
+}, 40_000);
+
+// Each fails in words much like an unknown question's, from a host that may well know rename: a
+// list wrapped before rename, and a list cut short with "at ask" elsewhere.
+test.each([
+  "✖ Invalid discriminator value. Expected 'start' | 'list' |\n  'rename' | 'status'; → at ask\n",
+  "✖ Invalid discriminator value. Expected 'start' | 'list'\nthe rename failed at ask time\n",
+])(
+  "a failure that only looks like an unknown question is asked again: %j",
+  (words) => {
+    const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+    const said = runWithFakeHost(
+      "sessions",
+      `const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(fake, "say-rename"))}, ${JSON.stringify(words)});
+await renameBuilders(db);
+await renameBuilders(db);
+console.log(JSON.stringify(db.query("SELECT no_rename FROM plugins WHERE name = 'fake'").get()));
+process.exit(0);`,
+      { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+    );
+    const renames = readFileSync(join(fake, "asked"), "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => JSON.parse(line).ask === "rename");
+    expect(renames).toHaveLength(2);
+    expect(said).toContain("couldn't rename SIMON/APP-12 on fake");
+    expect(said).toContain('{"no_rename":null}');
+  },
+  40_000,
+);
+
+test("a host down for every question isn't taken for one that can't rename", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+fs.writeFileSync(${JSON.stringify(join(fake, "down"))}, "");
+record(db, "app-12", { short: "first" });
+await renameBuilders(db);
+fs.rmSync(${JSON.stringify(join(fake, "down"))});
+record(db, "app-12", { short: "second" });
+await renameBuilders(db);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  expect(said).not.toContain("can't rename sessions");
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
 }, 40_000);
 
 // A builder started by a release before, whose title has no task's name, keeps running with its

@@ -2,7 +2,7 @@
 import { createConnection } from "node:net";
 import { z } from "zod";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
-import { type DaemonRequest, parseJson } from "./flow/requests.ts";
+import { type DaemonRequest, type LeadAction, parseJson } from "./flow/requests.ts";
 import { cliSocket } from "./paths.ts";
 import { quietly } from "./run.ts";
 
@@ -63,11 +63,15 @@ export async function namesRepository(word: string): Promise<boolean> {
   return checkReply(z.object({ named: z.boolean() }), reply).named;
 }
 
-// Asks the daemon for the threads, or one repository's, for sc ps. The daemon answers, as
-// the lead's sandbox hides Skelcrew's database.
-export async function askForThreads(repository?: string): Promise<ThreadRow[]> {
+// Asks the daemon for the threads, or one repository's, for sc ps, with who holds each check
+// slot taken now and since when. The daemon answers, as the lead's sandbox hides Skelcrew's
+// database, and only it counts the slots.
+export async function askForThreads(
+  repository?: string,
+): Promise<{ threads: ThreadRow[]; slots: { holder: string; since: number }[] }> {
   const reply = await request({ command: "ps", ...(repository ? { repo: repository } : {}) });
-  return checkReply(z.object({ threads: z.array(ThreadRow) }), reply).threads;
+  const Slot = z.object({ holder: z.string(), since: z.number() });
+  return checkReply(z.object({ threads: z.array(ThreadRow), slots: z.array(Slot) }), reply);
 }
 
 // Asks the daemon for the tasks of every repository, or of one, for sc ls.
@@ -163,14 +167,31 @@ export async function startNew(
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 
-// Has the daemon start a thread on an issue or merge a PR, for s or m on the screen's lists
-// and pages, which hold the request ready. Throws the daemon's error, such as the forge's
-// reason for refusing a merge. Only your own socket takes a merge, so no agent can merge.
-// Returns what the daemon said of a start, such as that the task waits in the queue, or null.
+// Has the daemon save a request of the lead's for sc ask, which waits under the lead in the
+// list for your y or n, and returns what the lead is told, naming the request. `repository` is
+// the lead's own, when the command named it, as sc start does.
+export async function askHuman(action: LeadAction, repository?: string): Promise<string> {
+  const reply = await request({
+    command: "ask",
+    action,
+    ...(repository ? { repo: repository } : {}),
+  });
+  return checkReply(z.object({ asked: z.string() }), reply).asked;
+}
+
+// Has the daemon start a thread on an issue, merge a PR or answer a lead's request, for a key
+// on the screen's lists and pages, which hold the request ready. Throws the daemon's error, such
+// as the forge's reason for refusing a merge. Only your own socket takes a merge or an answer,
+// so no agent can merge or say yes for you. Returns what the daemon said of a start or an
+// answer, such as that the task waits in the queue, or null.
 export async function startOrMerge(asked: DaemonRequest): Promise<string | null> {
   const reply = await request(asked);
-  const started = z.object({ started: z.string() }).safeParse(reply);
-  return started.success ? started.data.started : null;
+  const said = z
+    .object({ started: z.string() })
+    .or(z.object({ said: z.string() }))
+    .safeParse(reply);
+  if (!said.success) return null;
+  return "started" in said.data ? said.data.started : said.data.said;
 }
 
 // Has the daemon move a queued task one place earlier, by -1, or later, by 1, as a key in the
@@ -295,16 +316,14 @@ export async function submitForReview(summary: string): Promise<string> {
 }
 
 // Waits for one of the machine's check slots, for sc check, and returns the repository's test
-// commands and the connection's file descriptor, when Bun gives it. The daemon keeps the slot
-// while the connection stays open: in this process, and in any process the descriptor is handed
-// to. `queued` is told the caller's place in
-// line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
+// commands. The daemon keeps the slot while the connection stays open, so until this process
+// ends. `queued` is told the caller's place in line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
 // socket names its repository instead. Throws with the daemon's error, such as when no test
 // command is configured, or when nothing answers.
 export function takeCheckSlot(given: {
   queued: (place: number) => void;
   from?: string | undefined;
-}): Promise<{ test: string[]; fd: number | undefined }> {
+}): Promise<{ test: string[] }> {
   const { queued, from } = given;
   const Line = z.union([
     z.object({ queued: z.number() }),
@@ -335,12 +354,7 @@ export function takeCheckSlot(given: {
           fail(new Error(line.data.error));
         } else {
           answered = true;
-          // Node's socket keeps its descriptor on a field it doesn't publish, so it is read
-          // and checked here, and a Bun without it gives none.
-          const handle: unknown = Reflect.get(connection, "_handle");
-          const read = z.object({ fd: z.number().int().nonnegative() }).safeParse(handle);
-          const fd = read.success ? read.data.fd : undefined;
-          done({ test: line.data.test, fd });
+          done({ test: line.data.test });
         }
       }
     });

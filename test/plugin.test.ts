@@ -298,11 +298,11 @@ test("a manifest with jobs: that mixes machine with tracker still reads, as I/O"
 });
 
 // The shape of a runtime plugin such as herdr, which phase 5 builds on.
-test("a runtime plugin can provide sessions, transport and status, with their commands", async () => {
+test("a runtime plugin can provide sessions, transport, status and files, with their commands", async () => {
   const folder = join(home, "skelcrew-fake");
   fakePlugin(folder, "0.1.0", "session: [sh, session.sh]\nattach: [sh, attach.sh]\n");
   const manifest = join(folder, "skelcrew-plugin.yaml");
-  const runtime = "kind: runtime\nprovides: [sessions, transport, status]";
+  const runtime = "kind: runtime\nprovides: [sessions, transport, status, files]";
   writeFileSync(
     manifest,
     readFileSync(manifest, "utf8").replace("kind: io\nprovides: [tracker, forge]", runtime),
@@ -314,7 +314,7 @@ test("a runtime plugin can provide sessions, transport and status, with their co
     "  sh session.sh\n  sh attach.sh\n\nInstall the fake plugin? [Y/n]",
   );
   expect((await skel(["plugin", "ls"])).out).toBe(
-    "fake 0.1.0 runtime: sessions, transport, status\n",
+    "fake 0.1.0 runtime: sessions, transport, status, files\n",
   );
   // A change to either is asked about before it builds again, so with no terminal it doesn't.
   for (const [from, to] of [
@@ -341,6 +341,7 @@ test("a manifest whose kind doesn't fit what it provides, or that mixes both sha
   const manifest = join(folder, "skelcrew-plugin.yaml");
   for (const [lines, said] of [
     ["kind: runtime\nprovides: [tracker, forge]", "tracker isn't for a plugin of kind runtime"],
+    ["kind: io\nprovides: [tracker, forge, files]", "files isn't for a plugin of kind io"],
     ["kind: io\nprovides: [tracker]\njobs: [tracker]", "goes with neither kind nor provides"],
     ["provides: [tracker]", "needs kind and provides"],
   ] as const) {
