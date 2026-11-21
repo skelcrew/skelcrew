@@ -90,7 +90,7 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // records the thread as queued, to start once its turn comes in the queue, and the caller starts
 // nothing for it now. A task of the tracker that joins the queue is saved as owing its claim,
 // unless `claimed` says the label's start claimed it already, and leaves the queue only once
-// the claim is made.
+// the claim is made. With `now`, it starts at once over the limit, as sc start --now asks.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
 // just started. One at a time, the second finds that thread and is refused. `recorded` is told
@@ -105,6 +105,7 @@ export function startThread(
         from?: string | undefined;
         short?: string | undefined;
         flow?: string | undefined;
+        now?: boolean | undefined;
       }
     | {
         repo: string;
@@ -260,8 +261,8 @@ async function recordThread(
     if (before && before.status !== "failed" && before.status !== "done")
       throw new Error(`${taskName(name, task)} has a thread already`);
     // Counted in the same transaction as the thread is recorded, so two starts can't both take
-    // the last place.
-    const queued = joinsQueue(db, repository);
+    // the last place. A start with `now` never joins the queue: you chose to go over the limit.
+    const queued = !("now" in given && given.now) && joinsQueue(db, repository);
     const thread: Thread = {
       owner,
       repo,

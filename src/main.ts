@@ -726,8 +726,16 @@ async function threadCommand(args: string[]): Promise<void> {
   };
   const { at: shortAt, value: short } = option("--short");
   const { at: flowAt, value: flow } = option("--flow");
-  const taken = [shortAt, flowAt].flatMap((at) => (at === -1 ? [] : [at, at + 1]));
+  // --now starts a task at once, over its repository's limits.threads. It is yours, so sc ask
+  // start doesn't take it, and only sc start <task> does.
+  const nowAt = command === "start" && !asking ? rest.indexOf("--now") : -1;
+  const taken = [
+    ...[shortAt, flowAt].flatMap((at) => (at === -1 ? [] : [at, at + 1])),
+    ...(nowAt === -1 ? [] : [nowAt]),
+  ];
   const words = rest.filter((_, i) => !taken.includes(i));
+  if (nowAt !== -1 && !task)
+    throw new Error("Only sc start <task> takes --now, such as sc start APP-12 --now.");
   // --from takes a branch, and only sc start <issue> takes it.
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
   const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
@@ -737,7 +745,7 @@ async function threadCommand(args: string[]): Promise<void> {
     return;
   }
   if (!asking && command === "start" && task && (words.length === 0 || from)) {
-    console.log(await startOn(...task, from, short, flow));
+    console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true));
     return;
   }
   // --from names the branch an issue's thread starts from. A task with no issue has no such

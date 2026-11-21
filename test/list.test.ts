@@ -347,6 +347,8 @@ test("a claim the tracker hasn't taken yet is what the queue waits on, with buil
   expect(all.find((row) => row.name === "APP-31")?.start?.ask).toBe(
     "Queue APP-31? APP-21 waits for its issue's claim to reach the tracker, so it starts after the 2 queued. y/n",
   );
+  // A builder's place is free, so a task on Backlog isn't offered a start over the limit.
+  expect(all.find((row) => row.name === "APP-31")?.startNow).toBeNull();
 });
 
 // A paused thread's last change can come from a poll, such as its CI, so the newest task comes
@@ -1520,15 +1522,16 @@ function daemon(): void {
     by: z.number().default(0),
     id: z.number().default(0),
     yes: z.boolean().default(false),
+    now: z.boolean().default(false),
   });
   standIn = createServer((connection) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, id, yes } = Request.parse(
+      const { command, from, tab, repo, task, pr, commit, by, id, yes, now } = Request.parse(
         JSON.parse(data.toString()),
       );
       if (command === "answer") asked.push(`answer ${repo} ${id} ${yes ? "yes" : "no"}`);
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
-      if (command === "start") asked.push(`start ${repo} ${task}`);
+      if (command === "start") asked.push(`start ${repo} ${task}${now ? " now" : ""}`);
       if (command === "merge") asked.push(`merge ${repo} ${pr} ${commit}`);
       if (command === "queue move") asked.push(`queue move ${repo} ${task} ${by}`);
       const said =
@@ -1924,6 +1927,31 @@ test("shift+up on a queued task moves it earlier in the queue, and the line says
   press("S-Down");
   await until(() => seen().includes("APP-9 is paused: sc start APP-9 brings it back"), "why not");
   expect(asked.filter((line) => line.startsWith("queue move"))).toHaveLength(1);
+});
+
+// f starts a queued task now, over the limit, once you say y to a question that says so. With
+// every builder busy, a task on Backlog offers it too. A paused task isn't queued, so it doesn't.
+test("f on a queued task, or on Backlog with every builder busy, asks to start it now over the limit", async () => {
+  queueTwo();
+  await open();
+  await arrowTo("▸ ○ APP-20");
+  expect(seen()).toContain("f start now");
+  type("f");
+  await until(() => seen().includes("Start APP-20 now, over the limit of 3? y/n"), "the question");
+  type("y");
+  await until(() => asked.includes("start simon/app 20 now"), "the start");
+  await until(() => seen().includes("Started."), "the daemon's answer");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ APP-9"), "the paused row");
+  expect(seen()).not.toContain("f start now");
+  type("1");
+  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
+  expect(seen()).toContain("f start now");
+  type("f");
+  await until(() => seen().includes("Start APP-31 now, over the limit of 3? y/n"), "the question");
+  type("n");
+  await Bun.sleep(300);
+  expect(asked.filter((line) => line.startsWith("start"))).toEqual(["start simon/app 20 now"]);
 });
 
 // With every builder busy, s on Backlog asks to queue the task, and once queued the line keeps

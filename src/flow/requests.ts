@@ -82,6 +82,8 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     from: Branch.optional(),
     short: ShortTitle.optional(),
     flow: FlowName.optional(),
+    // Starts it at once, over the repository's limits.threads, for sc start --now.
+    now: z.literal(true).optional(),
   }),
   z.object({
     command: z.literal("start new"),
