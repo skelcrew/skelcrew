@@ -114,14 +114,14 @@ const roundLimit = (thread: Thread) => {
   }
 };
 
-// Returns when something happened as a clock time for a moment today, such as 14:32, and as a
-// date for an earlier one, such as 12 Nov, in this machine's time zone. The details pane says
-// when a task last changed with it, beside how long ago.
+// Returns when something happened as a clock time, such as 14:32, with the date before it for a
+// day before today, such as 12 Nov 23:59, in this machine's time zone. The details pane says when
+// a task last changed with it, beside how long ago.
 export function changedAt(at: number, now: number): string {
   const when = new Date(at);
-  if (when.toDateString() === new Date(now).toDateString())
-    return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })}`;
+  const clock = `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  if (when.toDateString() === new Date(now).toDateString()) return clock;
+  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })} ${clock}`;
 }
 
 // Returns how long ago a moment was, before `now`, both in milliseconds, in its largest whole

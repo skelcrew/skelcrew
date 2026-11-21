@@ -11,6 +11,7 @@ import { type Labels, startSession } from "../src/agents/sessions.ts";
 import { drawList, drawRows, type Frame, keysFor, paneWidth, tabAt } from "../src/list/layout.ts";
 import {
   ago,
+  changedAt,
   cutBacklog,
   type Row,
   type Section,
@@ -548,6 +549,10 @@ console.log(JSON.stringify(details?.changed));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toBe("last change 14:55, 5m ago");
+  // A change on an earlier day keeps its clock time, after its date.
+  const lateYesterday = new Date(2026, 10, 18, 23, 59).getTime();
+  expect(changedAt(lateYesterday, now)).toBe("18 Nov 23:59");
+  expect(changedAt(lateYesterday, new Date(2026, 10, 19, 0, 3).getTime())).toBe("18 Nov 23:59");
 });
 
 // A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
@@ -2532,7 +2537,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
     "─".repeat(paneWidth(wide)),
     "Needs you: question",
     "",
-    "Now      question · last change 19 Nov, 1d ago",
+    "Now      question · last change 19 Nov 14:58, 1d ago",
     "Issue    #12  https://github.com/simon/app/issues/12",
     "",
     "Task",
