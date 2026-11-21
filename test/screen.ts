@@ -32,13 +32,18 @@ export let terminal = "";
 
 // The sockets are the test's own too, as a sidebar tells whatever daemon it finds that it opened.
 export const env = () => ({ ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") });
-// Runs tmux on one of the test's servers, never on Skelcrew's own.
+// Runs tmux on one of the test's servers, never on Skelcrew's own. A tmux that never returns
+// would block the whole test file, Bun's own timeout included, until the run's limit ends its
+// worker without a word. So past 10 seconds it is ended, and the test fails naming the command.
 export function tmux(socket: string, ...args: string[]) {
   const run = Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args], {
     env: { ...env(), TMUX: "" },
     stdout: "pipe",
     stderr: "pipe",
+    timeout: 10_000,
   });
+  if (run.exitedDueToTimeout)
+    throw new Error(`tmux ${args.join(" ")} on ${socket} didn't return within 10 seconds`);
   return { ok: run.success, out: run.stdout.toString() };
 }
 
