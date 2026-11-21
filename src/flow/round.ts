@@ -47,6 +47,7 @@ import {
   cloneOf,
   hostMissing,
   markBeforeHost,
+  type Posting,
   readThread,
   record,
   repositoryOf,
@@ -770,42 +771,55 @@ function inTurn<T>(folder: string, write: () => Promise<T>): Promise<T> {
 }
 
 // Puts the thread's saved verdict on the forge in its turn: its review on the PR, then Skelcrew's
-// check on its commit. It is then no longer saved as posting, unless a newer verdict replaced it
-// meanwhile, which goes on in its own turn. A newer one already saved when the turn comes goes
-// on in its place, as the PR only shows the latest. Returns what the forge said when it failed,
-// or null. It never throws: the verdict stays saved, and each poll tries again, so a forge that
-// fails never stops the round, such as its changes reaching the builder.
+// check on its commit. Each is no longer saved as posting once the forge took it, unless a newer
+// verdict replaced it meanwhile, which goes on in its own turn. A newer one already saved when the
+// turn comes goes on in its place, as the PR only shows the latest. Returns what the forge said
+// when it failed, or null. It never throws: what is left stays saved, and each poll tries again,
+// so a forge that fails never stops the round, such as its changes reaching the builder.
 function postVerdict(db: Database, sessions: string, folder: string): Promise<string | null> {
   return inTurn(folder, async () => {
     const thread = readThread(db, folder);
-    const { posting } = thread;
+    let posting = thread.posting;
     if (posting === null) return null;
     const { commit, check, description, review } = posting;
+    // Saves that the forge took part of the verdict, as `left` is what is still to go on it, and
+    // returns whether this verdict is still the thread's latest, so the next step goes on.
+    const took = (saved: Posting, left: Posting | null, also: () => void = () => {}) =>
+      db.transaction(() => {
+        if (JSON.stringify(readThread(db, folder).posting) !== JSON.stringify(saved)) return false;
+        record(db, folder, { posting: left });
+        also();
+        return true;
+      })();
     try {
       const repository = repositoryOf(db, thread);
       if (review !== null) {
         await postOrEdit(db, folder, review.pr, review.commit, review);
         // sc show and the list read the PR's review from Skelcrew's copy, which a poll brings up
-        // to date only later. So the copy reads the PR back, and the verdict counts as on the
+        // to date only later. So the copy reads the PR back, and the review counts as on the
         // forge only once it has. A forge that fails here leaves it saved, to try again: the
         // review saved as posted is edited or left as it is then, never posted twice.
         await refreshPr(db, repository, review.pr);
+        // The review's note goes to the lead as the review stops being saved as posting, in one
+        // step, so a stop of the daemon can neither lose it nor say it twice. It goes only while
+        // the round limit still waits for a decision: sc start, or a mark set or cleared
+        // meanwhile, already decided it, and whatever else the thread needs you for has a note
+        // of its own. Skelcrew's check is left to go on by itself, so a forge that fails to take
+        // it never keeps the lead from hearing.
+        const { note } = posting;
+        const left = { ...posting, review: null, note: null };
+        const tell = () => {
+          if (note !== null && limitWaits(readThread(db, folder)))
+            noteForLead(db, sessions, thread, note);
+        };
+        if (!took(posting, left, tell)) return null;
+        posting = left;
       }
       await setStatus(db, repository, { commit, state: check, description });
     } catch (error) {
       return errorText(error);
     }
-    // The review's note goes to the lead with the posting cleared, in one step, so a stop of the
-    // daemon can neither lose it nor say it twice. It goes only while the round limit still
-    // waits for a decision: sc start, or a mark set or cleared meanwhile, already decided it,
-    // and whatever else the thread needs you for has a note of its own.
-    const now = readThread(db, folder);
-    if (JSON.stringify(now.posting) === JSON.stringify(posting))
-      db.transaction(() => {
-        record(db, folder, { posting: null });
-        if (posting.note !== null && limitWaits(now))
-          noteForLead(db, sessions, thread, posting.note);
-      })();
+    took(posting, null);
     return null;
   });
 }

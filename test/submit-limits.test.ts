@@ -168,6 +168,29 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(readBacks().length).toBeGreaterThan(1);
   }, 120_000);
 
+  // The note waits on the review alone. Skelcrew's check on the commit goes on by itself, so a
+  // forge slow to take it never keeps the lead from hearing of a review it can already read.
+  test("the round limit's note reaches the lead once its review is on the PR, though the check isn't yet", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    await startApp12();
+    await until(() => thread().review_round === 1 && thread().posting === null, 30_000);
+    // The forge holds the failed check of the second review, which reaches the round limit.
+    const hold = join(plugin, "hold-status-failure");
+    writeFileSync(hold, "");
+    await until(() => existsSync(join(plugin, "held-status")), 45_000);
+    await until(() => read(join(lead(), "typed")).includes("round limit is reached"), 15_000);
+    expect(existsSync(hold)).toBe(true);
+    expect(asked(plugin).filter((q) => q.ask === "review")).toHaveLength(2);
+    const saved = JSON.parse(String(thread().posting));
+    expect(saved).toMatchObject({ check: "failure", review: null, note: null });
+    rmSync(hold);
+    await until(() => thread().posting === null, 30_000);
+    expect(read(join(lead(), "typed")).split("round limit is reached").length - 1).toBe(1);
+  }, 120_000);
+
   // Your mark while the review waits for the forge decides its round limit, as a mark does. So
   // once the review is on the PR the lead hears of your mark, not of a limit already decided,
   // though the thread still needs you for the mark.
