@@ -58,15 +58,15 @@ const sections: [string, [string, string][]][] = [
     "ELSEWHERE",
     [
       ["--remote <host> install", "Send your personal files to a server, and set it up"],
-      ["--remote <host> up --bg", "Run the daemon on a server, in the background"],
+      ["--remote <host> serve --bg", "Run the daemon on a server, in the background"],
       ["--remote <host> [command]", "Run sc on a server, over ssh"],
     ],
   ],
   [
     "THE DAEMON",
     [
-      ["up", "Run the daemon here, until Ctrl-C"],
-      ["up --bg", "Run it as a systemd or launchd service, and return"],
+      ["serve", "Run the daemon here, until Ctrl-C"],
+      ["serve --bg", "Run it as a systemd or launchd service, and return"],
       ["restart", "Restart it, here or with --remote. Agents keep running"],
     ],
   ],

@@ -273,11 +273,11 @@ test("a command reaches the server exactly as typed", async () => {
   );
 });
 
-test("up --bg runs the engine on the server, with no repository passed", async () => {
+test("serve --bg runs the engine on the server, with no repository passed", async () => {
   installed(laptop.commit);
-  const run = await skel(["--remote", "simon@workbox", "up", "--bg"], "", checkout("simon/app"));
-  expect(run.out).toBe("Skelcrew on the server got 2 arguments\n[up]\n[--bg]\n");
-  expect(calls()).toBe(`${onServer(" up --bg")}\n`);
+  const run = await skel(["--remote", "simon@workbox", "serve", "--bg"], "", checkout("simon/app"));
+  expect(run.out).toBe("Skelcrew on the server got 2 arguments\n[serve]\n[--bg]\n");
+  expect(calls()).toBe(`${onServer(" serve --bg")}\n`);
 });
 
 test("without a terminal, --remote on a server without Skelcrew only says how to set it up", async () => {
@@ -688,8 +688,8 @@ function serverCheckout(name = "skel"): string {
 }
 
 // Writes the daemon's systemd unit on the server, starting the given Skelcrew with `command`:
-// up, or serve in a unit an older Skelcrew wrote.
-function unit(skel: string, command = "up"): void {
+// serve, or up in a unit an older Skelcrew wrote.
+function unit(skel: string, command = "serve"): void {
   const units = join(home, "server", ".config", "systemd", "user");
   mkdirSync(units, { recursive: true });
   writeFileSync(join(units, "skelcrew.service"), `[Service]\nExecStart="${skel}" ${command}\n`);
@@ -709,11 +709,11 @@ test("the update goes by what the daemon's service runs, not by ~/.local/bin", a
   expect(calls()).not.toMatch(/^systemctl --user restart/m);
 });
 
-// A server whose service an older Skelcrew installed runs sc serve, and is found all the same.
-test("the update finds the checkout of a service that runs sc serve", async () => {
+// A server whose service an older Skelcrew installed runs sc up, and is found all the same.
+test("the update finds the checkout of a service that runs sc up", async () => {
   installed("0000000");
   const checkout = serverCheckout();
-  unit(join(checkout, "bin", "sc"), "serve");
+  unit(join(checkout, "bin", "sc"), "up");
   const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
   expect(run.out).toContain(`Skelcrew on simon@workbox runs from a checkout at ${checkout}`);
 });
