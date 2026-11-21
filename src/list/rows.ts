@@ -58,7 +58,7 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // always agree. `needsYou` is whether it waits on you for
 // something other than a merge. `session` is the agent's session, which Enter attaches to,
 // `running` whether its agent runs, `working` whether an agent of its is at work this moment,
-// a builder, its reviewer or the lead, while it doesn't need you, and `tmux` whether Enter attaches to it on tmux, where
+// a builder, its reviewer or the lead, while it doesn't need you and nothing failed, and `tmux` whether Enter attaches to it on tmux, where
 // Ctrl-\ comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
 // Enter does on an issue, `startNow` what f does on a queued task, or on an issue while every
 // builder is busy, which starts it at once over limits.threads, and `merge` what m does on a task ready for review. `link` is its PR's,
@@ -292,7 +292,11 @@ function taskRow(
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
-    working: !ended && mark.sign === "○" && (shown.status === "working" || word === "reviewing"),
+    working:
+      !ended &&
+      mark.sign === "○" &&
+      mark.colour !== "red" &&
+      (shown.status === "working" || word === "reviewing"),
     tmux: !ended && !ready && (thread.host ?? "tmux") === "tmux",
     start: null,
     startNow: null,
@@ -636,9 +640,15 @@ export function shownRows(all: Row[], opened: Set<Section>, wholeBacklog: boolea
 }
 
 // A section's heading: its section, how many tasks it has, whether it is open, which shows its
-// rows, and what it says after its count, dim, which only Task queue has: how full the builders
-// are.
-export type Heading = { section: Section; count: number; open: boolean; note: string };
+// rows, what it says after its count, dim, which only Task queue has: how full the builders
+// are, and how many of its tasks wait only for you to merge them, which only Needs you has.
+export type Heading = {
+  section: Section;
+  count: number;
+  open: boolean;
+  note: string;
+  merges: number;
+};
 
 // Returns the heading of every section, in order, from all the rows, whether their section is open
 // or not, given the sections that are open. Needs you has none while no task needs you, as
@@ -646,10 +656,12 @@ export type Heading = { section: Section; count: number; open: boolean; note: st
 // buildersNote.
 export function sectionHeadings(rows: Row[], opened: Set<Section>, builders = ""): Heading[] {
   return sections.flatMap((section) => {
-    const count = rows.filter((row) => row.section === section).length;
-    if (section === "needs you" && count === 0) return [];
+    const ours = rows.filter((row) => row.section === section);
+    if (section === "needs you" && ours.length === 0) return [];
     const note = section === "task queue" ? builders : "";
-    return [{ section, count, open: opened.has(section), note }];
+    const merges = ours.filter((row) => row.mark.sign === "●" && row.mark.colour === "green");
+    const count = ours.length;
+    return [{ section, count, open: opened.has(section), note, merges: merges.length }];
   });
 }
 

@@ -266,17 +266,18 @@ test("a task approved past the round limit waits on you to merge, not on the lim
   expect(row).toMatchObject({ section: "needs you", says: "ready to merge", needsYou: false });
 });
 
+// Needs you also counts the tasks that wait only for you to merge them, such as APP-14.
 test("each section's heading counts its tasks, open or closed", () => {
   const opened = new Set<Section>(["needs you", "task queue", "building"]);
   expect(sectionHeadings(rows(), opened, "Building 1/1")).toEqual([
-    { section: "needs you", count: 2, open: true, note: "" },
-    { section: "task queue", count: 1, open: true, note: "Building 1/1" },
-    { section: "backlog", count: 1, open: false, note: "" },
-    { section: "building", count: 1, open: true, note: "" },
-    { section: "reviewing", count: 0, open: false, note: "" },
-    { section: "checks", count: 0, open: false, note: "" },
-    { section: "ready", count: 0, open: false, note: "" },
-    { section: "done", count: 0, open: false, note: "" },
+    { section: "needs you", count: 2, open: true, note: "", merges: 1 },
+    { section: "task queue", count: 1, open: true, note: "Building 1/1", merges: 0 },
+    { section: "backlog", count: 1, open: false, note: "", merges: 0 },
+    { section: "building", count: 1, open: true, note: "", merges: 0 },
+    { section: "reviewing", count: 0, open: false, note: "", merges: 0 },
+    { section: "checks", count: 0, open: false, note: "", merges: 0 },
+    { section: "ready", count: 0, open: false, note: "", merges: 0 },
+    { section: "done", count: 0, open: false, note: "", merges: 0 },
   ]);
 });
 
@@ -991,7 +992,7 @@ test("every section has its heading with its count, only open ones show rows, an
     "   ◆ Lead · Claude Code                                              ○ starting",
     "",
     "─".repeat(79),
-    "   1 running · 1 queued · 2 needs you",
+    "   1 running · 1 queued · 1 ready · 1 needs you",
     "",
     "   Needs you  2",
     " ▸ ● 12  Rate limit the API",
@@ -1245,7 +1246,7 @@ test("each line drawn says what a click on it reaches", () => {
     targets[lines.findIndex((line) => Bun.stripANSI(line).includes(text))];
   expect(at("◆ Lead")).toEqual({ row: 0 });
   expect(at("─")).toBeNull();
-  expect(at("2 needs you")).toBeNull();
+  expect(at("1 needs you")).toBeNull();
   expect(at("Backlog")).toEqual({ section: "backlog" });
   expect(at("Ready")).toEqual({ section: "ready" });
   expect(at("Login redirect")).toEqual({ row: shown.findIndex((row) => row.name === "APP-7") });
@@ -1295,7 +1296,7 @@ test("the lead heads the list with its state and step, then a line across and th
     `${"   ◆ Lead · Claude Code".padEnd(41)}○ working`,
     "     Reading rows.ts",
     "─".repeat(50),
-    "   1 running · 1 queued · 2 needs you",
+    "   1 running · 1 queued · 1 ready · 1 needs you",
     "",
     "   Needs you  2",
   ]);
@@ -1303,8 +1304,9 @@ test("the lead heads the list with its state and step, then a line across and th
   // Each count is in the colour of what it counts, and the line across is dim.
   expect(lines[2]).toStartWith("\x1b[90m─");
   expect(lines[3]).toContain("\x1b[90m1 queued");
-  expect(lines[3]).not.toContain("ready");
-  expect(lines[3]).toContain("\x1b[38;5;221m2 needs you");
+  // APP-14 waits only for you to merge it, so it counts as ready, though it shows under Needs you.
+  expect(lines[3]).toContain("\x1b[38;5;120m1 ready");
+  expect(lines[3]).toContain("\x1b[38;5;221m1 needs you");
   // On the lead's row, both its lines are shaded. Narrow, its title gives way to its state.
   const narrow = drawRows(shown, sectionHeadings(all, opened), 0, 0, 30, 30).lines;
   expect(narrow[0]).toContain("\x1b[48;5;238m");
@@ -1356,6 +1358,13 @@ test("with the spinner, the marks of agents at work are its first frame, and the
   sql("UPDATE threads SET reviewing = 'abc', asking = 1 WHERE folder = 'app-7';");
   expect(rows().find((row) => row.name === "APP-7")).toMatchObject({
     mark: { sign: "●" },
+    working: false,
+  });
+  // A failure keeps its red mark, though its builder still works, so it never looks like work.
+  sql("UPDATE threads SET reviewing = NULL, asking = 0, review_failed = 1 WHERE folder = 'app-7';");
+  expect(rows().find((row) => row.name === "APP-7")).toMatchObject({
+    says: "review failed",
+    mark: { sign: "○", colour: "red" },
     working: false,
   });
   // Paused and waiting tasks never spin, and without the spinner nothing does.
@@ -1555,7 +1564,7 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
     "   ◆ Lead · Claude Code                                              ○ starting",
     "",
     "─".repeat(79),
-    "   11 running · 1 queued · 2 needs you",
+    "   11 running · 1 queued · 1 ready · 1 needs you",
     "",
     " ↑ 11 more   Needs you 2   Task queue 1   Backlog 1   Building 11",
     "   ○ 57  Task 57",

@@ -464,7 +464,8 @@ export type Spin = { line: number; column: number; cell: string };
 // `◆ Lead · Claude Code`, its harness, with its mark and state on the right, such as `○ idle`.
 // Its title is cut first to fit. The second says what the lead is doing while it works. Then a
 // line across, a line of how many tasks are where, such as `9 running · 2 ready · 1 needs you`,
-// with only those that have any, and a blank line. Gives the lines, and where its mark is. On a
+// with only those that have any: a task waiting only for you to merge it counts as ready, though
+// it shows under Needs you. Then a blank line. Gives the lines, and where its mark is. On a
 // place too short for all of them, its last lines give way, so the row you are on still shows.
 function leadBlock(
   row: Row,
@@ -491,11 +492,12 @@ function leadBlock(
   const second = step ? `${indent}${tinted(here, colour, step)}` : "";
   const count = (section: Section) =>
     headings.find((heading) => heading.section === section)?.count ?? 0;
+  const merges = headings.find((heading) => heading.section === "needs you")?.merges ?? 0;
   const parts = [
     { count: count("building") + count("reviewing") + count("checks"), word: "running", code: "" },
     { count: count("task queue"), word: "queued", code: grey },
-    { count: count("ready"), word: "ready", code: green },
-    { count: count("needs you"), word: "needs you", code: yellow },
+    { count: count("ready") + merges, word: "ready", code: green },
+    { count: count("needs you") - merges, word: "needs you", code: yellow },
   ].filter((part) => part.count > 0);
   const said = parts.map((part) => `${part.count} ${part.word}`);
   const plain = `   ${said.join(" · ") || "nothing under way"}`;
