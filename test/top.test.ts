@@ -263,7 +263,20 @@ test("on a screen that shows one side at a time, the header names it, with a way
   expect(headerRow(sidebar, narrow)).not.toContain("range=user|sidebar");
 });
 
-test("a side's name too long for the header gives way, and the version stays", () => {
+test("a side's name too long for the header is cut, and the way back to the sidebar stays", () => {
   const agent = { side: "a-very-long-task-name-indeed", typingRight: true, fullScreen: true };
-  expect(above(agent, { sidebar: 20, right: 5 })).toBe("Skelcrew v0.1.0");
+  const given = { sidebar: 30, right: 5 };
+  expect(above(agent, given)).toBe("Skelcrew ‹ sidebar · a-very…");
+  expect(above(agent, { sidebar: 20, right: 5 })).toBe("Skelcrew ‹ sidebar");
+  expect(headerRow(agent, given)).toContain("#[range=user|sidebar]");
+  expect(seen(headerRow(agent, given))).toHaveLength(terminal(given));
+});
+
+test("on a phone-wide screen with many tabs, the way back to the sidebar still shows", () => {
+  const tabs = ["app", "site", "docs", "api", "billing"].map((name) => tab(name, 2, 1));
+  const given = { sidebar: 17, right: 18 };
+  const line = headerRow({ tabs, side: "lead", typingRight: true, fullScreen: true }, given);
+  expect(seen(line)).toContain("‹ sidebar");
+  expect(line).toContain("#[range=user|sidebar]");
+  expect(seen(line)).toHaveLength(terminal(given));
 });

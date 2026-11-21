@@ -36,40 +36,43 @@ const inColour = (colour: string, text: string) => `#[fg=${colour}]${text}#[defa
 export const sidebarRange = "sidebar";
 
 // Returns the header's left part, `width` columns wide, before the tabs: Skelcrew's name in line
-// with the sidebar's marks, then the side that shows on a screen that shows one at a time, with
-// a way back to the sidebar to tap from an agent, then dim the longest name of its version that
-// fits, such as v0.4.2 or 6f1c2ab (checkout), then, on a remote, a dot and where it runs, then
-// spaces out to the end. `where` is empty on this machine. It comes from outside, so it is made
-// safe as a title is. What follows the name stops a column before the end, so a
-// space always parts it from the tabs. The place gives way first. A version is never cut, as half
-// a number would be a different one.
+// with the sidebar's marks, then on a screen that shows one side at a time, a way back to the
+// sidebar to tap from an agent and the name of the side that shows, then dim the longest name of
+// its version that fits, such as v0.4.2 or 6f1c2ab (checkout), then, on a remote, a dot and where
+// it runs, then spaces out to the end. `where` is empty on this machine. It comes from outside, so
+// it is made safe as a title is. What follows the name stops a column before the end, so a space
+// always parts it from the tabs. The place gives way first, then the version, then the side's name,
+// which is cut, and the way back last. A version is never cut, as half a number would be a
+// different one.
 function header(where: string, width: number, versions: string[], side: Side): string {
   const nameWidth = 12;
   if (width < nameWidth + 1) return " ".repeat(Math.max(width, 0));
-  const sideWidth = side.text ? 1 + Bun.stringWidth(sideText(side)) : 0;
-  const sideFits = sideWidth <= width - 1 - nameWidth;
-  const room = Math.max(width - 1 - nameWidth - (sideFits ? sideWidth : 0), 0);
+  const free = width - 1 - nameWidth;
+  const back = side.back && free >= backWidth;
+  const between = back ? " · " : " ";
+  const sideRoom = free - (back ? backWidth : 0) - between.length;
+  const sideName =
+    side.text && sideRoom >= 2 ? fitted(removeControlCodes(side.text), sideRoom) : "";
+  const sideWidth =
+    (back ? backWidth : 0) + (sideName ? between.length + Bun.stringWidth(sideName) : 0);
+  const drawnSide = `${back ? backLink : ""}${sideName && `${between}#[fg=colour231]${escaped(sideName)}#[default]`}`;
+  const room = Math.max(free - sideWidth, 0);
   const fits = (name: string) => Bun.stringWidth(name) + 1 <= room;
   const shown = versions.find(fits) ?? versions.at(-1) ?? "";
   const taken = Bun.stringWidth(shown) + 1;
   const number = room >= taken ? ` ${shown}` : "";
   const place = fitted(removeControlCodes(where), Math.max(room - 3 - taken, 0));
   const about = `${number}${place && ` · ${place}`}`;
-  const shownSide = sideFits ? sideWidth : 0;
-  const rest = Math.max(width - nameWidth - shownSide - Bun.stringWidth(about), 0);
+  const rest = Math.max(width - nameWidth - sideWidth - Bun.stringWidth(about), 0);
   const dimmed = about && `#[fg=brightblack]${escaped(about)}#[default]`;
-  return `    ${skelName}${sideFits ? drawSide(side) : ""}${dimmed}${" ".repeat(rest)}`;
+  return `    ${skelName}${drawnSide}${dimmed}${" ".repeat(rest)}`;
 }
 
 type Side = { text: string; back: boolean };
 const backText = "‹ sidebar";
+const backWidth = 1 + Bun.stringWidth(backText);
+const backLink = ` #[range=user|${sidebarRange}]#[fg=${lit}]${backText}#[default]#[norange]`;
 const sideText = (side: Side) => (side.back ? `${backText} · ${side.text}` : side.text);
-const drawSide = (side: Side) => {
-  if (!side.text) return "";
-  const named = `#[fg=colour231]${escaped(removeControlCodes(side.text))}#[default]`;
-  if (!side.back) return ` ${named}`;
-  return ` #[range=user|${sidebarRange}]#[fg=${lit}]${backText}#[default]#[norange] · ${named}`;
-};
 
 // Returns the tabs as a tmux format, given each repository's tab, the open one's owner/name, and
 // the room they have, with how many columns they take, which is never more than the room. Each
@@ -186,6 +189,7 @@ export function drawTop(top: Top, size: Size): { header: string; boxes: string }
   let split = size.sidebar + 3;
   if (headerNeeds > split) split = Math.max(split, Math.min(headerNeeds, width - tabsNeed));
   else if (tabsNeed > width - split) split = Math.max(headerNeeds, width - tabsNeed);
+  if (side.back) split = Math.max(split, Math.min(13 + backWidth, width));
   const tabs = drawTabs(top.tabs, top.open, Math.max(width - split, 0));
   const after = " ".repeat(Math.max(width - split - tabs.width, 0));
   const [left, right] = top.fullScreen ? [lit, lit] : top.typingRight ? [dim, lit] : [lit, dim];
