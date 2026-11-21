@@ -782,13 +782,12 @@ test("the old top-level plugin commands point to sc plugin", async () => {
   }
 });
 
-// sc add adds a task now. A plugin's owner/repo alone, as sc add once took it, points to sc plugin
-// add rather than failing as a task with no title.
-test("sc add with only a plugin's owner/repo points to sc plugin add", async () => {
+// sc add is only for tasks, so a plugin's owner/repo alone is a task with no title.
+test("sc add with only a plugin's owner/repo is a task with no title, not a plugin command", async () => {
   const run = await skel(["add", "skelcrew/skelcrew-github"]);
   expect(run.code).toBe(1);
   expect(run.err).toBe(
-    "Skelcrew: plugins are added with sc plugin add now, such as sc plugin add skelcrew/skelcrew-github.\n",
+    "Skelcrew: sc add read no title on stdin: give the title on the first line, then the body\n",
   );
 });
 

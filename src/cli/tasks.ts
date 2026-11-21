@@ -90,7 +90,6 @@ export async function addCommand(args: string[]): Promise<void> {
     given = { title, body: bodyFor(shown, body) };
   else if (words.length === 0) {
     const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
-    if (rest.length === 0 && repository.includes("/") && !text.trim()) usage("add", repository);
     if (!process.stdin.isTTY) given = parseTask(text, shown);
   }
   if (!given) usage("add");
