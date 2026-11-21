@@ -660,3 +660,28 @@ test("a claim that answers while sc rm waits on the forge assigns the issue once
   await until(() => asked(plugin).some((q) => q.ask === "assign" && q.on === true));
   expect(statuses()["app-12"]).toBe("queued");
 }, 60_000);
+
+test("a claim taken elsewhere while sc rm waits on the forge leaves the end to sc rm when it succeeds", async () => {
+  addApp();
+  // app-12 waits in the queue, with a PR, and still owes the claim of its issue.
+  const rows = `${threadSql({ task: "12", title: "Add export", status: "queued", session: "t", pr: 7, queued_since: 1 })}
+INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12');`;
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(rows)});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  await serveApp();
+  writeFileSync(join(plugin, "hold-close-pr"), "");
+  const removal = runSkel(["rm", "app-12"], env());
+  await until(() => asked(plugin).some((q) => q.ask === "close pr"));
+  answer(plugin, "took", { took: false });
+  rmSync(failing);
+  await queueLooked();
+  rmSync(join(plugin, "hold-close-pr"));
+  expect((await removal).code).toBe(0);
+  // sc rm removed it, so the lead hears nothing of the claim, and nothing stays owed.
+  await until(() => claimsSaved() === 0);
+  expect(statuses()["app-12"]).toBe("done");
+  expect(leadHears()).not.toContain("APP-12 left the queue");
+}, 60_000);
