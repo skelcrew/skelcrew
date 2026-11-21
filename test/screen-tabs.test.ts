@@ -133,9 +133,9 @@ test("a click on a tab switches to its repository", async () => {
 test("several Alt keys typed together all move, and none is typed into the agent", async () => {
   open("lead");
   await ready("lead");
-  // The second task is six rows down, past the headings of Needs you, Up next, Backlog and
-  // Building.
-  type("\x1b[1;3B".repeat(6));
+  // The second task is five rows down, past the headings of the task queue, Backlog and
+  // Building. Nothing needs you, so Needs you has no heading.
+  type("\x1b[1;3B".repeat(5));
   await until(() => selected().includes("APP-7"), "the second task");
   await until(onDetails, "app-7's details");
   await Bun.sleep(300);

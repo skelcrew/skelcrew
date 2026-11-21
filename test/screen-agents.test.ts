@@ -53,28 +53,29 @@ setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 
-test("shows the lead, then Needs you, Up next and the stages, beside the agent", async () => {
+test("shows the lead, then the task queue and the stages, beside the agent", async () => {
   open("lead");
   await ready("lead");
   const lines = seen().split("\n");
   const left = (y: number) => lines[y]?.slice(0, sidebar - 1).trimEnd();
-  // The lead is at the top of the sidebar, below a blank line, then a blank line, Needs you, Up
-  // next and the six stages, with only Building open.
+  // The lead is at the top of the sidebar, below a blank line, then a blank line, the task queue,
+  // a blank line and the six stages, with only Building open. Nothing needs you, so Needs you
+  // has no heading.
   expect(left(1)).toBe("");
   expect(lines[1]).toContain("I am lead");
   expect(left(2)).toMatch(/^ ▹ ○ lead\b/);
   expect(left(3)).toBe("     running");
   expect(left(4)).toBe("");
-  expect(left(5)).toBe("   Needs you 0");
-  expect(left(6)).toBe("   Up next   0");
-  expect(left(7)).toBe(" 1 Backlog   0");
-  expect(left(8)).toBe(" 2 Building  2");
+  expect(left(5)).toBe(" 0 Task queue 0");
+  expect(left(6)).toBe("");
+  expect(left(7)).toBe(" 1 Backlog    0");
+  expect(left(8)).toBe(" 2 Building   2");
   expect(left(9)).toMatch(/^ {3}○ APP-12/);
   expect(left(10)).toMatch(/^ {5}working/);
   expect(left(11)).toMatch(/^ {3}○ APP-7/);
   expect(left(13)).toBe("");
-  expect(left(14)).toBe(" 3 Reviewing 0");
-  expect(left(17)).toBe(" 6 Done      1");
+  expect(left(14)).toBe(" 3 Reviewing  0");
+  expect(left(17)).toBe(" 6 Done       1");
   expect(selected()).toMatch(/^▹ ○ lead\b/);
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -323,7 +324,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   await until(() => colours().includes("\x1b[38;5;221m●"), "needs you");
   expect(seen()).toContain("● APP-12");
-  expect(seen()).toContain("Needs you 1");
+  expect(seen()).toContain("Needs you  1");
   // Its tab says so too, as other repositories' tabs would.
   expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*▕ {3}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
@@ -812,7 +813,7 @@ test("a task that ends while you are on it stays yours, under Done, which opens"
   await ready("lead");
   await toSecondThread();
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
-  await until(() => seen().includes("6 Done      2"), "app-7 to end");
+  await until(() => seen().includes("6 Done       2"), "app-7 to end");
   await until(() => selected().includes("APP-7"), "the sidebar to stay on APP-7");
   expect(seen()).toContain("○ APP-12");
 });

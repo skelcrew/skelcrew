@@ -136,7 +136,7 @@ test("the help lists the screen's keys, anywhere first, then the sidebar's", () 
   const order = [
     "ctrl + \\ ",
     "alt + ↑/↓ ",
-    "alt + 1-6 ",
+    "alt + 0-6 ",
     "alt + q ",
     "enter ",
     "shift + enter, a ",
@@ -148,7 +148,7 @@ test("the help lists the screen's keys, anywhere first, then the sidebar's", () 
   expect(keys).toMatch(/\n {2}m +merge a ready task\n/);
   expect(keys).toMatch(/\n {2}shift \+ enter, a +type to the row's agent full screen\n/);
   expect(keys).not.toContain("alt + ←");
-  expect(keys).toMatch(/\n {2}shift \+ ↑\/↓ +move a queued task in up next\n/);
+  expect(keys).toMatch(/\n {2}shift \+ ↑\/↓ +move a queued task in the task queue\n/);
   expect(keys).toMatch(/\n {2}s +start or queue a task in the backlog\n/);
   expect(out).not.toContain("ctrl + q");
   expect(out).not.toContain("⌃Q");

@@ -101,18 +101,18 @@ const config = [
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
   // into the agent. A paste that matters comes bracketed anyway.
   ["set", "-g", "assume-paste-time", "0"],
-  // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-1 to
-  // Alt-6, which open and close the stages, go to the sidebar, in pane 0, without moving your
-  // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as they move a word in
-  // its prompt, and so do Alt-B and Alt-F, which is how tmux reads the Esc b and Esc f a Mac
-  // terminal often sends for Option-Left and Option-Right.
+  // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-0 to
+  // Alt-6, which open and close the task queue and the stages, go to the sidebar, in pane 0,
+  // without moving your typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as
+  // they move a word in its prompt, and so do Alt-B and Alt-F, which is how tmux reads the Esc b
+  // and Esc f a Mac terminal often sends for Option-Left and Option-Right.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
-  ...["1", "2", "3", "4", "5", "6"].map((digit) => [
+  ...["0", "1", "2", "3", "4", "5", "6"].map((digit) => [
     "bind",
     "-n",
     `M-${digit}`,
