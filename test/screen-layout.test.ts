@@ -203,7 +203,7 @@ test("the footer runs across the screen under the boxes' line, with where you ty
   await until(
     () =>
       footer() ===
-      "  ↑↓ move  ⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  1-6 stages  R restart  w close  ⌥Q quit",
+      "  ↑↓ move  ⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  0-6 sections  R restart  w close  ⌥Q quit",
     "a task's footer",
   );
   press("M-Down");
