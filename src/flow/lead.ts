@@ -378,20 +378,28 @@ export function leadPrompted(db: Database, owner: string, repo: string): void {
 // so a lead on a plugin's host is never taken for one you exited: it comes back as one that
 // crashed. Only tmux is asked, which answers at once, so a plugin's host that hangs holds up
 // nothing here. A lead being started or ended is left to that, which ends what it left behind:
-// closed meanwhile, a lead you just opened again would have its tab closed under it.
+// closed meanwhile, a lead you just opened again would have its tab closed under it. So is a
+// repository you open again before its tab closes: opening it wins, and the lead's start that
+// follows ends the old session.
 export async function closeExitedLeads(db: Database, sessions: string): Promise<void> {
   for (const { owner, repo } of openedRepositories(db)) {
     const { name, host, hostId } = leadOf(db, owner, repo);
     const agent = leadAgent(owner, repo);
     const id = hostId ?? name;
     if (host !== "tmux" || agent.state().busy || !exitedCleanly(sessions, id)) continue;
+    const { opened } = z
+      .object({ opened: z.number().nullable() })
+      .parse(
+        db.query("SELECT opened FROM repositories WHERE owner = ? AND repo = ?").get(owner, repo),
+      );
     await agent.end({
       stop: async () => {
         if (!exitedCleanly(sessions, id)) return;
-        db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
-          owner,
-          repo,
-        ]);
+        const closed = db.run(
+          "UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ? AND tab_closed = 0 AND opened IS ?",
+          [owner, repo, opened],
+        );
+        if (closed.changes === 0) return;
         await endSession(sessions, id);
         console.log(
           `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,

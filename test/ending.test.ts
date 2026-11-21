@@ -225,3 +225,22 @@ const fresh = await startThread(db, { repo: "app", task: "t1" });
 console.log(JSON.stringify({ status: readThread(db, fresh.folder).status, new: fresh.started !== thread.started }));`);
   expect(seen).toEqual({ status: "working", new: true });
 });
+
+// The look for exited leads can find a lead you exited just as you open its repository again.
+// Opening it then wins: its tab stays open, and the start that follows deals with the old session.
+test("a lead you exited and opened again at once keeps its tab open", () => {
+  const seen =
+    withThread(`const { closeExitedLeads, leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { exitedCleanly, startSession } = await import(${JSON.stringify(source("agents/sessions.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const done = ${JSON.stringify(join(home, "lead.done"))};
+const labels = { repository: "simon/app", role: "lead" };
+await startSession(socket, name, { folder: ${JSON.stringify(home)}, command: ["sh", "-c", \`while [ ! -e \${done} ]; do sleep 0.05; done\`], env: {}, labels, keepOnExit: true });
+require("node:fs").writeFileSync(done, "");
+while (!exitedCleanly(socket, name)) await Bun.sleep(20);
+const closing = closeExitedLeads(db, socket);
+db.run("UPDATE repositories SET opened = opened + 1, tab_closed = 0 WHERE owner = 'simon' AND repo = 'app'");
+await closing;
+console.log(JSON.stringify(db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get()));`);
+  expect(seen).toEqual({ tab_closed: 0 });
+});
