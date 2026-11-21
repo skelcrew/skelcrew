@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { checkThenSc, quoted } from "../src/machine/remote.ts";
 import { source } from "./harness.ts";
 
@@ -1457,10 +1457,12 @@ test("an agent can't set up a machine", () => {
   expect(calls()).toBe("");
 });
 
-test("a file dropped onto the server's screen is sent to the agent it shows, and the paste says where", async () => {
-  // The screen there reads one line, as an agent would, once it knows the name the laptop gave it.
-  // The server's sidebar answers that the screen shows the agent whose folder is ~/agent, with a
-  // mark that changes at each answer.
+// Drops `shot` onto the server's screen through the laptop's sc --remote, with Enter right after,
+// and returns the line the screen there got and the screen's name. The screen there reads one
+// line, as an agent would, once it knows the name the laptop gave it. The server's sidebar
+// answers that the screen shows the agent whose folder is ~/agent, with a mark that changes at
+// each answer.
+async function dropOnServer(shot: string): Promise<{ got: string; screen: string }> {
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
   writeFileSync(
     join(home, "server", ".local", "bin", "sc"),
@@ -1472,8 +1474,6 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
     `#!/bin/sh\necho "tmux $*" >> "${join(home, "calls")}"\nn=$(($(cat n 2>/dev/null || echo 0) + 1)); echo $n > n\necho "$n $HOME/agent"\n`,
     { mode: 0o755 },
   );
-  const shot = join(home, "Screen Shot.png");
-  writeFileSync(shot, "pixels");
   const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox"], {
     cwd: home,
     env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
@@ -1481,15 +1481,21 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
   });
   const named = join(home, "server", "screen-name");
   for (let waited = 0; !existsSync(named) && waited < 100; waited++) await Bun.sleep(50);
-  // Enter pressed right after the drop waits for its paste.
   run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`);
   await run.exited;
   run.terminal?.close();
-  const screen = readFileSync(named, "utf8").trim();
+  const got = readFileSync(join(home, "server", "got"), "utf8").trim();
+  return { got, screen: readFileSync(named, "utf8").trim() };
+}
+
+test("a file dropped onto the server's screen is sent to the agent it shows, and the paste says where", async () => {
+  const shot = join(home, "Screen Shot.png");
+  writeFileSync(shot, "pixels");
+  // Enter pressed right after the drop waits for its paste.
+  const { got, screen } = await dropOnServer(shot);
   expect(screen).toMatch(/^screen-\w+$/);
   // It reads the sidebar's answer there, by the screen's name.
   expect(calls()).toContain(`tmux -L skelcrew-screen display -p -t =${screen}: #{@drop-answer}`);
-  const got = readFileSync(join(home, "server", "got"), "utf8").trim();
   const agent = join(home, "server", "agent", ".skelcrew-drops");
   // The drop's question, a right click on the top row, goes just ahead of the paste.
   expect(got.startsWith(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${agent}/`)).toBe(true);
@@ -1498,7 +1504,23 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
     .slice(got.indexOf("\x1b[200~") + "\x1b[200~".length, -"\x1b[201~".length)
     .replaceAll("\\ ", " ");
   expect(readFileSync(copy, "utf8")).toBe("pixels");
-  expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
+  // Git never sees the copy, so a builder doesn't commit it.
+  expect(readFileSync(join(dirname(copy), ".gitignore"), "utf8")).toBe("*\n");
+});
+
+test("a drops folder on the server that the agent made a link out of its folder is never written through", async () => {
+  // A link out to a folder of yours there, with a .gitignore of its own.
+  const yours = join(home, "server", "yours");
+  mkdirSync(join(home, "server", "agent"), { recursive: true });
+  mkdirSync(yours);
+  writeFileSync(join(yours, ".gitignore"), "node_modules\n");
+  symlinkSync(yours, join(home, "server", "agent", ".skelcrew-drops"));
+  const shot = join(home, "shot.png");
+  writeFileSync(shot, "pixels");
+  const { got } = await dropOnServer(shot);
+  expect(got).toBe(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${shot}\x1b[201~`);
+  expect(readdirSync(yours)).toEqual([".gitignore"]);
+  expect(readFileSync(join(yours, ".gitignore"), "utf8")).toBe("node_modules\n");
 });
 
 test("a text paste reaches the server's screen as it was", async () => {

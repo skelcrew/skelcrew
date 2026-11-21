@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { isIP } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { screenSocket } from "../agents/tmux.ts";
 import { sshFolder } from "../paths.ts";
 import { quietly } from "../run.ts";
@@ -340,9 +340,23 @@ function dropOnServer(machine: Machine, screen: string): Drop {
   const put = (folder: string, files: string[]) =>
     Promise.all(
       files.map(async (file) => {
+        // As on one machine, a drops folder that is a link is refused, and the copy's own new
+        // folder must be inside the agent's folder once every link is followed. Nothing is
+        // written over, so a link the agent made there never leads the copy outside its folder.
         const copy = dropPath(folder, file);
-        const ignored = join(folder, dropsFolder, ".gitignore");
-        const line = `mkdir -p ${quoted(dirname(copy))} && printf '*\n' > ${quoted(ignored)} && cat > ${quoted(copy)}`;
+        const drops = join(folder, dropsFolder);
+        const unique = dirname(copy);
+        const inside = `$(cd -P ${quoted(folder)} && pwd)/${dropsFolder}/${basename(unique)}`;
+        const line = [
+          `{ mkdir -p ${quoted(drops)} 2>/dev/null; true; }`,
+          `[ -d ${quoted(drops)} ] && [ ! -L ${quoted(drops)} ]`,
+          `mkdir ${quoted(unique)}`,
+          `real=$(cd -P ${quoted(unique)} && pwd)`,
+          `{ [ "$real" = "${inside}" ] || { rmdir ${quoted(unique)}; false; }; }`,
+          "set -C",
+          `printf '*\n' > "$real/.gitignore"`,
+          `cat > "$real"/${quoted(basename(copy))}`,
+        ].join(" && ");
         const sent = Bun.spawn(quiet(`sh -c ${quoted(line)}`), {
           stdin: Bun.file(file),
           stdout: "ignore",
