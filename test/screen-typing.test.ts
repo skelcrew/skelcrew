@@ -180,7 +180,8 @@ test("Enter on a task gives its builder your typing, and Ctrl-\\ brings it back 
   await until(onDetails, "app-7's details");
   await until(typingToSidebar, "the sidebar to take your typing");
   expect(selected()).toMatch(/ 7\b/);
-  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen");
+  // The footer is drawn a moment after the row, so it is waited for.
+  await until(() => footer().includes("⏎ attach  ⇧⏎/a full screen"), "the sidebar's keys");
 });
 
 for (const [key, how] of [
