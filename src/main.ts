@@ -87,6 +87,11 @@ async function runCommand(args: string[]): Promise<void> {
   if (runByAgent() && refusal)
     throw new Error(`${refusal} is only for your own terminal, not for agents`);
 
+  return dispatch(words, json);
+}
+
+async function dispatch(words: string[], json: boolean): Promise<void> {
+  const [first] = words;
   const list = first === "--list";
   const lead = list ? words.slice(1) : words;
   if (lead.length === 0 || (lead[0] === "--from" && lead[1] && lead.length === 2))
