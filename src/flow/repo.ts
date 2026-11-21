@@ -896,16 +896,30 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   const fullName = `${found.owner}/${found.repo}`;
   const { folder } = leadOf(db, found.owner, found.repo);
   await closeTabAndEndLead(db, sessions, found, "remove");
-  db.transaction(() => {
-    const removed = db.run(
-      "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
-      [found.owner, found.repo],
+  const row = z
+    .record(z.string(), z.union([z.string(), z.number(), z.null()]))
+    .parse(
+      db
+        .query("SELECT * FROM repositories WHERE owner = ? AND repo = ?")
+        .get(found.owner, found.repo),
     );
-    if (removed.changes === 0)
-      throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
+  const removed = db.run(
+    "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
+    [found.owner, found.repo],
+  );
+  if (removed.changes === 0)
+    throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
+  try {
     rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
     rmSync(join(folder, dropsFolder), { recursive: true, force: true });
-  })();
+  } catch (error) {
+    const columns = Object.keys(row);
+    db.run(
+      `INSERT INTO repositories (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+      Object.values(row),
+    );
+    throw error;
+  }
   forgetAgents(found);
   nameRepositories(db);
   await renameBuilders();
