@@ -590,7 +590,10 @@ function prepareTables(db: Database): void {
   // the built-in roles, or null for a lead started before Skelcrew kept it, which starts again
   // on the approved .agents/ the next time it is asked for, if you approved one. `digest_at` is
   // when Skelcrew's routine notes last went into the lead, so the next digest waits its turn,
-  // across a restart too.
+  // across a restart too. `reading_until` is when the lead's reading window ends: after the lead
+  // answers the human, nothing is typed into it until then, so the human can read the answer.
+  // `reading_flush` says what that window held goes in once the lead is idle, as the human wrote
+  // to the lead before it ended.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -611,6 +614,8 @@ function prepareTables(db: Database): void {
     lead_host_id: "TEXT",
     lead_agents: "TEXT",
     digest_at: "INTEGER NOT NULL DEFAULT 0",
+    reading_until: "INTEGER NOT NULL DEFAULT 0",
+    reading_flush: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

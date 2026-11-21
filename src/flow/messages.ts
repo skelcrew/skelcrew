@@ -215,8 +215,8 @@ function afterTyped(db: Database, folder: string, message: Message): void {
       );
 }
 
-// What Skelcrew typed into each builder and its harness hasn't reported yet, by the builder's
-// folder, so the hook that reports something typed in can tell Skelcrew's messages from a
+// What Skelcrew typed into each agent and its harness hasn't reported yet, by the builder's
+// folder or the lead's owner/name, which never meet as folders hold no /, so the hook that reports something typed in can tell Skelcrew's messages from a
 // person's typing. Each text is kept from just before its paste, as the hook can come before
 // the typing returns. Only the last few are kept, so a text whose hook never came, such as one a
 // harness dropped, is forgotten.
@@ -639,7 +639,60 @@ export function briefLead(
 // nothing soon, such as a task's end, arrive at most this often.
 const digestEvery = 10 * 60_000;
 
-// What wakes each repository's lead, by its owner/name, once its routine notes are due.
+// How long, after the lead answers the human, nothing more is typed into it, so the human can
+// read the answer without the chat moving on. It needs no look at the screen, so it works on
+// every host, such as a phone app where Skelcrew can't see the human scroll.
+const readingFor = 5 * 60_000;
+
+// The leads whose turn under way the human started, by owner/name. Only such a turn's end opens
+// a reading window: a note or a builder's message the lead answers isn't the human reading.
+const humanTurns = new Set<string>();
+
+// Something was typed into a repository's lead, which starts a turn. `prompt` is what was typed,
+// when the harness says: text Skelcrew didn't type is the human's. The human writing ends any
+// reading window early, and what it held goes in as soon as the lead has answered them.
+export function leadTurnStarted(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+  prompt?: string,
+): void {
+  const { owner, repo } = repository;
+  const key = `${owner}/${repo}`;
+  humanTurns.delete(key);
+  if (prompt === undefined || typedBySkelcrew(key, prompt)) return;
+  humanTurns.add(key);
+  const where = "WHERE owner = ? AND repo = ? AND reading_until > ?";
+  db.run(`UPDATE repositories SET reading_until = 0, reading_flush = 1 ${where}`, [
+    owner,
+    repo,
+    Date.now(),
+  ]);
+  // The held notes now wait only for the lead to be idle again.
+  typeLeadNotes(db, sessions);
+}
+
+// A repository's lead ended its turn. A turn the human started opens a reading window, so the
+// notes and messages that come next wait until the human has had time to read the answer.
+export function leadTurnEnded(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+): void {
+  const { owner, repo } = repository;
+  const key = `${owner}/${repo}`;
+  if (!humanTurns.delete(key)) return;
+  db.run("UPDATE repositories SET reading_until = ? WHERE owner = ? AND repo = ?", [
+    Date.now() + readingFor,
+    owner,
+    repo,
+  ]);
+  // Typing that waits for the lead to be idle looks again, and holds.
+  typeLeadNotes(db, sessions);
+}
+
+// What wakes each repository's lead, by its owner/name, once its routine notes are due or its
+// reading window ends.
 const digestTimers = new Map<string, Timer>();
 
 // Types the saved notes for a repository's lead into it, such as "started app-12 from github:
@@ -651,7 +704,9 @@ const digestTimers = new Map<string, Timer>();
 // the lead is busy, while a person's unsent draft is at its prompt, and while the human has
 // scrolled back in it, as the paste would throw them back to the bottom. Everything that waited
 // then goes in as one message, its parts a blank line apart, so the chat jumps once. A lead that
-// isn't running, or never started, gets nothing: its notes stay saved until it starts.
+// isn't running, or never started, gets nothing: its notes stay saved until it starts. While
+// the lead's reading window is open, nothing goes in, urgent or not, unless the human wrote to
+// the lead before it ended.
 async function typeNotes(
   db: Database,
   sessions: string,
@@ -670,10 +725,19 @@ async function typeNotes(
       .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
       .all(owner, repo);
     const needing = z.array(Thread).parse(rows);
+    const columns = "digest_at, reading_until, reading_flush";
     const last = z
-      .object({ digest_at: z.number() })
+      .object({
+        digest_at: z.number(),
+        reading_until: z.number(),
+        reading_flush: z.coerce.boolean(),
+      })
       .nullable()
-      .parse(db.query(`SELECT digest_at FROM repositories WHERE ${where}`).get(owner, repo));
+      .parse(db.query(`SELECT ${columns} FROM repositories WHERE ${where}`).get(owner, repo));
+    // The reading window holds everything, so it waits until the window ends.
+    const reading = (last?.reading_until ?? 0) - Date.now();
+    if (reading > 0 && !last?.reading_flush)
+      return { notes: [], needing: [], digest: false, text: "", wait: reading };
     const routine = saved.filter((note) => !note.urgent);
     const urgent = saved.filter((note) => note.urgent);
     const wait = (last?.digest_at ?? 0) + digestEvery - Date.now();
@@ -715,6 +779,8 @@ async function typeNotes(
     const { host, id } = on;
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
+    // The lead's harness reports the paste as typed in, which mustn't pass for the human's.
+    typingIn(key, now.text);
     // Typing asks this right before readying the paste and again right before it goes in. What
     // would be said may have changed while the lead was busy or scrolled back: a question you
     // answered, a thread's end note dropped as it starts over, or a new note to go in with the
@@ -746,6 +812,8 @@ async function typeNotes(
     for (const { id } of now.notes) db.run("DELETE FROM notes WHERE id = ?", [id]);
     if (now.digest)
       db.run(`UPDATE repositories SET digest_at = ? WHERE ${where}`, [Date.now(), owner, repo]);
+    // What the window held has gone in, so the next window holds again.
+    db.run(`UPDATE repositories SET reading_flush = 0 WHERE ${where}`, [owner, repo]);
     // A thread may have stopped needing you and started again while this was typed.
     for (const thread of now.needing)
       if (readThread(db, thread.folder).noting === thread.noting)

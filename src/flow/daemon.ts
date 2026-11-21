@@ -80,6 +80,8 @@ import {
 import {
   briefLead,
   deliverAllWaiting,
+  leadTurnEnded,
+  leadTurnStarted,
   messageBuilder,
   messageLead,
   noteForLead,
@@ -812,13 +814,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // no default, so the typecheck fails if a request is left out.
   const handle = async (request: DaemonRequest, caller: Caller): Promise<object> => {
     // A hook's request first keeps what the agent is doing. A lead's stops there: you see a lead
-    // whenever you open its repository, so nothing it does flags needs you.
+    // whenever you open its repository, so nothing it does flags needs you. Its turns starting
+    // and ending only open and close its reading window.
     const state = stateAfter(request.command);
     if (state !== null) {
       const lead = leadOfCaller(caller);
       keepState(db, lead ?? callingThread(caller), state);
       if (lead) {
-        if (request.command === "question answered") leadPrompted(db, lead.owner, lead.repo);
+        if (request.command === "question answered") {
+          leadPrompted(db, lead.owner, lead.repo);
+          leadTurnStarted(db, sessions, lead, request.prompt);
+        }
+        if (request.command === "turn ended" || request.command === "turn interrupted")
+          leadTurnEnded(db, sessions, lead);
         return { state };
       }
     }

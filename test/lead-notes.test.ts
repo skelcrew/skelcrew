@@ -51,7 +51,7 @@ function run(body: string, again = false): string {
 ${threadSql({ task: "12", status: "working" })}\`);`;
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { leadOf } from ${JSON.stringify(source("flow/lead.ts"))};
-import { briefLead, messageLead, noteForLead, skelcrewNoteForLead, typeLeadNotes } from ${JSON.stringify(source("flow/messages.ts"))};
+import { briefLead, leadTurnEnded, leadTurnStarted, messageLead, noteForLead, skelcrewNoteForLead, typeLeadNotes } from ${JSON.stringify(source("flow/messages.ts"))};
 import { needsYou, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { failThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
@@ -583,4 +583,74 @@ console.log(JSON.stringify({ during, after: received() }));`,
   );
   expect(seen.during).not.toContain("APP-12");
   expect(seen.after).toContain("Skelcrew digest:\nAPP-12 is done: #7 merged");
+});
+
+// After the lead answers the human, nothing goes in for 5 minutes, urgent or not, so the human
+// can read the answer without the chat moving. The test ends the window early by moving its end
+// back in time, as waiting 5 minutes would. What it held then goes in together.
+test("nothing goes into the lead while the human reads its answer, then it all goes in together", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+noteForLead(db, tmux, app, "APP-11 is done: #6 merged");
+record(db, "app-12", { asking: true }, "its builder asked a question");
+await Bun.sleep(3000);
+const during = { received: received(), waiting: waiting() };
+db.run("UPDATE repositories SET reading_until = 1");
+typeLeadNotes(db, tmux);
+await until(() => waiting() === 0 && received().includes("First part done."));
+await Bun.sleep(500);
+console.log(JSON.stringify({ during, after: received() }));`),
+  );
+  expect(seen.during).toEqual({ received: "", waiting: 2 });
+  const typed: string = seen.after;
+  expect(typed.split("\x1b[201~")).toHaveLength(2);
+  expect(typed).toContain("Skelcrew digest:\nAPP-11 is done: #6 merged");
+  expect(typed).toContain("APP-12 needs you: its builder asked a question");
+});
+
+// The human writing to the lead ends its window: what the window held goes in once the lead is
+// idle again, and the answer opens a window for what comes after.
+test("the human writing to the lead ends its reading window early", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await Bun.sleep(1500);
+const before = received();
+leadTurnStarted(db, tmux, app, "And now?");
+await until(() => waiting() === 0 && received().includes("First part done."));
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "Second part done.");
+await Bun.sleep(3000);
+console.log(JSON.stringify({ before, after: received(), waiting: waiting() }));`),
+  );
+  expect(seen.before).toBe("");
+  expect(seen.after).toContain("First part done.");
+  expect(seen.after).not.toContain("Second part done.");
+  expect(seen.waiting).toBe(1);
+});
+
+// The lead's harness reports Skelcrew's own paste as typed in too. A turn started by it is the
+// lead answering a note, not the human reading, so it opens no window.
+test("a turn that a note started opens no reading window", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await until(() => waiting() === 0 && received().includes("First part done."));
+const typed = received();
+const pasted = typed.slice(typed.indexOf("\\x1b[200~") + 6, typed.indexOf("\\x1b[201~"));
+leadTurnStarted(db, tmux, app, pasted);
+leadTurnEnded(db, tmux, app);
+messageLead(db, tmux, readThread(db, "app-12"), "Second part done.");
+await until(() => waiting() === 0 && received().includes("Second part done."));
+console.log(JSON.stringify({ sent: true }));`),
+  );
+  expect(seen.sent).toBe(true);
 });
