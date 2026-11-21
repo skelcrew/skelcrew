@@ -165,6 +165,23 @@ test("only a host that provides files is handed a placeholder for them, new for 
   expect(starts()[1]).not.toHaveProperty("files");
 });
 
+test("a session on the host gets a colour terminal, whatever terminal the daemon has", async () => {
+  const starts = () =>
+    readFileSync(join(settings(), "asked"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((question) => question.ask === "start");
+  // A daemon under systemd has no terminal at all.
+  const session = { folder: home, command: ["true"], labels };
+  await startSession(host(), "app-12", { ...session, env: { PATH: "/bin" } });
+  expect(starts()[0].env).toEqual({ PATH: "/bin", TERM: "xterm-256color", COLORTERM: "truecolor" });
+  // One started from your terminal has that terminal's, which isn't the host's.
+  const yours = { PATH: "/bin", TERM: "xterm-ghostty", COLORTERM: "24bit" };
+  await startSession(host(), "app-13", { ...session, env: yours });
+  expect(starts()[1].env).toEqual({ PATH: "/bin", TERM: "xterm-256color", COLORTERM: "truecolor" });
+});
+
 test("an agent that ended is no longer running, and its last screen says why", async () => {
   const on = host();
   const id = await start(on, ["sh", "-c", "echo not logged in; exit 1"]);

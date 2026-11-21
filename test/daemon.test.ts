@@ -1232,6 +1232,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     const starts = fakeHostStarts();
     expect(starts).toHaveLength(1);
     expect(starts[0].labels).toEqual({ repository: "simon/app", role: "lead" });
+    // The daemon has no terminal, yet the lead draws in colour.
+    expect(starts[0].env).toMatchObject({ TERM: "xterm-256color", COLORTERM: "truecolor" });
     expect(leadHost()).toEqual({ lead_host: "fake", lead_host_id: `fake-${leadName()}` });
     expect(hasLead()).toBe(false);
     expect(claudeCalls()).toBe(`--session-id ${storedSession()}\n`);

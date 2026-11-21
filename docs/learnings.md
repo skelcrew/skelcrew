@@ -436,6 +436,11 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   An agent already running can't get a new environment. Writing `CSI > 4;2 m` into its pane's
   terminal (`pane_tty`) asks for it instead: tmux reads it as the agent's own request, and
   Claude Code then reads `ESC[13;2u` as a newline.
+- **An agent on a plugin's host gets no terminal unless Skelcrew gives it one.** tmux sets
+  `TERM` in its panes, so agents there draw in colour. A host such as herdr hands the agent
+  exactly the environment Skelcrew passes. The daemon under systemd has no `TERM` or
+  `COLORTERM`, so Claude Code drew without colour there, and only there. So a plugin's host is
+  always asked for `TERM=xterm-256color` and `COLORTERM=truecolor`, never the daemon's own.
 - **The screen's tmux asks your terminal for extended keys only once it knows the terminal.**
   It sends `CSI > 4;2 m` after the terminal answers its `CSI > c` and `CSI > q` queries. A test
   pty that answers nothing never gets asked.
