@@ -1,4 +1,4 @@
-// sc issue create and sc start, run as you or the lead would run them, against a running daemon,
+// sc task add --issue and sc start, run as you or the lead would run them, against a running daemon,
 // a fake tracker and forge, a fake Claude Code and a folder of bare repositories standing in
 // for GitHub.
 import { Database } from "bun:sqlite";
@@ -21,6 +21,7 @@ import {
   insideSandbox,
   read,
   runSkel,
+  runSkelInTerminal,
   source,
   startDaemon,
   taskItem,
@@ -123,6 +124,18 @@ async function stop(run: Subprocess): Promise<void> {
 
 // Runs sc as you or the lead would.
 const skel = (...args: string[]) => runSkel(args, env());
+
+// Opens app's lead socket, as plain sc does, and returns what sc runs with as that lead.
+async function leadEnv(): Promise<Record<string, string>> {
+  const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+  const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
+  const connection = createConnection(join(home, "run", "skelcrew.sock"));
+  connection.on("error", () => {});
+  connection.write(`${JSON.stringify({ command: "lead", from: "simon/app" })}\n`);
+  await until(() => existsSync(leadSocket));
+  connection.destroy();
+  return { ...env(), SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket };
+}
 
 async function untilAnswers() {
   await until(() => existsSync(join(home, "run", "skelcrew.sock")));
@@ -241,65 +254,158 @@ const useHost = (host: string) =>
     `harness: claude\nsession: ${host}\n`,
   );
 
-test("sc issue create creates a task in the repository's tracker and prints its name", async () => {
+test("sc task add --issue creates a task in the repository's tracker and prints its name", async () => {
   addApp();
   serve();
   await untilAnswers();
-  const made = await skel("issue", "create", "app", "Add import", "From CSV");
+  const made = await skel("task", "add", "app", "Add import", "From CSV", "--issue");
   expect(made.err).toBe("");
-  expect(made.out).toBe("APP-13\n");
+  expect(made.out).toBe("Opened APP-13 as an issue in the tracker. sc start APP-13 starts it.\n");
   expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([
     { ask: "create task", repository: "simon/app", title: "Add import", body: "From CSV" },
   ]);
+  // With the title and body on stdin, the options come first.
+  const piped = await runSkel(["task", "add", "app", "--issue"], env(), "# Add notes\n\nAs text\n");
+  expect(piped.err).toBe("");
+  expect(
+    asked(plugin)
+      .filter((q) => q.ask === "create task")
+      .at(-1),
+  ).toMatchObject({
+    title: "Add notes",
+    body: "As text\n",
+  });
 });
 
 // A lead parks work in the backlog, and creates an issue only when the human explicitly asks,
-// giving their words. The human's own sc issue create needs none.
-test("a lead's sc issue create is refused without the human's words, and goes through with them", async () => {
+// giving their words. The human's own sc task add --issue needs none.
+test("a lead's sc task add --issue is refused without the human's words, and goes through with them", async () => {
   addApp();
   serve();
   await untilCloned();
-  // The daemon opens the lead's socket as it opens the repository, as plain sc does.
-  const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
-  const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
-  const connection = createConnection(join(home, "run", "skelcrew.sock"));
-  connection.on("error", () => {});
-  connection.write(`${JSON.stringify({ command: "lead", from: "simon/app" })}\n`);
-  await until(() => existsSync(leadSocket));
-  connection.destroy();
-  const lead = { ...env(), SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket };
-  const refused = await runSkel(["issue", "create", "app", "Add import", "From CSV"], lead);
+  const lead = await leadEnv();
+  const refused = await runSkel(["task", "add", "app", "Add import", "From CSV", "--issue"], lead);
   expect(refused.err).toContain("a lead creates an issue only when the human explicitly asks");
-  expect(refused.err).toContain("sc task add");
+  expect(refused.err).toContain("leave out --issue");
   const words = join(home, "asked.txt");
   writeFileSync(words, "");
   const empty = await runSkel(
-    ["issue", "create", "app", "Add import", "From CSV", "--asked-file", words],
+    ["task", "add", "app", "Add import", "From CSV", "--issue", "--asked-file", words],
     lead,
   );
   expect(empty.err).toContain("is empty");
   expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
   writeFileSync(words, "File an issue for the CSV import.\n");
   const made = await runSkel(
-    ["issue", "create", "app", "Add import", "From CSV", "--asked-file", words],
+    ["task", "add", "app", "Add import", "From CSV", "--issue", "--asked-file", words],
     lead,
   );
   expect(made.err).toBe("");
-  expect(made.out).toBe("APP-13\n");
+  expect(made.out).toBe("Opened APP-13 as an issue in the tracker. sc start APP-13 starts it.\n");
   expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(1);
+  // --asked-file goes only with --issue, as only an issue needs the human's words.
+  const backlog = await runSkel(["task", "add", "app", "t", "b", "--asked-file", words], lead);
+  expect(backlog.err).toContain("sc task was given arguments it doesn't take");
+}, 60_000);
+
+// An issue that never started has only its issue, which sc rm closes, with the reason as its
+// comment. Closing one goes out to other people, so a lead needs the human's words for it, and
+// --keep-issue leaves it nothing to remove.
+test("sc rm closes an issue that never started, and the lead needs the human's words for it", async () => {
+  addApp();
+  serve();
+  await untilCloned();
+  const lead = await leadEnv();
+  // The copy has issue 12 once a poll has read it.
+  const copied = () => {
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    try {
+      return db.query("SELECT 1 FROM items WHERE kind = 'task' AND id = '12'").get() !== null;
+    } finally {
+      db.close();
+    }
+  };
+  await until(copied);
+  const closes = () => asked(plugin).filter((q) => q.ask === "close task");
+  // At a terminal it says it closes the issue, and asks first.
+  const question = "Remove APP-12? It never started, and this closes issue #12. [y/N]";
+  const no = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "n");
+  expect(no).toContain("Skelcrew didn't remove APP-12.");
+  expect(closes()).toEqual([]);
+  const refused = await runSkel(["rm", "app-12"], lead);
+  expect(refused.err).toContain("a lead closes an issue only when the human explicitly asks");
+  expect(refused.err).toContain("sc rm APP-12 --keep-issue");
+  const kept = await runSkel(["rm", "app-12", "--keep-issue"], lead);
+  expect(kept.err).toBe(
+    "Skelcrew: APP-12 never started, and --keep-issue keeps its issue open, so there is nothing to remove\n",
+  );
+  expect(closes()).toEqual([]);
+  const words = join(home, "asked.txt");
+  writeFileSync(words, "Drop the export, we don't need it.\n");
+  const closed = await runSkel(["rm", "app-12", "not needed", "--asked-file", words], lead);
+  expect(closed.err).toBe("");
+  expect(closed.out).toBe("Removed APP-12 and closed issue #12.\n");
+  expect(closes()).toEqual([
+    {
+      ask: "close task",
+      repository: "simon/app",
+      task: "12",
+      comment: "Closed by Skelcrew: not needed",
+    },
+  ]);
+  // You need no words of your own, and with no reason the issue gets no comment.
+  const yours = await skel("rm", "app-12");
+  expect(yours.err).toBe("");
+  expect(closes().at(-1)).toEqual({
+    ask: "close task",
+    repository: "simon/app",
+    task: "12",
+    comment: null,
+  });
+  // A tracker that fails to close it says so, and how to try again.
+  writeFileSync(join(plugin, "fail-close-task"), "GitHub is down");
+  const failed = await skel("rm", "app-12");
+  expect(failed.err).toContain("APP-12's issue didn't close: github failed: GitHub is down");
+  expect(failed.err).toContain("Run sc rm APP-12 again to close it");
+}, 60_000);
+
+// The copy is only as fresh as the last poll, so an issue reopened since may be missing from it.
+// Work still under way closes its issue all the same, rather than say it closed and leave it open.
+test("sc rm on work closes its issue, though the copy doesn't have it open, and again after a failed try", async () => {
+  addApp();
+  serve();
+  await untilCloned();
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.exec(threadSql({ task: "14", title: "Reopened", status: "stopped" }));
+  db.close();
+  // The tracker fails once the work is removed, and sc rm run again still closes the issue.
+  writeFileSync(join(plugin, "fail-close-task"), "GitHub is down");
+  const failed = await skel("rm", "app-14");
+  expect(failed.err).toContain("APP-14's work is removed, but its issue didn't close");
+  expect(thread()).toMatchObject({ status: "done" });
+  rmSync(join(plugin, "fail-close-task"));
+  const removed = await skel("rm", "app-14");
+  expect(removed.err).toBe("");
+  expect(removed.out).toBe("Removed APP-14 and closed issue #14.\n");
+  expect(asked(plugin).filter((q) => q.ask === "close task")).toEqual([
+    { ask: "close task", repository: "simon/app", task: "14", comment: null },
+    { ask: "close task", repository: "simon/app", task: "14", comment: null },
+  ]);
 }, 60_000);
 
 // A builder sees only the title and body. A heredoc that failed inside $(...) leaves the
 // body empty while the command still runs, and an issue with no body can't be taken back.
-test("sc issue create and sc start <repo> refuse an empty body, and ask the tracker nothing", async () => {
+test("sc task add --issue and sc start <repo> refuse an empty body, and ask the tracker nothing", async () => {
   addApp();
   serve();
   await untilAnswers();
   for (const body of ["", " \n\t"]) {
-    const made = await skel("issue", "create", "app", "Add import", body);
+    const made = await skel("task", "add", "app", "Add import", body, "--issue");
     expect(made.code).toBe(1);
     expect(made.err).toBe(
-      "Skelcrew: sc issue create needs a body, which is all a builder sees besides its title.\n",
+      "Skelcrew: sc task add --issue needs a body, which is all a builder sees besides its title.\n",
     );
     const started = await skel("start", "app", "Add import", body);
     expect(started.code).toBe(1);
@@ -532,7 +638,7 @@ test("a repository Skelcrew doesn't have, named by its owner/name, is no reposit
   serve();
   await untilAnswers();
   for (const name of ["simon/site", "site", "-x/site"]) {
-    const listed = await skel("issue", "ls", name);
+    const listed = await skel("ls", name);
     expect(listed.code).not.toBe(0);
     expect(listed.err).toBe(`Skelcrew: there is no repository named ${name}\n`);
   }
@@ -611,8 +717,8 @@ exec ${Bun.which("git") ?? "git"} "$@"
   }, 60_000);
 });
 
-test("sc issue create and sc start say when the daemon isn't running", async () => {
-  const made = await skel("issue", "create", "app", "Add import", "From CSV");
+test("sc task add --issue and sc start say when the daemon isn't running", async () => {
+  const made = await skel("task", "add", "app", "Add import", "From CSV", "--issue");
   expect(made.code).not.toBe(0);
   expect(made.err).toContain("run sc");
 });
@@ -710,14 +816,14 @@ c.on("data", (d) => process.stdout.write(d));`;
   }, 60_000);
 
   // The lead gives the human's words for an issue, in a file it writes in its own folder.
-  test("the lead runs sc issue create and sc start from its sandbox, but can't trust", async () => {
+  test("the lead runs sc task add --issue and sc start from its sandbox, but can't trust", async () => {
     addApp();
     const asker = `const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
 c.on("connect", () => c.write('{"command":"lead"}\\n'));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
-      `{ printf 'File an issue for the CSV import.' > asked.txt; sc issue create app "Add import" "From CSV" --asked-file asked.txt; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+      `{ printf 'File an issue for the CSV import.' > asked.txt; sc task add app "Add import" "From CSV" --issue --asked-file asked.txt; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     // Opened before, so the daemon starts app's lead as it starts.
@@ -729,7 +835,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const out = join(data(), "leads", "simon", "app", "out");
     await until(() => read(out) !== "");
     expect(read(out)).toBe(
-      `APP-13\nStarted APP-12.\nSkelcrew: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
+      `Opened APP-13 as an issue in the tracker. sc start APP-13 starts it.\nStarted APP-12.\nSkelcrew: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
     );
     await until(() => read(join(config("app-12"), "args")) !== "");
   }, 60_000);
@@ -1392,7 +1498,7 @@ nameRepositories(db);`;
     // Its builder already runs as builder, so a flow that builds as another role is refused, and
     // the builder keeps the instructions it started with.
     expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
-      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12, then sc start APP-12 --flow careful.\n",
+      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12 --keep-issue, then sc start APP-12 --flow careful.\n",
     );
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     expect(read(join(config("app-12"), "args"))).not.toContain("Write the test first.");
@@ -1407,7 +1513,7 @@ nameRepositories(db);`;
     // A stopped thread whose builder hasn't submitted switches too, and comes back on that flow.
     expect((await skel("stop", "app-12")).code).toBe(0);
     expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
-      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12, then sc start APP-12 --flow careful.\n",
+      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12 --keep-issue, then sc start APP-12 --flow careful.\n",
     );
     expect(thread().status).toBe("stopped");
     const back = await skel("start", "app-12", "--flow", "default");
@@ -1523,6 +1629,10 @@ describe("the backlog", () => {
     // The same task filed again on purpose is a task of its own.
     const again = await skel("task", "add", "app", "Add export", "As JSON");
     expect(again.out).toBe("Filed APP-T3 in the backlog. sc start APP-T3 starts it.\n");
+    // The title and body are the first two words, so a body that reads like an option stays
+    // the body.
+    const flagLike = await skel("task", "add", "app", "Add flags", "--issue");
+    expect(flagLike.out).toBe("Filed APP-T4 in the backlog. sc start APP-T4 starts it.\n");
     // On the remote, under hidden refs, never as a branch, and never in the tracker.
     const refs = git(work, "ls-remote", "origin");
     expect(refs).toContain("refs/skelcrew/tasks/t1");

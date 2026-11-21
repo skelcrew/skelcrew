@@ -281,16 +281,10 @@ export async function remote(host: string, args: string[]): Promise<number> {
   checkHost(host);
   if (args.length === 1 && args[0] === "install") return installServer(host);
   // The server can't see the checkout you are in, so its remote goes along as --from where the
-  // command needs it: plain sc, sc --list, and sc pr show with a PR's number, which names a PR
-  // of that repository. A thread's name already names its repository.
+  // command needs it: plain sc and sc --list. A thread's name already names its repository.
   const words = args.filter((arg) => arg !== "--json");
   const plain = words.length === 0 || (words[0] === "--list" && words.length === 1);
-  const numbered =
-    words[0] === "pr" &&
-    words[1] === "show" &&
-    /^#?\d+$/.test(words[2] ?? "") &&
-    words.length === 3;
-  const from = plain || numbered ? originHere() : null;
+  const from = plain ? originHere() : null;
   const machine = serverMachine(host);
   const scWords = from ? [...args, "--from", from] : args;
   // The screen there, which plain sc opens in your terminal, gets a name picked here, so files
