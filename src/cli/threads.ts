@@ -106,8 +106,14 @@ export async function startCommand(args: string[], asking: boolean): Promise<voi
   };
   const { at: shortAt, value: short } = option("--short");
   const { at: flowAt, value: flow } = option("--flow");
-  const taken = [shortAt, flowAt].flatMap((at) => (at === -1 ? [] : [at, at + 1]));
+  const nowAt = asking ? -1 : rest.indexOf("--now");
+  const taken = [
+    ...[shortAt, flowAt].flatMap((at) => (at === -1 ? [] : [at, at + 1])),
+    ...(nowAt === -1 ? [] : [nowAt]),
+  ];
   const words = rest.filter((_, i) => !taken.includes(i));
+  if (nowAt !== -1 && !task)
+    throw new Error("Only sc start <task> takes --now, such as sc start APP-12 --now.");
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
   const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
   if (task && (words.length === 0 || from)) {
@@ -119,7 +125,7 @@ export async function startCommand(args: string[], asking: boolean): Promise<voi
         ...options,
       };
       console.log(await askHuman(action, task[0]));
-    } else console.log(await startOn(...task, from, short, flow));
+    } else console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true));
     return;
   }
   if (sub && !task && words[0] === "--from")

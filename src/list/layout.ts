@@ -38,7 +38,7 @@ export type Size = { width: number; height: number };
 // How wide the list is, in its own window or as the screen's sidebar: a little over a quarter of
 // the terminal, so the pane or the right side has the room for the agent at work. It never gets
 // narrower than a row's name, short title and word need, nor wider than a task's two lines do,
-// such as `working · Editing rows.ts · #40 · CI passed · 14:31`.
+// such as `working · Editing rows.ts · #40 · CI passed · 4m`.
 export const listShare = { percent: 28, least: 40, most: 58 };
 
 // Returns how many columns the list takes in a terminal `width` columns wide.
@@ -78,7 +78,7 @@ export const sectionNames: Record<Section, string> = {
 // Backlog's `… more` row, or as open/close on a section's heading, and not at all on the heading of
 // Needs you, which never closes. Then the numbers that open and close the sections, Shift with an
 // arrow only on a queued task in the task queue, which it moves in the queue, s only on a task it
-// can start, m only on a task it can merge, o on a task while the details pane shows, to show its
+// can start, f only on one it can start now over limits.threads, m only on a task it can merge, o on a task while the details pane shows, to show its
 // agent's whole screen or only the last lines, and Page Up and Page Down to scroll its details, and
 // Tab and Alt-Shift with an arrow only with another repository to go to. A runtime plugin's host
 // has its own key to come back, so its rows don't offer Ctrl-\. A request of the lead's offers y
@@ -104,6 +104,7 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
         : [enter];
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
+  const now = row?.startNow ? ["f start now"] : [];
   const reorder = row?.section === "task queue" && row.place !== null ? ["shift+↑↓ reorder"] : [];
   return [
     "↑↓ move",
@@ -111,6 +112,7 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
     "0-6 sections",
     ...reorder,
     ...start,
+    ...now,
     ...merge,
     ...tab,
     "q/esc quit",
@@ -269,7 +271,7 @@ function shortLine(row: Row, here: boolean, columns: Columns, width: number): st
 // so what it does sits under its title. The first line has its mark, its name, padded to
 // `nameWidth` so the titles line up, and its title. The second has its word in its colour, then
 // dim the step its builder is on, its PR, its CI and when it last changed, such as
-// `working · Editing rows.ts · #40 · CI passed · 14:31`, each left out where it has none. Each
+// `working · Editing rows.ts · #40 · CI passed · 4m`, each left out where it has none. Each
 // line is cut with … to fit, and the row you are on is shaded on both its lines.
 function tallLines(row: Row, here: boolean, nameWidth: number, width: number): string[] {
   const plainStart = `${pointer(here)}${row.mark.sign} `;
