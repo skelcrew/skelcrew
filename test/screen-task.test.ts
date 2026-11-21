@@ -87,7 +87,7 @@ async function onApp7(): Promise<void> {
 
 test("a task's row shows only its details, never its builder's screen, and typing never reaches it", async () => {
   await onApp7();
-  expect(right()).toContain("Building · working");
+  expect(right()).toContain("Now      working");
   expect(typingTo()).toBe("0");
   // What app-7 prints shows nowhere on the right while its details show.
   tmux(agents, "send-keys", "-t", "=app-7:", "-l", "first line\r");
@@ -141,7 +141,7 @@ test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to it
   type("hi\r");
   await until(() => read("app-7.typed") === "hi\n", "what was typed");
   press("C-\\");
-  await until(() => right().includes("Building · working"), "app-7's details again");
+  await until(() => right().includes("Now      working"), "app-7's details again");
   expect(typingTo()).toBe("0");
   // Ctrl-\ again does nothing, and the builder got none of it.
   press("C-\\");

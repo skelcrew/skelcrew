@@ -124,6 +124,17 @@ export function changedAt(at: number, now: number): string {
   return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })}`;
 }
 
+// Returns how long ago a moment was, before `now`, both in milliseconds, in its largest whole
+// unit, such as `4m ago`, `2h ago` or `3d ago`, or `just now` within a minute. The details pane
+// says when things happened this way, as a clock time makes you work out how long it has been.
+export function ago(at: number, now: number): string {
+  const minutes = Math.floor(Math.max(now - at, 0) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}h ago`;
+  return `${Math.floor(minutes / (24 * 60))}d ago`;
+}
+
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.
 const LeadState = z.object({ lead_state: z.string().nullable(), tab_closed: z.coerce.boolean() });
