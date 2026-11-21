@@ -281,6 +281,22 @@ test("sc start --now starts a new task at once over the limit, and a queued one 
   expect(leftQueue("app-12")).toHaveLength(0);
 }, 60_000);
 
+// The start that queued a task assigns you its issue once its claim is made, but only while it is
+// still queued. A forced start can come in between, so it assigns you itself.
+test("sc start --now of a queued task whose claim was made assigns you its issue", async () => {
+  addApp();
+  // app-12 is queued, its claim made, and you not assigned yet.
+  const queued = threadSql({ task: "12", title: "Add export", status: "queued", queued_since: 1 });
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(queued)});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  await serveApp();
+  expect(await sc("start", "app-12", "--now")).toContain("Started APP-12 now, out of the queue");
+  await until(() =>
+    asked(plugin).some((q) => q.ask === "assign" && q.on === true && q.task === "12"),
+  );
+}, 60_000);
+
 test("sc start --now starts a task its label queued while the start waited for the poll", async () => {
   addApp(["12"]);
   answer(plugin, "took", { took: true });

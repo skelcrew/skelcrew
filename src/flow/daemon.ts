@@ -703,7 +703,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         started = record(db, queued.folder, change, "started now, over limits.threads");
         starting = started.session === null ? setUpAndStart(started) : comeBack(started);
       });
-      if (owed) assignIssue(db, started, true);
+      // You are assigned its issue whatever happened to the claim: the start that queued it
+      // assigns you only while it is still queued, and may find it started by now.
+      assignIssue(db, started, owed);
       return { ...answer, starting };
     };
     if (before?.status === "queued" && request.now) {
