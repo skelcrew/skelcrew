@@ -5,8 +5,8 @@ import type { Database } from "bun:sqlite";
 import { chmodSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { errorText } from "../format.ts";
 import { capture } from "../run.ts";
-import { errorText } from "../say.ts";
 import { isRelease, release, releases, singleFile } from "../version.ts";
 
 // The release file for this machine, named as the install script names it. A Mac running sc

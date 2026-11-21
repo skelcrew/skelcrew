@@ -1,6 +1,6 @@
 // The queue of tasks under limits.threads, read from a database of the test's own with no
-// engine running: which tasks leave it and in what order, where a task joins, and moving one.
-// The engine's own tests in queued.test.ts keep one run of each path through a real daemon.
+// daemon running: which tasks leave it and in what order, where a task joins, and moving one.
+// The daemon's own tests in queued.test.ts keep one run of each path through a real daemon.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -99,8 +99,8 @@ console.log(JSON.stringify({ stopped, fresh: status("app-13") }));`,
   expect(left).toEqual({ stopped: "waiting", fresh: "working" });
 });
 
-test("a task whose start the engine's stop cut short goes back in its place in the queue", () => {
-  // app-12 left the queue, but the engine stopped before its builder's session was saved.
+test("a task whose start the daemon's stop cut short goes back in its place in the queue", () => {
+  // app-12 left the queue, but the daemon stopped before its builder's session was saved.
   const sql = `${twoQueued(1, 2)}
 UPDATE threads SET status = 'done' WHERE folder = 'app-11';
 UPDATE threads SET status = 'working' WHERE folder = 'app-12';`;

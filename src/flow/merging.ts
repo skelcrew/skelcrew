@@ -6,8 +6,8 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { flowRoles } from "../flows.ts";
+import { errorText } from "../format.ts";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
-import { errorText } from "../say.ts";
 import { openTasks, prOf } from "./copy.ts";
 import {
   mergeNoteFor,

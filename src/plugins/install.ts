@@ -176,7 +176,7 @@ export function askYes(question: string): boolean | null {
 const isYes = (line: string) => ["", "y", "yes"].includes(line.trim().toLowerCase());
 
 // Asks a question at your terminal and returns the line typed, or null with no terminal or after
-// Ctrl-D. Only a terminal counts, so an answer piped in from a script or the engine never installs
+// Ctrl-D. Only a terminal counts, so an answer piped in from a script or the daemon never installs
 // a plugin. Bun's own prompt gives null both for a bare Enter and for the end of the input, which
 // would take silence for a yes. The answer is read a byte at a time, so a question after this one
 // still finds its own line.

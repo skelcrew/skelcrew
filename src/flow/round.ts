@@ -7,6 +7,7 @@ import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
+import { errorText } from "../format.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import {
   askWhatChanged,
@@ -19,7 +20,6 @@ import {
 } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
 import { capture } from "../run.ts";
-import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, saveItems, threadTask } from "./copy.ts";
 import {
