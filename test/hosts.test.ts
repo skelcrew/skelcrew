@@ -566,6 +566,74 @@ test("a host that doesn't answer holds up the look for exited leads only a few s
   expect(Date.now() - started).toBeLessThan(15_000);
 }, 30_000);
 
+// Runs `code` with simon/app opened, its lead on the fake host as `row` says, and a stand-in for
+// the sandbox on PATH that keeps a lead running. `startLead`, `closeExitedLeads`, `leadOf`, the
+// host, `fake`, its settings folder, `repository` and `tab()`, whether the tab is closed, are at
+// hand.
+function leadRace(row: string, code: string): string {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  mkdirSync(join(home, "bin"), { recursive: true });
+  for (const sandbox of ["bwrap", "sandbox-exec"])
+    writeFileSync(join(home, "bin", sandbox), "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+  return runWithFakeHost(
+    "sessions",
+    `const { closeExitedLeads, leadOf, startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const { agentRuns } = await import(${JSON.stringify(source("agents/sessions.ts"))});
+const fs = require("node:fs");
+const fake = ${JSON.stringify(fake)};
+fs.mkdirSync(fake, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "config.yaml"))}, "harness: claude\\nsession: fake\\n");
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "claude-token"))}, "sk-ant-oat01-good\\n");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 1, ${row})");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+const host = pluginHost(db, "fake");
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+const tab = () => db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get().tab_closed;
+${code}
+process.exit(0);`,
+    {},
+  );
+}
+
+// The host forgot the lead's last session, and is slow to say so. A look for exited leads is
+// waiting on it as the lead starts again in that session's place.
+test("a lead starting in place of a session its host forgot keeps its tab", () => {
+  const said = leadRace(
+    "'fake', 'fake-forgotten'",
+    `fs.writeFileSync(fake + "/slow-list", "");
+const looking = closeExitedLeads(db, "unused");
+await Bun.sleep(300);
+const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
+await looking;
+console.log(await starting, tab());`,
+  );
+  expect(said).toContain("started 0\n");
+}, 30_000);
+
+// The look takes a while to end the lead you exited, and you open the repository meanwhile. The
+// host gives the new lead the same ID as the last one.
+test("a lead opened again while its exited session is being ended keeps running", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const looking = closeExitedLeads(db, "unused");
+for (let i = 0; i < 200 && tab() === 0; i++) await Bun.sleep(25);
+db.run("UPDATE repositories SET tab_closed = 0");
+await startLead(db, "unused", repository);
+await looking;
+console.log(await agentRuns(host, id), tab());`,
+  );
+  expect(said).toContain("true 0\n");
+}, 30_000);
+
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
   const lead = { repository: "simon/app", role: "lead" } as const;
   const on = host();

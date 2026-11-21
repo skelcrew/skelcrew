@@ -195,11 +195,24 @@ export async function startLead(
   repository: Repository,
 ): Promise<void> {
   const { owner, repo } = repository;
+  // A look for exited leads may be ending this lead's last session, and a host can give the new
+  // one the same ID, so the start waits for that first.
+  await endingLeads.get(`${owner}/${repo}`);
   const lead = leadOf(db, owner, repo);
   const before = await leadSession(db, sessions, owner, repo);
   if (before === null)
     throw new Error(
       `${owner}/${repo}'s lead ran on ${lead.host}, which isn't installed now: install it again to reach the lead`,
+    );
+  // A look for exited leads that finds the session gone, or ended, while this replaces it would
+  // take the lead for one you exited. So its ID goes at once, and the look leaves a lead without
+  // one alone. A lead kept running gets it back, as does one whose host couldn't say, which may
+  // still run there.
+  db.run("UPDATE repositories SET lead_host_id = NULL WHERE owner = ? AND repo = ?", [owner, repo]);
+  const keepId = () =>
+    db.run(
+      "UPDATE repositories SET lead_host_id = ? WHERE owner = ? AND repo = ? AND lead_host_id IS NULL",
+      [before.id, owner, repo],
     );
   // A lead still running is kept. One on tmux started by a release before leads stayed on a
   // clean exit is given that setting now, or exiting it would end its session and never close
@@ -210,11 +223,18 @@ export async function startLead(
   // approved an .agents/ it may not run on. With none approved it runs on the built-in roles
   // already, and is left running, as upgrading Skelcrew shouldn't stop a lead's work.
   const approved = approvedAgents(repository) ?? "none";
-  if (await hasSession(before.host, before.id)) {
-    const failed = await failedScreen(before.host, before.id);
+  const [found, failed] = await Promise.all([
+    hasSession(before.host, before.id),
+    failedScreen(before.host, before.id),
+  ]).catch((error) => {
+    keepId();
+    throw error;
+  });
+  if (found) {
     const older = lead.agents === null ? approved !== "none" : lead.agents !== approved;
     if (failed === null && !older) {
       if (typeof before.host === "string") keepOnExit(before.host, before.id);
+      keepId();
       return;
     }
     console.log(
@@ -222,12 +242,6 @@ export async function startLead(
         ? `${owner}/${repo}'s lead starts again on the .agents/ you approved.`
         : `${owner}/${repo}'s lead had ended:\n${failed}`,
     );
-    // A look for exited leads would find the session gone, and take the lead for one you exited.
-    // So its ID goes first, and the look leaves a lead without one alone.
-    db.run("UPDATE repositories SET lead_host_id = NULL WHERE owner = ? AND repo = ?", [
-      owner,
-      repo,
-    ]);
     await endSession(before.host, before.id);
   }
   const hostName = sessionHost();
@@ -375,6 +389,10 @@ export function leadPrompted(db: Database, owner: string, repo: string): void {
   dropLeadNotes(db, { owner, repo }, opening);
 }
 
+// The ending of each lead the look found exited, by its repository's owner/name, while it runs,
+// for a start of that lead to wait for.
+const endingLeads = new Map<string, Promise<void>>();
+
 // The look for exited leads under way, which a look asked for meanwhile shares, so a slow
 // plugin's host never has looks pile up behind it.
 let looking: Promise<void> | null = null;
@@ -431,9 +449,15 @@ export async function closeIfExited(
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
   // The host may have forgotten the session already, or a look that ran at the same time ended
   // it, so only a session still there is ended. The tab is closed either way, and opening the
-  // lead again ends whatever is left of it.
-  await stopSession(host, id).catch((error) =>
-    console.log(`couldn't end ${owner}/${repo}'s exited lead: ${errorText(error)}`),
+  // lead again ends whatever is left of it. You can open the repository again while this waits
+  // on the host, so a start of the lead waits for it: one the host gave the same ID would be
+  // ended here otherwise.
+  const key = `${owner}/${repo}`;
+  const ending = stopSession(host, id).catch((error) =>
+    console.log(`couldn't end ${key}'s exited lead: ${errorText(error)}`),
   );
+  endingLeads.set(key, ending);
+  await ending;
+  if (endingLeads.get(key) === ending) endingLeads.delete(key);
   return true;
 }
