@@ -2649,8 +2649,10 @@ test("the live view shows the agent's screen as it changes, colours kept and lon
 });
 
 // A tmux that logs each read of a screen with its colours, as the live view reads, then runs the
-// real one. Returns the folder it is in, for the list's PATH, and a count of the reads so far.
-function countedTmux(): { bin: string; reads: () => number } {
+// real one. Returns the folder it is in, for the list's PATH, a count of the reads so far, and
+// whether a read of the test's agents is running now. A read is logged as it starts, so once
+// none runs, every read the list began has been counted.
+function countedTmux(): { bin: string; reads: () => number; reading: () => boolean } {
   const bin = join(home, "bin");
   const log = join(home, "reads");
   mkdirSync(bin, { recursive: true });
@@ -2662,7 +2664,12 @@ exec ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
 `,
     { mode: 0o755 },
   );
-  return { bin, reads: () => read(log).split("\n").filter(Boolean).length };
+  const reading = () =>
+    Bun.spawnSync(["ps", "-A", "-o", "args="], { stdout: "pipe" })
+      .stdout.toString()
+      .split("\n")
+      .some((line) => line.includes("capture-pane -p -e") && line.includes(agents));
+  return { bin, reads: () => read(log).split("\n").filter(Boolean).length, reading };
 }
 
 // A tmux whose capture of a screen takes 3 seconds, as a busy or stalled tmux server can, which
@@ -2735,43 +2742,44 @@ async function noReads(reads: () => number): Promise<boolean> {
   return reads() === before;
 }
 
+// A read the list began on the row it just left, or just before its pane went, can still be
+// starting on a slow machine and be counted after. Such a read is already running by the time the
+// screen shows the change, so once no read runs, every one begun before has been counted.
+const readsEnded = (reading: () => boolean) => until(() => !reading(), "the read under way to end");
+
 test("the live view reads only while the list shows with its pane", async () => {
-  const { bin, reads } = countedTmux();
+  const { bin, reads, reading } = countedTmux();
   await open({ width: wide, bin });
   await until(() => reads() >= 4, "the live view's reads");
-  // On a row with no agent running, there is nothing to read. A read begun on APP-12's row, where
-  // the list starts, can still be noted on a slow machine, as after the attach below, so the list
-  // first goes a second without one. Past APP-14 and Up next's heading.
+  // On a row with no agent running, there is nothing to read.
+  // Past APP-14 and Up next's heading.
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
-  await wait(() => noReads(reads), { what: () => "the reads to stop on APP-9" });
+  await readsEnded(reading);
   expect(await noReads(reads)).toBe(true);
-  // While you are attached to an agent, the list isn't showing. A read that began on APP-7's row
-  // just before Enter may still be noted, on a slow machine, so the list must first go a second
-  // without a read: one that went on reading never would. Then it stays without. APP-7 is past
-  // the headings of Backlog and Building.
+  // While you are attached to an agent, the list isn't showing. APP-7 is past the headings of
+  // Backlog and Building.
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
-  await wait(() => noReads(reads), { what: () => "the reads to stop" });
+  await readsEnded(reading);
   expect(await noReads(reads)).toBe(true);
   press("C-\\");
   await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
   const back = reads();
   await until(() => reads() > back, "reads again");
-  // In a terminal too narrow for the pane, nothing is read. A read under way as the pane went
-  // can still be noted, as after the attach above, so the list first goes a second without one.
+  // In a terminal too narrow for the pane, nothing is read.
   tmux("resize-window", "-t", "=one:", "-x", "100");
   await until(() => !seen().includes(" │ "), "no pane");
-  await wait(() => noReads(reads), { what: () => "the reads to stop without the pane" });
+  await readsEnded(reading);
   expect(await noReads(reads)).toBe(true);
   // Nor once the list has left.
   tmux("resize-window", "-t", "=one:", "-x", String(wide));
   await until(() => seen().includes(" │ "), "the pane");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
-  await wait(() => noReads(reads), { what: () => "the reads to stop once the list left" });
+  await readsEnded(reading);
   expect(await noReads(reads)).toBe(true);
 });
 
