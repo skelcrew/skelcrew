@@ -1,6 +1,7 @@
 // The commands agents run: a builder submitting its work, the hooks that tell the daemon what an
 // agent is doing, and what the lead and builders use to ask, tell and mark a thread as needing you.
-import { readAsked, runByAgent, splitThreadName, usage } from "./input.ts";
+import { runByAgent } from "../agents/sandbox.ts";
+import { readAsked, splitThreadName, usage } from "./input.ts";
 import { startCommand } from "./threads.ts";
 
 export async function agentCommand(args: string[]): Promise<void> {

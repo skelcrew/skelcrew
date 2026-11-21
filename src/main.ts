@@ -1,6 +1,8 @@
 // Skelcrew's command line: reads the command and hands it to the file that does it.
+
+import { runByAgent } from "./agents/sandbox.ts";
 import { agentCommand, askCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
-import { runByAgent, serverName, usage } from "./cli/input.ts";
+import { usage } from "./cli/input.ts";
 import {
   leadCommand,
   machineCommand,
@@ -12,7 +14,7 @@ import {
 import { lsCommand, psCommand, showCommand, taskCommand } from "./cli/tasks.ts";
 import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
 import { help } from "./help.ts";
-import { outdated, outOfDate, remote, unfinished } from "./machine/remote.ts";
+import { outdated, outOfDate, remote, serverName, unfinished } from "./machine/remote.ts";
 import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 

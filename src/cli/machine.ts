@@ -1,6 +1,7 @@
 // The commands for this machine: plain sc, which opens the lead, the daemon, repositories,
 // plugins and the parts of the screen.
-import { runByAgent, usage } from "./input.ts";
+import { runByAgent } from "../agents/sandbox.ts";
+import { usage } from "./input.ts";
 
 export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { attachToLead, upInBackground } = await import("../attach.ts");
