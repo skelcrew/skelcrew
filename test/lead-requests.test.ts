@@ -177,6 +177,28 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     expect(read(join(builder(), "starts"))).toBe("start\n");
   }, 90_000);
 
+  // A yes that brings back a stopped task keeps its request until the builder is back, so the
+  // lead hears that it failed when the builder can't start, rather than that it is back.
+  test("a yes that brings back a stopped task whose builder can't start tells the lead it failed", async () => {
+    addApp();
+    await startApp12();
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    // From here on a builder exits as soon as it starts.
+    writeFileSync(join(home, "bin", "claude"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+      ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12 Add export?', 1)`);
+    db.close();
+    expect(await answer(1, true)).toEqual({
+      said: "Started APP-12 again: its builder is back where it was.",
+    });
+    await until(() => threadOf("12")?.status === "failed", 30_000);
+    const failed =
+      "The human said yes in the list to your request: Start APP-12 Add export? It failed: ";
+    await until(() => read(join(lead(), "typed")).includes(failed), 30_000);
+    expect(read(join(lead(), "typed"))).not.toContain("its builder is back where it was");
+  }, 60_000);
+
   test("a yes to a new task starts it with its title, description, short title and flow", async () => {
     await openApp();
     const asked = await asLead([

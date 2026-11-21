@@ -454,21 +454,25 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Brings back a stopped thread's builder for sc start, with --resume on its last session
   // in the same clone, then carries on the round its stop cut short, as after a restart.
   // Marks the thread failed, with the reason, when the builder can't start. A short title
-  // given with it is saved with it.
-  const resume = async (stopped: Thread, short?: string) => {
+  // given with it is saved with it. Gives back why the builder couldn't start, or null once it
+  // is back, as comeBack does.
+  const resume = (stopped: Thread, short?: string) => {
     const change = { status: statusOnceBack(stopped), ...(short ? { short } : {}) };
-    await comeBack(record(db, stopped.folder, change, "started again"));
+    return comeBack(record(db, stopped.folder, change, "started again"));
   };
   // Brings back the builder of a thread that was stopped, now that its status says it works or
   // waits again, and carries on its round. Marks the thread failed, with the reason, when the
-  // builder can't start.
-  const comeBack = async (thread: Thread) => {
+  // builder can't start. Gives back that reason, or null once the builder is back, for your yes
+  // to a lead's request, which waits on it to tell the lead.
+  const comeBack = async (thread: Thread): Promise<string | null> => {
     try {
       await listenFor(thread);
       await bringBack(db, sessions, thread);
       resumeRound(db, sessions, thread.folder);
+      return null;
     } catch (error) {
       failThread(db, sessions, thread, error);
+      return errorText(error);
     }
   };
   // Tells the lead what came of your answer to its request, and deletes the request, in one step.
@@ -533,9 +537,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         ...(flow ? { flow } : {}),
       };
       // The start marks this request as started as it changes the task, except for a new
-      // thread, whose setup takes a while. Its request waits for its builder to start, so a stop
-      // of the daemon during the setup has the yes done again, and the lead then hears whether
-      // the builder started. The bottom line says what the start said meanwhile.
+      // thread, whose setup takes a while, so a stop of the daemon during the setup has the yes
+      // done again. A start whose builder starts or comes back after the answer, a new thread's
+      // or a stopped one's, keeps its request until the builder runs, and the lead then hears
+      // whether it does. The bottom line says what the start said meanwhile.
       const { started, starting } = await startTask(start, taken.id);
       if (!starting) {
         settle(repository, taken.id, `${yes} ${started}`);
@@ -645,12 +650,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
       const on = switching ? ` on the flow ${request.flow}` : "";
       // Its builder comes back after the change is kept, as it takes a while.
+      let starting: Promise<string | null> = Promise.resolve(null);
       const answer = done(`Started ${name} again${on}: its builder is back where it was.`, () => {
-        void resume(before, request.short);
+        starting = resume(before, request.short);
       });
       // Its stop took you off its issue, so starting it again puts you back.
       assignIssue(db, before, true);
-      return answer;
+      return { ...answer, starting };
     }
     if (before && choice === "go on")
       return done(`${threadName(db, before)} goes on past the round limit.`, () =>
