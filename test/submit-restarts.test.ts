@@ -116,10 +116,15 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(reviews()).toHaveLength(1);
     const kept = edits()[0];
     expect(kept).toMatchObject({ pr: 7, id: "1001", verdict: "approve" });
-    expect(String(kept?.body)).toContain(`commit ${merged.slice(0, 7)}`);
+    expect(String(kept?.body)).toContain(`Round 2 · commit ${merged.slice(0, 7)}`);
     expect(String(kept?.body)).toContain("only merges main");
-    // It stays approved, with no round counted.
-    expect(thread()).toMatchObject({ status: "waiting", rounds: 0, verdict: "approve" });
+    // It stays approved, with no round of changes counted.
+    expect(thread()).toMatchObject({
+      status: "waiting",
+      rounds: 0,
+      verdict: "approve",
+      review_round: 2,
+    });
     // The daemon saves a thread before it appends the thread to its log.
     await until(() => read(join(data(), "threads", "app-12.log")).includes("approval kept"));
   }, 180_000);
@@ -150,7 +155,8 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(read(join(codexHome(), "sessions", "prompt-2"))).not.toContain(
       "CI runs the whole test suite on this commit",
     );
-    expect(edits()[0]?.body).toBe(`Round 1 · commit ${merged.slice(0, 7)}\n\nTests pass.`);
+    // The merge is a round of its own, so its number goes up.
+    expect(edits()[0]?.body).toBe(`Round 2 · commit ${merged.slice(0, 7)}\n\nTests pass.`);
   }, 180_000);
 
   // The builder merged main as GitHub has it, but its own origin/main is still where the thread

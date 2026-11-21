@@ -13,7 +13,7 @@ import { colorful, errorText } from "../say.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
-import { reviewCheck } from "./decide.ts";
+import { nextRound, reviewCheck } from "./decide.ts";
 import { messagesWaiting } from "./messages.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
@@ -163,7 +163,7 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
     // reviewed, while its status says it needs you when its push or check failed.
     if (thread.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
     const state = roundRunning(thread.folder) ? "reviewing" : "failed";
-    return { state, round: thread.rounds + 1, at };
+    return { state, round: nextRound(thread), at };
   }
   if (thread.verdict === null) return { state: "none", round: null, at: null };
   // A review that timed out twice failed its check, so it shows as failed.
