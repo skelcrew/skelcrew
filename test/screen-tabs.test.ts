@@ -52,7 +52,7 @@ test("a tab for each repository runs across the top, with a badge for what needs
   addSite();
   open("lead");
   await ready("lead");
-  await until(() => /^ {2}Skelcrew .*▕ {3}app {4}site •1$/.test(tabRow()), "the tabs");
+  await until(() => /^─┬─ Skelcrew .* ─*┬ {2}app {4}site •1 {2}─+┬─$/.test(tabRow()), "the tabs");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
   // The open one is on its dark grey, the others on a lighter one.
   expect(colours).toContain("48;5;234");
@@ -131,9 +131,9 @@ test("a click on a tab switches to its repository", async () => {
 test("several Alt keys typed together all move, and none is typed into the agent", async () => {
   open("lead");
   await ready("lead");
-  // The second task is six rows down, past the headings of Needs you, Up next, Backlog and
-  // Building.
-  type("\x1b[1;3B".repeat(6));
+  // The second task is five rows down, past the headings of the task queue, Backlog and
+  // Building. Nothing needs you, so Needs you has no heading.
+  type("\x1b[1;3B".repeat(5));
   await until(() => / 7\b/.test(selected()), "the second task");
   await until(onDetails, "app-7's details");
   await Bun.sleep(300);

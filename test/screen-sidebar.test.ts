@@ -1,6 +1,7 @@
 // The screen's sidebar as the list: its stages opening and closing by key and by click, moving
 // between sections, and the list's keys on a task's row, which never reach an agent.
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { panes } from "../src/screen/screen.ts";
 import { itemSql, threadSql } from "./harness.ts";
 import {
   acted,
@@ -34,12 +35,12 @@ afterEach(endTest);
 const left = () =>
   seen()
     .split("\n")
-    .map((line) => line.slice(0, sidebar - 1).trimEnd());
+    .map((line) => line.slice(2, sidebar).trimEnd());
 // Returns whether a stage's heading shows with rows under it, so it is open.
 const isOpen = (heading: string) => {
   const lines = left();
   const at = lines.findIndex((line) => line.includes(heading));
-  return at >= 0 && /^ [▸▹ ] \S/.test(lines[at + 1] ?? "");
+  return at >= 0 && /^ [▸ ] \S/.test(lines[at + 1] ?? "");
 };
 
 test("Building, Reviewing and Checks start open, and Backlog, Ready and Done start closed", async () => {
@@ -78,6 +79,43 @@ test("Alt-1 to Alt-6 open and close the stages from the lead's row, and the lead
   expect(read("lead.typed")).toBe("");
 });
 
+// The task queue is no stage, but opens and closes as one does, by 0, with Alt or without.
+test("Alt-0 and plain 0 open and close the task queue, and the lead gets neither", async () => {
+  sql(threadSql({ task: "9", title: "Old work", status: "stopped" }));
+  open("lead");
+  await ready("lead");
+  await until(() => isOpen("0 Task queue"), "the task queue open at the start");
+  press("M-0");
+  await until(() => !isOpen("0 Task queue"), "the task queue to close");
+  press("M-0");
+  await until(() => isOpen("0 Task queue") && / 9\b/.test(selected()), "it to open on APP-9");
+  await until(onDetails, "app-9's details");
+  type("0");
+  await until(() => !isOpen("0 Task queue"), "plain 0 to close it");
+  await Bun.sleep(300);
+  expect(read("lead.typed")).toBe("");
+  expect(read("app-9.typed")).toBe("");
+});
+
+// Needs you shows only while a task needs you, and you stay on your row as it comes and goes.
+test("Needs you shows only while a task needs you, and the row you are on stays", async () => {
+  open("lead");
+  await ready("lead");
+  await until(() => isOpen("2 Building"), "the stages");
+  expect(left().some((line) => line.includes("Needs you"))).toBe(false);
+  press("M-S-Down");
+  // The row shows its task's ID alone, after its mark.
+  await until(() => /^[▸▹] \S \d+\b/.test(selected()), "Building's first row");
+  const [, task = ""] = /^[▸▹] \S (\d+)\b/.exec(selected()) ?? [];
+  const name = new RegExp(` ${task}\\b`);
+  sql(`UPDATE threads SET needs_you = 1 WHERE task = ${task}`);
+  await until(() => isOpen("Needs you  1"), "it under Needs you");
+  expect(selected()).toMatch(name);
+  sql("UPDATE threads SET needs_you = 0");
+  await until(() => !left().some((line) => line.includes("Needs you")), "Needs you to go");
+  expect(selected()).toMatch(name);
+});
+
 test("on a task's row plain 1 to 6 open and close the stages, and no agent gets them", async () => {
   open("lead");
   await ready("lead");
@@ -98,11 +136,11 @@ test("a click on a stage's heading opens or closes it, and on Needs you does not
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
   await ready("lead");
-  await until(() => isOpen("Needs you 1"), "app-12 under Needs you");
+  await until(() => isOpen("Needs you  1"), "app-12 under Needs you");
   const at = (heading: string) => left().findIndex((line) => line.includes(heading)) + 1;
-  click(5, at("Needs you 1"));
+  click(5, at("Needs you  1"));
   await Bun.sleep(300);
-  expect(isOpen("Needs you 1")).toBe(true);
+  expect(isOpen("Needs you  1")).toBe(true);
   click(5, at("2 Building"));
   await until(() => !isOpen("2 Building"), "Building to close");
   click(5, at("2 Building"));
@@ -113,7 +151,7 @@ test("Alt-Shift-Down and Alt-Shift-Up move between the lead, Needs you and the o
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
   await ready("lead");
-  await until(() => isOpen("Needs you 1"), "app-12 under Needs you");
+  await until(() => isOpen("Needs you  1"), "app-12 under Needs you");
   press("M-S-Down");
   await until(() => / 12\b/.test(selected()), "Needs you's first row");
   press("M-S-Down");
@@ -156,14 +194,14 @@ test("a release installed in the background shows as a notice above the lead", a
   expect(at).toBeLessThan(lines.findIndex((line) => line.includes("lead")));
 });
 
-// A queued task shows under Up next, and Shift-Up there has the daemon move it earlier in the
+// A queued task shows in the task queue, and Shift-Up there has the daemon move it earlier in the
 // queue, with the footer saying its place. No agent gets the key.
-test("Shift-Up on a queued task in Up next moves it in the queue, and the footer says its place", async () => {
+test("Shift-Up on a queued task in the task queue moves it in the queue, and the footer says its place", async () => {
   daemon();
   sql(threadSql({ task: "20", title: "Dark mode", status: "queued", queued_since: 1000 }));
   open("lead");
   await ready("lead");
-  await until(() => left().some((line) => line.includes("Up next")), "Up next");
+  await until(() => left().some((line) => line.includes("Task queue")), "Task queue");
   press("M-S-Down");
   await until(() => / 20\b/.test(selected()) && onDetails(), "APP-20's details");
   await until(() => footer().includes("⇧↑↓ reorder"), "the key in the footer");
@@ -191,7 +229,14 @@ test("on a request of the lead's, the lead shows read-only on the right, and y a
   await until(() => footer().includes("y yes  n no"), "the keys in the footer");
   // The right side is the details pane, which reads the lead's screen without attaching to it.
   const rightCommand = () =>
-    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:.1`, "#{pane_start_command}").out;
+    tmux(
+      screen,
+      "display",
+      "-p",
+      "-t",
+      `=${screenSessions()[0]}:.${panes.right}`,
+      "#{pane_start_command}",
+    ).out;
   await until(() => rightCommand().includes("details"), "the details pane");
   await until(() => right().includes("I am lead"), "the lead's screen, read-only");
   type("n");

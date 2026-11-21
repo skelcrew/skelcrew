@@ -31,7 +31,7 @@ import {
   labeledToStart,
   type PullRequest,
 } from "./decide.ts";
-import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
+import { endThread, noticeEndedBuilder, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
@@ -623,7 +623,8 @@ async function pollRepository(
 }
 
 // Polls each repository's tracker and forge for what changed in its tasks and PRs. The PRs of
-// stopped threads are polled too, so a stopped thread's merge still ends it. A repository is
+// stopped threads are polled too, so a stopped thread's merge still ends it. Each tick also
+// stops every thread whose builder ended outside Skelcrew, and tells its lead. A repository is
 // polled every `every` milliseconds while one of its threads is working or waits on review or
 // CI, and half as often otherwise, so a label or your comment is seen within a minute. The
 // first poll runs at once, to pick up what happened while the daemon was down. A failed poll,
@@ -709,8 +710,24 @@ export function pollRepositories(
   };
   // Each tick polls a repository with work under way, and one without every other tick. A
   // repository whose forge isn't known yet waits, and one still being polled is skipped.
+  // The threads whose builder is being looked for on its host, by folder, so a slow host is
+  // never asked twice at once for the same one.
+  const looking = new Set<string>();
   const tick = () => {
     const live = threadsToPoll();
+    // Each tick stops the threads whose builder ended outside Skelcrew, in every repository,
+    // apart from its polls: only the host can tell, so a tracker or forge that fails, or a forge
+    // not known yet, never hides one. One whose stop fails, such as on a host that can't end
+    // what an ended builder left, is logged, and tried again on the next tick.
+    for (const thread of live) {
+      if (looking.has(thread.folder)) continue;
+      looking.add(thread.folder);
+      noticeEndedBuilder(db, sessions, thread)
+        .catch((error) =>
+          console.log(`couldn't stop ${thread.folder}, whose builder ended: ${errorText(error)}`),
+        )
+        .finally(() => looking.delete(thread.folder));
+    }
     for (const repository of repositories(db)) {
       const { owner, repo } = repository;
       const fullName = `${owner}/${repo}`;

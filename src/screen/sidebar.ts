@@ -39,8 +39,8 @@ import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
 import { dropAnswerOption, dropAsk, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
-import { filled, lightGrey, pad, paint, removeControlCodes } from "./look.ts";
-import { attachedMark, leadOnHost } from "./screen.ts";
+import { filled, pad, removeControlCodes } from "./look.ts";
+import { attachedMark, leadOnHost, panes } from "./screen.ts";
 import { attachTask, showTask } from "./task.ts";
 import { drawTop } from "./top.ts";
 
@@ -63,15 +63,16 @@ const keyPattern = new RegExp(
 );
 // The keys the screen's tmux sends the sidebar from anywhere: Alt with an arrow or a digit, a
 // click, and a message such as a click on a tab. Any other key was typed into the sidebar.
-const altPattern = new RegExp(`^${esc}(\\[1;3[AB]|\\[1;4[A-D]|[1-6]|\\[<|\\])`);
+const altPattern = new RegExp(`^${esc}(\\[1;3[AB]|\\[1;4[A-D]|[0-6]|\\[<|\\])`);
 // A press of the mouse, with its button, column and line, counted from 1. A release ends in m,
 // and does nothing.
 const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // The keys the sidebar acts on, by what they do. The Alt ones come from the screen's tmux, from
 // anywhere. The plain ones come only while your typing goes to the sidebar. Alt with a digit and
-// the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte from anywhere,
-// to bring your typing here, and Shift-Enter as CSI-u, only while your typing is here already.
-// `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain Enter.
+// the digit alone open or close the task queue or a stage. The screen's tmux sends Ctrl-\'s byte
+// from anywhere, to bring your typing here, and Shift-Enter as CSI-u, only while your typing is
+// here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
+// Enter.
 const keyNames: Record<string, string> = {
   "\x1c": "to sidebar",
   "\x1b[13;2u": "full screen",
@@ -98,24 +99,24 @@ const keyNames: Record<string, string> = {
 
 // The keys the footer shows while your typing goes to the sidebar, where the list's keys work
 // without Alt. Enter says what it does on the row: to the lead on the lead's row, open/close on a
-// stage's heading, none on the heading of Needs you or Up next, which never close, attach where it
-// attaches to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter
-// or `a` attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued task in Up next, and s or m show
-// only where the row can be started, or queued, or merged. A request of the lead's offers y and
-// n, which answer it, in place of Enter.
+// section's heading, none on the heading of Needs you, which never closes, attach where it attaches
+// to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter or `a`
+// attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued
+// task in the task queue, and s or m show only where the row can be started, or queued, or merged.
+// A request of the lead's offers y and n, which answer it, in place of Enter.
 function sidebarFooter(row: Row): string {
-  if (row.part === "lead") return "↑↓ move  ⏎ to lead  ⇧⏎/a full screen  1-6 stages  ⌥Q quit";
-  if (row.part === "request") return "↑↓ move  y yes  n no  1-6 stages  ⌥Q quit";
+  if (row.part === "lead") return "↑↓ move  ⏎ to lead  ⇧⏎/a full screen  0-6 sections  ⌥Q quit";
+  if (row.part === "request") return "↑↓ move  y yes  n no  0-6 sections  ⌥Q quit";
   if (row.part === "heading") {
-    const fixed = row.section === "needs you" || row.section === "up next";
-    return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  1-6 stages  ⌥Q quit`;
+    const fixed = row.section === "needs you";
+    return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  0-6 sections  ⌥Q quit`;
   }
   const scroll = row.task ? " · pgup/pgdn scroll" : "";
-  const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
+  const reorder = row.section === "task queue" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `↑↓ move  ${enter}${scroll}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
+  return `↑↓ move  ${enter}${scroll}  0-6 sections${reorder}${start}${merge}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
@@ -195,17 +196,17 @@ export async function runSidebar(
       });
   };
   let tabs = repositoryTabs(db, null);
-  const rightPane = `=${session}:.1`;
+  const rightPane = `=${session}:.${panes.right}`;
   let tty = paneTty(agents, rightPane);
   // The list's rows: every row, those that show, which are the lead's and those of the open
-  // sections, the row you are on among those and how far the sections scrolled. Needs you and
-  // Up next are always open. Of the stages, Building, Reviewing and Checks start open, as that is
-  // where the work under way is. The sections you open or close stay so, whichever repository
-  // you move to, and so does a whole Backlog once you asked for it.
+  // sections, the row you are on among those and how far the sections scrolled. Needs you is always
+  // open, and the task queue, Building, Reviewing and Checks start open, as that is where the work
+  // under way is, and what starts next. The sections you open or close stay so, whichever
+  // repository you move to, and so does a whole Backlog once you asked for it.
   let all: Row[] = [];
   let rows: Row[] = [];
-  const opened = new Set<Section>(["needs you", "up next", "building", "reviewing", "checks"]);
-  // What Up next's heading says of the builders, read with the rows.
+  const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
+  // What Task queue's heading says of the builders, read with the rows.
   let builders = "";
   let wholeBacklog = false;
   let here = 0;
@@ -220,7 +221,7 @@ export async function runSidebar(
   // an agent. Enter on the lead's row or a click on the lead gives it back. With Alt keys alone,
   // typing follows the row: the lead's row types to the lead.
   let held = false;
-  // Where your typing went at the last look, which the sidebar draws and the footer says.
+  // Where your typing went at the last look, which the top row's boxes show and the footer says.
   let typingRight = true;
   // What the footer says in place of its keys until the next key, the question it asks, and
   // whether the daemon is at work on an answer.
@@ -308,7 +309,7 @@ export async function runSidebar(
   let answers = 0;
   const answerDrop = () => {
     const active = screenTmux(agents, ["display", "-p", "-t", `=${session}:`, "#{pane_index}"]);
-    const agent = active.out.trim() === "1" ? about() : null;
+    const agent = Number(active.out) === panes.right ? about() : null;
     let folder = "";
     try {
       if (agent === open.lead) folder = leadOf(db, open.owner, open.repo).folder;
@@ -350,20 +351,16 @@ export async function runSidebar(
     return agentFooter(name, harnessOf(about()));
   };
 
-  // Draws the sidebar, the notice above the rest, only when it changed. Every line ends with the
-  // sidebar's edge in the pane's last column, and a column before it is left blank. The row you
-  // are on is lit while your typing goes to the sidebar, and only outlined while it goes to the
-  // right side.
+  // Draws the sidebar, the notice above the rest, only when it changed. Every line fills the
+  // pane, and its last column is left blank, so text never touches the box's line.
   const draw = () => {
     const { width, height } = size();
     const headings = sectionHeadings(all, opened, builders);
-    const room = Math.max(width - 2, 1);
-    const drawn = drawRows(rows, headings, here, top, room, height - 1, !typingRight);
+    const room = Math.max(width - 1, 1);
+    const drawn = drawRows(rows, headings, here, top, room, height - 1);
     top = drawn.top;
     targets = [...notice.map((): Target => null), null, ...drawn.targets];
-    const lines = ["", ...drawn.lines].map(
-      (line) => `${filled(line, Math.max(width - 1, 0))}${divider(typingRight)}`,
-    );
+    const lines = ["", ...drawn.lines].map((line) => filled(line, width));
     const frame = [...notice, ...lines].join("\n");
     if (frame === lastFrame) return;
     lastFrame = frame;
@@ -422,13 +419,16 @@ export async function runSidebar(
     }
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
-    // anything is drawn, as the sidebar and the top row show it.
-    typingRight = doing(
-      "asking tmux where your typing goes",
-      () =>
-        screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active}"]).out.trim() === "1",
+    // anything is drawn, as the top row and the footer show it.
+    // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it.
+    const [active, zoomed] = doing("asking tmux where your typing goes", () =>
+      screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active} #{window_zoomed_flag}"])
+        .out.trim()
+        .split(" "),
     );
-    notice = noticeLines(updateNotice(db), size().width, typingRight);
+    typingRight = active === "1";
+    const fullScreen = zoomed === "1";
+    notice = noticeLines(updateNotice(db), size().width);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
       try {
@@ -471,17 +471,20 @@ export async function runSidebar(
       asked = open.lead;
       openRepository(`${open.owner}/${open.repo}`, true);
     }
-    // The header and the tabs go to tmux's status line, and only when they changed.
+    // The header and the tabs go to tmux's status line, and only when they changed. A right side
+    // that fills the terminal is as wide as it, so the row keeps the sidebar's places and the
+    // tabs take what is left.
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
-    const left = size().width + 1;
+    const right = fullScreen ? width - size().width - 5 : width;
     const look = {
       tabs,
       open: `${open.owner}/${open.repo}`,
       where,
       versions: shownVersions(),
       typingRight,
+      fullScreen,
     };
-    const top = drawTop(look, { left, width });
+    const top = drawTop(look, { sidebar: size().width, right });
     if (top !== lastTop) {
       lastTop = top;
       doing("drawing the top row", () => showTop(agents, session, top));
@@ -543,11 +546,11 @@ export async function runSidebar(
       by === 1 ? starts.find((at) => at > here) : starts.filter((at) => at < mine).at(-1);
     if (next !== undefined) moveTo(next);
   };
-  // Opens or closes a stage. Needs you and Up next never close, as they are where you must look.
-  // Opening one moves you to its first row, so its heading and first rows show. Closing the one
-  // you are in moves you to its heading, as your row hides.
+  // Opens or closes a section. Needs you never closes, as it is where you must look. Opening one
+  // moves you to its first row, so its heading and first rows show. Closing the one you are in
+  // moves you to its heading, as your row hides.
   const toggle = (section: Section) => {
-    if (section === "needs you" || section === "up next") return;
+    if (section === "needs you") return;
     const inside = rows[here]?.section === section;
     const closing = opened.delete(section);
     if (!closing) opened.add(section);
@@ -578,7 +581,7 @@ export async function runSidebar(
   // You stay on its row, and the footer says its place. A paused task has no place until sc start
   // queues it, so the footer says that instead.
   const reorder = async (row: Row, by: -1 | 1) => {
-    if (row.task === null || row.section !== "up next") return;
+    if (row.task === null || row.section !== "task queue") return;
     if (row.place === null) {
       said = `${row.name} is paused: sc start ${row.name} brings it back`;
       return;
@@ -608,13 +611,13 @@ export async function runSidebar(
     shown = refused;
   };
 
-  // Opens the row you are on, as Enter does in the list. On the lead's row it gives your typing
-  // to the lead, and on a heading it opens or closes its stage. On a task at work, the builder
-  // takes the right side and your typing, until Ctrl-\ brings back its details, or the right side
-  // says why it can't. `zoom`, from Shift-Enter or `a`, gives the lead or the builder the whole
-  // terminal, and does nothing on a row Enter doesn't attach on. Up next says what the task waits
-  // on. Backlog asks to start the task, and the `… more` row shows every issue. Ready and Done
-  // open the PR, or copy its link. A ready task whose builder needs you reaches the builder
+  // Opens the row you are on, as Enter does in the list. On the lead's row it gives your typing to
+  // the lead, and on a heading it opens or closes its stage. On a task at work, the builder takes
+  // the right side and your typing, until Ctrl-\ brings back its details, or the right side says
+  // why it can't. `zoom`, from Shift-Enter or `a`, gives the lead or the builder the whole
+  // terminal, and does nothing on a row Enter doesn't attach on. Task queue says what the task
+  // waits on. Backlog asks to start the task, and the `… more` row shows every issue. Ready and
+  // Done open the PR, or copy its link. A ready task whose builder needs you reaches the builder
   // instead, so one Enter reaches what it waits on.
   const enter = (zoom = false) => {
     const row = rows[here];
@@ -634,8 +637,8 @@ export async function runSidebar(
       asking = { question: row.start, row: row.name, merge: false };
       return;
     }
-    // A task up next has no builder running yet, so the footer says what it waits on.
-    if (row.section === "up next") {
+    // A task in the task queue has no builder running yet, so the footer says what it waits on.
+    if (row.section === "task queue") {
       said = row.waits;
       return;
     }
@@ -688,7 +691,7 @@ export async function runSidebar(
     // question asked here open.
     if (name === "to sidebar") {
       held = true;
-      screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);
+      screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
       return;
     }
     if (working) return;
@@ -726,8 +729,10 @@ export async function runSidebar(
       return refresh();
     }
     if (button && column && line) return click(button, Number(column), Number(line));
-    // 1 to 6, with Alt or without, open or close the stages, in the order they show.
+    // 0, with Alt or without, opens or closes the task queue, and 1 to 6 the stages, in the
+    // order they show.
     const bare = key.startsWith(esc) ? key.slice(1) : key;
+    if (bare === "0") return toggle("task queue");
     const stage = /^[1-6]$/.test(bare) ? ListStage.options[Number(bare) - 1] : undefined;
     if (stage) return toggle(stage);
     if (name === "enter" || name === "full screen") return enter(name === "full screen");
@@ -787,18 +792,12 @@ export async function runSidebar(
   process.exit(0);
 }
 
-// Returns the sidebar's edge, the line between the two sides, which leans to the side your typing
-// goes to, and is lit there: to the right side while `typingRight`, and to the sidebar otherwise.
-// It is the last column of every line of the sidebar.
-const divider = (typingRight: boolean) => paint(lightGrey, typingRight ? "▕" : "▏");
-
 // Returns the lines that go above the rest of the sidebar for a notice, such as a release installed
 // in the background, or none without one. Cut at words to fit a sidebar `width` columns wide, and
-// parted from what follows by a blank line. Each fills the pane and ends with the sidebar's edge,
-// which leans as `typingRight` says.
-function noticeLines(notice: string, width: number, typingRight: boolean): string[] {
+// parted from what follows by a blank line. Each fills the pane.
+function noticeLines(notice: string, width: number): string[] {
   if (!notice) return [];
-  const room = Math.max(width - 1 - 2 * pad.length, 1);
+  const room = Math.max(width - 2 * pad.length, 1);
   // A word goes on the last line while it fits, and starts a new one when it doesn't. A word
   // longer than a whole line has one to itself.
   const lines = [""];
@@ -808,10 +807,8 @@ function noticeLines(notice: string, width: number, typingRight: boolean): strin
     if (Bun.stringWidth(longer) <= room || !lines[last]) lines[last] = longer;
     else lines.push(word);
   }
-  // Each line is padded, a blank one follows, and all of them end at the sidebar's edge.
-  return [...lines.map((line) => `${pad}${line}`), ""].map(
-    (line) => `${filled(line, width - 1)}${divider(typingRight)}`,
-  );
+  // Each line is padded, and a blank one follows.
+  return [...lines.map((line) => `${pad}${line}`), ""].map((line) => filled(line, width));
 }
 
 // Returns the agents running on a plugin's host, for the sidebar: builders by their thread's

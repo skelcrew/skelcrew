@@ -11,6 +11,7 @@ import {
   footer,
   given,
   home,
+  litBox,
   onDetails,
   onLead,
   open,
@@ -49,15 +50,20 @@ const fullScreen = () =>
     `=${screenSessions()[0]}:`,
     "#{window_zoomed_flag}",
   ).out.trim() === "1";
-// The sidebar's edge on the line under the top row.
-const edge = () => seen().split("\n")[1]?.[sidebar - 1];
+// Returns whether the top row is lit end to end, with no corner, which is how it shows that your
+// typing goes to an agent that fills the terminal.
+const topLit = () => {
+  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0] ?? "";
+  const plain = Bun.stripANSI(row);
+  return plain.startsWith("─── Skelcrew") && !plain.includes("┬") && !row.includes("\x1b[90m─");
+};
 // Returns whether a stage's heading shows with rows under it, so it is open.
 const isOpen = (heading: string) => {
   const lines = seen()
     .split("\n")
-    .map((line) => line.slice(0, sidebar - 1).trimEnd());
+    .map((line) => line.slice(2, sidebar).trimEnd());
   const at = lines.findIndex((line) => line.includes(heading));
-  return at >= 0 && /^ [▸▹ ] \S/.test(lines[at + 1] ?? "");
+  return at >= 0 && /^ [▸ ] \S/.test(lines[at + 1] ?? "");
 };
 // Presses a key and waits until the row you are on is another one, as the next key moves from
 // there.
@@ -70,25 +76,25 @@ async function step(key: string): Promise<void> {
 test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sidebar, and the screen shows it", async () => {
   open("lead");
   await ready("lead");
-  // At the start your typing goes to the lead, with no key pressed: the lead's row is only
-  // outlined, the edge leans to the right side, the footer says so, and the lead's cursor shows.
-  expect(selected()).toMatch(/^▹ ○ lead\b/);
+  // At the start your typing goes to the lead, with no key pressed: the box round the right side
+  // is the lit one, the footer says so, and the lead's cursor shows.
+  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  await until(() => litBox() === "right", "the right side's box");
   await until(
     () => footer() === "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude",
     "the footer under the lead",
   );
-  expect(edge()).toBe("▕");
   expect(cursorShows()).toBe(true);
   type("hi\r");
   await until(() => read("lead.typed") === "hi\n", "the typing to reach the lead");
   press("C-\\");
   await until(typingToSidebar, "the sidebar to take your typing");
   await until(
-    () => footer() === "  ↑↓ move  ⏎ to lead  ⇧⏎/a full screen  1-6 stages  ⌥Q quit",
+    () => footer() === "  ↑↓ move  ⏎ to lead  ⇧⏎/a full screen  0-6 sections  ⌥Q quit",
     "the sidebar's keys",
   );
   expect(selected()).toMatch(/^▸ ○ lead\b/);
-  expect(edge()).toBe("▏");
+  await until(() => litBox() === "sidebar", "the sidebar's box to light up");
   expect(cursorShows()).toBe(false);
   // The lead still shows on the right side, only to look at, and never saw the key.
   expect(seen()).toContain("I am lead");
@@ -109,13 +115,13 @@ test("in the sidebar plain keys work as in the list, keep your typing there, and
   while (!onLead()) await step("Up");
   await until(() => typingToSidebar() && seen().includes("I am lead"), "the lead on the right");
   type("3");
-  await until(() => seen().includes(" 3 Reviewing 0"), "Reviewing");
+  await until(() => seen().includes(" 3 Reviewing  0"), "Reviewing");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
   press("Enter");
   await until(() => !typingToSidebar() && onLead(), "the lead to take your typing");
   await until(() => footer().startsWith("  typing to lead"), "the footer under the lead");
-  expect(edge()).toBe("▕");
+  await until(() => litBox() === "right", "the right side's box to light up");
   // Digits then reach the lead, and open or close no stage.
   type("123456\r");
   await until(() => read("lead.typed") === "123456\n", "the digits to reach the lead");
@@ -152,7 +158,7 @@ test("your typing stays in the sidebar on a task's details, and onto the lead's 
   await Bun.sleep(300);
   expect(typingToSidebar()).toBe(true);
   type("3");
-  await until(() => seen().includes(" 3 Reviewing 0"), "Reviewing");
+  await until(() => seen().includes(" 3 Reviewing  0"), "Reviewing");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
 });
@@ -162,7 +168,7 @@ test("Enter on a task gives its builder your typing, and Ctrl-\\ brings it back 
   await ready("lead");
   await toSecondThread();
   await until(() => footer().startsWith("  typing to APP-7 · ⌃\\ to list"), "the agent's footer");
-  expect(edge()).toBe("▕");
+  await until(() => litBox() === "right", "the right side's box to light up");
   expect(fullScreen()).toBe(false);
   // Digits typed to the agent reach it.
   type("42\r");
@@ -187,10 +193,12 @@ for (const [key, how] of [
     press(key);
     await until(fullScreen, "the lead to fill the terminal");
     await until(() => !seen().includes("Needs you"), "the sidebar to hide");
+    await until(topLit, "the top row to light up");
     type("hi\r");
     await until(() => read("lead.typed") === "hi\n", "the typing to reach the lead");
     press("C-\\");
     await until(() => !fullScreen() && typingToSidebar(), "the sidebar again");
+    await until(() => !topLit(), "the top row's corners again");
     expect(read("lead.typed")).toBe("hi\n");
   });
 
@@ -202,6 +210,7 @@ test("a on a task's row attaches full screen to its builder, and Ctrl-\\ comes b
   await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
   type("a");
   await until(() => fullScreen() && seen().includes("I am app-7"), "app-7 full screen");
+  await until(topLit, "the top row to light up");
   type("go\r");
   await until(() => read("app-7.typed") === "go\n", "the typing to reach the builder");
   press("C-\\");
@@ -261,7 +270,7 @@ test("Enter on a stage's heading closes it, keeping you there, and opens it on i
   await step("Up");
   expect(selected()).toStartWith("2 Building");
   await until(
-    () => footer() === "  ↑↓ move  ⏎ open/close  1-6 stages  ⌥Q quit",
+    () => footer() === "  ↑↓ move  ⏎ open/close  0-6 sections  ⌥Q quit",
     "the heading's keys",
   );
   press("Enter");
@@ -286,7 +295,7 @@ test("on a request of the lead's, the focus keys keep your typing in the sidebar
   await step("Down");
   expect(selected()).toContain("Start APP-31");
   await until(
-    () => footer() === "  ↑↓ move  y yes  n no  1-6 stages  ⌥Q quit",
+    () => footer() === "  ↑↓ move  y yes  n no  0-6 sections  ⌥Q quit",
     "the request's keys",
   );
   for (const key of ["a", "S-Enter", "C-\\"]) {
