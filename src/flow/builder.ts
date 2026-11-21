@@ -454,8 +454,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   // A failed thread starting over leaves its old clone behind, so it goes first.
   rmSync(clone, { recursive: true, force: true });
   // From Skelcrew's own clone on the same disk, so git links its files rather than copying them.
-  // Maintenance stays off in the thread's clone, as the daemon fetches from it while the
-  // builder's git works there.
+  // Maintenance stays off in the thread's clone too, so the builder's git doesn't leave it running
+  // in the background. A fetch from the clone, as the daemon makes, is safe from it either way.
   await mustRun([
     "git",
     "clone",

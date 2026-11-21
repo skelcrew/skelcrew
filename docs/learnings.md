@@ -583,7 +583,9 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   `objects/maintenance.lock` for a moment. A clone from that folder copies its files and fails
   when the lock vanishes mid-copy, as a CI run did. Skelcrew runs its git with
   `maintenance.auto=false` and `gc.auto=0`, and writes both into every clone it makes. A plain
-  `git clone` never starts maintenance; a `git fetch` does.
+  `git clone` never starts maintenance; a `git fetch` does. Only a clone from a folder on the
+  same disk copies its files: a fetch from that folder goes through git's own transport and
+  never failed in 467 tries against nonstop maintenance, where 5 clones did.
 
 ## Runtime plugins
 
