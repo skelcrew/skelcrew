@@ -316,7 +316,7 @@ import { builderSession, readThread, renameBuilders } from ${JSON.stringify(sour
 import { endThread, noticeEndedBuilder, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { wakeAfterLimit } from ${JSON.stringify(source("flow/limits.ts"))};
-import { endSession, hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
+import { endSession, hasSession, listSessions, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
 import { bringBack, endEarlierBuilder, refuseSecondBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
 import { deliverMessages, dropOldEvents, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
@@ -624,24 +624,26 @@ console.log(after.status, after.host, after.host_id);`,
   );
 }, 30_000);
 
-test("sc start refuses a stopped thread whose last builder still runs on the host", () => {
-  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
-  writeFileSync(
-    join(home, ".config", "skelcrew", "config.yaml"),
-    "harness: claude\nsession: fake\n",
-  );
+// Your config names tmux, as it does by default, while the last builder still runs on the
+// plugin it started on. The host also still lists an older builder of the thread that ended,
+// before the one that runs.
+test("sc start refuses a stopped thread whose last builder still runs on any host", () => {
   const said = runWithFakeHost(
     "sessions",
     `const host = (await builderSession(db, "unused", { ...readThread(db, "app-12"), host: "fake" })).host;
 const refused = () => refuseSecondBuilder(db, "unused", readThread(db, "app-12")).then(() => "started", (error) => error.message);
 console.log(await refused());
 const labels = { repository: "simon/app", role: "builder", task: "app-12" };
-await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+const folder = ${JSON.stringify(home)};
+await startSession(host, "app-11", { folder, command: ["true"], env: {}, labels });
+while ((await listSessions(host)).some(({ running }) => running)) await Bun.sleep(20);
+console.log(await refused());
+await startSession(host, "app-12", { folder, command: ["sleep", "30"], env: {}, labels });
 console.log(await refused());`,
     { host: null, host_id: null, status: "stopped" },
   );
   expect(said).toBe(
-    "started\nSIMON/APP-12's last builder still runs on fake, as fake-app-12. End it there, then run sc start SIMON/APP-12 again.\n",
+    "started\nstarted\nSIMON/APP-12's last builder still runs on fake, as fake-app-12. End it there, then run sc start SIMON/APP-12 again.\n",
   );
 });
 

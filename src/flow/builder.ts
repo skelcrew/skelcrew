@@ -18,8 +18,9 @@ import { agentRole, checkFlow, repositoryCommands, roundLimit, sessionHost } fro
 import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
+import { installedPlugins } from "../plugins/plugin.ts";
 import { needsInstall } from "../plugins/repository.ts";
-import { filesFor, type Host, hostNamed } from "../plugins/runtime.ts";
+import { filesFor, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
@@ -39,7 +40,7 @@ import {
   folderName,
   hostGone,
   hostMissing,
-  labelledBuilder,
+  labelledBuilders,
   log,
   markBeforeHost,
   readThread,
@@ -795,30 +796,35 @@ async function bringBackNow(
   return null;
 }
 
-// Throws when a builder of the thread still runs on the host your config names, though the
-// thread keeps none, for sc start on a stopped thread. It is found by its name on tmux and by
-// its labels on a plugin's host. Such a builder outlived a stop, such as on a host that said
-// it ended a session it didn't, and a second one would share its clone.
+// Throws when a builder of the thread still runs on any host, though the thread keeps none, for
+// sc start on a stopped thread. Every host is looked on, tmux by the builder's name and each
+// installed plugin by its labels, as the thread doesn't say where its last builder ran, and
+// your config may name another host since. Such a builder outlived a stop, such as on a host
+// that said it ended a session it didn't, and a second one would share its clone. A host that
+// can't be asked fails the start, as nobody can tell whether the builder runs there.
 export async function refuseSecondBuilder(
   db: Database,
   sessions: string,
   thread: Thread,
 ): Promise<void> {
-  const hostName = sessionHost();
-  const host = hostNamed(db, sessions, hostName);
-  // A host that isn't installed is refused by the start itself, saying so.
-  if (host === null) return;
-  // One whose agent ended left only its last screen, and works in the clone no more.
-  const found =
-    typeof host === "string"
-      ? { name: thread.folder, running: await agentRuns(host, thread.folder) }
-      : await labelledBuilder(host, thread);
-  if (!found?.running) return;
-  const id = found.name;
-  const name = threadName(db, thread);
-  throw new Error(
-    `${name}'s last builder still runs on ${hostName}, as ${id}. End it there, then run sc start ${name} again.`,
-  );
+  const plugins = installedPlugins(db).flatMap(({ name }) => {
+    const host = pluginHost(db, name);
+    return host === null ? [] : [{ name, host }];
+  });
+  for (const { name: hostName, host } of [{ name: "tmux", host: sessions }, ...plugins]) {
+    // One whose agent ended left only its last screen, and works in the clone no more.
+    const id =
+      typeof host === "string"
+        ? (await agentRuns(host, thread.folder))
+          ? thread.folder
+          : undefined
+        : (await labelledBuilders(host, thread)).find(({ running }) => running)?.name;
+    if (id === undefined) continue;
+    const name = threadName(db, thread);
+    throw new Error(
+      `${name}'s last builder still runs on ${hostName}, as ${id}. End it there, then run sc start ${name} again.`,
+    );
+  }
 }
 
 // How long bringBack waits before asking a plugin's host again, in milliseconds.

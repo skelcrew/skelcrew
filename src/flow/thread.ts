@@ -294,17 +294,18 @@ export type Thread = z.infer<typeof Thread>;
 // Returns the harness the thread's builder runs on, for starting it again and typing into it.
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
 
-// Returns the session on a plugin's host whose labels say it is the thread's builder, or
-// nothing when it has none, for finding a builder whose ID Skelcrew doesn't have. The builder's
+// Returns the sessions on a plugin's host whose labels say they are the thread's builder, for
+// finding a builder whose ID Skelcrew doesn't have. A host can still list an old one that
+// ended beside one that runs, so every match is given. The builder's
 // task label is its thread's name when it started: its repository's short name or, once another
 // repository shares that, its owner and name, then its task's ID. Either is matched whole, so
 // task 12 never takes the builder of task other-12. The case is ignored, as a label is lowercase
 // while a builder started before held its repository's name as it was.
-export async function labelledBuilder(host: PluginHost, thread: Thread) {
+export async function labelledBuilders(host: PluginHost, thread: Thread) {
   const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`].map(
     (name) => name.toLowerCase(),
   );
-  return (await listSessions(host)).find(
+  return (await listSessions(host)).filter(
     ({ labels }) =>
       labels?.role === "builder" &&
       labels.repository === fullNameOf(thread) &&
@@ -327,7 +328,9 @@ export async function builderSession(
   if (host === null) throw new Error(hostGone(thread));
   if (thread.host_id !== null || typeof host === "string")
     return { host, id: thread.host_id ?? thread.folder };
-  const found = await labelledBuilder(host, thread);
+  // One that runs is the builder, before any that ended.
+  const matches = await labelledBuilders(host, thread);
+  const found = matches.find(({ running }) => running) ?? matches[0];
   if (!found) return { host, id: thread.folder };
   const now = record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
   // A short title given while its ID was unknown found nothing to rename, so its labels may
