@@ -70,7 +70,7 @@ Watch it from another terminal:
 ```sh
 sc --list         # the repository as a list. Enter opens an agent, Ctrl+\ comes back
 sc ps             # the threads, with their status and which need you
-sc show APP-12    # one task: its threads, PR, checks and review
+sc task APP-12    # one task: its threads, PR, checks and review
 ```
 
 Use your task's name where these say `APP-12`. The lead and `sc ls` show it: a task from an issue is named after it, such as `APP-12`, and one you asked the lead for is named like `APP-T100`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
@@ -105,7 +105,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | `sc` | Opens the lead of the repository you are in, with the sidebar of its tasks. Alt+Q quits, and the agents run on. |
 | `sc --list` | Shows the repository as a list. Enter opens a row, such as an agent or a PR. Ctrl+\ comes back from an agent. In a wide terminal, a pane beside the list shows the task you are on and its agent at work. |
 | `sc ls` | Lists the tasks, with each one's stage, status, PR, CI and review. |
-| `sc show <task>` | Shows one task: its description, threads, PR, checks and review. |
+| `sc task <task>` | Shows one task: its description, threads, PR, checks and review. |
 | `sc ps` | Lists the threads, with their status and which need you. |
 | `sc start <task>` | Starts a task's builder, resumes a stopped one, or lets one go on past the round limit. |
 | `sc task add <repo> "<title>" "<body>"` | Files a task in the backlog. `--issue` files it as an issue in the tracker instead. |
