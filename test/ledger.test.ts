@@ -7,6 +7,7 @@ import {
   failureOver,
   letGoOn,
   limitDecided,
+  limitNeedsYou,
   limitWaits,
   nextRound,
   reviewAsked,
@@ -210,6 +211,29 @@ test("a thread's round numbers never go backwards, through sc start past the lim
     "verdict",
     "submitted",
   ]);
+});
+
+// A row from before Skelcrew kept the highest round counted every round of changes as a round.
+// Letting it go on sets those back, and its next round still goes on above them.
+test("letting a row from before the record go on never takes its round number back", () => {
+  const old = thread({ rounds: 5, top_round: null, round_log: null, verdict: "changes" });
+  expect(nextRound(old)).toBe(6);
+  const on = { ...old, ...letGoOn(old, 3, 1000) };
+  expect(on).toMatchObject({ rounds: 3, top_round: 5 });
+  expect(nextRound(on)).toBe(6);
+});
+
+// As an event sets the builder working past the limit, the thread still needs you, but not while
+// a submit or review is on its way, nor after a review that failed.
+test("the round limit needs you as the builder works again, only after changes asked for", () => {
+  const past = thread({ rounds: 4, verdict: "changes" });
+  expect(limitNeedsYou(past, 3)).toBe(true);
+  expect(limitNeedsYou(past, 4)).toBe(false);
+  expect(limitNeedsYou(thread({ rounds: 4, verdict: "failed" }), 3)).toBe(false);
+  expect(limitNeedsYou(thread({ rounds: 4, verdict: "changes", submitting: "Fix" }), 3)).toBe(
+    false,
+  );
+  expect(limitNeedsYou(thread({ rounds: 4, verdict: "changes", reviewing: sha }), 3)).toBe(false);
 });
 
 // A task from before Skelcrew kept the record goes on from the counts its row had.

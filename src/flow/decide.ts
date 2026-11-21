@@ -1,7 +1,7 @@
 // Deciding what an event means: given a thread and what its forge returned, these functions
 // say what to do. They read no clock, files or network, so they can be tested without them.
 import type { Item } from "./copy.ts";
-import { passedReviewStage, pastRoundLimit, reviewText, roundOf } from "./ledger.ts";
+import { limitNeedsYou, passedReviewStage, pastRoundLimit, reviewText, roundOf } from "./ledger.ts";
 import type { Thread } from "./thread.ts";
 
 // How an event changes the thread's status and its needs you flag.
@@ -27,15 +27,6 @@ export function waitsOnFirstCheck(thread: Thread): boolean {
 // an approval and green checks, or on a flow with no review stage for its checks alone.
 export const readyWhen = (thread: Thread) =>
   roundOf(thread).verdict === "not reviewed" ? "its checks pass" : "it's approved and green";
-
-// Returns whether the round limit makes the thread need you as an event sets its builder working:
-// past the limit, with the last review asking for changes and no submit or review under way, as
-// waiting on a review never needs you, and a review that failed is the lead's to run again.
-const limitNeedsYou = (thread: Thread, maxRounds: number) =>
-  pastRoundLimit(thread, maxRounds) &&
-  roundOf(thread).verdict === "changes" &&
-  roundOf(thread).submitting === null &&
-  roundOf(thread).reviewing === null;
 
 // Returns whether a failed round stays failed as an event sets the builder working: a review
 // that failed is over once the builder works again, but a submit its flow doesn't review that

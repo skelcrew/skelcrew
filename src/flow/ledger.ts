@@ -250,9 +250,12 @@ function next(round: Round, event: RoundEvent): Round {
       return { ...round, review_failed: false };
     case "limit decided":
       return { ...round, limit_decided: true };
+    // Every round of changes was a round, so the highest round keeps them as it sets them back,
+    // for a row from before Skelcrew kept the highest round too.
     case "let go on":
       return {
         ...round,
+        top_round: round.rounds > (round.top_round ?? 0) ? round.rounds : round.top_round,
         rounds: event.limit,
         review_failed: false,
         telling: round.held,
@@ -320,6 +323,19 @@ export function nextRound(thread: Recorded): number {
 export function pastRoundLimit(thread: Recorded, maxRounds: number): boolean {
   const round = roundOf(thread);
   return round.rounds > maxRounds && !passed(round);
+}
+
+// Returns whether the round limit makes the thread need you as an event sets its builder working:
+// past the limit, with the last review asking for changes and no submit or review under way, as
+// waiting on a review never needs you, and a review that failed is the lead's to run again.
+export function limitNeedsYou(thread: Recorded, maxRounds: number): boolean {
+  const { verdict, submitting, reviewing } = roundOf(thread);
+  return (
+    pastRoundLimit(thread, maxRounds) &&
+    verdict === "changes" &&
+    submitting === null &&
+    reviewing === null
+  );
 }
 
 // Returns whether the lead or you decided about the round limit since the latest review.
