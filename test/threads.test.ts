@@ -176,7 +176,7 @@ function holdClones(): void {
   writeFileSync(
     join(home, "bin", "git"),
     `#!/bin/sh
-case "$*" in *"clone --quiet https://github.com/"*)
+case "$*" in *"clone --quiet "*" https://github.com/"*)
   touch "$HOME/held"
   for i in $(seq 1200); do
     if [ -e "$HOME/go" ] || [ ! -d "$HOME" ]; then break; fi
@@ -574,7 +574,7 @@ describe("a clone the daemon makes as it starts", () => {
     writeFileSync(
       join(home, "bin", "git"),
       `#!/bin/sh
-case "$*" in *"clone --quiet https://github.com/"*)
+case "$*" in *"clone --quiet "*" https://github.com/"*)
   trap 'sleep 0.5; touch "$HOME/ended"; exit' TERM
   touch "$HOME/held"
   for i in $(seq 1200); do sleep 0.05; done ;;
@@ -594,7 +594,7 @@ exec ${Bun.which("git") ?? "git"} "$@"
     writeFileSync(
       join(home, "bin", "git"),
       `#!/bin/sh
-case "$*" in *"clone --quiet https://github.com/"*)
+case "$*" in *"clone --quiet "*" https://github.com/"*)
   trap '' TERM
   echo $$ > "$HOME/held"
   for i in $(seq 1200); do sleep 0.05; done ;;
@@ -1712,7 +1712,7 @@ describe("the backlog", () => {
       join(home, "bin", "git"),
       `#!/bin/sh
 case "$*" in *push*":refs/skelcrew/tasks/"*) ${real} "$@"; touch "$HOME/down"; exit 1 ;; esac
-if [ -e "$HOME/down" ]; then case "$*" in *ls-remote*|*fetch*) echo "unreachable" >&2; exit 1 ;; esac; fi
+if [ -e "$HOME/down" ]; then case "$*" in *ls-remote*|*" fetch "*) echo "unreachable" >&2; exit 1 ;; esac; fi
 exec ${real} "$@"
 `,
       { mode: 0o755 },
@@ -1806,8 +1806,8 @@ exec ${real} "$@"
       join(home, "bin", "git"),
       `#!/bin/sh
 case "$*" in *push*":refs/skelcrew/started/"*) ${real} "$@"; touch "$HOME/down" "$HOME/nofetch"; exit 1 ;; esac
-if [ -e "$HOME/down" ]; then case "$*" in *ls-remote*|*fetch*) exit 1 ;; esac; fi
-if [ -e "$HOME/nofetch" ]; then case "$*" in *fetch*refs/skelcrew/*) exit 1 ;; esac; fi
+if [ -e "$HOME/down" ]; then case "$*" in *ls-remote*|*" fetch "*) exit 1 ;; esac; fi
+if [ -e "$HOME/nofetch" ]; then case "$*" in *" fetch "*refs/skelcrew/*) exit 1 ;; esac; fi
 exec ${real} "$@"
 `,
       { mode: 0o755 },
