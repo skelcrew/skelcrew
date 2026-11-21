@@ -33,6 +33,7 @@ import {
   bringBack,
   endEarlierBuilder,
   failThread,
+  inTurn,
   setUpThread,
   startBuilder,
   startChoice,
@@ -982,7 +983,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           return same && live && !stopping.has(thread.folder) && !removing.has(thread.folder);
         };
         if (!unchanged()) throw new Error(`${name} is being stopped, so it isn't restarted`);
-        await stopSession(host, id);
+        // The end takes its turn with the builder's starts and ends. A builder started a moment
+        // ago is still watched for exiting at once, and an end in that moment would fail it.
+        await inTurn(thread.folder, async (earlier) => {
+          await earlier;
+          await stopSession(host, id);
+        });
         if (!unchanged())
           return { said: `${name} was stopped or removed meanwhile, so its builder stays ended.` };
         // Brought back as after the daemon's restart, but its round goes on untouched, as

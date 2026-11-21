@@ -49,6 +49,8 @@ ${threadSql({ repo: "site", task: "8", status: "waiting" })}`);
 // What the database says of app now: whether it is there, and whether its tab is closed.
 function appRow(): { tab_closed: number } | null {
   const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  // The sidebar and the removal write meanwhile, so the read waits for them.
+  db.run("PRAGMA busy_timeout = 5000");
   try {
     const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
     return row === null ? null : z.object({ tab_closed: z.number() }).parse(row);
