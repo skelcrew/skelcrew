@@ -85,3 +85,36 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   await sidebarRefreshedTwice();
   expect(readFileSync(written, "utf8")).toBe("");
 });
+
+// A spinner on the mark of an agent at work turns about four times a second, and each turn
+// rewrites its cell alone, so the screen sends your terminal little. Over sc --remote it stays
+// still, as each turn would cost a write over a slow link, and the screen then sends nothing.
+test("the lead at work has a spinner that turns by its cell alone, and stays still over sc --remote", async () => {
+  sql("UPDATE repositories SET lead_state = 'working'");
+  sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
+  open("lead");
+  await ready("lead");
+  await until(() => (seen().split("\n")[29] ?? "").includes(fixedLoad), "the footer");
+  const frames = new Set<string>();
+  await until(() => {
+    for (const [frame] of seen().matchAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?= working)/g)) frames.add(frame);
+    return frames.size >= 3;
+  }, "the spinner to turn");
+  const written = join(home, "written");
+  tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
+  await Bun.sleep(1500);
+  const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
+  expect(sent).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+  expect(sent.length).toBeLessThan(1000);
+});
+
+test("over sc --remote the lead at work shows a still mark, and the screen sends nothing", async () => {
+  noteRefreshes();
+  sql("UPDATE repositories SET lead_state = 'working'");
+  sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
+  await until(() => seen().includes("○ working"), "the lead's still mark");
+  const written = await copyOnceSettled();
+  await sidebarRefreshedTwice();
+  expect(readFileSync(written, "utf8")).toBe("");
+});

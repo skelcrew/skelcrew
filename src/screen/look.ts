@@ -2,11 +2,14 @@
 // colours, the padding, and making text from outside safe and fit to show.
 import type { Colour } from "../flow/marks.ts";
 
-// The colours of marks and words. 256-colour numbers, as they reach your terminal through both
-// tmux servers and ssh, and mean the same whatever your theme. A theme's own green can be olive,
-// close to the yellow of needs you. They are the same on the row you are looking at, so a mark
-// never changes colour as you move onto it.
-export const [green, yellow, red] = ["38;5;120", "38;5;221", "38;5;210"];
+// The colours of marks and words, and of the stages at work. 256-colour numbers, as they reach
+// your terminal through both tmux servers and ssh, and mean the same whatever your theme. A
+// theme's own green can be olive, close to the yellow of needs you. Each is a mid tone with about
+// 3:1 contrast on a white theme, a dark one and the grey of the row you are looking at, and each
+// has a hue of its own. They are the same on the row you are looking at, so a mark never changes
+// colour as you move onto it.
+export const [green, yellow, red] = ["38;5;34", "38;5;136", "38;5;203"];
+export const [blue, purple, amber] = ["38;5;69", "38;5;171", "38;5;202"];
 // Bright text, for the mark of a builder at work. It is the theme's own text in bold, not a fixed
 // white, so it reads on a light theme too. On the row you are looking at it is white, as there
 // the theme's own text can be dark on the grey.

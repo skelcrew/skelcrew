@@ -36,7 +36,7 @@ const showing = () => {
     "#{window_zoomed_flag}",
   );
   if (zoomed.out.trim() !== "1") return "both";
-  return seen().includes("○ lead") ? "sidebar" : "agent";
+  return seen().includes("◆ Lead") ? "sidebar" : "agent";
 };
 // The header, on the top row.
 const header = () => (seen().split("\n")[0] ?? "").trimEnd();
@@ -120,14 +120,14 @@ test("on a narrow screen a tap on ‹ sidebar shows the sidebar, and a tap on a 
   await until(() => showing() === "sidebar", "the sidebar alone");
   const row = seen()
     .split("\n")
-    .findIndex((line) => line.includes("○ lead"));
+    .findIndex((line) => line.includes("◆ Lead"));
   click(10, row + 1);
   await until(() => showing() === "agent" && seen().includes("I am lead"), "the lead alone");
   await tapBackOnceShown();
   await until(() => showing() === "sidebar", "the sidebar alone again");
   const task = seen()
     .split("\n")
-    .findIndex((line) => line.includes("○ 12"));
+    .findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/.test(line));
   click(10, task + 1);
   await until(() => showing() === "agent" && seen().includes("I am app-12"), "app-12 alone");
   await tapBackOnceShown();

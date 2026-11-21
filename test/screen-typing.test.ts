@@ -78,7 +78,7 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
   await ready("lead");
   // At the start your typing goes to the lead, with no key pressed: the box round the right side
   // is the lit one, the footer says so, and the lead's cursor shows.
-  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  expect(selected()).toMatch(/^▸ ◆ Lead\b/);
   await until(() => litBox() === "right", "the right side's box");
   await until(
     () =>
@@ -96,7 +96,7 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
       "  ↑↓ move  w/⌥W close  ⏎ to lead  ⇧⏎/a full screen  0-6 sections  R restart  q/⌥Q quit",
     "the sidebar's keys",
   );
-  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  expect(selected()).toMatch(/^▸ ◆ Lead\b/);
   await until(() => litBox() === "sidebar", "the sidebar's box to light up");
   expect(cursorShows()).toBe(false);
   // The lead still shows on the right side, only to look at, and never saw the key.

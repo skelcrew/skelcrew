@@ -57,26 +57,28 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   await ready("lead");
   const lines = seen().split("\n");
   const left = (y: number) => lines[y]?.slice(2, sidebar).trimEnd();
-  // The lead is at the top of the sidebar, below a blank line, then a blank line, the task queue,
-  // a blank line and the six stages, with only Building open. Nothing needs you, so Needs you
-  // has no heading.
+  // The lead heads the sidebar, below a blank line, then a line across and how many tasks are
+  // where. Then a blank line, the task queue, a blank line and the six stages, with only Building
+  // open. Nothing needs you, so Needs you has no heading.
   expect(left(2)).toBe("");
   expect(lines[2]).toContain("I am lead");
-  expect(left(3)).toMatch(/^ ▸ ○ lead\b/);
-  expect(left(4)).toBe("     running");
-  expect(left(5)).toBe("");
-  expect(left(6)).toBe(" 0 Task queue 0");
+  expect(left(3)).toMatch(/^ ▸ ◆ Lead\b/);
+  expect(left(4)).toBe("");
+  expect(left(5)).toMatch(/^─+$/);
+  expect(left(6)).toBe("   2 running");
   expect(left(7)).toBe("");
-  expect(left(8)).toBe(" 1 Backlog    0");
-  expect(left(9)).toBe(" 2 Building   2");
-  expect(left(10)).toMatch(/^ {3}○ 12\b/);
+  expect(left(8)).toBe(" 0 Task queue 0");
+  expect(left(9)).toBe("");
+  expect(left(10)).toBe(" 1 Backlog    0");
+  expect(left(11)).toBe(" 2 Building   2");
+  expect(left(12)).toMatch(/^ {3}[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
   // Building already says it works, and it has no time yet, so nothing else shows under it.
-  expect(left(11)).toBe("");
-  expect(left(12)).toMatch(/^ {3}○ 7\b/);
-  expect(left(14)).toBe("");
-  expect(left(15)).toBe(" 3 Reviewing  0");
-  expect(left(18)).toBe(" 6 Done       1");
-  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  expect(left(13)).toBe("");
+  expect(left(14)).toMatch(/^ {3}[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/);
+  expect(left(16)).toBe("");
+  expect(left(17)).toBe(" 3 Reviewing  0");
+  expect(left(20)).toBe(" 6 Done       1");
+  expect(selected()).toMatch(/^▸ ◆ Lead\b/);
   await until(() => litBox() === "right", "the right side's box to light up");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -106,7 +108,7 @@ test("a click on a task shows its details, and a second click types to its build
   await ready("lead");
   const y = seen()
     .split("\n")
-    .findIndex((line) => /○ 7\b/.test(line));
+    .findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(line));
   click(5, y + 1);
   await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
   click(5, y + 1);
@@ -314,8 +316,9 @@ test("the screen starts on the lead's row, even while a task needs you", async (
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
   await ready("lead");
-  await until(() => /● 12\b/.test(seen()), "APP-12 under Needs you");
-  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  // Its builder still works, so its mark may spin, in the yellow of needs you.
+  await until(() => /[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/.test(seen()), "APP-12 under Needs you");
+  expect(selected()).toMatch(/^▸ ◆ Lead\b/);
   await until(() => litBox() === "right", "the right side's box to light up");
 });
 
@@ -324,13 +327,15 @@ test("updates on its own, with needs you in the sidebar", async () => {
   await ready("lead");
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  await until(() => colours().includes("\x1b[38;5;221m●"), "needs you");
-  expect(seen()).toMatch(/● 12\b/);
+  const yellow = () =>
+    [..."●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"].some((mark) => colours().includes(`\x1b[38;5;136m${mark}`));
+  await until(yellow, "needs you");
+  expect(seen()).toMatch(/[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
   expect(seen()).toContain("Needs you  1");
   // Its tab says so too, as other repositories' tabs would.
   expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {4}Skelcrew .* {2}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
-  await until(() => !/[○●] 7\b/.test(seen()), "the done thread to go");
+  await until(() => !/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(seen()), "the done thread to go");
 });
 
 test("Alt-Q leaves the whole screen, ends no agent, and says so", async () => {
@@ -462,7 +467,7 @@ for (const extended of [false, true])
     // tmux before 3.5 has only the xterm form of an extended key.
     const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
     expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
-    expect(selected()).toMatch(/^▸ ○ lead\b/);
+    expect(selected()).toMatch(/^▸ ◆ Lead\b/);
     await until(() => litBox() === "right", "the right side's box to light up");
     expect(seen()).toContain("I am lead");
   });
@@ -518,7 +523,7 @@ test("the wheel scrolls back through the agent's output, and typing returns you 
   for (let turn = 0; turn < 4; turn++) wheel(64);
   await until(() => seen().includes("line 160"), "the agent's older output");
   expect(seen()).not.toContain("I am output");
-  expect(seen()).toMatch(/[○●] 12\b/);
+  expect(seen()).toMatch(/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
   type("æble\r");
   // The agent's shell makes the file before it writes the line, so wait for the whole line.
   await until(() => read("output.typed").endsWith("\n"), "the typing");
@@ -819,7 +824,7 @@ test("a task that ends while you are on it stays yours, under Done, which opens"
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => seen().includes("6 Done       2"), "app-7 to end");
   await until(() => / 7\b/.test(selected()), "the sidebar to stay on APP-7");
-  expect(seen()).toMatch(/○ 12\b/);
+  expect(seen()).toMatch(/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
 });
 
 test("Enter on a task whose builder isn't running says so on the right, until the next key", async () => {
