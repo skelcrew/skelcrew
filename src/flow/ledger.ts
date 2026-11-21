@@ -66,6 +66,7 @@ const Round = z.object({
   review_at: z.number().nullable(),
   review_failed: z.boolean(),
   posting: Posting.nullable(),
+  review_post: ReviewPost.nullable(),
 });
 type Round = z.infer<typeof Round>;
 
@@ -117,6 +118,8 @@ export const RoundEvent = z.discriminatedUnion("kind", [
     round: z.number().nullable(),
     note: z.string().nullable(),
   }),
+  // Skelcrew's review on the PR was posted, edited or found there, as it now says.
+  z.object({ kind: z.literal("review on PR"), at: z.number(), post: ReviewPost }),
   // The commit an approval from before Skelcrew saved it stands for, found in Skelcrew's clone.
   z.object({ kind: z.literal("approval found"), commit: z.string() }),
 ]);
@@ -140,6 +143,7 @@ const freshRound: Round = {
   review_at: null,
   review_failed: false,
   posting: null,
+  review_post: null,
 };
 
 // What the record is read from: the record, or for a row from before it, the row's own fields.
@@ -168,6 +172,7 @@ const recordOf = (thread: Recorded): RoundEvent[] =>
         review_at: thread.review_at,
         review_failed: thread.review_failed,
         posting: thread.posting,
+        review_post: thread.review_post,
       },
     },
   ];
@@ -222,6 +227,7 @@ function next(round: Round, event: RoundEvent): Round {
         review_at: event.at,
         review_failed: event.verdict === "failed" || event.verdict === "timed out",
         posting: event.posting,
+        review_post: round.review_post,
       };
     }
     case "not reviewed":
@@ -256,6 +262,8 @@ function next(round: Round, event: RoundEvent): Round {
       return { ...round, telling: null };
     case "posted":
       return { ...round, posting: null };
+    case "review on PR":
+      return { ...round, review_post: event.post };
     case "approval found":
       return { ...round, reviewed_commit: event.commit };
   }
@@ -273,11 +281,7 @@ function logged(thread: Thread, event: RoundEvent) {
 }
 
 // The round fields of a thread that starts, or starts over, with an empty record.
-export const freshRounds = {
-  round_log: [],
-  ...freshRound,
-  review_post: null,
-} satisfies Partial<Thread>;
+export const freshRounds = { round_log: [], ...freshRound } satisfies Partial<Thread>;
 
 // Returns whether the thread's latest submit may go on to CI and ready: Skelcrew's reviewer
 // approved it, or its flow has no review stage, so it was never reviewed. Everything that
@@ -432,9 +436,9 @@ export const changesTyped = (thread: Thread, now: number) =>
 export const approvalFound = (thread: Thread, commit: string) =>
   logged(thread, { kind: "approval found", commit });
 
-// Skelcrew's review on the PR was posted or edited, so the next round edits it. It is the forge's
-// copy of the round, not an event of it.
-export const reviewOnPr = (post: ReviewPost) => ({ review_post: post }) satisfies Partial<Thread>;
+// Skelcrew's review on the PR was posted, edited or found there, so the next round edits it.
+export const reviewOnPr = (thread: Thread, post: ReviewPost, now: number) =>
+  logged(thread, { kind: "review on PR", at: now, post });
 
 // Returns the note the lead gets as a verdict is posted: the round limit's, while it still holds
 // the thread's changes, as a submit or a decision since ends that.
@@ -447,7 +451,7 @@ const noteNow = (round: Round, note: string | null) =>
 // verdict's own round, so it never names a review the PR doesn't show.
 export function verdictPosted(thread: Thread, posting: Posting, now: number) {
   const shown = posting.review;
-  const onPr = thread.review_post;
+  const onPr = roundOf(thread).review_post;
   const round = shown !== null && onPr?.pr === shown.pr ? onPr.round : null;
   const change = logged(thread, { kind: "posted", at: now, round, note: posting.note });
   const showsIt = shown !== null && round === shown.round;
@@ -478,8 +482,8 @@ type Reached = {
 };
 
 // What a verdict gives back: the change to save, the round's number, Skelcrew's check, what to
-// type into the builder, why, for the log, and the note for the lead to save with the change,
-// which comes only from its posted event.
+// type into the builder, why, for the log, whether the round limit now holds the changes, and the
+// note for the lead to save with the change, which comes only from its posted event.
 type Reaching = {
   change: Partial<Thread>;
   round: number;
@@ -487,6 +491,7 @@ type Reaching = {
   description: string;
   tell: string | null;
   why: string;
+  holds: boolean;
   note: string | null;
 };
 
@@ -566,5 +571,5 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
     status: asked && !held ? ("working" as const) : ("waiting" as const),
   } satisfies Partial<Thread>;
   const note = forge ? null : noteNow(saved, limitNote);
-  return { change, round, check, description, tell: saved.telling, why, note };
+  return { change, round, check, description, tell: saved.telling, why, holds: held, note };
 }

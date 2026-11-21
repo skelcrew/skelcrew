@@ -36,7 +36,7 @@ function inProcess(body: string): Record<string, unknown> {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { markForgotten, markNeedsYou, needsYou, needsYouFor, questionAnswered, threadWord, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { goOn, noteLimit, submitRound } from ${JSON.stringify(source("flow/round.ts"))};
-import { verdictPosted, verdictReached } from ${JSON.stringify(source("flow/ledger.ts"))};
+import { reviewOnPr, verdictPosted, verdictReached } from ${JSON.stringify(source("flow/ledger.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { bringBack } from ${JSON.stringify(source("flow/builder.ts"))};
 import { armMerge, cancelMerge } from ${JSON.stringify(source("flow/merging.ts"))};
@@ -305,7 +305,8 @@ const changesAsked = `const changesAsked = () => {
   record(db, "app-12", { ...o.change, noting: null }, o.why);
   const unposted = noting();
   const round = thread().posting.review.round;
-  record(db, "app-12", { review_post: { pr: 7, id: "9", verdict: "changes", findings: ["Fix it."], round } });
+  const post = { pr: 7, id: "9", verdict: "changes", findings: ["Fix it."], round };
+  record(db, "app-12", reviewOnPr(thread(), post, Date.now()));
   const saved = thread();
   const posted = verdictPosted(saved, saved.posting, Date.now());
   record(db, "app-12", posted.change);

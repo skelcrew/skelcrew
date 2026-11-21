@@ -10,6 +10,7 @@ import {
   limitWaits,
   nextRound,
   reviewAsked,
+  reviewOnPr,
   reviewStarted,
   roundFailed,
   roundMoved,
@@ -260,7 +261,8 @@ test("without a forge, the verdict is posted at once and brings the note with it
 test("posting the verdict brings the round limit's note, unless a submit came first", () => {
   const before = thread({ rounds: 3 });
   const onPr = { pr: 7, id: "9", verdict: "changes" as const, findings: changes.findings };
-  const past = { ...before, ...reach(before, changes).change, review_post: { ...onPr, round: 4 } };
+  const reached = { ...before, ...reach(before, changes).change };
+  const past = { ...reached, ...reviewOnPr(reached, { ...onPr, round: 4 }, 1900) };
   const { posting } = past;
   if (posting === null) throw new Error("the verdict saved nothing to post");
   const posted = verdictPosted(past, posting, 2000);
@@ -278,7 +280,7 @@ test("posting the verdict brings the round limit's note, unless a submit came fi
   expect(verdictPosted(decided, posting, 2000).note).toBeNull();
   // A forge that can't edit, with nothing new said, would leave the older round's review on the
   // PR. The record then says the PR shows that round, and the lead hears nothing of this one.
-  const older = { ...past, review_post: { ...onPr, round: 3 } };
+  const older = { ...reached, ...reviewOnPr(reached, { ...onPr, round: 3 }, 1900) };
   const stale = verdictPosted(older, posting, 2000);
   expect(stale.note).toBeNull();
   expect(stale.change.round_log?.at(-1)).toMatchObject({ kind: "posted", round: 3 });
@@ -339,6 +341,8 @@ test("the round fields are always what the record comes to", () => {
     (from) => submitted(from, "Add export", 1000, false),
     (from) => reviewStarted(from, sha, 1100),
     (from) => reach(from, changes, 1).change,
+    (from) =>
+      reviewOnPr(from, { pr: 7, id: "9", verdict: "changes", findings: [], round: 1 }, 1150),
     (from) => changesTyped(from, 1200),
     (from) => submitted(from, "Fix", 1300, false),
     (from) => reviewStarted(from, sha, 1400),
