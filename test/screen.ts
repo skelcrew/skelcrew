@@ -60,29 +60,41 @@ export const read = (file: string) => {
 // What you see in the first terminal, or a second one.
 export const seen = (window = "one") =>
   tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
-// Returns how wide the sidebar is now, from how wide the terminal is, as a test may resize it.
-const sidebarNow = (window = "one") =>
-  sidebarFor(Number(tmux(terminal, "display", "-p", "-t", `=${window}:`, "#{window_width}").out));
+// Returns how wide the terminal is now, and the sidebar, as a test may resize it.
+const widthNow = (window = "one") =>
+  Number(tmux(terminal, "display", "-p", "-t", `=${window}:`, "#{window_width}").out);
+const sidebarNow = (window = "one") => sidebarFor(widthNow(window));
 // The top row as you see it: Skelcrew above the sidebar, then the tabs above the right side.
 export const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
-// The row you are looking at, as the sidebar shows it: the line it starts with ▸, lit while your
-// typing goes to the sidebar, or the outline ▹ while it goes to the right side, or a heading with
-// the grey background. Below the status line, where the open tab has the same grey, and left of
-// the sidebar's edge. Empty until the sidebar has drawn one.
+// The row you are looking at, as the sidebar shows it: the line it starts with ▸, or a heading
+// with the grey background. Below the status line, where the open tab has the same grey, and
+// inside the sidebar's box, which starts two columns in, past the pad and the box's line. Empty
+// until the sidebar has drawn one.
 export function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
-  const width = sidebarNow(window) - 1;
+  const width = sidebarNow(window);
   const lines = colours.split("\n").slice(1);
   const line = lines.find((text) => {
-    const plain = Bun.stripANSI(text).slice(0, width).trim();
-    return /^[▸▹] /.test(plain) || (text.split(/[▏▕]/)[0] ?? "").includes("48;5;238");
+    const plain = Bun.stripANSI(text).slice(2, width).trim();
+    return /^▸ /.test(plain) || (text.split("│")[1] ?? "").includes("48;5;238");
   });
   return Bun.stripANSI(line ?? "")
-    .slice(0, width)
+    .slice(2, width)
     .trim();
 }
-// Returns whether your typing goes to the sidebar, as the row you are on is lit there with ▸.
-export const typingToSidebar = (window = "one") => selected(window).startsWith("▸");
+// Returns whose box is lit, which is where your typing goes: the sidebar's, the right side's, both
+// or none, from the colour of the outer line of each side, on the row under the top row. The
+// line between the two sides is in both boxes, so it says nothing.
+export function litBox(window = "one"): string {
+  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out.split("\n")[1];
+  const parts = (row ?? "").split("│");
+  // The colours that were set last before a line, as the text before it ends.
+  const lit = (before: string) => before.lastIndexOf("38;5;33") > before.lastIndexOf("\x1b[9");
+  const [sidebar, right] = [lit(parts[0] ?? ""), lit(parts.at(-2) ?? "")];
+  return sidebar && right ? "both" : sidebar ? "sidebar" : right ? "right" : "none";
+}
+// Returns whether your typing goes to the sidebar, as its box is the lit one.
+export const typingToSidebar = (window = "one") => litBox(window) === "sidebar";
 export const screenSessions = () =>
   tmux(screen, "list-sessions", "-F", "#{session_name}").out.trim().split("\n").filter(Boolean);
 
@@ -317,7 +329,7 @@ export async function toSecondThread(): Promise<void> {
 }
 
 // Returns whether the row you are on is the lead's, which alone starts with its mark and lead.
-export const onLead = (window = "one") => /^[▸▹] \S lead\b/.test(selected(window));
+export const onLead = (window = "one") => /^▸ \S lead\b/.test(selected(window));
 
 // Waits until the screen shows the agent you opened it on, and the sidebar has drawn, on the
 // lead's row, where the screen starts whichever agent it opened on.
@@ -394,9 +406,10 @@ export function daemon(): void {
   standIn = createServer(answer).listen(join(home, "run", "skelcrew.sock"));
 }
 
-// What the right side shows, without the sidebar.
+// What the right side shows, inside its box: without the sidebar, and without the box's line and
+// the pad at its right.
 export const right = () =>
   seen()
     .split("\n")
-    .map((line) => line.slice(sidebarNow() + 1))
+    .map((line) => line.slice(sidebarNow() + 1, widthNow() - 2).trimEnd())
     .join("\n");
