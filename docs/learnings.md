@@ -405,6 +405,9 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **tmux draws no line at the window's edges.** A pane one column wide at each outer edge gives
   tmux a line to draw there. The status line draws the boxes' tops, as tmux has no line above
   a pane at the top.
+- **A zoomed pane has no lines round it.** `resize-pane -Z` hides every other pane, and with
+  them the lines between panes. Only the status line still shows, so it is the one place left
+  to mark where your typing goes.
 - **A pane's index is its place on the screen**, left to right, then down. A split goes into
   tmux's list beside the pane it splits, and `swap-pane` swaps both places at once. A pad at
   the left edge makes the sidebar pane 1, not 0.

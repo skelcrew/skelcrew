@@ -116,13 +116,15 @@ function drawTabs(tabs: Tab[], open: string, width: number): { text: string; wid
 
 // What the top row shows: the tabs and the open one's owner/name, the remote Skelcrew runs on, if
 // any, the names of the version of the Skelcrew running here, longest first, such as v0.4.2, and
-// whether your typing goes to the right side, whose box is then the lit one.
+// whether your typing goes to the right side, whose box is then the lit one, and whether the right
+// side fills the whole terminal.
 export type Top = {
   tabs: Tab[];
   open: string;
   where: string;
   versions: string[];
   typingRight: boolean;
+  fullScreen: boolean;
 };
 
 // Returns the top row of the screen as a tmux format, given what it shows and how wide the
@@ -131,19 +133,22 @@ export type Top = {
 // each of those lines, the header set in the sidebar's top, the tabs in the right side's, and a
 // stub of dim line above each pad at the outer edges, as tmux's line under the panes has. The box
 // your typing goes to is lit, the line the sides share always, and the rest is dim, as tmux draws
-// the lines below. The tabs start where the right side does. It reads nothing, so what you see can
-// be tested without a terminal.
+// the lines below. The tabs start where the right side does. While the right side fills the
+// terminal, tmux hides the panes that draw the box's lines, so the whole row is lit, as the one
+// mark left that your typing goes to the agent, with no corner over lines that aren't there. It
+// reads nothing, so what you see can be tested without a terminal.
 export function drawTop(top: Top, size: Size): string {
-  const [left, right] = top.typingRight ? [dim, lit] : [lit, dim];
+  const [left, right] = top.fullScreen ? [lit, lit] : top.typingRight ? [dim, lit] : [lit, dim];
+  const [outer, corner] = top.fullScreen ? [lit, "─"] : [dim, "┬"];
   const tabs = drawTabs(top.tabs, top.open, Math.max(size.right - 1, 0));
   const after = "─".repeat(Math.max(size.right - tabs.width, 0));
   return [
-    inColour(dim, "─"),
-    inColour(left, "┬"),
+    inColour(outer, "─"),
+    inColour(left, corner),
     header(top.where, size.sidebar, top.versions, left),
-    inColour(lit, "┬"),
+    inColour(lit, corner),
     tabs.text,
-    inColour(right, `${after}┬`),
-    inColour(dim, "─"),
+    inColour(right, `${after}${corner}`),
+    inColour(outer, "─"),
   ].join("");
 }

@@ -404,11 +404,14 @@ export async function runSidebar(
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
     // anything is drawn, as the top row and the footer show it.
-    typingRight = doing(
-      "asking tmux where your typing goes",
-      () =>
-        screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active}"]).out.trim() === "1",
+    // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it.
+    const [active, zoomed] = doing("asking tmux where your typing goes", () =>
+      screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active} #{window_zoomed_flag}"])
+        .out.trim()
+        .split(" "),
     );
+    typingRight = active === "1";
+    const fullScreen = zoomed === "1";
     notice = noticeLines(updateNotice(db), size().width);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
@@ -452,14 +455,18 @@ export async function runSidebar(
       asked = open.lead;
       openRepository(`${open.owner}/${open.repo}`, true);
     }
-    // The header and the tabs go to tmux's status line, and only when they changed.
-    const right = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
+    // The header and the tabs go to tmux's status line, and only when they changed. A right side
+    // that fills the terminal is as wide as it, so the row keeps the sidebar's places and the
+    // tabs take what is left.
+    const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
+    const right = fullScreen ? width - size().width - 5 : width;
     const look = {
       tabs,
       open: `${open.owner}/${open.repo}`,
       where,
       versions: shownVersions(),
       typingRight,
+      fullScreen,
     };
     const top = drawTop(look, { sidebar: size().width, right });
     if (top !== lastTop) {

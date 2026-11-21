@@ -77,7 +77,7 @@ test("shows the lead, then Needs you, Up next and the stages, beside the agent",
   expect(left(14)).toBe(" 3 Reviewing 0");
   expect(left(17)).toBe(" 6 Done      1");
   expect(selected()).toMatch(/^▸ ○ lead\b/);
-  expect(litBox()).toBe("right");
+  await until(() => litBox() === "right", "the right side's box to light up");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
   expect(panes.sort()).toEqual(["app-12", "app-7", "lead"]);
@@ -316,7 +316,7 @@ test("the screen starts on the lead's row, even while a task needs you", async (
   await ready("lead");
   await until(() => seen().includes("● APP-12"), "APP-12 under Needs you");
   expect(selected()).toMatch(/^▸ ○ lead\b/);
-  expect(litBox()).toBe("right");
+  await until(() => litBox() === "right", "the right side's box to light up");
 });
 
 test("updates on its own, with needs you in the sidebar", async () => {
@@ -463,7 +463,7 @@ for (const extended of [false, true])
     const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
     expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
     expect(selected()).toMatch(/^▸ ○ lead\b/);
-    expect(litBox()).toBe("right");
+    await until(() => litBox() === "right", "the right side's box to light up");
     expect(seen()).toContain("I am lead");
   });
 

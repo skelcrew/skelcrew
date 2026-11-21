@@ -19,6 +19,7 @@ const base: Top = {
   where: "",
   versions: ["v0.1.0"],
   typingRight: true,
+  fullScreen: false,
 };
 // Returns the top row as a tmux format, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
@@ -109,6 +110,14 @@ test("the box your typing goes to is lit, the line the sides share always, and t
   expect(toSidebar).toStartWith(`${dim}─#[default]${lit}┬#[default]${lit}─ #[default]`);
   expect(toSidebar).toContain(`${lit}┬#[default]`);
   expect(toSidebar).toMatch(/#\[fg=brightblack\]─+┬#\[default\]#\[fg=brightblack\]─#\[default\]$/);
+});
+
+test("while the right side fills the terminal, the whole row is lit, with no corners", () => {
+  const line = top({ fullScreen: true });
+  expect(line).not.toContain("brightblack]─");
+  expect(line).not.toContain("┬");
+  expect(seen(line)).toHaveLength(2 + size.sidebar + 1 + size.right + 2);
+  expect(seen(line)).toStartWith("─── Skelcrew");
 });
 
 test("where Skelcrew runs can't run commands, restyle the row or reach your terminal", () => {
