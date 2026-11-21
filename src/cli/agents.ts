@@ -38,7 +38,6 @@ export async function agentCommand(args: string[]): Promise<void> {
     await reportTurnInterrupted();
     return;
   }
-  if (command === "attached" && args.length === 1) return;
   usage(command);
 }
 
