@@ -45,7 +45,6 @@ export async function readAsked(file: string): Promise<string> {
 }
 
 const commands = [
-  "up",
   "serve",
   "restart",
   "init",
@@ -61,7 +60,6 @@ const commands = [
   "peek",
   "interrupt",
   "needs-you",
-  "ask",
   "review",
   "submit",
   "hook",

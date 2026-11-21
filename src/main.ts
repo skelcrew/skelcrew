@@ -1,7 +1,7 @@
 // Skelcrew's command line: reads the command and hands it to the file that does it.
 
 import { runByAgent } from "./agents/sandbox.ts";
-import { agentCommand, askCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
+import { agentCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
 import { usage } from "./cli/input.ts";
 import {
   leadCommand,
@@ -21,7 +21,6 @@ import { versionLine } from "./version.ts";
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   "--list": "showing the list",
-  up: "running the daemon",
   restart: "restarting the engine",
   serve: "running the daemon",
   "repo add": "adding a repository",
@@ -100,7 +99,6 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     return leadCommand(list, lead[1]);
 
   switch (first) {
-    case "up":
     case "serve":
     case "restart":
       return machineCommand(words);
@@ -126,7 +124,7 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "task":
       return words[1] === "add" ? taskCommand(words) : showCommand(words.slice(1), json);
     case "start":
-      return startCommand(words, false);
+      return startCommand(words);
     case "stop":
     case "rm":
     case "review":
@@ -134,8 +132,6 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "interrupt":
     case "attach":
       return threadCommand(words);
-    case "ask":
-      return askCommand(words);
     case "needs-you":
       return needsYouCommand(words);
     case "tell":

@@ -63,7 +63,7 @@ test("the help names every command", () => {
     expect(out).toContain(`  ${command} `);
 });
 
-// sc up still runs the daemon for services an older Skelcrew installed, but sc serve replaced it.
+// sc serve runs the daemon. sc up was its old name, and is gone.
 test("the help names sc serve for the daemon, and never sc up", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toMatch(/^ {2}(--remote <host> )?up /m);

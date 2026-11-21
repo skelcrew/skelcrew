@@ -687,12 +687,11 @@ function serverCheckout(name = "skel"): string {
   return checkout;
 }
 
-// Writes the daemon's systemd unit on the server, starting the given Skelcrew with `command`:
-// serve, or up in a unit an older Skelcrew wrote.
-function unit(skel: string, command = "serve"): void {
+// Writes the daemon's systemd unit on the server, starting the given Skelcrew with sc serve.
+function unit(skel: string): void {
   const units = join(home, "server", ".config", "systemd", "user");
   mkdirSync(units, { recursive: true });
-  writeFileSync(join(units, "skelcrew.service"), `[Service]\nExecStart="${skel}" ${command}\n`);
+  writeFileSync(join(units, "skelcrew.service"), `[Service]\nExecStart="${skel}" serve\n`);
 }
 
 // Skelcrew run once from a checkout points the daemon's service at it, and a copy left in
@@ -707,15 +706,6 @@ test("the update goes by what the daemon's service runs, not by ~/.local/bin", a
   expect(run.out).toEndWith("Skelcrew on the server got 1 arguments\n[ps]\n");
   expect(calls()).not.toContain("scp");
   expect(calls()).not.toMatch(/^systemctl --user restart/m);
-});
-
-// A server whose service an older Skelcrew installed runs sc up, and is found all the same.
-test("the update finds the checkout of a service that runs sc up", async () => {
-  installed("0000000");
-  const checkout = serverCheckout();
-  unit(join(checkout, "bin", "sc"), "up");
-  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
-  expect(run.out).toContain(`Skelcrew on simon@workbox runs from a checkout at ${checkout}`);
 });
 
 // systemd reads % in a unit as the start of a name it fills in, so the service doubles it.

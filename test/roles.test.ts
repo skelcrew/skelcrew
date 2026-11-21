@@ -212,10 +212,6 @@ Builders bring their questions and decisions to you, with sc tell lead or at the
 Wait for the human only on what is foundational, however clear the answer seems: a change to the repository's spec, the document it names as its spec, such as docs/spec.md; product direction; trust and security; any step that can't be undone or that goes out to other people, such as closing a PR, deleting work, filing a public issue or merging without review; and work that grows a thread's scope a lot or costs real money or time.
 Bring such a question, and any you can't answer, to the human in this chat, naming the thread, and pass their answer on to the builder with sc tell. The human should never have to open a builder to answer it. Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option, lettered a, b, c, with what it means for the human, and your recommendation with why, so a one-letter answer settles it. Leave out file paths and names from the code unless they help.`;
 
-// What the lead's file added after that: sc ask, which puts a proposal in the human's list for
-// their y or n.
-const askingInTheList = `- sc ask start app-13, or sc ask start <repo> "<title>" "<body>", takes what sc start takes, --from, --short and --flow included, and puts your proposal in the human's list, on a line under your own row, where they answer it with y or n. A yes starts it exactly as sc start would, so don't run sc start for it yourself. Either way Skelcrew types you a note with their answer, and on a yes what the start did. sc ask repo add <owner/repo> asks the human to add a repository you need. Their yes only tells you, as only they can add one, with sc repo add at their own terminal.\n`;
-
 // Returns the instructions with the names in their examples in lowercase, as they were before
 // names showed in uppercase, such as app-12 for APP-12.
 const namesInLowercase = (text: string) =>
@@ -227,7 +223,6 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(builtInRole("builder").instructions).not.toMatch(/\bapp-t?\d+\b/);
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   let lead = namesInLowercase(builtInRole("lead").instructions);
-  expect(lead).toContain(askingInTheList);
   expect(lead).toContain(noReviewFlows);
   lead = lead.replace(noReviewFlows, "");
   expect(lead).toContain(waiting);
@@ -257,7 +252,6 @@ test("the lead and builder files hold the instructions the code gave, but for wh
     .replace(briefing, "")
     .replace(briefed, "")
     .replace(answeringAdded, "")
-    .replace(askingInTheList, "")
     .replace(answering, answeringBefore);
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);

@@ -388,7 +388,7 @@ test("rewrites the service when the PATH it needs moved, without restarting anyt
   expect(calls()).toBe("systemctl --user daemon-reload\ndaemon lead\nscreen on lead\n");
 });
 
-// The service an older Skelcrew installed runs sc up, which still works until sc rewrites it.
+// The service an older Skelcrew installed runs sc up, which no longer exists, so sc rewrites it.
 test("rewrites a service that runs sc up so it runs sc serve", async () => {
   await skel("sk-ant-oat01-good\n");
   writeFileSync(unit(), readFileSync(unit(), "utf8").replace(" serve\n", " up\n"));

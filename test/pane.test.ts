@@ -36,7 +36,6 @@ const row: Row = {
   more: 0,
   place: null,
   waits: "",
-  request: null,
 };
 
 // Its details, as sc task reads them from Skelcrew's copy, with its review's findings and events.
