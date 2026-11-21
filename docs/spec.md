@@ -493,12 +493,12 @@ The screen is how you see and steer a repository's work. It guarantees:
 - **Always a way back.** One key brings you back from an agent, and pressing it once too often never leaves the screen. Leaving keeps every agent running, and says so.
 - **Seeing without touching.** A task's details show what `sc show` gives, with its agent live beside them. Nothing typed there reaches the agent, and its session is never resized.
 - **Fast and quiet.** The screen reads only Skelcrew's database and its copy, so it opens at once and never asks the forge, and it redraws only on change, so it works over a slow link. It shows the load of the machine the engine runs on.
-- **Yours to decide.** Merging, starting and the queue's order happen only on your keys or commands, never the lead's. The merge confirm says when the PR changes `.agents/`.
+- **Yours to decide.** The screen's keys that merge, start a task or reorder the queue are yours: the lead can't press them. What the lead may do instead goes through its own commands, by the rules of **The flow**. The merge confirm says when the PR changes `.agents/`.
 - **Your terminal stays yours.** The screen never reads your `~/.tmux.conf`, and takes the mouse only while it shows.
 
 **A lead you exit** ends alone: its repository and tasks stay, and the engine doesn't bring it back until you open the repository again, which resumes its conversation. A lead that crashed is brought back when you look at it. When Skelcrew can't tell which happened, it takes the lead as exited, and says how to start it.
 
-A runtime plugin's host shows the same agents in its own apps, and its sessions on the screen through its own `attach`. Skelcrew's screen is the only place that merges and answers the lead's requests.
+A runtime plugin's host shows the same agents in its own apps, and its sessions on the screen through its own `attach`. A host's apps never merge or answer the lead's requests: that stays with Skelcrew, on its screen and its commands.
 
 ## Remote machines
 
