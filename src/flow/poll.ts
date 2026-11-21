@@ -539,7 +539,12 @@ async function pollRepository(
   // A builder that ended outside Skelcrew stops its thread first, before the tracker and forge
   // are asked, so a plugin that fails every poll never hides it. Its events then wait for sc
   // start as a stopped thread's do.
-  for (const thread of threads) await noticeEndedBuilder(db, sessions, thread);
+  // One that fails, such as a host that can't end what an ended builder left, is logged, and
+  // the other threads and the repository's events still get their turn.
+  for (const thread of threads)
+    await noticeEndedBuilder(db, sessions, thread).catch((error) =>
+      console.log(`couldn't stop ${thread.folder}, whose builder ended: ${errorText(error)}`),
+    );
   // Whether Skelcrew's clone's default branch is up to date with the remote as of this poll.
   let refreshed = false;
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this

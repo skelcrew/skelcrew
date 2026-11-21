@@ -172,6 +172,7 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
 // nobody does. Stopped, it keeps its clone, branch and PR, and sc start brings it back. A thread
 // whose builder is starting, ending or being brought back is left alone, as its session may be
 // missing for a moment. A host that can't be asked says nothing, so the thread stays as it was.
+// A stop that fails, such as a host that can't end what an ended builder left, throws why.
 export async function noticeEndedBuilder(
   db: Database,
   sessions: string,
@@ -199,16 +200,11 @@ export async function noticeEndedBuilder(
   }).catch(() => false);
   if (!ended || !ours(readThread(db, thread.folder))) return;
   const name = threadName(db, thread);
-  // The stop ends what the session left behind, such as an agent's last screen.
-  await stopLiveThread(db, sessions, thread, false, "its builder ended outside Skelcrew");
-  if (readThread(db, thread.folder).status !== "stopped") return;
-  noteForLead(
-    db,
-    sessions,
-    thread,
-    `${name}'s builder ended outside Skelcrew, so the thread is stopped. sc start ${name} brings it back.`,
-    thread.folder,
-  );
+  // The stop ends what the session left behind, such as an agent's last screen. The lead's note
+  // is saved with the stop, so a daemon that stops in between never leaves a stopped thread no
+  // poll looks at again, and a lead that never hears of it.
+  const note = `${name}'s builder ended outside Skelcrew, so the thread is stopped. sc start ${name} brings it back.`;
+  await stopLiveThread(db, sessions, thread, false, "its builder ended outside Skelcrew", note);
 }
 
 // Ends a working or waiting thread's builder, then marks the thread stopped, with `why`, and
@@ -216,18 +212,20 @@ export async function noticeEndedBuilder(
 // ended, and its builder's submits are refused meanwhile. One whose host can't be reached, or
 // won't end it, may still run, so the thread stays as it was: its round and any wake after a
 // usage limit carry on, its messages wait for it, and this throws why. `drop` drops its
-// messages once it has ended, for a thread that is going. A second stop or sc rm while one is
-// under way joins it, and gets its outcome, rather than ending the builder again.
+// messages once it has ended, for a thread that is going. `note`, if any, goes to the lead,
+// saved with the stop. A second stop or sc rm while one is under way joins it, and gets its
+// outcome, rather than ending the builder again.
 function stopLiveThread(
   db: Database,
   sessions: string,
   thread: Thread,
   drop: boolean,
   why: string,
+  note: string | null = null,
 ): Promise<void> {
   const under = stopping.get(thread.folder);
   if (under) return under;
-  const stop = stopNow(db, sessions, thread, drop, why).finally(() => {
+  const stop = stopNow(db, sessions, thread, drop, why, note).finally(() => {
     if (stopping.get(thread.folder) === stop) stopping.delete(thread.folder);
   });
   stopping.set(thread.folder, stop);
@@ -238,34 +236,40 @@ function stopLiveThread(
 // no builder has started on it since: one whose end cleared its session and found no other. A
 // merge or close can end the thread while this waits its turn to end the builder, and remove
 // its clone. Marked stopped then, it would look like work sc start could bring back, so the
-// stop says the thread is done instead.
+// stop says the thread is done instead. `note` is saved for the lead in the same transaction
+// as the stop, so the thread is never stopped without it.
 async function stopNow(
   db: Database,
   sessions: string,
   thread: Thread,
   drop: boolean,
   why: string,
+  note: string | null,
 ): Promise<void> {
   await endBuilder(db, sessions, thread.folder, drop);
   const now = readThread(db, thread.folder);
   if (now.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   if (now.started !== thread.started || now.host_id !== null) return;
-  record(
-    db,
-    thread.folder,
-    {
-      status: "stopped",
-      needs_you: false,
-      review_failed: false,
-      asking: false,
-      turn_ended: false,
-      ended_at: null,
-      erred: false,
-      limited: false,
-      limit_reset: null,
-    },
-    why,
-  );
+  // The note is typed only once this has returned, as typing starts on a promise.
+  db.transaction(() => {
+    if (note !== null) noteForLead(db, sessions, thread, note, thread.folder);
+    record(
+      db,
+      thread.folder,
+      {
+        status: "stopped",
+        needs_you: false,
+        review_failed: false,
+        asking: false,
+        turn_ended: false,
+        ended_at: null,
+        erred: false,
+        limited: false,
+        limit_reset: null,
+      },
+      why,
+    );
+  })();
   unassignIssue(db, thread.folder);
 }
 
