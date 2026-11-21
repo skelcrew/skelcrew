@@ -306,7 +306,7 @@ export async function endTest(): Promise<void> {
 // Returns whether the right side shows a task's details, whose first line ends with its stage,
 // such as `Building`, over a line across the pane.
 export const onDetails = () =>
-  / (Up next|Backlog|Building|Reviewing|Checks|Ready|Done)\s*\n\s*─{10,}/.test(right());
+  / (Task queue|Backlog|Building|Reviewing|Checks|Ready|Done)\s*\n\s*─{10,}/.test(right());
 
 // Presses Enter on the task you are on, once its details show, as only then does your typing go
 // to the sidebar, and waits until its builder takes the right side, named by its row.

@@ -111,7 +111,7 @@ test("a long description scrolls on the right by Page Down, Page Up and the whee
   press("M-S-Down");
   press("M-Down");
   await until(() => right().includes("Login redirect"), "app-7's details");
-  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  1-6 stages");
+  expect(footer()).toContain("⏎ attach  ⇧⏎/a full screen · pgup/pgdn scroll  0-6 sections");
   // No key shows the builder's screen under the details, o included.
   type("o");
   await Bun.sleep(500);

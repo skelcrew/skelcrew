@@ -580,11 +580,11 @@ test("a PR no longer in the forge's copy shows the link saved on its row", () =>
   );
 });
 
-// A queued task says it is up next, and what it waits on is what it does now.
-test("the pane of a queued task says it is up next and what it waits on", () => {
+// A queued task says it is in the task queue, and what it waits on is what it does now.
+test("the pane of a queued task says it is in the task queue and what it waits on", () => {
   const queued: Row = {
     ...row,
-    section: "up next",
+    section: "task queue",
     mark: { sign: "○", colour: "dim" },
     says: "3rd in line",
     colour: "dim",
@@ -594,7 +594,7 @@ test("the pane of a queued task says it is up next and what it waits on", () => 
   };
   const waiting: Details = { ...details, view: { ...details.view, prPage: null, pr: null } };
   const lines = plain(drawPane(queued, waiting, null, 60, 30).lines);
-  expect(lines[0]).toBe("app-12  Rate limit the API                           Up next");
+  expect(lines[0]).toBe("app-12  Rate limit the API                        Task queue");
   expect(lines).toContain("Now      3rd in line: 4 of 4 builders busy · 2m ago");
 });
 
@@ -602,7 +602,7 @@ test("the pane of a queued task says it is up next and what it waits on", () => 
 // brings a paused task back, is never cut off.
 test("a queued task's wait reason wraps whole in a narrow pane", () => {
   const waits = "2nd in line: app-21 waits for its issue's claim to reach the tracker";
-  const queued: Row = { ...row, section: "up next", says: "2nd in line", place: 2, waits };
+  const queued: Row = { ...row, section: "task queue", says: "2nd in line", place: 2, waits };
   const waiting: Details = { ...details, view: { ...details.view, prPage: null, pr: null } };
   const lines = plain(drawPane(queued, waiting, null, 30, 40).lines);
   const at = lines.findIndex((line) => line.startsWith("Now "));

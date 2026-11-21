@@ -155,12 +155,12 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   const { view, findings, events, updates } = details;
   const text = Math.min(width, textWidth);
   const value = Math.max(width - labelWidth, 1);
-  // The stage, such as `Building`, on the right of the title's first line. A task up next says
+  // The stage, such as `Building`, on the right of the title's first line. A task in the task queue says
   // so, as its section says more than its stage.
   const stageName =
     row.part === "lead" || row.part === "request" || row.part === "heading"
       ? ""
-      : sectionNames[row.section === "up next" ? "up next" : row.part];
+      : sectionNames[row.section === "task queue" ? "task queue" : row.part];
   // A pane too narrow for the stage beside a few letters of the title leaves the stage out.
   const spun = `${details.spinner ? `${details.spinner} ` : ""}${stageName}`;
   const stage = Bun.stringWidth(spun) + 12 <= width ? spun : "";
