@@ -38,8 +38,7 @@ export async function machineCommand(args: string[]): Promise<void> {
     return;
   }
   const { serve } = await import("../flow/daemon.ts");
-  if (command === "up") console.error("sc up is now sc serve.");
-  const daemon = command === "up" || command === "serve";
+  const daemon = command === "serve";
   if (daemon && args.length === 1) {
     await serve("skelcrew");
     return;
