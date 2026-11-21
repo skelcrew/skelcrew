@@ -233,10 +233,12 @@ export function unfinished(last: string, sent: string): string {
 export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // The paste read so far, without its start, or null outside one.
   let held: Buffer | null = null;
-  // The escape sequence what went on last ends inside, or "", and how much of the held paste's
-  // start went on in it, when its start came split across two reads.
+  // The escape sequence what went on last ends inside, or "".
   let openSequence = "";
-  let startSent = 0;
+  // The end of the last read, when it may be the start of a paste cut in two, kept until the next
+  // read, and the timer that sends it on if that read is late.
+  let cut: Buffer = Buffer.alloc(0);
+  let cutLater: ReturnType<typeof setTimeout> | null = null;
   // What the filter has to add, waiting for the stream to be between sequences, and the timer
   // that adds it anyway when the sequence never ends.
   // Each comes with what to do once it went in.
@@ -293,9 +295,9 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   };
 
   // Returns the paste's text with each droppable path replaced by its copy's, or null when
-  // nothing was copied, so the paste goes on as it came. It calls `asking` just before it asks
+  // nothing was copied, so the paste goes on as it came.
   // where the files go, which happens only when one of them can be copied.
-  const rewritten = async (text: string, asking: () => void): Promise<string | null> => {
+  const rewritten = async (text: string): Promise<string | null> => {
     const parts = pastedPaths(text);
     if (!parts) return null;
     // Only the files that can be copied go to `drop`, each once, in the order pasted.
@@ -303,7 +305,6 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
     const can = await Promise.all(paths.map(droppable));
     const files = paths.filter((_, at) => can[at]);
     if (files.length === 0) return null;
-    asking();
     const folder = await drop.where(() => add(Buffer.from(dropSignal)));
     if (folder === null) return null;
     const copies = await drop.put(folder, files);
@@ -322,7 +323,10 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       waiting.push(Buffer.from(piece));
       return;
     }
-    let rest: Buffer = Buffer.from(piece);
+    if (cutLater) clearTimeout(cutLater);
+    cutLater = null;
+    let rest: Buffer = Buffer.concat([cut, piece]);
+    cut = Buffer.alloc(0);
     while (rest.length > 0) {
       // A paste going on as it comes passes through to its end, then what follows is read again.
       if (streaming) {
@@ -339,21 +343,29 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
         streaming = false;
         continue;
       }
-      // Outside a paste, everything goes on, up to the start of one. A start split across two
-      // reads began in the sequence sent last, and startSent says how much of it went.
+      // Outside a paste, everything goes on, up to the start of one.
       if (held === null) {
-        const seen = Buffer.concat([Buffer.from(openSequence, "latin1"), rest]);
-        const start = seen.indexOf(pasteStart);
-        if (start < 0) {
-          pass(rest);
-          return;
+        const start = rest.indexOf(pasteStart);
+        if (start >= 0) {
+          pass(rest.subarray(0, start));
+          held = Buffer.alloc(0);
+          rest = rest.subarray(start + pasteStart.length);
+          continue;
         }
-        const sent = openSequence.length;
-        startSent = Math.max(sent - start, 0);
-        if (start > sent) pass(seen.subarray(sent, start));
-        held = Buffer.alloc(0);
-        rest = seen.subarray(start + pasteStart.length);
-        continue;
+        // A read that ends in what may be the start of a paste keeps it for the next read, so a
+        // start is always seen whole, never half sent. It goes on after 10 ms anyway, when tmux
+        // too would stop waiting for the rest and take an Esc as the Esc key.
+        let ending = Math.min(rest.length, pasteStart.length - 1);
+        while (ending > 0 && !rest.subarray(-ending).equals(pasteStart.subarray(0, ending)))
+          ending--;
+        pass(rest.subarray(0, rest.length - ending));
+        if (ending === 0) return;
+        cut = rest.subarray(rest.length - ending);
+        cutLater = setTimeout(() => {
+          pass(cut);
+          cut = Buffer.alloc(0);
+        }, 10);
+        return;
       }
       // Inside one, it is held until its end.
       const sofar: Buffer = Buffer.concat([held, rest]);
@@ -368,7 +380,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
           ending--;
         const sofarText = sofar.subarray(0, sofar.length - ending).toString();
         if (sofar.length > longestPaths || pastedPaths(sofarText, false) === null) {
-          pass(Buffer.concat([pasteStart.subarray(startSent), sofar]));
+          pass(Buffer.concat([pasteStart, sofar]));
           held = null;
           streaming = true;
           streamedLast = sofar.subarray(Math.max(sofar.length - pasteEnd.length + 1, 0));
@@ -379,9 +391,9 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       rest = sofar.subarray(end + pasteEnd.length);
       const text = sofar.subarray(0, end).toString();
       const asCame = Buffer.concat([pasteStart, sofar.subarray(0, end), pasteEnd]);
-      // Text goes on at once, as it came, after what was sent of its start already.
+      // Text goes on at once, as it came.
       if (pastedPaths(text) === null) {
-        pass(asCame.subarray(startSent));
+        pass(asCame);
         continue;
       }
       // Paths wait for their files, and what came after the paste waits until it has gone in.
@@ -391,26 +403,11 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
         dropping = false;
         for (const next of waiting.splice(0)) take(next);
       };
-      // A start sent in part is closed as a paste with nothing in it, but only once a file can
-      // be copied, just before the question, which must go in between sequences. The paste then
-      // goes whole. A paste with nothing to copy goes on byte for byte, after the part sent.
-      const begun = startSent;
-      let closed = false;
-      const asking = () => {
-        if (begun === 0) return;
-        pass(Buffer.concat([pasteStart.subarray(begun), pasteEnd]));
-        closed = true;
-      };
-      rewritten(text, asking)
+      rewritten(text)
         .catch(() => null)
-        .then((changed) => {
-          if (changed === null && begun > 0 && !closed) {
-            pass(asCame.subarray(begun));
-            release();
-            return;
-          }
-          add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`), release);
-        });
+        .then((changed) =>
+          add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`), release),
+        );
       return;
     }
   };

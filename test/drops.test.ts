@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   copyDrops,
+  type Drop,
   dropSignal,
   dropsFolder,
   largestDrop,
@@ -317,8 +318,8 @@ test("a copy runs off the screen's way, so nothing waits on it", async () => {
 test("a paste's start split anywhere across two reads is still seen, and the question never lands inside it", async () => {
   const shot = file("shot.png");
   const whole = `x${pasted(shot)}y`;
-  // Each place inside the start, from after its Esc to before its last byte. The part sent before
-  // the cut is closed as an empty paste, so the question and the paste each go in whole.
+  // Each place inside the start, from after its Esc to before its last byte. The part before the
+  // cut waits for the rest, so the question goes in first, and the paste whole after it.
   const copied = `\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~`;
   const question = dropSignal.replaceAll("[", "\\[");
   for (let cut = 2; cut < 7; cut++) {
@@ -327,8 +328,40 @@ test("a paste's start split anywhere across two reads is still seen, and the que
     take(Buffer.from(whole.slice(0, cut)));
     take(Buffer.from(whole.slice(cut)));
     const out = await sentOn();
-    expect(out).toMatch(new RegExp(`^x\\x1b\\[200~\\x1b\\[201~${question}${copied}y$`));
+    expect(out).toMatch(new RegExp(`^x${question}${copied}y$`));
   }
+});
+
+test("a paste of a file split anywhere in its start goes on byte for byte when nothing is copied", async () => {
+  const shot = file("shot.png");
+  const whole = `x${pasted(shot)}y`;
+  // The sidebar names no agent, as while your typing goes to it, or the copy fails.
+  const drops: Drop[] = [
+    { where: async () => null, put: async (folder, files) => copyDrops(folder, files) },
+    { where: async () => agent, put: async (_folder, files) => files.map(() => null) },
+  ];
+  for (const drop of drops) {
+    for (let cut = 2; cut < 7; cut++) {
+      sent = "";
+      const take = pasteFilter((bytes) => {
+        sent += Buffer.from(bytes).toString();
+      }, drop);
+      take(Buffer.from(whole.slice(0, cut)));
+      take(Buffer.from(whole.slice(cut)));
+      expect(await sentOn()).toBe(whole);
+    }
+  }
+});
+
+test("the start of a paste cut at the end of a read goes on alone if the rest is late", async () => {
+  const take = filter();
+  take(Buffer.from("x\x1b"));
+  expect(sent).toBe("x");
+  // Within tmux's own wait for the rest of an Esc sequence.
+  await Bun.sleep(30);
+  expect(sent).toBe("x\x1b");
+  take(Buffer.from("[A"));
+  expect(sent).toBe("x\x1b[A");
 });
 
 test("a text paste whose start is split across two reads passes byte for byte", async () => {
