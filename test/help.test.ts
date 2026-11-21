@@ -34,9 +34,9 @@ test("the help names every command", () => {
     "--list",
     "--remote",
     "--remote <host> install",
-    "--remote <host> up --bg",
-    "up",
-    "up --bg",
+    "--remote <host> serve --bg",
+    "serve",
+    "serve --bg",
     "init",
     "repo add",
     "repo ls",
@@ -61,6 +61,12 @@ test("the help names every command", () => {
     "plugins",
   ])
     expect(out).toContain(`  ${command} `);
+});
+
+// sc up still runs the daemon for services an older Skelcrew installed, but sc serve replaced it.
+test("the help names sc serve for the daemon, and never sc up", () => {
+  const out = skel(["--help"]).out;
+  expect(out).not.toMatch(/^ {2}(--remote <host> )?up /m);
 });
 
 // --remote keeps Skelcrew on the other side up to date, so there is no command for it. The one

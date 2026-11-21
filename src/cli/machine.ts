@@ -38,25 +38,22 @@ export async function machineCommand(args: string[]): Promise<void> {
     return;
   }
   const { serve } = await import("../flow/daemon.ts");
-  if (command === "up" && args.length === 1) {
+  if (command === "up") console.error("sc up is now sc serve.");
+  const daemon = command === "up" || command === "serve";
+  if (daemon && args.length === 1) {
     await serve("skelcrew");
     return;
   }
-  if (command === "up" && args.length === 2 && args[1] === "--bg") {
+  if (daemon && args.length === 2 && args[1] === "--bg") {
     const { setupDone } = await import("../machine/setup.ts");
     if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
     const { upInBackground } = await import("../attach.ts");
     const outside = await upInBackground();
     console.log(
       outside
-        ? "Skelcrew's daemon already runs outside its service, such as with sc up in a terminal. Stop it to run it in the background."
+        ? "Skelcrew's daemon already runs outside its service, such as with sc serve in a terminal. Stop it to run it in the background."
         : "Skelcrew's daemon is running in the background.",
     );
-    return;
-  }
-  if (command === "serve" && args.length === 1) {
-    console.error("sc serve is now sc up, and sc serve will go in a later release.");
-    await serve("skelcrew");
     return;
   }
   usage(command);

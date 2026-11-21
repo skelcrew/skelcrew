@@ -78,19 +78,13 @@ function lastingPath(given: string): string[] {
     .filter((p) => p && !p.includes("/node_modules/.bin") && !p.startsWith(`${temporary}/`));
 }
 
-// Returns the daemon's service definition with a lasting tool PATH and sessions that
-// survive daemon stops.
 function unitText(skel: string, given: string): string {
-  // systemd starts services with a bare PATH, which misses bun, your harness and gh where they
-  // usually live, so the daemon gets yours.
   const path = lastingPath(given).map(unitValue).join(":");
-  // Where tmux couldn't get a scope of its own, stopping the service would otherwise end
-  // the tmux server, and every agent with it.
   return `[Unit]
 Description=Skelcrew daemon
 
 [Service]
-ExecStart="${unitValue(skel)}" up
+ExecStart="${unitValue(skel)}" serve
 Environment="PATH=${path}"
 Restart=on-failure
 KillMode=process
@@ -156,7 +150,7 @@ export function installService(): void {
 }
 
 // Returns the process id of the daemon the service runs, or 0 when it runs none or isn't
-// installed. A daemon that answers with another id runs outside the service, such as sc up in
+// installed. A daemon that answers with another id runs outside the service, such as sc serve in
 // a terminal, which the service manager can neither restart nor start a second daemon beside.
 export function servicePid(): number {
   if (process.platform === "darwin") return launchAgentPid();
