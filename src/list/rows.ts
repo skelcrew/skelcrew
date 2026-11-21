@@ -50,7 +50,8 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in,
 // `says` is its short word, in `colour`, and `step` what its builder is doing, such as `Editing
 // rows.ts`. Then dim its PR, such as `#41`, its CI, such as `CI passed`, and how long ago it last
-// changed, such as `4m`. Each is empty where it has none. `needsYou` is whether it waits on you for
+// changed, such as `4m`. Each is empty where it has none. `changed` is that moment in
+// milliseconds, or null, which the details pane gives by the clock, so the two always agree. `needsYou` is whether it waits on you for
 // something other than a merge. `session` is the agent's session, which Enter attaches to,
 // `running` whether its agent runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\
 // comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
@@ -77,6 +78,7 @@ export type Row = {
   pr: string;
   checks: string;
   when: string;
+  changed: number | null;
   needsYou: boolean;
   session: string | null;
   running: boolean;
@@ -175,6 +177,7 @@ function leadRow(db: Database, open: Open): Row {
     pr: "",
     checks: "",
     when: "",
+    changed: null,
     needsYou: asking,
     session: lead.name,
     running: runs,
@@ -208,6 +211,7 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     pr: "",
     checks: "",
     when: "",
+    changed: null,
     needsYou: false,
     session: lead.session,
     running: lead.running,
@@ -338,6 +342,7 @@ function taskRow(
     pr,
     checks: thread.checks === null ? (noCi ? "no CI" : "") : ciWords[thread.checks],
     when: changed === null ? "" : ago(changed, now, true),
+    changed,
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
@@ -481,6 +486,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       pr: "",
       checks: "",
       when: Number.isNaN(changed) ? "" : ago(changed, now, true),
+      changed: Number.isNaN(changed) ? null : changed,
       needsYou: false,
       session: null,
       running: false,
@@ -603,6 +609,7 @@ const emptyRow: Row = {
   pr: "",
   checks: "",
   when: "",
+  changed: null,
   needsYou: false,
   session: null,
   running: false,

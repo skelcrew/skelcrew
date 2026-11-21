@@ -21,6 +21,7 @@ const row: Row = {
   pr: "#43",
   checks: "CI running",
   when: "14:02",
+  changed: null,
   needsYou: true,
   session: "app-12",
   running: true,

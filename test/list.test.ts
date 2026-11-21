@@ -541,36 +541,59 @@ test("a row says how long ago its task changed, in minutes, hours or days, never
   expect(row?.when).toBe("5m");
 });
 
-test("a task's details say when it last changed, by the clock and how long ago", () => {
+// Returns how a row of the list says when its task last changed, and what its details say of it,
+// as the list and the screen read them, the details given the row's moment.
+function rowAndDetails(name: string): { when: string; section: string; changed: string } {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
-const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "7", ${now});
-console.log(JSON.stringify(details?.changed));`;
+import { listRows } from ${JSON.stringify(source("list/rows.ts"))};
+const db = openDb();
+const open = { owner: "simon", repo: "app" };
+const row = listRows(db, open, ${now}).find((row) => row.name === ${JSON.stringify(name)});
+const details = row?.task ? readDetails(db, open, row.task, ${now}, row.changed) : null;
+console.log(JSON.stringify({ when: row?.when, section: row?.section, changed: details?.changed }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
-  expect(JSON.parse(run.stdout.toString())).toBe("last change 14:55, 5m ago");
+  return JSON.parse(run.stdout.toString());
+}
+
+test("a task's details say when it last changed, by the clock and how long ago", () => {
+  expect(rowAndDetails("APP-7")).toEqual({
+    when: "5m",
+    section: "building",
+    changed: "last change 14:55, 5m ago",
+  });
   // A change on an earlier day keeps its clock time, after its date.
   const lateYesterday = new Date(2026, 10, 18, 23, 59).getTime();
   expect(changedAt(lateYesterday, now)).toBe("18 Nov 23:59");
   expect(changedAt(lateYesterday, new Date(2026, 10, 19, 0, 3).getTime())).toBe("18 Nov 23:59");
 });
 
-// A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
-test("a row says one short word, with no merge when ready or messages waiting after it", () => {
-  sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
-INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-7', 'lead', 'one', 'one', 0);`);
-  const row = rows().find((candidate) => candidate.name === "APP-7");
-  expect(row).toMatchObject({ says: "working", pr: "", when: "5m" });
-});
-
-test("an issue whose work ended is back under Backlog, to start again", () => {
-  sql("UPDATE threads SET status = 'done' WHERE folder = 'app-7';");
-  sql(itemSql("app", "task", 7, "Login redirect", "2026-11-01T10:00:00Z"));
-  expect(
-    rows()
-      .filter((row) => row.part === "backlog")
-      .map((row) => row.name),
-  ).toEqual(["APP-31", "APP-7"]);
+test("a task in Backlog has the same time in its details as on its row", () => {
+  // An issue never started: when it was last updated.
+  const updated = changedAt(Date.parse("2026-11-05T10:00:00Z"), now);
+  expect(rowAndDetails("APP-31")).toEqual({
+    when: "14d",
+    section: "backlog",
+    changed: `last change ${updated}, 14d ago`,
+  });
+  // A task filed in Skelcrew's backlog: when it was filed.
+  sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
+  VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
+  const filed = changedAt(Date.parse("2026-11-07T10:00:00Z"), now);
+  expect(rowAndDetails("APP-T5")).toEqual({
+    when: "12d",
+    section: "backlog",
+    changed: `last change ${filed}, 12d ago`,
+  });
+  // A task whose work ended while its issue stayed open is back in Backlog, by its issue's time,
+  // never by its old thread's.
+  sql(threadSql({ task: "31", title: "Export as CSV", status: "done", changed: now - 3_600_000 }));
+  expect(rowAndDetails("APP-31")).toEqual({
+    when: "14d",
+    section: "backlog",
+    changed: `last change ${updated}, 14d ago`,
+  });
 });
 
 // A task filed in Skelcrew's backlog waits beside the issues, by when it was filed, and Enter asks
@@ -2706,7 +2729,7 @@ test("the pane's events come from the thread's log: started, submitted, verdicts
   );
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
-console.log(JSON.stringify(readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now})?.events));`;
+console.log(JSON.stringify(readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now}, null)?.events));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toEqual([
@@ -2731,7 +2754,7 @@ test("the pane's details keep the lead's updates out of the description, each wi
   );
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
-const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now});
+const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now}, null);
 console.log(JSON.stringify({ body: details?.view.body, updates: details?.updates }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");

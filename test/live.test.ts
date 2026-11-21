@@ -207,6 +207,7 @@ test("what is left fills the live view from the bottom up", async () => {
     pr: "",
     checks: "",
     when: "4m",
+    changed: null,
     needsYou: false,
     session: "app-12",
     running: true,

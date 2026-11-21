@@ -207,7 +207,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2).lines;
     if (details?.name !== row.name)
-      details = { name: row.name, read: readDetails(db, open, row.task, Date.now()) };
+      details = { name: row.name, read: readDetails(db, open, row.task, Date.now(), row.changed) };
     const note = liveNote(row);
     const shown = note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
     const pane = drawPane(
