@@ -59,9 +59,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
       Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "ignore", stderr: "ignore" }),
     );
     await untilCloned();
-    // It has no tracker to create a task in.
-    const create = await skel(["issue", "create", "app", "Add export", "As JSON"]);
-    expect(create.err).toContain("app has no tracker");
+    // It has no tracker to open an issue in, and the backlog is named instead.
+    const create = await skel(["task", "add", "app", "Add export", "As JSON", "--issue"]);
+    expect(create.err).toContain("app has no tracker, so --issue can't open an issue there");
+    expect(create.err).toContain("Without --issue, sc task add files the task");
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
     expect(started.out).toBe(`Started APP-T1.\n`);
