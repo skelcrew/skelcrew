@@ -1,6 +1,6 @@
 // The screen's right side on a task's row: its details with the builder's screen live under them,
 // read-only, and Enter's attachment to the builder there, which Ctrl-\ comes back from.
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { source } from "./harness.ts";
@@ -25,8 +25,6 @@ import {
   wheel,
 } from "./screen.ts";
 
-// Longer than the waits below, so a test that fails says what it waited for.
-setDefaultTimeout(30_000);
 beforeEach(() => {
   startTest();
   daemon();
