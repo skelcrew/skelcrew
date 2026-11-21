@@ -67,11 +67,11 @@ const zoomed = () =>
     `=${screenSessions()[0]}:`,
     "#{window_zoomed_flag}",
   ).out.trim() === "1";
-// The sidebar's text as one line, its own lines joined, without the right side.
+// The sidebar's text as one line, its own lines joined, without its border or the right side.
 const flat = () =>
   seen()
     .split("\n")
-    .map((line) => line.slice(0, sidebar).trim())
+    .map((line) => line.slice(0, sidebar).replace(/[│─┬┴┌┐└┘├┤]/g, "").trim())
     .filter(Boolean)
     .join(" ");
 const question =
