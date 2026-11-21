@@ -117,11 +117,11 @@ function describedLines(body: string, width: number): string[] {
 }
 
 // Returns the details of a task as lines `width` columns wide at most, from the top: its full
-// title, its issue's and PR's links, its stage and word, what it waits on when it is up next,
-// its CI with each check, its armed merge, its review round with the verdict and the findings in
-// short, its whole description, then when it last changed, such as `last change 09:33, 4 minutes
-// ago`, as its row says only how long ago, and its recent events. Each part is left out where the
-// task has none.
+// title, its issue's and PR's links, its stage and word, what it waits on when it is in the task
+// queue, its CI with each check, its armed merge, its review round with the verdict and the
+// findings in short, its whole description, then when it last changed, such as `last change
+// 09:33, 4 minutes ago`, as its row says only how long ago, and its recent events. Each part is
+// left out where the task has none.
 function detailLines(row: Row, details: Details, width: number): string[] {
   const { view, findings, events } = details;
   const cut = (text: string) => fitted(text, width);
@@ -143,14 +143,14 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     if (Bun.stringWidth(`${named}  ${link}`) <= width) return [`${start}  ${linked(link, link)}`];
     return [start, ...folded(link, width).map((piece) => linked(link, piece))];
   });
-  // The stage and the row's word, in its colour, such as `Building · question`, or cut without
-  // its colours when too wide. A task up next says so, as its section says more than its stage.
-  // Then what it waits on, such as `3rd in line: 4 of 4 builders busy`, wrapped whole, as the
-  // reason the queue is held, or the command that brings a paused task back, comes last.
+  // The stage and the row's word, in its colour, such as `Building · question`, or cut without its
+  // colours when too wide. A task in the task queue says so, as its section says more than its
+  // stage. Then what it waits on, such as `3rd in line: 4 of 4 builders busy`, wrapped whole, as
+  // the reason the queue is held, or the command that brings a paused task back, comes last.
   const stage =
     row.part === "lead" || row.part === "request" || row.part === "heading"
       ? ""
-      : sectionNames[row.section === "up next" ? "up next" : row.part];
+      : sectionNames[row.section === "task queue" ? "task queue" : row.part];
   const word = row.says ? ` · ${row.says}` : "";
   const staged =
     Bun.stringWidth(`${stage}${word}`) <= width
