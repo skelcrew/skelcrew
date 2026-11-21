@@ -141,14 +141,14 @@ test("the pane shows a summary card, then the task, then what happened, and the 
 test("the details take the list's look: bold title, stage and verdicts in colour, dim labels, links", () => {
   const lines = drawPane(row, details, null, 50, 40).lines;
   const esc = "\x1b";
-  const yellow = `${esc}[38;5;221m`;
+  const yellow = `${esc}[38;5;136m`;
   // Returns the line that reads `text` once its colours are taken off.
   const line = (text: string) => lines.find((drawn) => Bun.stripANSI(drawn).trimEnd() === text);
   // The title is bold, and the stage takes the colour of the row's mark, yellow as it needs you.
   expect(lines[0]).toBe(
     `${esc}[1mapp-12  Rate limit the API${esc}[22;39m${" ".repeat(16)}${yellow}Building${esc}[22;39m`,
   );
-  expect(line("Needs you: question")).toBe(`${esc}[1;38;5;221mNeeds you: question${esc}[22;39m`);
+  expect(line("Needs you: question")).toBe(`${esc}[1;38;5;136mNeeds you: question${esc}[22;39m`);
   // Each label is dim, and each link is a terminal link to itself.
   const pr = "https://github.com/acme/app/pull/43";
   expect(line(`PR       #43  ${pr}`)).toBe(
@@ -157,7 +157,7 @@ test("the details take the list's look: bold title, stage and verdicts in colour
   // Each check has its mark in its colour, and the review its round and verdict, as a row shows
   // its round, in the verdict's colour.
   expect(line("CI       ✓ test  ● lint  ✗ build")).toBe(
-    `${esc}[90mCI       ${esc}[22;39m${esc}[38;5;120m✓${esc}[22;39m test  ${yellow}●${esc}[22;39m lint  ${esc}[38;5;210m✗${esc}[22;39m build`,
+    `${esc}[90mCI       ${esc}[22;39m${esc}[38;5;34m✓${esc}[22;39m test  ${yellow}●${esc}[22;39m lint  ${esc}[38;5;203m✗${esc}[22;39m build`,
   );
   expect(line("Review   r2 · changes asked")).toBe(
     `${esc}[90mReview   ${esc}[22;39m${yellow}r2 · changes asked${esc}[22;39m`,
@@ -286,8 +286,8 @@ test("a link with control characters in it never reaches your terminal as codes"
 test("an approved review and passed CI show green, a failed one red", () => {
   const page = details.view.prPage;
   if (!page) throw new Error("the details have a PR");
-  const green = "\x1b[38;5;120m";
-  const red = "\x1b[38;5;210m";
+  const green = "\x1b[38;5;34m";
+  const red = "\x1b[38;5;203m";
   const passed: Details = {
     ...details,
     view: {
@@ -729,7 +729,7 @@ test("a check too long for the card has its name cut, and keeps its mark's colou
   const lines = drawPane(row, long, null, 30, 40).lines;
   const ci = lines.find((line) => Bun.stripANSI(line).startsWith("CI ")) ?? "";
   expect(Bun.stripANSI(ci)).toBe("CI       ✗ end-to-end tests o…");
-  expect(ci).toContain("\x1b[38;5;210m✗\x1b[22;39m");
+  expect(ci).toContain("\x1b[38;5;203m✗\x1b[22;39m");
 });
 
 test("a task list keeps its boxes, and an image shows its alt text and address", () => {

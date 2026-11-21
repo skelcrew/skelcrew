@@ -316,7 +316,8 @@ test("the screen starts on the lead's row, even while a task needs you", async (
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
   await ready("lead");
-  await until(() => /● 12\b/.test(seen()), "APP-12 under Needs you");
+  // Its builder still works, so its mark may spin, in the yellow of needs you.
+  await until(() => /[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/.test(seen()), "APP-12 under Needs you");
   expect(selected()).toMatch(/^▸ ◆ Lead\b/);
   await until(() => litBox() === "right", "the right side's box to light up");
 });
@@ -326,8 +327,10 @@ test("updates on its own, with needs you in the sidebar", async () => {
   await ready("lead");
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  await until(() => colours().includes("\x1b[38;5;221m●"), "needs you");
-  expect(seen()).toMatch(/● 12\b/);
+  const yellow = () =>
+    [..."●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"].some((mark) => colours().includes(`\x1b[38;5;136m${mark}`));
+  await until(yellow, "needs you");
+  expect(seen()).toMatch(/[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
   expect(seen()).toContain("Needs you  1");
   // Its tab says so too, as other repositories' tabs would.
   expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {4}Skelcrew .* {2}app •1$/);

@@ -58,7 +58,7 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // always agree. `needsYou` is whether it waits on you for
 // something other than a merge. `session` is the agent's session, which Enter attaches to,
 // `running` whether its agent runs, `working` whether its builder or the lead is at work this
-// moment, by what its harness last said, while it doesn't need you and nothing failed, and `tmux` whether Enter attaches to it on tmux, where
+// moment, by what its harness last said, even while the task needs you or something failed, and `tmux` whether Enter attaches to it on tmux, where
 // Ctrl-\ comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
 // Enter does on an issue, `startNow` what f does on a queued task, or on an issue while every
 // builder is busy, which starts it at once over limits.threads, and `merge` what m does on a task ready for review. `link` is its PR's,
@@ -292,7 +292,12 @@ function taskRow(
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
-    working: !ended && mark.sign === "○" && mark.colour !== "red" && shown.status === "working",
+    working:
+      !ended &&
+      runs &&
+      !thread.asking &&
+      !thread.erred &&
+      (thread.state ?? thread.status) === "working",
     tmux: !ended && !ready && (thread.host ?? "tmux") === "tmux",
     start: null,
     startNow: null,

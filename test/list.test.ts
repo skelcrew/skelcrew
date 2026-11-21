@@ -1044,7 +1044,7 @@ test("an open section shows its rows, and its heading is bright while a closed o
   // Needs you has no number key, and its count is yellow, as it shows only while a task waits
   // on you.
   expect(coloured).toContain(
-    " \x1b[90m \x1b[22;39m \x1b[38;5;221mNeeds you \x1b[22;39m \x1b[38;5;221m2\x1b[22;39m",
+    " \x1b[90m \x1b[22;39m \x1b[38;5;136mNeeds you \x1b[22;39m \x1b[38;5;136m2\x1b[22;39m",
   );
 });
 
@@ -1277,7 +1277,7 @@ test("a row's word is in its colour, then its step and PR dim, its CI's mark and
   const at = lines.findIndex((line) => line.includes("Login redirect"));
   expect(lines.slice(at, at + 3)).toEqual([
     "   \x1b[38;5;69m○\x1b[22;39m 7   Login redirect",
-    "     \x1b[1mchanges\x1b[22;39m\x1b[90m · Editing rows.ts · #40 \x1b[22;39m\x1b[38;5;221m●\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;221mr2\x1b[22;39m\x1b[90m · 5m\x1b[22;39m",
+    "     \x1b[1mchanges\x1b[22;39m\x1b[90m · Editing rows.ts · #40 \x1b[22;39m\x1b[38;5;136m●\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;136mr2\x1b[22;39m\x1b[90m · 5m\x1b[22;39m",
     "",
   ]);
 });
@@ -1306,8 +1306,8 @@ test("the lead heads the list with its state and step, then a line across and th
   expect(lines[2]).toStartWith("\x1b[90m─");
   expect(lines[3]).toContain("\x1b[90m1 queued");
   // APP-14 waits only for you to merge it, so it counts as ready, though it shows under Needs you.
-  expect(lines[3]).toContain("\x1b[38;5;120m1 ready");
-  expect(lines[3]).toContain("\x1b[38;5;221m1 needs you");
+  expect(lines[3]).toContain("\x1b[38;5;34m1 ready");
+  expect(lines[3]).toContain("\x1b[38;5;136m1 needs you");
   // On the lead's row, both its lines are shaded. Narrow, its title gives way to its state.
   const narrow = drawRows(shown, sectionHeadings(all, opened), 0, 0, 30, 30).lines;
   expect(narrow[0]).toContain("\x1b[48;5;238m");
@@ -1355,17 +1355,23 @@ test("with the spinner, the marks of agents at work are its first frame, and the
   // Each cell is drawn in its colours: Building's blue, on the grey of the row you are on.
   expect(spins[1]?.cell).toBe("\x1b[48;5;238m\x1b[38;5;69m⠋\x1b[22;39m\x1b[49m");
   expect(lines[spins[1]?.line ?? 0]).toContain("\x1b[48;5;238m ▸ \x1b[38;5;69m⠋\x1b[22;39m");
-  // A task that needs you keeps its filled mark while its review runs, so it never spins.
-  sql("UPDATE threads SET reviewing = 'abc', asking = 1 WHERE folder = 'app-7';");
-  expect(rows().find((row) => row.name === "APP-7")).toMatchObject({
-    mark: { sign: "●" },
-    working: false,
-  });
-  // A failure keeps its red mark, though its builder still works, so it never looks like work.
-  sql("UPDATE threads SET reviewing = NULL, asking = 0, review_failed = 1 WHERE folder = 'app-7';");
-  expect(rows().find((row) => row.name === "APP-7")).toMatchObject({
+  // A builder still at work after its review failed spins in the failure's red, so it shows both.
+  sql("UPDATE threads SET review_failed = 1 WHERE folder = 'app-7';");
+  const failed = rows();
+  expect(failed.find((row) => row.name === "APP-7")).toMatchObject({
     says: "review failed",
     mark: { sign: "○", colour: "red" },
+    working: true,
+  });
+  const every = new Set<Section>([...opened, "reviewing", "checks"]);
+  const failedRows = shownRows(failed, every, false);
+  const red = drawRows(failedRows, sectionHeadings(failed, every), 0, 0, 60, 40, true);
+  const failedAt = red.lines.findIndex((line) => line.includes("Login redirect"));
+  expect(red.spins.find(({ line }) => line === failedAt)?.cell).toContain("\x1b[38;5;203m⠋");
+  // One whose builder asked you a question isn't at work, so it keeps its still, filled mark.
+  sql("UPDATE threads SET review_failed = 0, asking = 1 WHERE folder = 'app-7';");
+  expect(rows().find((row) => row.name === "APP-7")).toMatchObject({
+    mark: { sign: "●", colour: "yellow" },
     working: false,
   });
   // Paused and waiting tasks never spin, and without the spinner nothing does.
@@ -1394,20 +1400,20 @@ ${threadSql({ task: "19", title: "Merged", status: "done", merged: 1, pr: 49 })}
   );
   const line = (text: string) => lines.find((one) => Bun.stripANSI(one).includes(text)) ?? "";
   expect(line(" 2 Building")).toContain("\x1b[1;38;5;69mBuilding");
-  expect(line(" 3 Reviewing")).toContain("\x1b[1;38;5;134mReviewing");
-  expect(line(" 4 Checks")).toContain("\x1b[1;38;5;172mChecks");
+  expect(line(" 3 Reviewing")).toContain("\x1b[1;38;5;171mReviewing");
+  expect(line(" 4 Checks")).toContain("\x1b[1;38;5;202mChecks");
   expect(line(" 6 Done")).toContain("\x1b[1;90mDone");
-  expect(line("Needs you")).toContain("\x1b[1;38;5;221mNeeds you");
+  expect(line("Needs you")).toContain("\x1b[1;38;5;136mNeeds you");
   // A closed stage keeps its colour, not bold, so the stages sort while closed too.
-  expect(line(" 5 Ready")).toContain("\x1b[38;5;120mReady");
+  expect(line(" 5 Ready")).toContain("\x1b[38;5;34mReady");
   expect(line(" 0 Task queue")).toContain("\x1b[90mTask queue");
   expect(line("Login redirect")).toContain("\x1b[38;5;69m○");
-  expect(line("Under review")).toContain("\x1b[38;5;134m○");
-  expect(line("Approved too")).toContain("\x1b[38;5;172m○");
+  expect(line("Under review")).toContain("\x1b[38;5;171m○");
+  expect(line("Approved too")).toContain("\x1b[38;5;202m○");
   expect(line("Merged")).toContain("\x1b[90m○");
-  expect(line("Rate limit the API")).toContain("\x1b[38;5;221m●");
-  expect(line("Fix the export header")).toContain("\x1b[38;5;120m●");
-  expect(line("Failed")).toContain("\x1b[38;5;210m○");
+  expect(line("Rate limit the API")).toContain("\x1b[38;5;136m●");
+  expect(line("Fix the export header")).toContain("\x1b[38;5;34m●");
+  expect(line("Failed")).toContain("\x1b[38;5;203m○");
   // Without colour, the shape still says it: filled needs you, hollow doesn't.
   expect(Bun.stripANSI(line("Rate limit the API"))).toContain("● 12");
 });
@@ -1468,7 +1474,7 @@ ${threadSql({ task: "17", title: "Failed review", status: "waiting", review_fail
   expect(lines).toContain("     #45 ● r2");
   // On a terminal with colours, each mark is in its own.
   const coloured = drawnWith(1, frame, { width: 80, height: 40 }, ["needs you"]).join("\n");
-  expect(coloured).toContain("\x1b[38;5;120m✓\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;120mr1");
+  expect(coloured).toContain("\x1b[38;5;34m✓\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;34mr1");
 });
 
 // A wide terminal used to lose the last letter of whatever reached its right edge.
@@ -1504,8 +1510,8 @@ test("another repository's badge counts what needs you in yellow and what is rea
   const [top = ""] = drawnWith(0, { ...frame, tabs }, { width: 80, height: 20 });
   // Every tab is on the left, the open one without its badge, each with a space inside it.
   expect(Bun.stripANSI(top)).toBe(" Skelcrew v0.6.0   app    docs •1    site •2 •1 ");
-  expect(top).toContain("\x1b[38;5;120m•1");
-  expect(top).toContain("\x1b[38;5;221m•2");
+  expect(top).toContain("\x1b[38;5;34m•1");
+  expect(top).toContain("\x1b[38;5;136m•2");
 });
 
 // The open repository's tab tells which one the list shows, so it keeps its place when others
@@ -1649,7 +1655,7 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   // The edges' counts keep their colours: what needs you is yellow.
   const coloured = drawnWith(14, frame, { width: 80, height: 18 }, open);
   expect(coloured).toContain(
-    ` \x1b[90m↑\x1b[22;39m \x1b[90m11 more\x1b[22;39m   \x1b[38;5;221mNeeds you 2\x1b[22;39m   \x1b[90mTask queue 1\x1b[22;39m   \x1b[90mBacklog 1\x1b[22;39m   \x1b[90mBuilding 7\x1b[22;39m   \x1b[90mReviewing 1\x1b[22;39m`,
+    ` \x1b[90m↑\x1b[22;39m \x1b[90m11 more\x1b[22;39m   \x1b[38;5;136mNeeds you 2\x1b[22;39m   \x1b[90mTask queue 1\x1b[22;39m   \x1b[90mBacklog 1\x1b[22;39m   \x1b[90mBuilding 7\x1b[22;39m   \x1b[90mReviewing 1\x1b[22;39m`,
   );
 });
 
