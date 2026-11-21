@@ -32,6 +32,7 @@ import {
   bringBack,
   endEarlierBuilder,
   failThread,
+  refuseSecondBuilder,
   setUpThread,
   startBuilder,
   startChoice,
@@ -700,6 +701,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const choice = startChoice(before);
     if (before && choice === "bring back") {
       const name = threadName(db, before);
+      // A builder that outlived its stop still works in the clone, so none starts beside it.
+      // Another sc start may have brought the thread back while its host was asked, so it
+      // goes on only if the thread is still as it was.
+      await refuseSecondBuilder(db, sessions, before);
+      const now = readThread(db, before.folder);
+      if (now.status !== before.status || now.started !== before.started)
+        throw new Error(`${name} changed while Skelcrew asked its host: run sc start again`);
       // Over the limit, it waits its turn in the queue, and comes back then.
       if (joinsQueue(db, before)) {
         const change = { status: "queued" as const, queued_since: joinTime(db) };
