@@ -2,7 +2,7 @@
 // lead is on top, then Needs you and the six stages, as sc --list shows them. The right side
 // follows the row you are on: the lead's session on the lead's row, a task's details on a task's.
 // The sidebar also keeps the top row up to date, with the header and the tabs, tells the footer
-// what to say, and switches tabs.
+// what to say, switches tabs, and closes or removes the open repository when you ask.
 import {
   attachCommand,
   attachThen,
@@ -16,6 +16,7 @@ import { paneTty, paneWidth, respawnPane, screenTmux, showTop } from "../agents/
 import { moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
+import { closeRepo, removeRepo } from "../flow/repo.ts";
 import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { cloneOf, liveThreads } from "../flow/thread.ts";
@@ -37,7 +38,7 @@ import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
-import { dropAnswerOption, dropAsk, unfinished } from "./drops.ts";
+import { dropAnswerOption, dropAsk, escapeTime, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, pad, removeControlCodes } from "./look.ts";
 import { attachedMark, leadOnHost, panes } from "./screen.ts";
@@ -61,9 +62,9 @@ const keyPattern = new RegExp(
   ].join("|"),
   "g",
 );
-// The keys the screen's tmux sends the sidebar from anywhere: Alt with an arrow or a digit, a
+// The keys the screen's tmux sends the sidebar from anywhere: Alt with an arrow, a digit or W, a
 // click, and a message such as a click on a tab. Any other key was typed into the sidebar.
-const altPattern = new RegExp(`^${esc}(\\[1;3[AB]|\\[1;4[A-D]|[0-6]|\\[<|\\])`);
+const altPattern = new RegExp(`^${esc}(\\[1;3[AB]|\\[1;4[A-D]|[0-6w]|\\[<|\\])`);
 // A press of the mouse, with its button, column and line, counted from 1. A release ends in m,
 // and does nothing.
 const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
@@ -72,9 +73,12 @@ const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // the digit alone open or close the task queue or a stage. The screen's tmux sends Ctrl-\'s byte
 // from anywhere, to bring your typing here, and Shift-Enter as CSI-u, only while your typing is
 // here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
-// Enter.
+// Enter. Alt-W and plain w ask whether to close or remove the open repository.
 const keyNames: Record<string, string> = {
   "\x1c": "to sidebar",
+  "\x1bw": "close",
+  w: "close",
+  "\x1b": "esc",
   "\x1b[13;2u": "full screen",
   a: "full screen",
   "\x1b[1;3A": "up",
@@ -103,21 +107,70 @@ const keyNames: Record<string, string> = {
 // to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter or `a`
 // attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued
 // task in the task queue, and s or m show only where the row can be started, or queued, or merged.
-// A request of the lead's offers y and n, which answer it, in place of Enter.
-function sidebarFooter(row: Row): string {
-  if (row.part === "lead") return "↑↓ move  ⏎ to lead  ⇧⏎/a full screen  0-6 sections  ⌥Q quit";
-  if (row.part === "request") return "↑↓ move  y yes  n no  0-6 sections  ⌥Q quit";
+// A request of the lead's offers y and n, which answer it, in place of Enter. R shows where the
+// row's agent runs, so it can be restarted. w, which closes or removes the repository, is always
+// there, with Alt-W beside it, as that is the key that works while an agent has your typing. It
+// comes right after the moves, so a narrow terminal, which cuts the footer at its end, cuts the
+// row's own keys first.
+function sidebarFooter(row: Row, restarts: boolean): string {
+  const first = "↑↓ move  w/⌥W close";
+  const end = `${restarts ? "  R restart" : ""}  ⌥Q quit`;
+  if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎/a full screen  0-6 sections${end}`;
+  if (row.part === "request") return `${first}  y yes  n no  0-6 sections${end}`;
   if (row.part === "heading") {
     const fixed = row.section === "needs you";
-    return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  0-6 sections  ⌥Q quit`;
+    return `${first}${fixed ? "" : "  ⏎ open/close"}  0-6 sections${end}`;
   }
   const scroll = row.task ? " · pgup/pgdn scroll" : "";
   const reorder = row.section === "task queue" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `↑↓ move  ${enter}${scroll}  0-6 sections${reorder}${start}${merge}  ⌥Q quit`;
+  return `${first}  ${enter}${scroll}  0-6 sections${reorder}${start}${merge}${end}`;
 }
+
+// The question the close key asks about the open repository, by the step it is at: which of
+// closing its tab or removing it, then a yes to the one you chose, then at work on it, then a
+// refusal to read. `name` is what it shows, and `fullName` the owner/name it acts on, as a
+// name can pass to another repository while it asks. `said` is what it says at work, or the refusal. `back` is where your typing
+// was before the question took it, so Esc puts it back there, full screen too.
+type Closing = {
+  step: "choose" | "close" | "remove" | "working" | "refused";
+  name: string;
+  fullName: string;
+  said: string;
+  back: { right: boolean; zoomed: boolean; held: boolean };
+};
+
+// Returns what the sidebar shows in place of its rows while the close key's question is open, as
+// paragraphs, and what the footer says meanwhile.
+function closingText(closing: Closing): { lines: string[]; footer: string } {
+  const { name } = closing;
+  if (closing.step === "choose")
+    return {
+      lines: [
+        `Close ${name}?`,
+        "c  close the tab: its lead stops, its tasks keep running, and it comes back when you open the repository again",
+        "r  remove it from Skelcrew: deletes Skelcrew's clone and its record",
+        "esc  cancel",
+      ],
+      footer: "c close  r remove  esc cancel",
+    };
+  if (closing.step === "close")
+    return { lines: [`Close ${name}'s tab? y/n`], footer: "y yes  n no" };
+  if (closing.step === "remove")
+    return {
+      lines: [
+        `Remove ${name} from Skelcrew? Its clone is deleted; GitHub and your checkouts are untouched. y/n`,
+      ],
+      footer: "y yes  n no",
+    };
+  if (closing.step === "working") return { lines: [closing.said], footer: "" };
+  return { lines: [closing.said], footer: "any key to go back" };
+}
+
+// What the right side shows once no tab is left: how to open a repository again.
+const emptyText = "No repository is open. Run sc in a checkout of one to open it.";
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
 // For a repository Skelcrew no longer has, such as one just removed, the session is named as a
@@ -236,8 +289,10 @@ export async function runSidebar(
   // The lead this sidebar last asked the daemon to start, until it runs, so a lead that can't
   // start isn't asked for again each second. Whatever opened the screen asked already.
   let asked: string | null = open.lead;
-  // Whether the screen is leaving, as no tab is left.
-  let leaving = false;
+  // The close key's question while it is open, and whether no tab is left, so the screen shows
+  // how to open a repository rather than any repository's rows.
+  let closing: Closing | null = null;
+  let empty = false;
   const canOpen = canOpenLinks(where);
   // Returns the size the rest has now, as the terminal can change it at any time.
   const size = () => ({
@@ -340,13 +395,43 @@ export async function runSidebar(
     return thread ? (thread.harness ?? "claude") : "";
   };
 
+  // Returns the question R asks on a row whose agent runs, the lead's or a task's builder, or
+  // null on any other row. A yes has the daemon end the agent's session and start it again on
+  // its harness, with its conversation, so it picks up new skills, settings and environment.
+  const restartOf = (row: Row): Question | null => {
+    const lead = row.part === "lead";
+    // A builder counts while its thread works or waits and its session runs, as the daemon
+    // restarts no other. A heading or a request of the lead's has no agent of its own.
+    const task = row.part !== "heading" && row.part !== "request" ? row.task : null;
+    const runs = lead
+      ? running.includes(open.lead)
+      : task !== null && row.running && row.session !== null && running.includes(row.session);
+    if (!runs) return null;
+    const repository = `${open.owner}/${open.repo}`;
+    const who = lead
+      ? `${tabs.find((tab) => tab.fullName === repository)?.name ?? open.repo}'s lead`
+      : `${row.name}'s builder`;
+    return {
+      ask: `Restart ${who}? Its conversation is kept. y/n`,
+      working: `Restarting ${who}…`,
+      request: {
+        command: "restart",
+        repo: repository,
+        ...(task === null ? {} : { task }),
+      },
+      queues: false,
+    };
+  };
+
   // Returns what the footer says now: a line said or a question asked, the keys for the row
   // while your typing goes to the sidebar, or while it goes to an agent which one it is, the keys
   // you need most and what Esc stops.
   const footerText = () => {
+    if (closing) return closingText(closing).footer;
+    if (empty) return "⌥Q quit";
     if (said ?? asking) return said ?? asking?.question.ask ?? "";
     const row = rows[here];
-    if (!typingRight && row) return sidebarFooter(row);
+    if (!typingRight && row) return sidebarFooter(row, restartOf(row) !== null);
     const name = shown === open.lead ? "lead" : (row?.name ?? "");
     return agentFooter(name, harnessOf(about()));
   };
@@ -357,10 +442,16 @@ export async function runSidebar(
     const { width, height } = size();
     const headings = sectionHeadings(all, opened, builders);
     const room = Math.max(width - 1, 1);
-    const drawn = drawRows(rows, headings, here, top, room, height - 1);
+    const drawn = closing
+      ? { lines: questionLines(closingText(closing).lines, room), targets: [], top }
+      : drawRows(rows, headings, here, top, room, height - 1);
     top = drawn.top;
     targets = [...notice.map((): Target => null), null, ...drawn.targets];
-    const lines = ["", ...drawn.lines].map((line) => filled(line, width));
+    // The lines of the question are padded to the sidebar's height, so none of the rows before
+    // it shows under it.
+    const below = Math.max(height - 1 - drawn.lines.length, 0);
+    const shownLines = closing ? [...drawn.lines, ...Array<string>(below).fill("")] : drawn.lines;
+    const lines = ["", ...shownLines].map((line) => filled(line, width));
     const frame = [...notice, ...lines].join("\n");
     if (frame === lastFrame) return;
     lastFrame = frame;
@@ -388,7 +479,6 @@ export async function runSidebar(
 
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
-    if (leaving) return;
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
     const found = doing("asking tmux for the agents' sessions", () => listTmuxSessions(agents));
@@ -399,23 +489,15 @@ export async function runSidebar(
     );
     const before = tabs;
     tabs = doing("reading the tabs", () => repositoryTabs(db, null));
-    // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to
-    // the tab that took its place, or the one before when it was last. With no tab left, the
-    // screen leaves as Alt-Q does.
+    // A repository you closed or removed, or whose lead you exited, has no tab left. The sidebar
+    // moves to the tab that took its place, or the one before when it was last. With no tab
+    // left, the screen says how to open a repository, until a tab comes back, such as one you
+    // open from another terminal.
     const at = before.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
-    if (!tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`)) {
+    if (empty || !tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`)) {
       const next = tabs[Math.min(Math.max(at, 0), tabs.length - 1)];
-      if (!next) {
-        // The session is ended, not detached. Detaching it from here made tmux 3.6 crash
-        // about one time in six on a busy machine, as destroy-unattached ended the session,
-        // and your terminal showed "server exited unexpectedly" in place of the usual line.
-        // The server ends it itself a moment after this command is gone, so no one-off
-        // command disconnects as it goes, and the sidebar asks tmux nothing more.
-        leaving = true;
-        screenTmux(agents, ["run-shell", "-d", "0.5", "-C", `kill-session -t =${session}`]);
-        return;
-      }
-      switchTo(next.fullName);
+      if (next) switchTo(next.fullName);
+      else if (!empty) showEmpty();
     }
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
@@ -431,6 +513,7 @@ export async function runSidebar(
     notice = noticeLines(updateNotice(db), size().width);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
+      if (empty) return [];
       try {
         return listRows(db, open, Date.now());
       } catch {
@@ -438,6 +521,7 @@ export async function runSidebar(
       }
     });
     builders = doing("reading how full the builders are", () => {
+      if (empty) return "";
       try {
         return buildersNote(db, open);
       } catch {
@@ -449,7 +533,7 @@ export async function runSidebar(
     // of tmux, unless details show. With no client on the right while the lead isn't running,
     // the right side is waiting for the lead, such as after a builder ended while its lead was
     // gone, so the lead is what it shows. The sidebar then moves to the lead's row with it.
-    if (!isDetails(shown)) {
+    if (!isDetails(shown) && !empty) {
       const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
       else if (!running.includes(open.lead)) shown = open.lead;
@@ -459,7 +543,7 @@ export async function runSidebar(
     // through its host now, once the right side shows the lead. This comes once the sidebar knows
     // what the right side shows, as at the first look it doesn't yet.
     leadAttach = doing("reading the lead's host", () => leadOnHost(db, open));
-    if (shown === open.lead && paneLead !== leadAttach) {
+    if (shown === open.lead && paneLead !== leadAttach && !empty) {
       respawnPane(agents, rightPane, paneOn(open.lead));
       tty = paneTty(agents, rightPane);
       paneLead = leadAttach;
@@ -467,7 +551,7 @@ export async function runSidebar(
     // A lead that crashed while you look at it is brought back with its conversation, once,
     // as the daemon does at its start. One you exited closes its tab instead.
     if (running.includes(open.lead)) asked = null;
-    else if (shown === open.lead && asked !== open.lead && !exited) {
+    else if (shown === open.lead && asked !== open.lead && !exited && !empty) {
       asked = open.lead;
       openRepository(`${open.owner}/${open.repo}`, true);
     }
@@ -478,7 +562,7 @@ export async function runSidebar(
     const right = fullScreen ? width - size().width - 5 : width;
     const look = {
       tabs,
-      open: `${open.owner}/${open.repo}`,
+      open: empty ? "" : `${open.owner}/${open.repo}`,
       where,
       versions: shownVersions(),
       typingRight,
@@ -502,7 +586,8 @@ export async function runSidebar(
   // the right, which the daemon starts then if it never has. The client on the right tries again
   // each second until the lead's session is there.
   function switchTo(fullName: string) {
-    if (fullName === `${open.owner}/${open.repo}`) return;
+    if (fullName === `${open.owner}/${open.repo}` && !empty) return;
+    empty = false;
     open = repositoryAndLead(db, fullName);
     leadAttach = leadOnHost(db, open);
     // Not waited on, so the sidebar draws at once.
@@ -527,6 +612,80 @@ export async function runSidebar(
     switchTo(next.fullName);
     // Keys that came with the switch, such as Alt-Shift-Down, move in the new repository's rows.
     refresh();
+  };
+
+  // Leaves the screen on its empty state once no tab is left: no rows, and on the right how to
+  // open a repository, printed as given and never run. Your typing stays in the sidebar, as the
+  // right side has nothing to type to, and Alt-Q still leaves.
+  const showEmpty = () => {
+    empty = true;
+    all = [];
+    rows = [];
+    here = 0;
+    asking = null;
+    const say = 'printf "\\n %s\\n" "$1"; exec cat >/dev/null';
+    respawnPane(agents, rightPane, ["sh", "-c", say, "sh", emptyText]);
+    tty = paneTty(agents, rightPane);
+    shown = null;
+    held = true;
+    screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
+  };
+
+  // Asks whether to close or remove the open repository, from Alt-W anywhere or w in the sidebar.
+  // The question takes your typing, leaving full screen if an agent had it, and keeps where your
+  // typing was, so Esc can put it back. tmux shows every pane again once the sidebar's is selected.
+  const askToClose = () => {
+    const tab = tabs.find((one) => one.fullName === `${open.owner}/${open.repo}`);
+    if (empty || !tab) return;
+    const asked = (format: string) =>
+      screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim() === "1";
+    const back = { right: asked("#{pane_active}"), zoomed: asked("#{window_zoomed_flag}"), held };
+    closing = { step: "choose", name: tab.name, fullName: tab.fullName, said: "", back };
+    held = true;
+    screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
+  };
+  // Ends the close key's question, and gives your typing back to where it was before it, the
+  // agent's full screen included.
+  const goBack = () => {
+    const back = closing?.back;
+    closing = null;
+    if (!back) return;
+    held = back.held;
+    if (!back.right) return;
+    screenTmux(agents, ["select-pane", "-t", rightPane]);
+    if (back.zoomed) screenTmux(agents, ["resize-pane", "-Z", "-t", rightPane]);
+  };
+  // Closes or removes the repository the question is about once you said y, as sc repo rm does
+  // for a removal, which refuses the same way. The screen moves to the next tab as the closed one
+  // goes. A refusal shows in place of the question until the next key.
+  const closeOrRemove = async (question: Closing, remove: boolean) => {
+    working = true;
+    question.step = "working";
+    question.said = remove ? `Removing ${question.name}…` : `Closing ${question.name}'s tab…`;
+    refresh();
+    try {
+      said = await (remove ? removeRepo : closeRepo)(question.fullName, agents);
+      closing = null;
+      held = question.back.held;
+      if (!held && !empty) screenTmux(agents, ["select-pane", "-t", rightPane]);
+    } catch (error) {
+      question.step = "refused";
+      question.said = errorText(error);
+    }
+    working = false;
+    refresh();
+  };
+  // Acts on a key while the close key's question is open, and takes every key but Ctrl-\, so none
+  // moves or opens anything under it. c or r choose, y says yes to the choice, and n or Esc go
+  // back. Any key goes back from a refusal.
+  const answerClosing = (question: Closing, name: string) => {
+    if (question.step === "refused") return goBack();
+    if (name === "esc") return goBack();
+    if (question.step === "choose" && (name === "c" || name === "r"))
+      question.step = name === "c" ? "close" : "remove";
+    else if (question.step !== "choose" && name === "n") goBack();
+    else if (question.step !== "choose" && name === "y")
+      void closeOrRemove(question, question.step === "remove");
   };
 
   // Moves to the row at `at` among those that show, staying among them, and shows it on the right.
@@ -695,6 +854,8 @@ export async function runSidebar(
       return;
     }
     if (working) return;
+    if (closing) return answerClosing(closing, name);
+    if (name === "close") return askToClose();
     // A reason shown on the right goes at the next key, which then does what it does.
     if (shown === refused) {
       shown = null;
@@ -706,6 +867,8 @@ export async function runSidebar(
       asking = null;
       if (name !== "y") return;
       refresh();
+      // A restart goes ahead as asked: the daemon itself refuses an agent that stopped running.
+      if (action.question.request.command === "restart") return void goAhead(action.question);
       const offer = stillOffered(action, all);
       if (typeof offer === "string") said = offer;
       else void goAhead(offer);
@@ -745,7 +908,10 @@ export async function runSidebar(
     // y and n answer the lead's request you are on at once, as its row is the question.
     const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
     if (answer) void goAhead(answer);
-    else if (key === "s" && row?.part === "backlog" && row.start)
+    else if (key === "R" && row && restartOf(row)) {
+      const question = restartOf(row);
+      if (question) asking = { question, row: row.name, merge: false };
+    } else if (key === "s" && row?.part === "backlog" && row.start)
       asking = { question: row.start, row: row.name, merge: false };
     else if (key === "m" && row?.merge) {
       if ("refused" in row.merge) said = row.merge.refused;
@@ -773,15 +939,29 @@ export async function runSidebar(
   // A sequence a read ends inside, such as a paste's start or end cut in two, waits for its rest
   // in the next read, however late, so it is still seen whole. A lone Esc waits too, as the
   // sidebar has no use for it: when what comes next doesn't go on with [, the Esc was a key of its
-  // own, and is taken apart from it, so Esc then a stays two keys rather than Alt-a.
+  // own, and is taken apart from it, so Esc then a stays two keys rather than Alt-a. Only the
+  // close key's question takes Esc, for cancel, so while it is open a lone Esc also acts once
+  // nothing followed it for a moment longer than tmux waits. It stays cut all the same, so a
+  // paste whose rest comes late is still skipped whole, and isn't acted on again.
   let cut = "";
+  let lone: ReturnType<typeof setTimeout> | undefined;
+  let actedOn = false;
   // Acts on each key and click that came together, then redraws.
   process.stdin.on("data", (bytes) => {
+    clearTimeout(lone);
     let text = bytes.toString();
-    if (cut === esc && !text.startsWith("[")) act(cut);
-    else text = cut + text;
+    if (cut === esc && !text.startsWith("[")) {
+      if (!actedOn) act(cut);
+    } else text = cut + text;
+    actedOn = false;
     cut = unfinished("", text);
     act(text.slice(0, text.length - cut.length));
+    if (cut === esc && closing)
+      lone = setTimeout(() => {
+        actedOn = true;
+        act(esc);
+        refresh();
+      }, escapeTime * 5);
     refresh();
   });
   // Draws now, on each resize and each second, until the pane goes and its input closes.
@@ -790,6 +970,18 @@ export async function runSidebar(
   setInterval(refresh, 1000);
   await new Promise((gone) => process.stdin.on("close", gone));
   process.exit(0);
+}
+
+// Returns the lines of the close key's question for a sidebar `room` columns wide: each paragraph
+// cut at words, two columns in, with a blank line between paragraphs.
+function questionLines(paragraphs: string[], room: number): string[] {
+  const width = Math.max(room - 2 * pad.length, 10);
+  return paragraphs.flatMap((text, at) => [
+    ...(at > 0 ? [""] : []),
+    ...Bun.wrapAnsi(removeControlCodes(text), width, { hard: true })
+      .split("\n")
+      .map((line) => `${pad}${line}`),
+  ]);
 }
 
 // Returns the lines that go above the rest of the sidebar for a notice, such as a release installed

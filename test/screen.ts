@@ -352,7 +352,7 @@ export const footer = (row = 29) =>
 // Stands in for the daemon on the test's own socket: it logs each repository asked to open,
 // saying when a tab asked, which must never open a tab you closed, and answers with nothing to
 // say.
-// It also logs each thread started, PR merged and request of the lead's answered, in `acted`, answering a merge with
+// It also logs each thread started, agent restarted, PR merged and request of the lead's answered, in `acted`, answering a merge with
 // `given.mergeAnswer`. While `given.holding`, those wait for `release`, so a test sees what the screen says
 // meanwhile.
 export const asked: string[] = [];
@@ -385,6 +385,12 @@ export function daemon(): void {
         connection.end(
           `${JSON.stringify({ said: yes ? "Started APP-31." : "Told the lead no." })}\n`,
         );
+        return;
+      }
+      if (command === "restart") {
+        acted.push(`restart ${repo} ${task}`.trimEnd());
+        const who = task ? `APP-${task}'s builder` : "app's lead";
+        connection.end(`${JSON.stringify({ said: `Restarted ${who}.` })}\n`);
         return;
       }
       if (command === "queue move") {

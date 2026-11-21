@@ -101,7 +101,7 @@ const sections: [string, [string, string][]][] = [
   // character. Those that work anywhere come first, then those for the sidebar, where the list's
   // keys work without Alt. a does what shift + enter does, for a terminal that sends that as
   // plain Enter. Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't
-  // send Option as Alt.
+  // send Option as Alt. alt + w works anywhere, and w only in the sidebar.
   [
     "KEYS",
     [
@@ -110,6 +110,7 @@ const sections: [string, [string, string][]][] = [
       ["alt + shift + ↑/↓", "jump to the next or previous section"],
       ["alt + 0-6", "open or close the task queue or a stage"],
       ["alt + shift + ←/→", "switch repository"],
+      ["alt + w, w", "close the repository's tab, or remove it from Skelcrew"],
       ["alt + q", "quit, agents run on"],
       ["↑/↓, 0-6", "in the sidebar: move, open or close a section"],
       ["enter", "open the row you are on: type to its agent, or open a stage"],
@@ -118,6 +119,7 @@ const sections: [string, [string, string][]][] = [
       ["s", "start or queue a task in the backlog"],
       ["m", "merge a ready task"],
       ["y / n", "answer a request from the lead"],
+      ["shift + r", "restart the row's agent, keeping its conversation"],
     ],
   ],
 ];

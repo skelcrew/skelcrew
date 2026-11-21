@@ -875,14 +875,34 @@ export async function trustRepo(given: string): Promise<void> {
   if (known) askAboutAgents(known, known.name);
 }
 
-// Removes a repository for sc repo rm. Ends its lead, which runs in `sessions`, then deletes
-// Skelcrew's clone, its row, your trust in it and the .agents/ you approved, and names the other repositories again.
-// Refuses while the repository has live threads, or tasks in its queue, naming them. The lead is ended because, left running, it would
-// go on with no repository behind it, and the daemon would never bring it back or end it.
-export async function removeRepo(name: string, sessions: string): Promise<void> {
+// Closes a repository's tab, for the screen's close key: its lead ends, and stays ended until
+// you open the repository again, which resumes its conversation. Its threads, clone and record
+// stay. The tab is marked closed before the lead ends, whatever host it runs on, so a host that
+// brings back a lead that exited, as herdr does, never brings this one back. `fullName` is its
+// owner/name, which never changes, unlike its name in Skelcrew. Returns what to say.
+export async function closeRepo(fullName: string, sessions: string): Promise<string> {
   const db = openDb();
-  const found = repositories(db).find((r) => r.name === name);
-  if (!found) throw new Error(`there is no repository named ${name}`);
+  const found = repositories(db).find((r) => fullNameIs(r, fullName));
+  if (!found) throw new Error(`Skelcrew no longer has ${fullName}`);
+  await closeTabAndEndLead(db, sessions, found, "close");
+  return `Closed ${found.name}'s tab. Its tasks keep running.`;
+}
+
+// Removes a repository for sc repo rm and the screen's remove key. Ends its lead, which runs in
+// `sessions`, then deletes Skelcrew's clone, its row, your trust in it and the .agents/ you
+// approved, and names the other repositories again. Refuses while the repository has live
+// threads, or tasks in its queue, naming them. The lead is ended because, left running, it would
+// go on with no repository behind it, and the daemon would never bring it back or end it.
+// Returns what to say, as the screen shows it in its own place rather than printing it. `given`
+// is its name, for sc repo rm, or its owner/name, which the screen gives: a name can pass to
+// another repository while the screen asks, as adding or removing one renames others.
+export async function removeRepo(given: string, sessions: string): Promise<string> {
+  const db = openDb();
+  const found =
+    repositories(db).find((r) => fullNameIs(r, given)) ??
+    repositories(db).find((r) => r.name === given);
+  if (!found) throw new Error(`there is no repository named ${given}`);
+  const { name } = found;
   // Builders of live threads would keep running with no repository behind them, which
   // breaks polling, sc ps and cleanup after merge. A queued task would start one later.
   const live = db
@@ -893,40 +913,9 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
     .map((row) => taskName(name, z.object({ task: z.coerce.string() }).parse(row).task));
   if (live.length > 0)
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
-  // A lead on a plugin no longer installed may still run there, using the clone, and removing
-  // the repository would forget how to reach it. So it waits until that host is back.
   const fullName = `${found.owner}/${found.repo}`;
-  const { host, folder } = leadOf(db, found.owner, found.repo);
-  if (hostNamed(db, sessions, host) === null)
-    throw new Error(
-      `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then remove ${name}.`,
-    );
-  // Its tab closes first, so an open screen moves on at once. A screen that found the lead
-  // gone while its tab was still there would take it for a crash and ask for it back. A lead the
-  // daemon is starting meanwhile sees the tab closed once its session is there, and ends it.
-  const where = "WHERE owner = ? AND repo = ?";
-  const tab = z
-    .object({ tab_closed: z.number() })
-    .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(found.owner, found.repo));
-  db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
-  try {
-    // Then find the lead's session: its host, and its ID there, found by its labels when the
-    // daemon stopped before saving it. Looked up only now, so a lead whose start began before
-    // the tab closed is found here, on the host it started on, if its start doesn't end it.
-    const lead = await leadSession(db, sessions, found.owner, found.repo);
-    if (lead === null) throw new Error(`${name}'s lead's host went away while it was removed`);
-    // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
-    await stopSession(lead.host, lead.id);
-  } catch (error) {
-    // A host that can't be reached leaves the lead and the repository as they were, so its tab
-    // goes back as it was too, rather than hiding a repository Skelcrew still has.
-    db.run(`UPDATE repositories SET tab_closed = ? ${where}`, [
-      tab.tab_closed,
-      found.owner,
-      found.repo,
-    ]);
-    throw error;
-  }
+  const { folder } = leadOf(db, found.owner, found.repo);
+  await closeTabAndEndLead(db, sessions, found, "remove");
   // Remove the clone, the files you dropped onto its lead, the row, the lead's requests and your
   // trust in it. A request left behind would come back with the repository, and a yes could start
   // work its new lead never asked for. The other repositories are named again, as one that shared
@@ -941,5 +930,50 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
   const trusted = trustLines().filter((line) => line !== "" && line !== fullName);
   if (existsSync(trustFile()))
     writeFileSync(trustFile(), trusted.map((line) => `${line}\n`).join(""));
-  console.log(`Removed ${name} and Skelcrew's clone of it.`);
+  return `Removed ${name} and Skelcrew's clone of it.`;
+}
+
+// Closes a repository's tab, then ends its lead and waits for it, for closing and removing a
+// repository, which `verb` names for what it says when it fails. When the lead can't be ended,
+// its tab goes back as it was and this throws, rather than hiding a repository whose lead still
+// runs.
+async function closeTabAndEndLead(
+  db: Database,
+  sessions: string,
+  found: Repository,
+  verb: "close" | "remove",
+): Promise<void> {
+  const { name } = found;
+  // A lead on a plugin no longer installed may still run there, using the clone, and forgetting
+  // the repository would forget how to reach it. So it waits until that host is back.
+  const { host } = leadOf(db, found.owner, found.repo);
+  if (hostNamed(db, sessions, host) === null)
+    throw new Error(
+      `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then ${verb} ${name}.`,
+    );
+  // Its tab closes first, so an open screen moves on at once. A screen that found the lead
+  // gone while its tab was still there would take it for a crash and ask for it back. A lead the
+  // daemon is starting meanwhile sees the tab closed once its session is there, and ends it.
+  const where = "WHERE owner = ? AND repo = ?";
+  const tab = z
+    .object({ tab_closed: z.number() })
+    .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(found.owner, found.repo));
+  db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
+  try {
+    // Then find the lead's session: its host, and its ID there, found by its labels when the
+    // daemon stopped before saving it. Looked up only now, so a lead whose start began before
+    // the tab closed is found here, on the host it started on, if its start doesn't end it.
+    const lead = await leadSession(db, sessions, found.owner, found.repo);
+    if (lead === null) throw new Error(`${name}'s lead's host went away while it was ${verb}d`);
+    // Ended as a thread's builder is, and waited for, as removing reads the clone next.
+    await stopSession(lead.host, lead.id);
+  } catch (error) {
+    // A host that can't be reached leaves the lead as it was, so its tab goes back as it was too.
+    db.run(`UPDATE repositories SET tab_closed = ? ${where}`, [
+      tab.tab_closed,
+      found.owner,
+      found.repo,
+    ]);
+    throw error;
+  }
 }

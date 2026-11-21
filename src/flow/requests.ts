@@ -118,6 +118,14 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     repo: z.string(),
     task: TaskId,
   }),
+  // Ends an agent's session and starts it again on its harness, keeping its conversation, so it
+  // picks up new skills, settings and environment: a thread's builder, or with no task the
+  // repository's lead.
+  z.object({
+    command: z.literal("restart"),
+    repo: z.string(),
+    task: TaskId.optional(),
+  }),
   // `keepIssue` leaves the task's issue open, so it can start over. Without it, sc rm closes
   // the issue, which from a lead needs `asked`, the human's words asking for it, exactly.
   z.object({
@@ -230,7 +238,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // terminal. A builder may tell only its repository's lead, never another thread, and may ask for a
 // review of its own thread only. You and a lead may look at a builder's screen and stop its turn,
 // but a builder may not, as it has only its own. You type to a builder yourself in the sidebar, so
-// you have no tell. Which queued task starts next is yours alone, as you set it in the list.
+// you have no tell. Which queued task starts next is yours alone, as you set it in the list, and
+// so is restarting an agent, with a key on the screen.
 // Merging is yours alone: no agent may merge, as merging stays a human's choice. Only a lead
 // asks you to say yes to something in the list, and only you answer it.
 // A lead may arm a merge, when ready or without Skelcrew's approval, only while your config lets it,
@@ -263,6 +272,7 @@ export const allowed = {
     "queue move",
     "peek",
     "interrupt",
+    "restart",
     "rm preview",
     "rm",
     "merge",
