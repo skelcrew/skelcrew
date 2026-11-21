@@ -632,6 +632,8 @@ export function startOnHost(
 ): Promise<void> {
   return inTurn(thread.folder, async (earlier) => {
     await earlier;
+    // The builder before it, if any, ran: this one hasn't yet.
+    seenRunning.delete(thread.folder);
     const now = readThread(db, thread.folder);
     if (now.status !== "working" && now.status !== "waiting")
       throw new Error(`the thread was ${now.status} while its builder started`);
@@ -656,8 +658,15 @@ export function startOnHost(
     const latest = readThread(db, thread.folder);
     if (sessionTitle(db, latest) !== title) renameOnHost(db, thread.folder);
     await checkAgentStarted(on.host, id, "builder");
+    seenRunning.add(thread.folder);
   });
 }
+
+// The threads whose builder Skelcrew saw running, by folder: one that started, or one found
+// still running, as the daemon started or by a poll. Only such a builder can end outside Skelcrew. One that
+// failed to start never ran, and its start marks the thread failed, a moment after its turn is
+// over: a poll in that moment must not take it for one that ended and mark it stopped.
+export const seenRunning = new Set<string>();
 
 // The starts and ends under way of each thread's builder, by its folder, each settling once it
 // is over.
@@ -716,24 +725,6 @@ export async function bringBack(
   sessions: string,
   thread: Thread,
 ): Promise<string | null> {
-  bringingBack.add(thread.folder);
-  try {
-    return await bringBackNow(db, sessions, thread);
-  } finally {
-    bringingBack.delete(thread.folder);
-  }
-}
-
-// The threads whose builder is being brought back, by folder. A poll leaves them alone, as a
-// builder about to start again would look like one that ended outside Skelcrew.
-export const bringingBack = new Set<string>();
-
-// Brings back the builder for bringBack, which notes the thread as being brought back meanwhile.
-async function bringBackNow(
-  db: Database,
-  sessions: string,
-  thread: Thread,
-): Promise<string | null> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
   // A builder you stopped has no host left to look on.
@@ -773,7 +764,10 @@ async function bringBackNow(
       try {
         // A session whose agent ended is ended too, so the new one can take its name.
         const { host, id } = await builderSession(db, sessions, thread);
-        if (await agentRuns(host, id)) return null;
+        if (await agentRuns(host, id)) {
+          seenRunning.add(thread.folder);
+          return null;
+        }
         // stopSession checks the host no longer has the session, so a host that says it ended
         // one it didn't never gets a second builder beside it.
         if (await hasSession(host, id)) await stopSession(host, id);

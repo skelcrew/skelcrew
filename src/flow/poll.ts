@@ -518,8 +518,7 @@ async function tellRunningLead(
 const flowsNote = (repository: Repository) =>
   `Skelcrew was updated: each thread now runs a flow, default unless sc start --flow <name> names another. ${approvedFlowsTold(cloneDir(repository.owner, repository.repo))} When the approved .agents/ has flows other than default, pick the one that fits each thread you start or propose, read from there, not from .agents/flows/ in the clone, and add --flow <name> to sc start. Whenever you pick one other than default, tell the human, naming the flow and why. A thread keeps its flow from start to end. A thread started from the skelcrew label runs default, and you can switch it with sc start app-12 --flow <name> until its builder first submits, unless the flow builds with another role, which is another agent: then start it over with sc rm app-12 and sc start app-12 --flow <name>.`;
 
-// Polls one repository. First stops each thread whose builder ended outside Skelcrew. Then asks
-// its tracker and its forge what changed since the `next` each
+// Polls one repository. Asks its tracker and its forge what changed since the `next` each
 // plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
 // Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge,
 // and Skelcrew's clone's default branch with it. Then starts threads on its tasks labeled to start. Then acts on what each thread's PR means
@@ -536,15 +535,6 @@ async function pollRepository(
   passed: Set<string>,
 ): Promise<void> {
   const { owner, repo } = repository;
-  // A builder that ended outside Skelcrew stops its thread first, before the tracker and forge
-  // are asked, so a plugin that fails every poll never hides it. Its events then wait for sc
-  // start as a stopped thread's do.
-  // One that fails, such as a host that can't end what an ended builder left, is logged, and
-  // the other threads and the repository's events still get their turn.
-  for (const thread of threads)
-    await noticeEndedBuilder(db, sessions, thread).catch((error) =>
-      console.log(`couldn't stop ${thread.folder}, whose builder ended: ${errorText(error)}`),
-    );
   // Whether Skelcrew's clone's default branch is up to date with the remote as of this poll.
   let refreshed = false;
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this
@@ -633,7 +623,8 @@ async function pollRepository(
 }
 
 // Polls each repository's tracker and forge for what changed in its tasks and PRs. The PRs of
-// stopped threads are polled too, so a stopped thread's merge still ends it. A repository is
+// stopped threads are polled too, so a stopped thread's merge still ends it. Each tick also
+// stops every thread whose builder ended outside Skelcrew, and tells its lead. A repository is
 // polled every `every` milliseconds while one of its threads is working or waits on review or
 // CI, and half as often otherwise, so a label or your comment is seen within a minute. The
 // first poll runs at once, to pick up what happened while the daemon was down. A failed poll,
@@ -719,8 +710,24 @@ export function pollRepositories(
   };
   // Each tick polls a repository with work under way, and one without every other tick. A
   // repository whose forge isn't known yet waits, and one still being polled is skipped.
+  // The threads whose builder is being looked for on its host, by folder, so a slow host is
+  // never asked twice at once for the same one.
+  const looking = new Set<string>();
   const tick = () => {
     const live = threadsToPoll();
+    // Each tick stops the threads whose builder ended outside Skelcrew, in every repository,
+    // apart from its polls: only the host can tell, so a tracker or forge that fails, or a forge
+    // not known yet, never hides one. One whose stop fails, such as on a host that can't end
+    // what an ended builder left, is logged, and tried again on the next tick.
+    for (const thread of live) {
+      if (looking.has(thread.folder)) continue;
+      looking.add(thread.folder);
+      noticeEndedBuilder(db, sessions, thread)
+        .catch((error) =>
+          console.log(`couldn't stop ${thread.folder}, whose builder ended: ${errorText(error)}`),
+        )
+        .finally(() => looking.delete(thread.folder));
+    }
     for (const repository of repositories(db)) {
       const { owner, repo } = repository;
       const fullName = `${owner}/${repo}`;

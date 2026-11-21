@@ -8,7 +8,7 @@ import { closePr, failedLog } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
-import { baseOf, bringingBack, inTurn } from "./builder.ts";
+import { baseOf, inTurn, seenRunning } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
@@ -169,9 +169,11 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
 // Stops a working or waiting thread whose builder no longer runs, for each poll, and tells its
 // lead. Only sc stop and sc rm end a builder, so one that ended, such as killed on its host or
 // exited, ended outside Skelcrew, and nothing else would notice: its thread would show work that
-// nobody does. Stopped, it keeps its clone, branch and PR, and sc start brings it back. A thread
-// whose builder is starting, ending or being brought back is left alone, as its session may be
-// missing for a moment. A host that can't be asked says nothing, so the thread stays as it was.
+// nobody does. Stopped, it keeps its clone, branch and PR, and sc start brings it back. Only a
+// builder Skelcrew saw running counts: one that never started is its start's to fail, and one
+// missing as the daemon starts is brought back. A thread whose builder is starting or ending is
+// left alone, as its session may be missing for a moment. A host that can't be asked says
+// nothing, so the thread stays as it was.
 // A stop that fails, such as a host that can't end what an ended builder left, throws why.
 export async function noticeEndedBuilder(
   db: Database,
@@ -186,7 +188,6 @@ export async function noticeEndedBuilder(
     now.session !== null &&
     now.started === thread.started &&
     !stopping.has(now.folder) &&
-    !bringingBack.has(now.folder) &&
     !removing.has(now.folder);
   if (!ours(thread)) return;
   // The look takes its turn with the builder's starts and ends, so it never sees a session a
@@ -196,7 +197,9 @@ export async function noticeEndedBuilder(
     const now = readThread(db, thread.folder);
     if (!ours(now)) return false;
     const { host, id } = await builderSession(db, sessions, now);
-    return !(await agentRuns(host, id));
+    if (!(await agentRuns(host, id))) return seenRunning.has(now.folder);
+    seenRunning.add(now.folder);
+    return false;
   }).catch(() => false);
   if (!ended || !ours(readThread(db, thread.folder))) return;
   const name = threadName(db, thread);

@@ -651,6 +651,9 @@ test("a poll stops a thread whose builder ended outside Skelcrew, and tells its 
   const said = runWithFakeHost(
     "sessions",
     `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+// A builder Skelcrew never saw running, such as one whose start failed, is its start's to fail.
+await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
+console.log(readThread(db, "app-12").status);
 const labels = { repository: "simon/app", role: "builder", task: "app-12" };
 await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
 await noticeEndedBuilder(db, "unused", readThread(db, "app-12"));
@@ -664,7 +667,7 @@ console.log(db.query("SELECT text FROM notes").all().map((note) => note.text).jo
     { host: "fake", host_id: "fake-app-12" },
   );
   expect(said).toBe(
-    "working\nstopped null null\nSIMON/APP-12's builder ended outside Skelcrew, so the thread is stopped. sc start SIMON/APP-12 brings it back.\n",
+    "working\nworking\nstopped null null\nSIMON/APP-12's builder ended outside Skelcrew, so the thread is stopped. sc start SIMON/APP-12 brings it back.\n",
   );
 });
 
