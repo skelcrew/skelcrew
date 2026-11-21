@@ -649,14 +649,8 @@ async function typeNotes(
   const batch = () => {
     const sql = `SELECT id, text, wrapped FROM notes WHERE ${where} ORDER BY urgent DESC, id`;
     const notes = z.array(Note).parse(db.query(sql).all(owner, repo));
-    // A thread whose review is still to go on the PR waits, so the lead, told it needs you,
-    // finds that review there and in sc show, not the round before. A forge that keeps failing
-    // to take it tells the lead so in a note of its own.
     const rows = db
-      .query(
-        `SELECT * FROM task_threads WHERE noting IS NOT NULL AND posting IS NULL AND ${where}
-          ORDER BY rowid`,
-      )
+      .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
       .all(owner, repo);
     const needing = z.array(Thread).parse(rows);
     const lines = [

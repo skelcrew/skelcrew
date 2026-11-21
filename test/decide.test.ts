@@ -997,6 +997,7 @@ test("a merge without approval waits on everything but the reviewer's approval",
     check: "failure" as const,
     description: "Skelcrew's reviewer asked for changes",
     review: null,
+    note: null,
   };
   expect(skipReviewWaitsOn({ ...changes, posting }, green)).toBe("its review");
   // A round on its way brings a new commit, which the human never saw.

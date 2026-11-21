@@ -121,6 +121,21 @@ console.log(JSON.stringify({
   expect(seen.needsYou).toBe(false);
 });
 
+// A verdict the forge hasn't taken yet holds back only its own note, such as the round limit's.
+// The lead hears of a builder's question at once, though the forge keeps failing.
+test("a builder's question reaches the lead while the thread's review still waits for the forge", () => {
+  const typed = run(`
+await lead();
+const review = { pr: 7, commit: "a".repeat(40), verdict: "changes", body: "No test.", findings: ["No test."], round: 2 };
+const posting = { commit: "a".repeat(40), check: "failure", description: "Skelcrew's reviewer asked for changes", review, note: null };
+record(db, "app-12", { posting }, "the forge didn't take its review");
+record(db, "app-12", { asking: true }, "its builder asked a question");
+typeLeadNotes(db, tmux);
+await until(() => received().includes("asked a question"));
+console.log(received());`);
+  expect(typed).toContain("APP-12 needs you: its builder asked a question");
+});
+
 // A paste while the human reads further up would throw them back to the bottom. Back at the
 // bottom, everything that waited goes in as one message, once. A thread needing you goes first,
 // though it came last, then the builder's message, then Skelcrew's routine note.

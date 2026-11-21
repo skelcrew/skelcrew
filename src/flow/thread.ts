@@ -42,6 +42,8 @@ export type ReviewPost = z.infer<typeof ReviewPost>;
 // A verdict saved on the thread but not yet on the forge: the commit, Skelcrew's check on it,
 // and the review to post on the PR with the commit it covers, or null when there is none to
 // post. A failed review posts none, but keeps the review before it that is still to post.
+// `note` is what the lead hears once the review is on the PR, such as that changes held at the
+// round limit need you, so the lead finds that review there. A row saved before it had none.
 const Posting = z.object({
   commit: z.string(),
   check: z.enum(["success", "failure"]),
@@ -56,6 +58,7 @@ const Posting = z.object({
       round: z.number(),
     })
     .nullable(),
+  note: z.string().nullable().default(null),
 });
 export type Posting = z.infer<typeof Posting>;
 

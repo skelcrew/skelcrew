@@ -612,7 +612,15 @@ async function actOnVerdict(
       ? { pr, commit: sha, ...verdict, round }
       : (thread.posting?.review ?? null);
   const { check, description } = outcome;
-  const posting = hasForge ? { commit: sha, check, description, review } : null;
+  // Changes held at the round limit always reach the lead, as the thread needs you for them.
+  // With a forge the note goes with the review, so the lead hears once the PR shows it. A failed
+  // review keeps the note of the review before it still to post. Without a forge, it goes now: a
+  // thread that starts needing you gets its note on saving, and one that needed you already,
+  // such as for its builder's question, gets its own note.
+  const name = threadName(db, thread);
+  const limitNote = held === null ? null : `${name} needs you: ${outcome.why}`;
+  const note = failed ? (thread.posting?.note ?? null) : limitNote;
+  const posting = hasForge ? { commit: sha, check, description, review, note } : null;
   // A new review asks anew about the round limit, so a decision about the last one ends.
   const change = {
     reviewing: null,
@@ -633,19 +641,16 @@ async function actOnVerdict(
     review_findings: "findings" in verdict ? verdict.findings : [],
     review_at: Date.now(),
     posting,
+    // With a forge, the review's own note tells the lead, so saving leaves none. A thread that
+    // needed you already keeps the note it still has to give, such as for a question.
+    ...(hasForge && limitNote !== null && !neededYou(thread) ? { noting: null } : {}),
   };
-  // Changes held at the round limit always reach the lead. Saving them leaves a note only when
-  // the thread starts needing you, so one that needed you already, such as for its builder's
-  // question, gets its note here, after any it still has to give. It is the thread's own note,
-  // so it waits, as that does, until this review is on the PR.
-  const still = readThread(db, folder).noting;
-  const reached = held !== null && neededYou(thread);
-  const noting = still === null ? outcome.why : `${still}; ${outcome.why}`;
-  record(db, folder, reached ? { ...change, noting } : change, outcome.why);
+  record(db, folder, change, outcome.why);
+  if (!hasForge && limitNote !== null && neededYou(thread))
+    noteForLead(db, sessions, repository, limitNote);
   // A review that failed doesn't need you: the lead hears of it, with the error the harness
   // gave, and can run it again, or mark the thread if only you can fix what stops it.
   if (failed) {
-    const name = threadName(db, thread);
     const said =
       verdict.verdict === "failed" ? `'s review failed: ${verdict.body}` : `: ${verdict.body}`;
     const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
@@ -672,16 +677,14 @@ async function actOnVerdict(
   // check first, and this verdict's check would land on top of it. A forge that fails to take it
   // is the lead's to hear, once, while each poll tries again. The verdict stands, so any changes
   // still reach the builder.
-  const posted = postVerdict(db, folder).then((failed) => {
+  const posted = postVerdict(db, sessions, folder).then((failed) => {
     if (failed === null) return;
     const why = `couldn't put its review on the forge: ${failed}`;
     record(db, folder, {}, `${why}; each poll tries again`);
-    const line = `${threadName(db, thread)} ${why}`.replace(/\s+/g, " ").slice(0, 200);
+    const line = `${name} ${why}`.replace(/\s+/g, " ").slice(0, 200);
     noteForLead(db, sessions, repository, `${line}. Skelcrew tries again at each poll.`);
   });
-  // The notes saved here, such as that the thread needs you at the round limit, are typed in once
-  // the review is on the PR, so a lead that looks at once finds this round's review there.
-  const told = posted.then(() => typeLeadNotes(db, sessions));
+  typeLeadNotes(db, sessions);
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
   // for when you start it again. A round cancelled meanwhile leaves them to the newer round,
   // which drops them, or to sc start, which types them in.
@@ -689,7 +692,7 @@ async function actOnVerdict(
     await builderBack;
     if (!signal.aborted) await queueChanges(db, sessions, folder, tell, signal);
   }
-  await told;
+  await posted;
 }
 
 // Ends a round whose task's flow has no review stage, once CI's first check had its chance to
@@ -772,7 +775,7 @@ function inTurn<T>(folder: string, write: () => Promise<T>): Promise<T> {
 // on in its place, as the PR only shows the latest. Returns what the forge said when it failed,
 // or null. It never throws: the verdict stays saved, and each poll tries again, so a forge that
 // fails never stops the round, such as its changes reaching the builder.
-function postVerdict(db: Database, folder: string): Promise<string | null> {
+function postVerdict(db: Database, sessions: string, folder: string): Promise<string | null> {
   return inTurn(folder, async () => {
     const thread = readThread(db, folder);
     const { posting } = thread;
@@ -792,8 +795,16 @@ function postVerdict(db: Database, folder: string): Promise<string | null> {
     } catch (error) {
       return errorText(error);
     }
-    const now = readThread(db, folder).posting;
-    if (JSON.stringify(now) === JSON.stringify(posting)) record(db, folder, { posting: null });
+    // The review's note goes to the lead with the posting cleared, in one step, so a stop of the
+    // daemon can neither lose it nor say it twice. It goes only while the thread still needs
+    // you, as sc start or a mark cleared meanwhile already decided it.
+    const now = readThread(db, folder);
+    if (JSON.stringify(now.posting) === JSON.stringify(posting))
+      db.transaction(() => {
+        record(db, folder, { posting: null });
+        if (posting.note !== null && neededYou(now))
+          noteForLead(db, sessions, thread, posting.note);
+      })();
     return null;
   });
 }
@@ -815,14 +826,10 @@ export async function retryPost(db: Database, sessions: string, folder: string):
     thread.reviewing === null &&
     !writesUnderWay.has(folder);
   if (!quiet) return;
-  const failed = await postVerdict(db, folder);
+  const failed = await postVerdict(db, sessions, folder);
   if (failed !== null)
     console.log(`${folder}: couldn't put its saved verdict on the forge: ${failed}`);
-  else {
-    record(db, folder, {}, "its saved verdict is on the forge now");
-    // The thread's note to the lead waited for it.
-    typeLeadNotes(db, sessions);
-  }
+  else record(db, folder, {}, "its saved verdict is on the forge now");
 }
 
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
