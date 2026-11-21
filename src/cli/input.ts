@@ -1,6 +1,6 @@
-// Reads what a command was given: the names of tasks and threads among its arguments, a task's
-// title and body on stdin, and the human's words in a file. Says so when a command can't run
-// as given.
+// Reads what a command was given and who gave it: the names of tasks and threads among its
+// arguments, a task's title and body on stdin, the human's words in a file, and whether an
+// agent ran it. Says so when a command can't run as given.
 
 export function splitTaskName(word?: string): [string, string] | undefined {
   const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/i);
@@ -89,4 +89,8 @@ export function usage(command?: string): never {
             : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
   );
   process.exit(1);
+}
+
+export function runByAgent(): boolean {
+  return process.env.SKELCREW_SANDBOX === "1";
 }

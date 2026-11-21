@@ -1,6 +1,6 @@
 // The commands agents run: a builder submitting its work, the hooks that tell the daemon what an
 // agent is doing, and what the lead and builders use to ask, tell and mark a thread as needing you.
-import { readAsked, splitThreadName, usage } from "./input.ts";
+import { readAsked, runByAgent, splitThreadName, usage } from "./input.ts";
 import { startCommand } from "./threads.ts";
 
 export async function agentCommand(args: string[]): Promise<void> {
@@ -72,7 +72,7 @@ export async function needsYouCommand(args: string[]): Promise<void> {
 export async function tellCommand(args: string[]): Promise<void> {
   const command = args[0];
   const { briefOtherLead, tellOn, tellTheLead } = await import("../client.ts");
-  if (process.env.SKELCREW_SANDBOX !== "1")
+  if (!runByAgent())
     throw new Error(
       "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar, or press Enter on it in sc --list.",
     );

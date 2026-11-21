@@ -1,6 +1,6 @@
 // The commands for this machine: plain sc, which opens the lead, the daemon, repositories,
 // plugins and the parts of the screen.
-import { usage } from "./input.ts";
+import { runByAgent, usage } from "./input.ts";
 
 export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { attachToLead, upInBackground } = await import("../attach.ts");
@@ -106,12 +106,7 @@ export async function repoCommand(args: string[], json: boolean): Promise<void> 
     return;
   }
   if (sub === "ls" && rest.length === 0) {
-    printRepositories(
-      process.env.SKELCREW_SANDBOX === "1"
-        ? await askForRepositories()
-        : listRepositories(openDb()),
-      json,
-    );
+    printRepositories(runByAgent() ? await askForRepositories() : listRepositories(openDb()), json);
     return;
   }
   if (sub === "rm" && rest[0] && rest.length === 1) {
