@@ -143,9 +143,9 @@ export async function startOn(
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 
-// Has the daemon start a thread on a title and body, for sc start in a repository with no
-// tracker, and returns what it did, in a sentence naming the thread, such as app-t1. `short` is
-// its short title for the sidebar, and `flow` the flow it runs.
+// Has the daemon start a thread on a title and body, for sc task add --start, and returns what
+// it did, in a sentence naming the thread, such as app-t1. `short` is its short title for the
+// sidebar, and `flow` the flow it runs.
 export async function startNew(
   repository: string,
   title: string,

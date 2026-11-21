@@ -64,6 +64,14 @@ test("the help names every command", () => {
     expect(out).toContain(`  ${command} `);
 });
 
+// One command files a task and can start it, so sc start takes only a task.
+test("the help names task add --start for new work, and no start <repo>", () => {
+  const out = skel(["--help"]).out;
+  expect(out).not.toContain("  start <repo>");
+  expect(out).toContain("  task add <repo> ");
+  expect(out).toContain("  --start ");
+});
+
 // sc serve runs the daemon. sc up was its old name, and is gone.
 test("the help names sc serve for the daemon, and never sc up", () => {
   const out = skel(["--help"]).out;

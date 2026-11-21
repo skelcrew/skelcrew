@@ -196,7 +196,7 @@ test("closing the last tab leaves the screen on how to open a repository, until 
     () => right().includes("No repository is open. Run sc in a checkout of one to open it."),
     "the empty screen",
   );
-  expect(footer()).toBe("  ⌥Q quit");
+  expect(footer()).toBe("  q/⌥Q quit");
   expect(screenSessions()).toHaveLength(1);
   expect(seen()).not.toMatch(/[○●] 12\b/);
   // Opening app again, such as with sc in another terminal, brings its tab back here.

@@ -833,7 +833,7 @@ test("Enter on a task whose builder isn't running says so on the right, until th
   const why = "APP-12's builder isn't running: sc start APP-12";
   await until(() => right().includes(why), "the right side to say why");
   expect(tmux(agents, "list-clients").out).toBe("");
-  type("q");
+  type("x");
   await until(onDetails, "app-12's details again");
   expect(right()).not.toContain(why);
 });
