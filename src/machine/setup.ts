@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { piHome } from "../agents/pi.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { errorText, toRun } from "../format.ts";
@@ -304,19 +305,20 @@ function savedReviewerHarness(): HarnessName | undefined {
   return readSettings(["yourReviewer"]).yourReviewer;
 }
 
-// Asks which harness reviews run on, offering the other one first, as a second model sees what
+// Asks which harness reviews run on, offering the others first, as a second model sees what
 // the builder's model misses. Saves it only when it isn't your harness, which reviews run on
 // anyway.
-function pickReviewer(harness: HarnessName): void {
+function pickReviewer(harness: HarnessName, env: Env): void {
   // The other harness comes first, so Enter takes it.
+  const installed = harnesses.filter((h) => Bun.which(h.program, { PATH: env.PATH ?? "" }));
   const choices = [
-    ...harnesses.filter((h) => h.name !== harness),
-    ...harnesses.filter((h) => h.name === harness),
+    ...installed.filter((h) => h.name !== harness),
+    ...installed.filter((h) => h.name === harness),
   ];
   const at = pick(
     "Choose the coding agent for reviews:",
-    // Both are installed, as the question comes only then, and say so as the first question
-    // does. The other harness, first, is marked as the second opinion it gives.
+    // Only installed harnesses are offered, marked so as the first question does. The first
+    // other harness is marked as the second opinion it gives.
     choices.map((h, index) => ({
       label: h.title,
       hint: index === 0 ? "installed · a second opinion" : "installed",
@@ -335,7 +337,31 @@ function pickReviewer(harness: HarnessName): void {
 // plain sc checks this each time it starts.
 function agentsLoggedIn(harness: HarnessName): boolean {
   if (harness === "claude") return existsSync(claudeTokenFile());
+  if (harness === "pi") return piLoggedIn();
   return existsSync(join(codexHome(), "auth.json"));
+}
+
+// Reports whether Skelcrew's own Pi folder has a login or models of yours, which every Pi agent
+// and review gets a copy of.
+const piLoggedIn = () =>
+  ["auth.json", "models.json"].some((file) => existsSync(join(piHome(), file)));
+
+// Signs Skelcrew in to the model provider you name, in Skelcrew's own Pi folder, with an account or
+// an API key, as pi auth login asks. Agents get a copy at each start, so an account whose sign-in
+// renews by replacing its refresh token goes stale: use an API key or an account such as GitHub
+// Copilot's.
+function logInPi(env: Env, line: string): void {
+  console.log(line);
+  const provider = prompt("Provider, such as google, github-copilot or openrouter:")?.trim();
+  if (!provider || !/^[\w.-]+$/.test(provider))
+    throw new Error("no provider was named, so Pi has no login for Skelcrew");
+  mkdirSync(piHome(), { recursive: true, mode: 0o700 });
+  const ran = Bun.spawnSync(["pi", "auth", "login", provider], {
+    env: { ...env, PI_CODING_AGENT_DIR: piHome() },
+    stdio: ["inherit", "inherit", "inherit"],
+  }).success;
+  if (!ran) throw new Error("pi auth login didn't finish, so Pi has no login for Skelcrew");
+  console.log(`Signed in to ${provider} for Pi.`);
 }
 
 // Reports whether setup finished: your harness choice is saved, the agents have their login,
@@ -466,14 +492,14 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const harness = readSettings(["yourHarness"]).yourHarness;
   if (!harness) steps.push({ title: "the coding agent", take: () => pickHarness(env) });
   const PATH = env.PATH ?? "";
-  // Reviews are asked about only when both harnesses are installed, as otherwise there is
+  // Reviews are asked about only when another harness is installed, as otherwise there is
   // nothing to pick.
-  const both = harnesses.every((h) => Bun.which(h.program, { PATH }));
-  if (harness && both && !savedReviewerHarness() && !asked.reviewer)
+  const choice = harnesses.filter((h) => Bun.which(h.program, { PATH })).length > 1;
+  if (harness && choice && !savedReviewerHarness() && !asked.reviewer)
     steps.push({
       title: "the coding agent for reviews",
       take: () => {
-        pickReviewer(harness);
+        pickReviewer(harness, env);
         asked.reviewer = true;
       },
     });
@@ -501,5 +527,12 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
       title: "Codex's sign-in",
       take: () => logInCodex(env, `Sign in to Codex${forReviews}. Press Enter to start.`),
     });
+  if (uses("pi") && !piLoggedIn()) {
+    const forPiReviews = harness === "pi" ? "" : " for reviews";
+    steps.push({
+      title: "Pi's sign-in",
+      take: () => logInPi(env, `Sign in to a model provider for Pi${forPiReviews}.`),
+    });
+  }
   return steps;
 }

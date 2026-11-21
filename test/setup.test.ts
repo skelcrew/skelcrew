@@ -176,6 +176,7 @@ test("takes every step on the first run, and none on the second", async () => {
       "",
       "Claude Code detected",
       "Codex not found",
+      "Pi not found",
       "Agents will run on Claude Code",
       "",
       "Sign in to Claude. In another terminal, run:",
@@ -848,6 +849,8 @@ test("names each missing tool with what to install, and runs nothing else", asyn
       "",
       "  npm install -g @openai/codex",
       "",
+      "  npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+      "",
       "Then run sc again.",
       "",
     ].join("\n"),
@@ -1123,7 +1126,7 @@ test("with only Claude Code installed, asks nothing about harnesses and says age
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("Choose");
   expect(run.out).toContain(
-    "\nClaude Code detected\nCodex not found\nAgents will run on Claude Code\n",
+    "\nClaude Code detected\nCodex not found\nPi not found\nAgents will run on Claude Code\n",
   );
 });
 
@@ -1150,7 +1153,9 @@ test("on a machine with only Codex, it is taken without asking, and its one logi
   const run = await skel("\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Claude Code not found\nCodex detected\nAgents will run on Codex\n");
+  expect(run.out).toContain(
+    "Claude Code not found\nCodex detected\nPi not found\nAgents will run on Codex\n",
+  );
   expect(run.out).not.toContain("Choose");
   expect(run.out).toContain("\nSign in to Codex. Press Enter to start.\nSigned in to Codex.\n");
   expect(run.out).not.toContain("for reviews");
@@ -1165,6 +1170,51 @@ test("on a machine with only Codex, it is taken without asking, and its one logi
   expect(second.code).toBe(0);
   expect(second.out).not.toContain("set up");
   expect(calls()).toBe("daemon lead\nscreen on lead\n");
+});
+
+const piHome = () => join(home, ".local", "share", "skelcrew", "pi");
+
+// Stands in for pi auth login: it keeps its folder, and saves a login there.
+function fakePi(login = 'echo "{}" > "$PI_CODING_AGENT_DIR/auth.json"'): void {
+  fake(
+    "pi",
+    `echo "PI_CODING_AGENT_DIR=$PI_CODING_AGENT_DIR" >> "$HOME/calls"
+case "$1 $2" in
+  "auth login") ${login} ;;
+esac`,
+  );
+}
+
+test("on a machine with only Pi, it signs in to the provider you name, in Skelcrew's own Pi folder", async () => {
+  unlinkSync(join(bin, "claude"));
+  fakePi();
+  const run = await skel("google\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Claude Code not found\nCodex not found\nPi detected\nAgents will run on Pi\n",
+  );
+  expect(run.out).toContain("\nSign in to a model provider for Pi.\n");
+  expect(run.out).toContain("Signed in to google for Pi.");
+  expect(readFileSync(config(), "utf8")).toContain("harness: pi");
+  expect(calls()).toContain(`pi auth login google\nPI_CODING_AGENT_DIR=${piHome()}\n`);
+  expect(statSync(piHome()).mode & 0o777).toBe(0o700);
+
+  writeFileSync(join(home, "calls"), "");
+  const second = await skel();
+  expect(second.code).toBe(0);
+  expect(second.out).not.toContain("Sign in");
+  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+});
+
+test("names no provider and Pi has no login, so the next sc asks again", async () => {
+  unlinkSync(join(bin, "claude"));
+  fakePi();
+  const run = await skel("\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("no provider was named");
+  expect(calls()).not.toContain("pi auth login");
+  expect(existsSync(unit())).toBe(false);
 });
 
 test("picking Codex for agents and reviews where Claude Code is installed too skips Claude's login", async () => {
@@ -1230,12 +1280,13 @@ test("names only the harness your config saved when it isn't installed", async (
   expect(run.out).not.toContain("claude.ai");
 });
 
-test("needs Claude Code or Codex, and names how to install either", async () => {
+test("needs Claude Code, Codex or Pi, and names how to install each", async () => {
   unlinkSync(join(bin, "claude"));
   const run = await skel();
   expect(run.code).toBe(1);
   expect(run.out).toContain("curl -fsSL https://claude.ai/install.sh | bash");
   expect(run.out).toContain("npm install -g @openai/codex");
+  expect(run.out).toContain("npm install -g --ignore-scripts @earendil-works/pi-coding-agent");
   expect(calls()).toBe("");
 });
 

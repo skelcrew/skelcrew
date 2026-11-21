@@ -90,8 +90,8 @@ console.log(JSON.stringify(await (async () => { ${code} })()));`;
 }
 
 // Starts a builder on the harness with the skills `skills` names, and returns where it looks for
-// skills: its config folder's skills/.
-function startBuilder(harness: "claude" | "codex", skills = "from"): string {
+// skills: its config folder's skills/, or for Pi its session folder's, which --skill names.
+function startBuilder(harness: "claude" | "codex" | "pi", skills = "from"): string {
   const env = z.record(z.string(), z.string()).parse(
     inHome(`return (await harnessNamed(${JSON.stringify(harness)}).start({
       name: "app-12", socket: ${JSON.stringify(join(home, "socket"))},
@@ -99,10 +99,13 @@ function startBuilder(harness: "claude" | "codex", skills = "from"): string {
       prompt: "Add export", skills: ${skills}, env,
     })).env;`),
   );
-  return join(env.CLAUDE_CONFIG_DIR ?? env.CODEX_HOME ?? "", "skills");
+  const pi = env.PI_CODING_AGENT_DIR;
+  return pi
+    ? join(dirname(pi), "skills")
+    : join(env.CLAUDE_CONFIG_DIR ?? env.CODEX_HOME ?? "", "skills");
 }
 
-for (const harness of ["claude", "codex"] as const)
+for (const harness of ["claude", "codex", "pi"] as const)
   test(`a builder on ${harness} gets the approved skills in its own config folder`, () => {
     const skills = startBuilder(harness);
     expect(readdirSync(skills).sort()).toEqual(["notes", "review-sql"]);
