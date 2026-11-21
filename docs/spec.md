@@ -228,7 +228,7 @@ Every command that lists or shows something takes `--json`. Commands that do som
 
 Every command an agent can run answers quickly, as Claude Code moves a shell command to the background after 2 minutes.
 
-**Check slots.** Many whole test suites at once overload the machine, so the whole suite runs only through `sc check`, as many at once as your limit allows, first come first served, saying where it is in line. A slot is freed when its check ends, however it ends, and nothing the suite starts can hold it. A suite never outlives its check, but for a process that detaches into a session of its own. A restarted engine forgets the slots, so a suite running across the restart may briefly overlap new ones. A reviewer's socket allows only `sc check`. Without `test:` it fails and says so, and with `test: []` it runs nothing.
+**Check slots.** Many whole test suites at once overload the machine, so the whole suite runs only through `sc check`, as many at once as your limit allows, first come first served, saying where it is in line. A slot is freed when its check ends, however it ends, and nothing the suite starts can hold it. A suite never outlives its check, but for a process that detaches into a session or process group of its own, such as a tmux server or a database, as containing it would take means only Linux has. A restarted engine forgets the slots, so a suite running across the restart may briefly overlap new ones. A reviewer's socket allows only `sc check`. Without `test:` it fails and says so, and with `test: []` it runs nothing.
 
 ### Installing
 
@@ -261,7 +261,7 @@ One task, in the `default` flow, in a repository with GitHub as its tracker and 
 1. **A task is started**: by the `skelcrew` label on an issue, from anywhere, or by the lead once you say yes, on an issue, a task of the backlog, or a task with no issue. You can start one yourself too.
 2. **Skelcrew sets up the builder**: a clone of its own, on a branch of its own, with the repository's setup run once in it.
 3. **The builder starts**, in the sandbox, in that clone, with its role's instructions and the task as its first message.
-4. **The builder finishes a round.** The whole test suite runs once per commit that changes code, in CI or in the reviewer, never in the builder, as many builders running it at once overload the machine. The builder runs the tests near its change, commits and runs `sc submit` with a summary, which becomes the PR's description. Skelcrew pushes the branch from its own clone, never running git in the task's folder, and on the first round opens the PR, which closes its issue.
+4. **The builder finishes a round.** The whole test suite runs once per commit that changes code, in CI or in the reviewer, never in the builder, as many builders running it at once overload the machine. While it works, the builder runs only the tests near its change. Before it submits, it runs the tests related to its change and the repository's lint and typecheck, and if it ever must run the whole suite, it runs `sc check`. It commits and runs `sc submit` with a summary, which becomes the PR's description. Skelcrew pushes the branch from its own clone, never running git in the task's folder, and on the first round opens the PR, which closes its issue.
 5. **The reviewer reviews**, as **The review** says.
 6. **Changes go back to the builder**, typed into its session. It fixes them and submits again: back to step 4.
 7. **After the flow's round limit, the builder needs you.** Reviews stop reaching the builder until you say go on. A merge you arm, or clearing the thread, decides it too. An approval answers it.
@@ -491,7 +491,7 @@ The screen is how you see and steer a repository's work. It guarantees:
 - **Tasks, not threads**, in sections: everything that waits on you, always open, so one key reaches it; Up next, what waits for a builder, in the order it starts; then the stages. Each task shows in exactly one place, decided from its state alone.
 - **Words, not colours.** A task's word always says what is happening. Outside text has its control codes removed first.
 - **Always a way back.** One key brings you back from an agent, and pressing it once too often never leaves the screen. Leaving keeps every agent running, and says so.
-- **Seeing without touching.** A task's details show what `sc show` gives, with its agent live beside them. Nothing typed there reaches the agent, and its session is never resized.
+- **Seeing without touching.** A task's details show what `sc show` gives, from Skelcrew's copy and database alone, so without the logs of failed checks, with its agent live beside them. Nothing typed there reaches the agent, and its session is never resized.
 - **Fast and quiet.** The screen reads only Skelcrew's database and its copy, so it opens at once and never asks the forge, and it redraws only on change, so it works over a slow link. It shows the load of the machine the engine runs on.
 - **Yours to decide.** The screen's keys that merge, start a task or reorder the queue are yours: the lead can't press them. What the lead may do instead goes through its own commands, by the rules of **The flow**. The merge confirm says when the PR changes `.agents/`.
 - **Your terminal stays yours.** The screen never reads your `~/.tmux.conf`, and takes the mouse only while it shows.
