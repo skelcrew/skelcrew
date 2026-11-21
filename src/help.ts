@@ -78,9 +78,6 @@ const sections: [string, [string, string][]][] = [
       ['tell lead "<text>"', "Type a message into its repository's lead, as a builder"],
       ['tell <thread> "<text>" | -', "Type a message into its builder, as the lead, - for stdin"],
       ['tell lead <repo> "<text>" | -', "Type a brief into another repository's lead, - for stdin"],
-      ["ask start <issue>", "Ask you in the list to start it, as the lead"],
-      ['ask start <repo> "<title>" "<body>"', "The same for a thread with no issue"],
-      ["ask repo add <owner/repo>", "Ask you in the list to add a repository, as the lead"],
     ],
   ],
   [

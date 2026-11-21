@@ -353,7 +353,7 @@ export const footer = (row = 29) =>
 // Stands in for the daemon on the test's own socket: it logs each repository asked to open,
 // saying when a tab asked, which must never open a tab you closed, and answers with nothing to
 // say.
-// It also logs each thread started, agent restarted, PR merged and request of the lead's answered, in `acted`, answering a merge with
+// It also logs each thread started, agent restarted and PR merged, in `acted`, answering a merge with
 // `given.mergeAnswer`. While `given.holding`, those wait for `release`, so a test sees what the screen says
 // meanwhile.
 export const asked: string[] = [];
@@ -366,7 +366,7 @@ export const release = () => {
 export function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, id, yes, now } = z
+      const { command, from, tab, repo, task, pr, commit, by, now } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
@@ -376,19 +376,10 @@ export function daemon(): void {
           pr: z.number().default(0),
           commit: z.string().default(""),
           by: z.number().default(0),
-          id: z.number().default(0),
-          yes: z.boolean().default(false),
           now: z.boolean().default(false),
         })
         .parse(JSON.parse(data.toString()));
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
-      if (command === "answer") {
-        acted.push(`answer ${repo} ${id} ${yes ? "yes" : "no"}`);
-        connection.end(
-          `${JSON.stringify({ said: yes ? "Started APP-31." : "Told the lead no." })}\n`,
-        );
-        return;
-      }
       if (command === "restart") {
         acted.push(`restart ${repo} ${task}`.trimEnd());
         const who = task ? `APP-${task}'s builder` : "app's lead";

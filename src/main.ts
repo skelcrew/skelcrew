@@ -1,7 +1,7 @@
 // Skelcrew's command line: reads the command and hands it to the file that does it.
 
 import { runByAgent } from "./agents/sandbox.ts";
-import { agentCommand, askCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
+import { agentCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
 import { usage } from "./cli/input.ts";
 import {
   leadCommand,
@@ -125,7 +125,7 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "task":
       return taskCommand(words);
     case "start":
-      return startCommand(words, false);
+      return startCommand(words);
     case "stop":
     case "rm":
     case "review":
@@ -133,8 +133,6 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
     case "interrupt":
     case "attach":
       return threadCommand(words);
-    case "ask":
-      return askCommand(words);
     case "needs-you":
       return needsYouCommand(words);
     case "tell":
