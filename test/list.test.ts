@@ -2739,10 +2739,12 @@ test("the live view reads only while the list shows with its pane", async () => 
   const { bin, reads } = countedTmux();
   await open({ width: wide, bin });
   await until(() => reads() >= 4, "the live view's reads");
-  // On a row with no agent running, there is nothing to read.
-  // Past APP-14 and Up next's heading.
+  // On a row with no agent running, there is nothing to read. A read begun on APP-12's row, where
+  // the list starts, can still be noted on a slow machine, as after the attach below, so the list
+  // first goes a second without one. Past APP-14 and Up next's heading.
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
+  await wait(() => noReads(reads), { what: () => "the reads to stop on APP-9" });
   expect(await noReads(reads)).toBe(true);
   // While you are attached to an agent, the list isn't showing. A read that began on APP-7's row
   // just before Enter may still be noted, on a slow machine, so the list must first go a second
