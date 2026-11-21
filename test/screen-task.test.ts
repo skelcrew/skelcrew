@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { panes } from "../src/screen/screen.ts";
 import { source } from "./harness.ts";
 import {
   agents,
@@ -35,11 +36,13 @@ afterEach(endTest);
 
 // The screen's session, of the one terminal these tests open.
 const session = () => screenSessions()[0] ?? "";
-// What the right side shows, and which of the screen's panes your typing goes to: 0 is the
-// sidebar, 1 the right side.
-const right = () => tmux(screen, "capture-pane", "-p", "-t", `=${session()}:.1`).out;
-const typingTo = () =>
-  tmux(screen, "display-message", "-p", "-t", `=${session()}:`, "#{pane_index}").out.trim();
+// What the right side shows, and which of the screen's panes your typing goes to: the sidebar or
+// the right side.
+const right = () => tmux(screen, "capture-pane", "-p", "-t", `=${session()}:.${panes.right}`).out;
+const typingTo = () => {
+  const at = tmux(screen, "display-message", "-p", "-t", `=${session()}:`, "#{pane_index}").out;
+  return Number(at) === panes.sidebar ? "sidebar" : Number(at) === panes.right ? "right" : at;
+};
 
 // Does what the sidebar does on a task's row, by the row's name, as a process of its own with the
 // test's home: `show` shows the task's details, and `attach` attaches to its builder, both by the
@@ -89,7 +92,7 @@ test("a task's row shows its details with its builder live under them, and typin
   await onApp7();
   expect(right()).toContain("Building · working");
   await until(() => right().includes("I am app-7"), "app-7's screen, live");
-  expect(typingTo()).toBe("0");
+  expect(typingTo()).toBe("sidebar");
   // What app-7 prints next reaches the right side without attaching.
   tmux(agents, "send-keys", "-t", "=app-7:", "-l", "first line\r");
   await until(() => right().includes("first line"), "app-7's new line");
@@ -118,7 +121,7 @@ test("o on a task's row shows its builder's whole screen and back, and Enter sti
   await until(() => !right().includes("I am app-7"), "the strip again");
   // Enter still attaches to the builder.
   press("Enter");
-  await until(() => typingTo() === "1", "typing to move to the builder");
+  await until(() => typingTo() === "right", "typing to move to the builder");
   type("hi\r");
   await until(() => read("app-7.typed").endsWith("four\nhi\n"), "what was typed");
 });
@@ -161,12 +164,12 @@ test("a long description scrolls on the right by Page Down, Page Up and the whee
 test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to its details", async () => {
   await onApp7();
   expect(onRow("attach", "APP-7")).toBe("");
-  await until(() => typingTo() === "1", "typing to move to the builder");
+  await until(() => typingTo() === "right", "typing to move to the builder");
   type("hi\r");
   await until(() => read("app-7.typed") === "hi\n", "what was typed");
   press("C-\\");
   await until(() => right().includes("Building · working"), "app-7's details again");
-  expect(typingTo()).toBe("0");
+  expect(typingTo()).toBe("sidebar");
   // Ctrl-\ again does nothing, and the builder got none of it.
   press("C-\\");
   type("x\r");
@@ -179,10 +182,10 @@ test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to it
 test("a builder that exits while attached brings the details back", async () => {
   await onApp7();
   onRow("attach", "APP-7");
-  await until(() => typingTo() === "1", "typing to move to the builder");
+  await until(() => typingTo() === "right", "typing to move to the builder");
   const pid = tmux(agents, "display-message", "-p", "-t", "=app-7:", "#{pane_pid}").out.trim();
   process.kill(Number(pid), "SIGKILL");
-  await until(() => typingTo() === "0", "typing to come back to the sidebar");
+  await until(() => typingTo() === "sidebar", "typing to come back to the sidebar");
   await until(() => right().includes("Login redirect"), "app-7's details again");
   expect(tmux(agents, "list-sessions", "-F", "#S").out).toContain("app-7");
 });
@@ -207,16 +210,16 @@ test("a builder that exits just before Enter attaches brings the details back", 
   );
   expect(onRow("attach", "APP-7", folder)).toBe("");
   await until(() => right().includes("Login redirect"), "app-7's details again");
-  await until(() => typingTo() === "0", "typing to come back to the sidebar");
+  await until(() => typingTo() === "sidebar", "typing to come back to the sidebar");
 });
 
 test("moving to another row while attached comes back from the builder, and shows that row", async () => {
   await onApp7();
   onRow("attach", "APP-7");
-  await until(() => typingTo() === "1", "typing to move to the builder");
+  await until(() => typingTo() === "right", "typing to move to the builder");
   onRow("show", "APP-12");
   await until(() => right().includes("I am app-12"), "app-12's details");
-  expect(typingTo()).toBe("0");
+  expect(typingTo()).toBe("sidebar");
   expect(tmux(agents, "list-clients").out).not.toContain("app-7");
 });
 
@@ -225,9 +228,9 @@ test("moving to another row while attached comes back from the builder, and show
 test("Ctrl-\\ on the lead moves your typing to the sidebar, and on a task's details keeps it there", async () => {
   open("lead");
   await ready("lead");
-  expect(typingTo()).toBe("1");
+  expect(typingTo()).toBe("right");
   press("C-\\");
-  await until(() => typingTo() === "0", "your typing to move to the sidebar");
+  await until(() => typingTo() === "sidebar", "your typing to move to the sidebar");
   type("x");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
@@ -236,7 +239,7 @@ test("Ctrl-\\ on the lead moves your typing to the sidebar, and on a task's deta
   press("C-\\");
   await Bun.sleep(500);
   expect(right()).toContain("I am app-7");
-  expect(typingTo()).toBe("0");
+  expect(typingTo()).toBe("sidebar");
 });
 
 test("Enter on a task whose builder isn't running, or that went, says so, and attaches to nothing", async () => {
@@ -248,7 +251,7 @@ test("Enter on a task whose builder isn't running, or that went, says so, and at
   );
   // A row removed a moment before Enter is read as it is now, and has nothing to attach to.
   expect(onRow("attach", "APP-99")).toBe("APP-99 is no longer in the list");
-  expect(typingTo()).toBe("0");
+  expect(typingTo()).toBe("sidebar");
 });
 
 // The host's attach logs what it read, and ends once it reads a line.
@@ -269,11 +272,11 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-7' WHERE folder = 'app-7'`
   for (const leave of ["Ctrl-\\", "its end"]) {
     expect(onRow("attach", "APP-7")).toBe("");
     await until(() => right().includes("I am fake-app-7 on fake"), "the host's attach");
-    expect(typingTo()).toBe("1");
+    expect(typingTo()).toBe("right");
     if (leave === "Ctrl-\\") press("C-\\");
     else type("bye\r");
     await until(() => right().includes("Login redirect"), `the details again, after ${leave}`);
-    expect(typingTo()).toBe("0");
+    expect(typingTo()).toBe("sidebar");
   }
   // Only the line that ended it reached the host, and no Ctrl-\.
   expect(read("host.typed")).toBe("bye");
@@ -300,7 +303,7 @@ UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-7'`);
   await until(() => right().includes("I am app-12"), "app-12's details");
   await Bun.sleep(500);
   expect(right()).toContain("I am app-12");
-  expect(typingTo()).toBe("0");
+  expect(typingTo()).toBe("sidebar");
   expect(read("host.typed")).toBe("");
 });
 
@@ -321,6 +324,6 @@ UPDATE threads SET host = 'broken', host_id = 'broken-app-7' WHERE folder = 'app
     // Once the attachment ended, its shell moves your typing back, then becomes the details,
     // which take a moment to start and draw on a busy machine.
     await until(() => right().includes("Login redirect"), "the details again");
-    expect(typingTo()).toBe("0");
+    expect(typingTo()).toBe("sidebar");
   }
 });

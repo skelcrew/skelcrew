@@ -12,7 +12,7 @@ import { listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
-import { attachedMark, skelcrewCommand } from "./screen.ts";
+import { attachedMark, panes, skelcrewCommand } from "./screen.ts";
 
 // What the details pane scrolls by: Page Up, as 5, or Page Down, as 6, then the wheel up, as 64,
 // or down, as 65, as your terminal reports a press of the mouse.
@@ -36,8 +36,12 @@ export function showTask(
   name: string,
   full: boolean,
 ): void {
-  respawnPane(agents, `=${session}:.1`, detailsCommand(agents, repository, name, full));
-  screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);
+  respawnPane(
+    agents,
+    `=${session}:.${panes.right}`,
+    detailsCommand(agents, repository, name, full),
+  );
+  screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
 }
 
 // Attaches the right side of the screen whose session is named to the builder of a task's row,
@@ -68,7 +72,7 @@ export async function attachTask(
     return `${name}'s builder isn't running: sc start ${name} brings it back`;
   // The right pane's process, so a move to another row while the host answers is seen: each
   // move starts the pane again.
-  const pane = `=${session}:.1`;
+  const pane = `=${session}:.${panes.right}`;
   const paneProcess = () =>
     screenTmux(agents, ["display-message", "-p", "-t", pane, "#{pane_pid}"]).out.trim();
   const before = paneProcess();
@@ -79,7 +83,7 @@ export async function attachTask(
     // becomes the details. The mark is a no-op word that names the pane's command as attached.
     const back = [
       `: ${attachedMark}`,
-      `tmux -L ${quoteForSh(screenSocket(agents))} select-pane -t ${quoteForSh(`=${session}:.0`)}`,
+      `tmux -L ${quoteForSh(screenSocket(agents))} select-pane -t ${quoteForSh(`=${session}:.${panes.sidebar}`)}`,
       `exec ${detailsCommand(agents, repository, row.name, full).map(quoteForSh).join(" ")}`,
     ].join("; ");
     attach =
@@ -102,7 +106,7 @@ export async function attachTask(
   }
   const started = screenTmux(agents, ["respawn-pane", "-k", "-t", pane, "--", ...attach]);
   if (!started.ok) {
-    screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);
+    screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
     return `${name}'s builder couldn't be shown: ${started.err}`;
   }
   return null;

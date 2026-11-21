@@ -11,6 +11,7 @@ import {
   footer,
   given,
   home,
+  litBox,
   onDetails,
   onLead,
   open,
@@ -51,15 +52,13 @@ const fullScreen = () =>
     `=${screenSessions()[0]}:`,
     "#{window_zoomed_flag}",
   ).out.trim() === "1";
-// The sidebar's edge on the line under the top row.
-const edge = () => seen().split("\n")[1]?.[sidebar - 1];
 // Returns whether a stage's heading shows with rows under it, so it is open.
 const isOpen = (heading: string) => {
   const lines = seen()
     .split("\n")
-    .map((line) => line.slice(0, sidebar - 1).trimEnd());
+    .map((line) => line.slice(2, sidebar).trimEnd());
   const at = lines.findIndex((line) => line.includes(heading));
-  return at >= 0 && /^ [▸▹ ] \S/.test(lines[at + 1] ?? "");
+  return at >= 0 && /^ [▸ ] \S/.test(lines[at + 1] ?? "");
 };
 // Presses a key and waits until the row you are on is another one, as the next key moves from
 // there.
@@ -72,14 +71,14 @@ async function step(key: string): Promise<void> {
 test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sidebar, and the screen shows it", async () => {
   open("lead");
   await ready("lead");
-  // At the start your typing goes to the lead, with no key pressed: the lead's row is only
-  // outlined, the edge leans to the right side, the footer says so, and the lead's cursor shows.
-  expect(selected()).toMatch(/^▹ ○ lead\b/);
+  // At the start your typing goes to the lead, with no key pressed: the box round the right side
+  // is the lit one, the footer says so, and the lead's cursor shows.
+  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  await until(() => litBox() === "right", "the right side's box");
   await until(
     () => footer() === "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥Q quit  Esc stops claude",
     "the footer under the lead",
   );
-  expect(edge()).toBe("▕");
   expect(cursorShows()).toBe(true);
   type("hi\r");
   await until(() => read("lead.typed") === "hi\n", "the typing to reach the lead");
@@ -90,7 +89,7 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
     "the sidebar's keys",
   );
   expect(selected()).toMatch(/^▸ ○ lead\b/);
-  expect(edge()).toBe("▏");
+  expect(litBox()).toBe("sidebar");
   expect(cursorShows()).toBe(false);
   // The lead still shows on the right side, only to look at, and never saw the key.
   expect(seen()).toContain("I am lead");
@@ -117,7 +116,7 @@ test("in the sidebar plain keys work as in the list, keep your typing there, and
   press("Enter");
   await until(() => !typingToSidebar() && onLead(), "the lead to take your typing");
   await until(() => footer().startsWith("  typing to lead"), "the footer under the lead");
-  expect(edge()).toBe("▕");
+  expect(litBox()).toBe("right");
   // Digits then reach the lead, and open or close no stage.
   type("123456\r");
   await until(() => read("lead.typed") === "123456\n", "the digits to reach the lead");
@@ -164,7 +163,7 @@ test("Enter on a task gives its builder your typing, and Ctrl-\\ brings it back 
   await ready("lead");
   await toSecondThread();
   await until(() => footer().startsWith("  typing to APP-7 · ⌃\\ to list"), "the agent's footer");
-  expect(edge()).toBe("▕");
+  expect(litBox()).toBe("right");
   expect(fullScreen()).toBe(false);
   // Digits typed to the agent reach it.
   type("42\r");

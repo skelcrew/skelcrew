@@ -397,6 +397,17 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **tmux before 3.6 refuses `pane-border-lines spaces`.** It says "unknown value: spaces",
   and the screen never opens, as one bad setting fails the whole command. Ubuntu 24.04 has
   tmux 3.4 and Debian 13 has 3.5a. Read `tmux -V` and leave the setting out there.
+- **A box round a pane must be tmux's own lines.** tmux always leaves a border row between
+  panes stacked one above the other, such as the agent and the footer. A box drawn by the
+  sidebar and the footer would break there, one row short of its corners. tmux's lines join
+  with proper corners, and `pane-active-border-style` colours the whole ring round the active
+  pane, corners included, and nothing else. A line between two panes is in both rings.
+- **tmux draws no line at the window's edges.** A pane one column wide at each outer edge gives
+  tmux a line to draw there. The status line draws the boxes' tops, as tmux has no line above
+  a pane at the top.
+- **A pane's index is its place on the screen**, left to right, then down. A split goes into
+  tmux's list beside the pane it splits, and `swap-pane` swaps both places at once. A pad at
+  the left edge makes the sidebar pane 1, not 0.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
   redraws, so a frame written in two halves arrives in two, attached directly or nested.
 - **Alt-Shift-Up and Alt-Shift-Down get through.** They arrive as `ESC[1;4A` and `ESC[1;4B`
