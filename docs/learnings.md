@@ -574,6 +574,18 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **A clone stopped halfway must not look like one.** Clone outside the folder the lead
   sees, then move it in.
 
+## Runtime plugins
+
+- **An older plugin fails a question it doesn't know.** herdr's plugin 0.1.4 answers `rename`
+  with Zod's `Invalid discriminator value. Expected 'start' | 'list' | …` at `ask`, listing the
+  questions it does know. `sc repo add` renamed every running builder, so it printed one such
+  error per thread, about threads you didn't ask about. A manifest says what a plugin provides,
+  not which questions it answers, so Skelcrew asks once and learns from the answer. Only that
+  answer counts: comparing a failure with the answer to a made-up question would take a write
+  that failed for a moment, in a plugin's one generic error, for a missing question, and
+  stop renames for good. What it learned is saved with the plugin's version, so a restart
+  doesn't ask again, and an update does.
+
 ## Releasing
 
 - **Bun's cross-built Mac binaries carry a signature that fails verification.** Built on

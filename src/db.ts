@@ -835,6 +835,10 @@ function prepareTables(db: Database): void {
   // Skelcrew kept them, which is asked about once more.
   if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'approved'").get())
     db.run("ALTER TABLE plugins ADD COLUMN approved TEXT");
+  // The version of a plugin that said it doesn't know rename, so it isn't asked again until
+  // another version is installed. Null for one that may rename.
+  if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'no_rename'").get())
+    db.run("ALTER TABLE plugins ADD COLUMN no_rename TEXT");
 }
 
 // Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its

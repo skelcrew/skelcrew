@@ -30,6 +30,9 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     asked: z.string().optional(),
   }),
   z.object({ command: z.literal("repo ls") }),
+  // Renames each live builder on a plugin's host by its title as it is now, after sc repo added
+  // or removed a repository, which can change the names in titles.
+  z.object({ command: z.literal("rename builders") }),
   // Whether a word names a repository Skelcrew has. It isn't `repo`, as a word that names none
   // is no request about another repository.
   z.object({ command: z.literal("repo named"), word: z.string() }),
@@ -216,6 +219,7 @@ export const allowed = {
     "status",
     "lead",
     "repo ls",
+    "rename builders",
     "repo named",
     "ps",
     "task ls",
