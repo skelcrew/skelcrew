@@ -394,9 +394,20 @@ export function roundMoved(before: Thread, after: Thread, posted = false): boole
   const counts = (event: RoundEvent) =>
     moving.has(event.kind) || (posted && (event.kind === "posted" || event.kind === "check set"));
   const count = (thread: Thread) => recordOf(thread).filter(counts).length;
-  return before.round_log === null
-    ? after.round_log !== null && count(after) > 0
-    : count(after) !== count(before);
+  if (before.round_log !== null) return count(after) !== count(before);
+  if (after.round_log !== null) return count(after) > 0;
+  // A row from before the record, read twice, moved when its round did.
+  const was = roundOf(before);
+  const is = roundOf(after);
+  return (
+    is.submitting !== was.submitting ||
+    is.reviewing !== was.reviewing ||
+    is.rounds !== was.rounds ||
+    is.review_round !== was.review_round ||
+    is.review_at !== was.review_at ||
+    is.verdict !== was.verdict ||
+    (posted && JSON.stringify(is.posting) !== JSON.stringify(was.posting))
+  );
 }
 
 // Returns whether the thread's pushed commit waits on its review or is being reviewed, with no

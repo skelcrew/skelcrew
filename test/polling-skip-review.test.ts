@@ -302,7 +302,8 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       db.run("PRAGMA busy_timeout = 5000");
       try {
         db.run(
-          `UPDATE tasks SET review_post = json_set(review_post, '$.findings', json('["Only this"]'))`,
+          `UPDATE tasks SET review_post = json_set(review_post, '$.findings', json('["Only this"]')),
+            round_log = NULL`,
         );
       } finally {
         db.close();
