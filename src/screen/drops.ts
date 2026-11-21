@@ -26,6 +26,11 @@ export const dropSignalColumn = 9998;
 export const dropAsk = "\x1b]skel-drop\x07";
 export const dropAnswerOption = "@drop-answer";
 
+// How long, in milliseconds, the screen's tmux waits for the rest of a sequence cut off after
+// its Esc before taking its bytes as keys of their own, and so how long the layer keeps the
+// start of a paste cut at the end of a read. Any later, tmux would no longer see a paste there.
+export const escapeTime = 10;
+
 // Returns the folder an answer of the sidebar names, or null for none.
 export function answeredFolder(answer: string): string | null {
   const folder = answer.slice(answer.indexOf(" ") + 1);
@@ -353,8 +358,9 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
           continue;
         }
         // A read that ends in what may be the start of a paste keeps it for the next read, so a
-        // start is always seen whole, never half sent. It goes on after 10 ms anyway, when tmux
-        // too would stop waiting for the rest and take an Esc as the Esc key.
+        // start is always seen whole, never half sent. It goes on as it came after escapeTime
+        // anyway, as tmux then takes it apart into keys whatever comes next, so there is no paste.
+        // Waiting longer would hold up every Esc key, and still not make it one.
         let ending = Math.min(rest.length, pasteStart.length - 1);
         while (ending > 0 && !rest.subarray(-ending).equals(pasteStart.subarray(0, ending)))
           ending--;
@@ -364,7 +370,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
         cutLater = setTimeout(() => {
           pass(cut);
           cut = Buffer.alloc(0);
-        }, 10);
+        }, escapeTime);
         return;
       }
       // Inside one, it is held until its end.

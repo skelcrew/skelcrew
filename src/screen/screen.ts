@@ -17,6 +17,7 @@ import {
   dropAnswerOption,
   dropAsk,
   dropSignalColumn,
+  escapeTime,
   runWithDrops,
 } from "./drops.ts";
 
@@ -116,6 +117,10 @@ const config = [
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
   // into the agent. A paste that matters comes bracketed anyway.
   ["set", "-g", "assume-paste-time", "0"],
+  // tmux waits this long for the rest of a sequence cut off after its Esc. It is set, as its
+  // default was 500 ms before tmux 3.5, so it matches the wait of the layer that sees your pastes
+  // first: a paste start that layer lets go of unfinished is never one tmux still reads as a paste.
+  ["set", "-s", "escape-time", String(escapeTime)],
   // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-1 to
   // Alt-6, which open and close the stages, go to the sidebar, in pane 0, without moving your
   // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as they move a word in

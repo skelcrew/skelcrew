@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { escapeTime } from "../src/screen/drops.ts";
 import {
   attachTo,
   daemon,
@@ -209,6 +210,12 @@ test("a screen opened from a laptop with sc --remote leaves a drop to the laptop
   drop(shot);
   expect(await got("lead")).toBe(shot);
   expect(existsSync(join(skelcrew(), "lead", ".skelcrew-drops"))).toBe(false);
+});
+
+test("the screen's tmux waits for the rest of a cut-off paste start as long as the layer before it", async () => {
+  open("lead");
+  await ready("lead");
+  expect(tmux(screen, "show", "-sv", "escape-time").out.trim()).toBe(String(escapeTime));
 });
 
 test("text pasted onto the screen reaches the agent as it was", async () => {

@@ -20,6 +20,7 @@ import {
   type Drop,
   dropSignal,
   dropsFolder,
+  escapeTime,
   largestDrop,
   pasteFilter,
 } from "../src/screen/drops.ts";
@@ -353,12 +354,27 @@ test("a paste of a file split anywhere in its start goes on byte for byte when n
   }
 });
 
+test("a paste of a file whose start's rest comes after tmux stopped waiting goes on as it came", async () => {
+  // tmux by then took the start apart into keys, so there is no paste to copy for.
+  const shot = file("shot.png");
+  const whole = pasted(shot);
+  for (let cut = 1; cut < "\x1b[200~".length; cut++) {
+    sent = "";
+    const take = filter();
+    take(Buffer.from(whole.slice(0, cut)));
+    await Bun.sleep(escapeTime * 3);
+    take(Buffer.from(whole.slice(cut)));
+    expect(await sentOn()).toBe(whole);
+  }
+  expect(existsSync(join(agent, dropsFolder))).toBe(false);
+});
+
 test("the start of a paste cut at the end of a read goes on alone if the rest is late", async () => {
   const take = filter();
   take(Buffer.from("x\x1b"));
   expect(sent).toBe("x");
-  // Within tmux's own wait for the rest of an Esc sequence.
-  await Bun.sleep(30);
+  // Once tmux too stopped waiting for the rest.
+  await Bun.sleep(escapeTime * 3);
   expect(sent).toBe("x\x1b");
   take(Buffer.from("[A"));
   expect(sent).toBe("x\x1b[A");
