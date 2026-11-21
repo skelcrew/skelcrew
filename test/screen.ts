@@ -221,7 +221,8 @@ ${threadSql({ task: "12" })}`);
 // screen test file runs it after each test, one that failed or timed out included. It returns
 // once every process the servers' panes ran has exited, such as the sidebar and a host's attach.
 // tmux only hangs up on them as its server ends, and on a busy machine they could still be
-// exiting when the check for leftover processes looks. One that never exits is still reported.
+// exiting when the check for leftover processes looks. One still running after 15 seconds fails
+// the test, and is killed.
 export async function endTest(): Promise<void> {
   standIn?.close();
   standIn = null;
@@ -270,10 +271,17 @@ export async function endTest(): Promise<void> {
     const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
     rmSync(join(folder, socket), { force: true });
   }
+  // One still running at the deadline fails the test, and is killed so it can't reach the next.
   await wait(() => stillRunning(tree).length === 0, {
     timeout: 15_000,
     what: () => `the screen's panes to end: ${stillRunning(tree).join(" ")}`,
-  }).catch((error) => failures.push(error));
+  }).catch((error) => {
+    failures.push(error);
+    for (const pid of stillRunning(tree))
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+  });
   rmSync(home, { recursive: true, force: true });
   if (failures.length > 0) throw failures[0];
 }
