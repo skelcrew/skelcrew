@@ -323,15 +323,22 @@ export const takenAsExited = (session: { running: boolean; ended?: { code: numbe
 
 // Reports whether the agent in the named session ended as one you exited, on any host, so
 // Skelcrew closes a lead's tab rather than bring it back. False while it runs and after it
-// crashed. On tmux, false too when its session is gone, as tmux keeps a lead's session however
-// it ends. A plugin's host that no longer lists the session can't say how it ended, as an older
-// plugin that drops a session on exit, so that counts as exited. Throws when a plugin's host
-// can't answer within 5 seconds: this is asked every second, and a host that hangs must not hold
-// up the next look for long.
-export async function agentExited(host: Host, name: string): Promise<boolean> {
-  if (typeof host === "string") return exitedCleanly(host, name);
+// crashed. A session that is gone can't say how it ended, and counts as exited with
+// `goneIsExited`, else as not: as the daemon starts, a gone session is brought back, as after
+// the machine restarted. Throws when a plugin's host can't answer within 5 seconds: this is
+// asked every second, and a host that hangs must not hold up the next look for long.
+export async function agentExited(
+  host: Host,
+  name: string,
+  goneIsExited: boolean,
+): Promise<boolean> {
+  if (typeof host === "string")
+    return (
+      exitedCleanly(host, name) ||
+      (goneIsExited && !tmux(host, ["has-session", "-t", `=${name}`]).ok)
+    );
   const session = (await listSessions(host, 5_000)).find((one) => one.name === name);
-  return session === undefined || takenAsExited(session);
+  return session === undefined ? goneIsExited : takenAsExited(session);
 }
 
 // Reports whether the agent in the named session is still running, so Skelcrew only types into

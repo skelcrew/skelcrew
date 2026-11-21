@@ -30,7 +30,7 @@ import {
 } from "../src/agents/sessions.ts";
 import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
 import { deliver, idle, type Marks, quietSince, whyBusy } from "../src/agents/transport.ts";
-import { source, until as wait } from "./harness.ts";
+import { homeEnv, source, until as wait } from "./harness.ts";
 
 const moment = 100;
 let home = "";
@@ -716,6 +716,54 @@ test("a session kept on exit tells an agent that exited cleanly from one that fa
   // A session not kept on exit goes as its agent exits cleanly, as a builder's does.
   await start("builder", ["sh", "-c", "exit 0"]);
   await until(async () => !(await hasSession(socket, "builder")));
+});
+
+// Gives simon/app, opened, a lead on this test's tmux server with its ID saved, running `command`
+// unless it is null, as a lead whose session went. Then the look for exited leads runs, as the
+// daemon makes it at its start with `atStart`, and this returns whether the tab closed.
+function tabClosedAfterLook(command: string[] | null, atStart = false): string {
+  const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+const { closeExitedLeads, leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { startSession } = await import(${JSON.stringify(source("agents/sessions.ts"))});
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened) VALUES ('app', 'simon', 'app', '', 1)");
+const { name } = leadOf(db, "simon", "app");
+db.run("UPDATE repositories SET lead_host_id = ?", [name]);
+const command = ${JSON.stringify(command)};
+if (command) {
+  await startSession(${JSON.stringify(socket)}, name, { folder: ${JSON.stringify(home)}, command, env: {}, labels: { repository: "simon/app", role: "lead" }, keepOnExit: true });
+  await Bun.sleep(500);
+}
+await closeExitedLeads(db, ${JSON.stringify(socket)}, ${atStart});
+console.log(db.query("SELECT tab_closed FROM repositories").get().tab_closed);`;
+  const run = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { ...process.env, ...homeEnv(home) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!run.success) throw new Error(run.stderr.toString());
+  return run.stdout.toString().trim().split("\n").at(-1) ?? "";
+}
+
+test("a lead whose tmux session went while the daemon runs is taken as exited", () => {
+  expect(tabClosedAfterLook(null)).toBe("1");
+});
+
+// As after the machine restarted, when every session is gone.
+test("a lead whose tmux session went before the daemon started is brought back, not exited", () => {
+  expect(tabClosedAfterLook(null, true)).toBe("0");
+});
+
+test("a lead on tmux that exited cleanly closes its tab", () => {
+  expect(tabClosedAfterLook(["sh", "-c", "exit 0"])).toBe("1");
+});
+
+test("a lead on tmux that crashed keeps its tab", () => {
+  expect(tabClosedAfterLook(["sh", "-c", "exit 3"])).toBe("0");
+});
+
+test("a lead on tmux that still runs keeps its tab", () => {
+  expect(tabClosedAfterLook(["sleep", "30"])).toBe("0");
 });
 
 test("idle means a quiet pane showing the prompt, and not busy", async () => {

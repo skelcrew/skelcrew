@@ -393,13 +393,28 @@ export async function runSidebar(
   const refresh = () => {
     if (leaving) return;
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
-    // a lead found gone here with its tab still read as open has crashed.
+    // a lead found ended here with its tab still read as open ended by itself.
     const found = doing("asking tmux for the agents' sessions", () => listTmuxSessions(agents));
     running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted];
     lookAtHosts();
+    // A lead on tmux whose session is gone can't say how it ended, and is taken as exited, as the
+    // daemon takes it, once it has a saved ID: one that never started has none.
+    const savedId = () => {
+      try {
+        const lead = leadOf(db, open.owner, open.repo);
+        return lead.host === "tmux" && lead.hostId !== null;
+      } catch {
+        return false;
+      }
+    };
     const exited =
       hostedLeadExited ||
-      doing("asking tmux whether the lead exited", () => exitedCleanly(agents, open.lead));
+      doing(
+        "asking tmux whether the lead exited",
+        () =>
+          exitedCleanly(agents, open.lead) ||
+          (!found.some((one) => one.name === open.lead) && savedId()),
+      );
     const before = tabs;
     tabs = doing("reading the tabs", () => repositoryTabs(db, null));
     // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to

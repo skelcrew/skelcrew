@@ -212,6 +212,8 @@ test("with no tab left, the screen leaves as Ctrl-Q does", async () => {
   expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
 });
 
+// The lead has no saved ID, as one an older release started, so a session that went can't be
+// told from one that never started, and the lead is brought back.
 test("a lead that stops while you look at it is brought back, once", async () => {
   daemon();
   open("lead");
@@ -259,6 +261,30 @@ test("a lead you exited isn't brought back, as its tab closes", async () => {
   );
   await Bun.sleep(2000);
   expect(asked).toEqual([]);
+});
+
+// With its ID saved, a lead whose session went can't say how it ended, and is taken as exited.
+test("a lead whose session goes while you look at it isn't brought back", async () => {
+  sql("UPDATE repositories SET lead_host_id = 'lead' WHERE repo = 'app'");
+  daemon();
+  open("lead");
+  await ready("lead");
+  tmux(agents, "kill-session", "-t", "=lead");
+  await until(() => right().includes("Waiting for the lead to start."), "the waiting line");
+  await Bun.sleep(2000);
+  expect(asked).toEqual([]);
+});
+
+test("a lead that crashes while you look at it is brought back, its ID saved", async () => {
+  sql("UPDATE repositories SET lead_host_id = 'lead' WHERE repo = 'app'");
+  daemon();
+  open("lead");
+  await ready("lead");
+  tmux(agents, "respawn-pane", "-k", "-t", "=lead:", "sh", "-c", "exit 3");
+  await until(
+    () => asked.includes("open simon/app from a tab"),
+    "the daemon to bring the lead back",
+  );
 });
 
 test("a repository removed while the screen shows it loses its tab, and the screen moves on", async () => {

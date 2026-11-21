@@ -723,6 +723,25 @@ console.log(closed.join(" "), tab(), ends);`,
   expect(said).toContain("true false 1 1\n");
 }, 30_000);
 
+// The lead starts and runs, but the host fails a moment as Skelcrew checks that it started. The
+// lead may still run there, so it keeps its ID, and the look for exited leads keeps reaching it.
+test("a lead whose host fails as its start is checked keeps its ID", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
+const asked = () => (fs.existsSync(fake + "/asked") ? fs.readFileSync(fake + "/asked", "utf8") : "");
+for (let i = 0; i < 400 && !asked().includes('"ask":"start"'); i++) await Bun.sleep(25);
+// The check comes a second after the start, after the lead's notes and status went in.
+await Bun.sleep(700);
+fs.writeFileSync(fake + "/fail-list", "");
+console.log(await starting);
+const { hostId } = leadOf(db, "simon", "app");
+console.log(hostId, await agentRuns(host, hostId));`,
+  );
+  expect(said).toContain("fake couldn't list");
+  expect(said).toMatch(/fake-lead-app\S* true\n$/);
+}, 30_000);
+
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
   const lead = { repository: "simon/app", role: "lead" } as const;
   const on = host();

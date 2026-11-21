@@ -365,13 +365,15 @@ async function startLeadSession(
   console.log(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}${lost}.`,
   );
-  // A lead that couldn't start, such as one whose login is gone, never ran to be exited, and its
-  // session is gone. It keeps no ID, so the look for exited leads doesn't close its tab.
-  await checkAgentStarted(host, id, "lead").catch((error) => {
-    db.run(
-      "UPDATE repositories SET lead_host_id = NULL WHERE owner = ? AND repo = ? AND lead_host_id = ?",
-      [owner, repo, id],
-    );
+  // A lead that couldn't start, such as one whose login is gone, never ran to be exited. Once its
+  // session is known to be gone, it keeps no ID, so the look for exited leads doesn't close its
+  // tab. A host that can't say keeps the ID, as the lead may still run there.
+  await checkAgentStarted(host, id, "lead").catch(async (error) => {
+    if (!(await hasSession(host, id).catch(() => true)))
+      db.run(
+        "UPDATE repositories SET lead_host_id = NULL WHERE owner = ? AND repo = ? AND lead_host_id = ?",
+        [owner, repo, id],
+      );
     throw error;
   });
 }
@@ -412,15 +414,16 @@ let looking: Promise<void> | null = null;
 // daemon was down, has its tab closed too. Only the lead ends: the repository, its threads and
 // its clone stay, and its conversation is kept for when you open it again. Leads on every host
 // are looked at all at once, so a slow host holds up only its own leads, and a look asked for
-// while one runs waits for that one. With `recover`, as the daemon starts, a lead on a plugin's
+// while one runs waits for that one. With `atStart`, as the daemon starts, a lead on a plugin's
 // host whose ID never got saved is found by its labels first, so one that exited while the
 // daemon was down closes its tab too. Only then: a lead starting meanwhile has no ID either, and
-// the session it is replacing would be found and taken for one you exited.
-export function closeExitedLeads(db: Database, sessions: string, recover = false): Promise<void> {
+// the session it is replacing would be found and taken for one you exited. A lead whose session
+// is gone then is brought back, as after the machine restarted, rather than taken as exited.
+export function closeExitedLeads(db: Database, sessions: string, atStart = false): Promise<void> {
   looking ??= Promise.all(
     openedRepositories(db).map(async ({ owner, repo }) => {
-      if (recover) await leadSession(db, sessions, owner, repo).catch(() => null);
-      if (await closeIfExited(db, sessions, owner, repo))
+      if (atStart) await leadSession(db, sessions, owner, repo).catch(() => null);
+      if (await closeIfExited(db, sessions, owner, repo, atStart))
         console.log(
           `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
         );
@@ -442,12 +445,15 @@ export function closeExitedLeads(db: Database, sessions: string, recover = false
 // moment, and a lead running there must not lose its tab. The check leaves the lead alone when
 // its queue holds a start or an ending, or when the lead's generation changed while the host
 // answered, such as a start or another check's ending asked for meanwhile: the answer may then
-// be about a session that is gone. The ending itself waits in the lead's queue.
+// be about a session that is gone. The ending itself waits in the lead's queue. A lead whose
+// session is gone is one Skelcrew can't tell about, and is taken as exited, unless `atStart`, or
+// unless it has no saved ID, such as one that never started, or one an older release started.
 export async function closeIfExited(
   db: Database,
   sessions: string,
   owner: string,
   repo: string,
+  atStart = false,
 ): Promise<boolean> {
   const key = `${owner}/${repo}`;
   const generation = generations.get(key) ?? 0;
@@ -457,7 +463,8 @@ export async function closeIfExited(
   if (host === null || (typeof host !== "string" && lead.hostId === null) || changed())
     return false;
   const id = lead.hostId ?? lead.name;
-  if (!(await agentExited(host, id).catch(() => false))) return false;
+  const goneIsExited = !atStart && lead.hostId !== null;
+  if (!(await agentExited(host, id, goneIsExited).catch(() => false))) return false;
   // Nothing waits from this look to the ending being queued, so no start or other check can
   // come in between.
   if (changed()) return false;
