@@ -198,13 +198,13 @@ export async function runSidebar(
   const rightPane = `=${session}:.1`;
   let tty = paneTty(agents, rightPane);
   // The list's rows: every row, those that show, which are the lead's and those of the open
-  // sections, the row you are on among those and how far the sections scrolled. Needs you is
-  // always open, and so is Up next, and of the stages only Building at first. The sections you
-  // open stay open,
-  // whichever repository you move to, and so does a whole Backlog once you asked for it.
+  // sections, the row you are on among those and how far the sections scrolled. Needs you and
+  // Up next are always open. Of the stages, Building, Reviewing and Checks start open, as that is
+  // where the work under way is. The sections you open or close stay so, whichever repository
+  // you move to, and so does a whole Backlog once you asked for it.
   let all: Row[] = [];
   let rows: Row[] = [];
-  const opened = new Set<Section>(["needs you", "up next", "building"]);
+  const opened = new Set<Section>(["needs you", "up next", "building", "reviewing", "checks"]);
   // What Up next's heading says of the builders, read with the rows.
   let builders = "";
   let wholeBacklog = false;

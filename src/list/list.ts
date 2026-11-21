@@ -129,15 +129,15 @@ export async function runList(agents: string, repository: string): Promise<void>
   // What the list keeps between draws: every row, those that show, which are the lead's and
   // those of the open sections, the row you are on among those and how far it scrolled, the line
   // at the bottom when it says something other than the keys, the question it asks, and whether
-  // the daemon is at work on an answer. Needs you and Up next are always open, and Building is
-  // open at first.
-  // The sections you open stay open until you leave the list, whichever repository you move to,
-  // and so does a whole Backlog once you asked for it, which shows its newest issues until then.
+  // the daemon is at work on an answer. Needs you and Up next are always open, and Building,
+  // Reviewing and Checks are open at first, as that is where the work under way is. The sections
+  // you open or close stay so until you leave the list, whichever repository you move to, and so
+  // does a whole Backlog once you asked for it, which shows its newest issues until then.
   let all: Row[] = [];
   let rows: Row[] = [];
   // What Up next's heading says of the builders, read with the rows.
   let builders = "";
-  const opened = new Set<Section>(["needs you", "up next", "building"]);
+  const opened = new Set<Section>(["needs you", "up next", "building", "reviewing", "checks"]);
   let wholeBacklog = false;
   const showing = () => shownRows(all, opened, wholeBacklog);
   let here = -1;

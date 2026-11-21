@@ -30,6 +30,14 @@ that covers the code you are about to write.
   menu also shows the mark before text, and isn't a draft.
 - **Pass the first message on the command line, not by typing it.** Typed into the input, a
   long message collapses to "[Pasted text]" and can miss its Enter.
+- **Never paste into the lead while you scroll back or type there.** A paste throws a
+  scrolled-back pane to the bottom, and lands after your unsent text. So the lead's notes
+  wait until you are at the bottom with an empty prompt.
+- **The human's words go through a file, never a shell.** The lead writes them for
+  `--asked-file` with its file-writing tool. Passed through a shell, quotes, backticks and
+  `$()` in them would run or change.
+- **Read a yes or no as a line, not a key.** Read one key at a time, the Enter after it
+  stays in the input and answers the next question.
 
 ## Starting and stopping Claude Code
 
@@ -119,6 +127,9 @@ that covers the code you are about to write.
 - **`Stop` runs on neither an error nor Esc.** Its hooks reference says `Stop` "does not run if
   the stoppage occurred due to a user interrupt", and a turn that ends on an API error runs
   `StopFailure` instead. Its input has `last_assistant_message`, the turn's last text.
+- **Turn off Claude Code's tips in a lead's settings.** They crowd the lead's greeting.
+  Its announcements, such as of a new model, come from Anthropic's servers, and no setting
+  turns them off.
 
 ## Starting Codex
 
@@ -251,6 +262,9 @@ that covers the code you are about to write.
   The lead stays at normal priority, as it is what you type into.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
+- **On a Mac, a host can't show an agent its dropped files.** `sandbox-exec` reads its rules
+  from a profile Skelcrew writes to a file before the command runs, not from the command's
+  words. So a host has no word to swap for the folder of dropped files.
 
 ## On a Sprite
 
@@ -496,6 +510,18 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   prepares the query again, but Bun puts each value under the old names. A column added in the
   middle shifted every name after it, and the sidebar read `tmux` as `seen` and stopped on
   "JSON Parse error". Seen on Bun 1.3.14. New columns go at the view's end.
+- **Option with a digit types a character on a Mac**, such as `¡` for Option-1. So Alt-1 to
+  Alt-6 and Alt-Q need the terminal to send Option as Alt. Ctrl-Q quits too, even while you
+  type to an agent, for a Mac terminal that doesn't.
+- **Ctrl-\ is herdr's key to detach, so it is Skelcrew's too.** An agent is then left the
+  same way on either host. The screen's tmux takes it before any pane, so herdr's own client
+  inside the screen never detaches and leaves the right side empty. Ctrl-4 sends the same
+  byte in most terminals, for a keyboard where backslash needs AltGr.
+- **Hide Claude Code's notices over its input box in the live strip.** Its effort notice,
+  such as `◐ medium · /effort`, and the tip under its busy line push the agent's output out
+  of a strip of 3 lines. Keep every other line, whatever its indent, as it may be output.
+- **Ask for the mouse only while the list shows.** Otherwise an agent you attach to, and
+  your shell after you quit, lose the mouse.
 
 ## Tests
 
@@ -587,6 +613,27 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   repository you can't push to is trusted only from your own terminal.
 - **A clone stopped halfway must not look like one.** Clone outside the folder the lead
   sees, then move it in.
+- **launchd keeps the definition it loaded.** systemd reads a changed service file at the
+  engine's next start. On a Mac the changed file must be loaded at once, which restarts the
+  engine.
+- **`sc init` never switches to the default branch.** Switching could fail where the branch
+  tracks a file `sc init` just wrote. On another branch it shows the commands that commit
+  there, and says to merge it.
+- **GitHub picks a repository on the app's install page only by its ID.** Nobody can read a
+  private repository's ID before the app is on it, so there you pick it yourself.
+- **git maintains a clone in the background, and other git trips over it.** After a fetch,
+  commit or merge, git may start `git maintenance` detached. It holds
+  `objects/maintenance.lock` for a moment. A clone from that folder copies its files and fails
+  when the lock vanishes mid-copy, as a CI run did. A fetch also writes a commit graph when
+  your own settings ask for `fetch.writeCommitGraph`, with lock files of its own. Skelcrew runs
+  its git with `maintenance.auto=false`, `gc.auto=0` and `fetch.writeCommitGraph=false`. It
+  writes them into every clone it makes, and into its older clones at their first update. A
+  plain `git clone` never starts maintenance; a `git fetch` does. Only a clone from a folder on
+  the same disk copies its files: a fetch from that folder goes through git's own transport and
+  never failed in 467 tries against nonstop maintenance, where 5 clones did.
+- **A fake git that looks for a word sees the options too.** Skelcrew's git options include
+  `fetch.writeCommitGraph=false`, so a fake git matching `*fetch*` takes an `ls-remote` for a
+  fetch. Match `*" fetch "*` instead.
 
 ## Runtime plugins
 
@@ -618,3 +665,11 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **A webhook says only "look now".** Anyone can reach a Sprite's public URL, and deliveries
   are lost while the daemon is down. So a delivery, even a signed one, only brings the next
   poll forward, and Skelcrew acts on what the poll reads.
+- **Skelcrew's GitHub App can't be assigned an issue.** So a label starts a task, and only
+  people with triage or write access can add one.
+- **A review on GitHub carries a verdict.** A review on a PR nobody reviewed would show as
+  "Approved.", so a flow with no review posts none. A merge's record keeps the reviewer's
+  last verdict, so it never contradicts it or blocks a forge that requires an approval. It
+  says "Merging", not "Merged", as a check can still fail.
+- **CI can show its first check after a docs-only review ends.** That review waits for no CI,
+  so its approval makes the wait for checks instead.
