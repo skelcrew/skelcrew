@@ -123,7 +123,7 @@ test("on a task's row plain 1 to 6 open and close the stages, and no agent gets 
   await until(() => isOpen("6 Done"), "Done to open");
   type("6");
   await until(() => !isOpen("6 Done"), "Done to close");
-  type("q");
+  type("x");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
   expect(read("app-12.typed")).toBe("");
