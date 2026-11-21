@@ -93,6 +93,7 @@ async function stopAfterStart(starts: object[]): Promise<void> {
   );
   const started = Number(threadOf("12")?.started);
   const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
   for (const [at, action] of starts.entries())
     db.run(
       `INSERT INTO lead_requests (owner, repo, action, says, made, answered)
@@ -139,6 +140,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
   test("a yes whose start a stop cut short starts once the daemon is back", async () => {
     addApp();
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run(
       `INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
       ('simon', 'app', '{"kind":"start","task":"12","short":"Export"}', 'Start APP-12 Add export?', 1, ?)`,
@@ -163,6 +165,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
   test("a yes to a new task that a stop cut short starts it once the daemon is back", async () => {
     addApp();
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
       ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
         'Start a new task: CSV export?', 1, 1)`);
@@ -202,6 +205,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     );
     // Answered after the thread started, as a yes to bring it back is.
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run(
       `INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
       ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12 Add export?', 1, ?)`,
@@ -229,6 +233,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     // From here on a builder exits as soon as it starts.
     writeFileSync(join(home, "bin", "claude"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
       ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12 Add export?', 1)`);
     db.close();
@@ -255,6 +260,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     }
     // What the yes left as the daemon stopped: the task live again, and what the start said.
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run("UPDATE threads SET status = 'working' WHERE folder = 'app-12'");
     db.run(
       `INSERT INTO lead_requests (owner, repo, action, says, made, answered, outcome) VALUES
@@ -311,6 +317,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
   test("a yes whose builder's session host is gone after a restart tells the lead it can't tell", async () => {
     await stopAfterStart([{ task: "12" }]);
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run("UPDATE threads SET host = 'gone' WHERE folder = 'app-12'");
     db.close();
     serve();

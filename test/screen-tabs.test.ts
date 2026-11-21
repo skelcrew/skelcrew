@@ -198,7 +198,8 @@ test("the last tab closing moves the screen to the tab before it", async () => {
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   closeTab("site");
   await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
-  expect(tabRow()).not.toContain("site");
+  // The top row is drawn after the right side has moved, so it can show site a moment longer.
+  await until(() => !tabRow().includes("site"), "site's tab to go");
 });
 
 test("with no tab left, the screen leaves as Ctrl-Q does", async () => {
