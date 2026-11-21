@@ -8,6 +8,7 @@ import { claimTask } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
 import { statusOnceBack } from "./builder.ts";
+import { removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository } from "./repo.ts";
 import { readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
@@ -157,7 +158,7 @@ export function backToQueue(db: Database): void {
 // `retry`, runs with nobody there to decide: the first ask failed, and another machine may have
 // claimed the issue meanwhile. So when the tracker says the issue is taken, the task leaves
 // the queue, back to its issue, and the lead hears it can sc start it if no other machine works
-// on it. Throws when the tracker fails, and the claim stays owed, to be asked again. Asked once
+// on it, unless sc rm is removing it, whose end that is. Throws when the tracker fails, and the claim stays owed, to be asked again. Asked once
 // at a time per start of the thread: a second call gets the ask under way. A task sc rm removed
 // and started again makes a claim of its own, as the answer to the first one was for the task
 // removed.
@@ -176,10 +177,13 @@ export function claimQueued(
     return Promise.resolve();
   const ask = claimTask(db, repositoryOf(db, thread), task)
     .then((took) => {
-      // sc rm may have taken it out of the queue while the tracker answered.
+      // sc rm may have taken it out of the queue while the tracker answered. Or it may still be
+      // removing it, waiting on the forge: that removal decides the task's end, and one that
+      // fails must leave the task queued, so sc rm can run again.
       const now = readThread(db, thread.folder);
       const same = now.started === thread.started;
-      const taken = retry && !took && now.status === "queued" && same;
+      const taken =
+        retry && !took && now.status === "queued" && same && !removing.has(thread.folder);
       const name = threadName(db, thread);
       db.transaction(() => {
         // A claim saved since belongs to the task started again, which still owes it.
