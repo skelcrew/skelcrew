@@ -207,7 +207,6 @@ test("what is left fills the live view from the bottom up", async () => {
     pr: "",
     checks: "",
     when: "4m",
-    lastChange: "14:02, 4 minutes ago",
     needsYou: false,
     session: "app-12",
     running: true,
@@ -236,7 +235,12 @@ test("what is left fills the live view from the bottom up", async () => {
       filed: null,
     },
     findings: [],
+    updates: [],
     events: [],
+    changed: "",
+    started: "",
+    flow: "",
+    spinner: "",
   };
   const live = { screen: agentOutput("claude", await screen("claude-busy.txt")) };
   const lines = drawPane(row, details, live, 60, 12, true).lines.map((line) =>

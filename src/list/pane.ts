@@ -7,7 +7,6 @@ import {
   fitted,
   green,
   grey,
-  lightGrey,
   markColours,
   paint,
   red,
@@ -16,15 +15,15 @@ import {
 } from "../screen/look.ts";
 import type { Details } from "./details.ts";
 import { sectionNames } from "./layout.ts";
+import { markdownLines } from "./markdown.ts";
 import type { Row } from "./rows.ts";
 
 // The live view's part of the pane: the agent's screen as its session host gave it, colours
 // included, or a short line saying why there is none, such as `Builder not running`.
 export type Live = { screen: string } | { note: string };
 
-// How many findings show, and how many lines the events take at most, as both are in short.
+// How many of the latest review's findings show, as the card has them in short.
 const findingsShown = 3;
-const eventLines = 2;
 
 // Returns text wrapped at word breaks to `width` columns, at most `most` lines, the last one
 // ending in … when there was more. A word wider than the pane, such as a link, is broken.
@@ -78,130 +77,188 @@ const reviewWords: Record<NonNullable<TaskView["review"]>["state"], string> = {
   "not reviewed": "not reviewed",
 };
 
-// Returns items as lines `width` columns wide at most, as many on each line as fit, with two
-// spaces between them, so none is left out. Each item is its plain text and how it shows, in
-// colour. An item wider than a line alone is cut, without its colours.
-function packed(items: { plain: string; shown: string }[], width: number): string[] {
+// Returns CI's checks as lines `width` columns wide at most, as many on each line as fit, with two
+// spaces between them, so none is left out. Each is its mark, in its colour, then its name. A
+// check too wide for a line alone has its name cut, never its mark, so a long failed check
+// still shows red.
+function checkLines(checks: NonNullable<TaskView["prPage"]>["checks"], width: number): string[] {
   const lines: { plain: string; shown: string }[] = [];
-  for (const item of items) {
+  for (const check of checks) {
+    const mark = checkMarks[check.state];
+    const plain = `${Bun.stripANSI(mark)} ${check.name}`;
     const last = lines.at(-1);
-    if (last && Bun.stringWidth(`${last.plain}  ${item.plain}`) <= width) {
-      last.plain += `  ${item.plain}`;
-      last.shown += `  ${item.shown}`;
-    } else if (Bun.stringWidth(item.plain) <= width) lines.push({ ...item });
-    else lines.push({ plain: fitted(item.plain, width), shown: fitted(item.plain, width) });
+    if (last && Bun.stringWidth(`${last.plain}  ${plain}`) <= width) {
+      last.plain += `  ${plain}`;
+      last.shown += `  ${mark} ${check.name}`;
+    } else {
+      const name = fitted(check.name, width - Bun.stringWidth(Bun.stripANSI(mark)) - 1);
+      lines.push({ plain: `${Bun.stripANSI(mark)} ${name}`, shown: `${mark} ${name}` });
+    }
   }
   return lines.map((line) => line.shown);
 }
 
-// Returns a task's description as lines `width` columns wide at most, as it was written: its own
-// line breaks kept, and each run of blank lines made one. A long line wraps at word breaks, and
-// a list item's lines after its first start under its text, past its indent and its marker, such
-// as `- ` or `2. `, so a list in the description still reads as one.
-function describedLines(body: string, width: number): string[] {
-  if (body.trim() === "") return [];
-  const lines = body
-    .trim()
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line, i, all) => line !== "" || all[i - 1] !== "");
-  return lines.flatMap((line) => {
-    if (line === "") return [""];
-    // An indent wider than half the pane would leave the item too little room, so it wraps
-    // from the pane's edge instead.
-    const found = /^ *(?:(?:[-*+]|\d+[.)]) +)?/.exec(line)?.[0] ?? "";
-    const indent = found.length * 2 <= width ? found : "";
-    const pieces = folded(line.slice(indent.length), width - indent.length);
-    return pieces.map((piece, i) => `${i === 0 ? indent : " ".repeat(indent.length)}${piece}`);
-  });
+// How wide the task's description, the lead's updates and the review's findings are at most, as
+// lines much longer than this are hard to read. The card and the timeline take the pane's width.
+const textWidth = 80;
+
+// How wide the card's dim labels are, such as `Started`, with the gap before their values.
+const labelWidth = 9;
+
+// Returns a line of the card: its label, dim, then its value's first line, with the value's other
+// lines under it, past the label. A value with no lines leaves the card's line out.
+const cardLines = (label: string, values: string[]) =>
+  values.map(
+    (value, i) =>
+      `${i === 0 ? paint(grey, label.padEnd(labelWidth)) : " ".repeat(labelWidth)}${value}`,
+  );
+
+// Returns a section's lines under its name, dim, such as `Task`, or none when it has no lines.
+const section = (name: string, lines: string[]) =>
+  lines.length > 0 ? [paint(grey, name), ...lines] : [];
+
+// Returns entries each after how long ago it happened, dim, such as `2m ago`, lined up so their
+// texts start in one column. Each text is its lines, from `lines` given the room left for them.
+function dated(
+  entries: { ago: string; text: string }[],
+  width: number,
+  lines: (text: string, room: number) => string[],
+): string[] {
+  const agoWidth = Math.max(...entries.map((entry) => Bun.stringWidth(entry.ago))) + 2;
+  return entries.flatMap((entry) =>
+    lines(entry.text, width - agoWidth).map(
+      (line, i) =>
+        `${i === 0 ? paint(grey, entry.ago.padEnd(agoWidth)) : " ".repeat(agoWidth)}${line}`,
+    ),
+  );
 }
 
-// Returns the details of a task as lines `width` columns wide at most, from the top: its full
-// title, its issue's and PR's links, its stage and word, what it waits on when it is in the task
-// queue, its CI with each check, its armed merge, its review round with the verdict and the
-// findings in short, its whole description, then when it last changed, such as `last change
-// 09:33, 4 minutes ago`, as its row says only how long ago, and its recent events. Each part is
-// left out where the task has none.
+// Returns a link's lines in the card, after its number, such as `#43`: on the number's line when
+// it fits there, or else on the lines after, broken where it reaches the edge, so it can always
+// be read whole. Each piece is a terminal link. A link holding control codes could end the
+// terminal link early and send your terminal codes of its own, so they go, as spaces.
+function linkLines(id: string, given: string, width: number): string[] {
+  const link = removeControlCodes(given);
+  if (!link) return [fitted(id, width)];
+  if (Bun.stringWidth(`${id}  ${link}`) <= width) return [`${id}  ${linked(link, link)}`];
+  return [fitted(id, width), ...folded(link, width).map((piece) => linked(link, piece))];
+}
+
+// Returns the details of a task as lines `width` columns wide at most, from the top. First its
+// name and title, bold, with its stage on the right in the colour of its mark, and a spinner
+// while its builder works, then a line. Then what it needs of you, in yellow, when it does. Then
+// a card of the facts you check, each after a dim label: what it does now, its issue and PR, its
+// CI's checks, its review with the latest findings, its armed merge and when it started. Then its
+// description, the lead's updates to it and what happened to it, each under its name. A line or
+// a part the task has nothing for is left out.
 function detailLines(row: Row, details: Details, width: number): string[] {
-  const { view, findings, events } = details;
-  const cut = (text: string) => fitted(text, width);
-  const title = folded(view.title, width).map((line) => paint(bright, line));
-  // The links, each after a dim label and its number, lined up, and each one a terminal link. A
-  // link too long for that line goes on the lines after, broken where it reaches the edge, so it
-  // can always be read whole.
-  const issue = view.issue ? [["issue", view.issue.id, view.issue.link ?? ""]] : [];
-  // A PR that left the forge's copy, such as a merged one, still has the link saved on its row.
-  const prLink = view.prPage?.link ?? row.link ?? "";
-  const pr = view.pr === null ? [] : [["PR", `#${view.pr}`, prLink]];
-  const links = [...issue, ...pr].flatMap(([label = "", id = "", given = ""]) => {
-    // A link holding control codes could end the terminal link early and send your terminal
-    // codes of its own, so they go, as spaces.
-    const link = removeControlCodes(given);
-    const named = cut(`${label.padEnd(6)}${id}`);
-    const start = `${paint(grey, named.slice(0, 6))}${named.slice(6)}`;
-    if (!link) return [start];
-    if (Bun.stringWidth(`${named}  ${link}`) <= width) return [`${start}  ${linked(link, link)}`];
-    return [start, ...folded(link, width).map((piece) => linked(link, piece))];
-  });
-  // The stage and the row's word, in its colour, such as `Building · question`, or cut without its
-  // colours when too wide. A task in the task queue says so, as its section says more than its
-  // stage. Then what it waits on, such as `3rd in line: 4 of 4 builders busy`, wrapped whole, as
-  // the reason the queue is held, or the command that brings a paused task back, comes last.
-  const stage =
+  const { view, findings, events, updates } = details;
+  const text = Math.min(width, textWidth);
+  const value = Math.max(width - labelWidth, 1);
+  // The stage, such as `Building`, on the right of the title's first line. A task in the task queue says
+  // so, as its section says more than its stage.
+  const stageName =
     row.part === "lead" || row.part === "request" || row.part === "heading"
       ? ""
       : sectionNames[row.section === "task queue" ? "task queue" : row.part];
-  const word = row.says ? ` · ${row.says}` : "";
-  const staged =
-    Bun.stringWidth(`${stage}${word}`) <= width
-      ? `${paint(bright, stage)}${paint(markColours[row.colour], word)}`
-      : cut(`${stage}${word}`);
-  // CI as a whole, its verdict in colour after a dim label, then each check with its mark, going on
-  // over as many lines as they need.
+  // A pane too narrow for the stage beside a few letters of the title leaves the stage out.
+  const spun = `${details.spinner ? `${details.spinner} ` : ""}${stageName}`;
+  const stage = Bun.stringWidth(spun) + 12 <= width ? spun : "";
+  const stageWidth = Bun.stringWidth(stage);
+  // The title's first line leaves room for the stage, and the lines after it take the width.
+  const named = `${view.task}  ${view.title}`;
+  const first = folded(named, Math.max(width - stageWidth - 2, 1))[0] ?? "";
+  const after = named.slice(first.length).trim();
+  const titled = [first, ...(after ? folded(after, width) : [])];
+  const title = titled.map((line, i) => {
+    const shown = paint(bright, line);
+    if (i > 0 || !stage) return shown;
+    const gap = " ".repeat(Math.max(width - Bun.stringWidth(line) - stageWidth, 1));
+    return `${shown}${gap}${paint(markColours[row.mark.colour], stage)}`;
+  });
+  const top = [...title, paint(grey, "─".repeat(width))];
+  // What it needs of you, as sc show says it, such as `question` or `ready to merge`.
+  // A task approved and green waits on you to merge it, and shows under Needs you with its word
+  // saying so, though its thread may not count as needing you for anything else.
+  const needed =
+    view.threads.find((thread) => thread.needsYouFor !== null)?.needsYouFor ??
+    (row.section === "needs you" ? row.says : null);
+  const callout = needed
+    ? folded(`Needs you: ${needed}`, width).map((line) => paint(`${bright};${yellow}`, line))
+    : [];
+  // Now: its word in its colour, such as `working`, or what a queued or paused task waits on,
+  // then its builder's step and how long ago its thread last changed.
+  const word = row.waits || row.says;
+  const rest = [row.step, details.changed].filter(Boolean).join(" · ");
+  const nowPlain = [word, rest].filter(Boolean).join(" · ");
+  const now =
+    nowPlain === ""
+      ? []
+      : Bun.stringWidth(nowPlain) <= value
+        ? [
+            `${paint(markColours[row.colour], word)}${word && rest ? paint(grey, " · ") : ""}${rest}`,
+          ]
+        : folded(nowPlain, value);
+  const issue = view.issue ? linkLines(view.issue.id, view.issue.link ?? "", value) : [];
+  // A PR that left the forge's copy, such as a merged one, still has the link saved on its row.
+  const prLink = view.prPage?.link ?? row.link ?? "";
+  const pr = view.pr === null ? [] : linkLines(`#${view.pr}`, prLink, value);
+  // CI: each check after its mark, going on over as many lines as they need, or with no checks
+  // its verdict as a whole, in colour.
   const page = view.prPage;
-  const colon = page?.checks.length ? ":" : "";
-  const summary = {
-    plain: page ? `CI ${page.ci}${colon}` : "",
-    shown: page ? `${paint(grey, "CI")} ${paint(ciColours[page.ci], page.ci)}${colon}` : "",
-  };
-  const items = (page?.checks ?? []).map((check) => ({
-    plain: `${check.name} ${Bun.stripANSI(checkMarks[check.state])}`,
-    shown: `${check.name} ${checkMarks[check.state]}`,
-  }));
-  const ci = page ? packed([summary, ...items], width) : [];
-  const merge = view.merge === null ? [] : [cut(view.merge)];
-  // The review's round, dim, and its verdict in colour, then what it found, each finding on one
-  // line.
+  const ci = !page
+    ? []
+    : page.checks.length > 0
+      ? checkLines(page.checks, value)
+      : page.ci === "none"
+        ? []
+        : [paint(ciColours[page.ci], page.ci)];
+  // The review: its round, dim, and its verdict in colour, then what it found, numbered, each
+  // finding on one line cut short.
   const review = view.review;
   const said = review && review.state !== "none" ? reviewWords[review.state] : "";
   const round = typeof review?.round === "number" ? `Round ${review.round} · ` : "";
-  const roundShown =
-    review && Bun.stringWidth(`${round}${said}`) <= width
+  const verdict =
+    review && Bun.stringWidth(`${round}${said}`) <= value
       ? `${round ? paint(grey, round) : ""}${paint(reviewColours[review.state], said)}`
-      : cut(`${round}${said}`);
-  const rounds = said ? [roundShown] : [];
+      : fitted(`${round}${said}`, value);
+  const findingWidth = Math.max(text - labelWidth, 1);
   const more = findings.length - findingsShown;
-  const found = [
-    ...findings.slice(0, findingsShown).map((finding) => cut(`  - ${finding}`)),
-    ...(more > 0 ? [paint(grey, cut(`  … ${more} more`))] : []),
+  const reviewed = said
+    ? [
+        verdict,
+        ...findings
+          .slice(0, findingsShown)
+          .map((finding, i) => fitted(`${i + 1}. ${finding}`, findingWidth)),
+        ...(more > 0 ? [paint(grey, fitted(`… ${more} more`, findingWidth))] : []),
+      ]
+    : [];
+  const merge = view.merge === null ? [] : folded(view.merge, value);
+  const started = details.started
+    ? folded(
+        [details.started, details.flow && `${details.flow} flow`].filter(Boolean).join(" · "),
+        value,
+      )
+    : [];
+  const card = [
+    ...cardLines("Now", now),
+    ...cardLines("Issue", issue),
+    ...cardLines("PR", pr),
+    ...cardLines("CI", ci),
+    ...cardLines("Review", reviewed),
+    ...cardLines("Merge", merge),
+    ...cardLines("Started", started),
   ];
-  // The description, whole and dimmer than the rest.
-  const described = describedLines(view.body, width).map((line) => paint(lightGrey, line));
-  // When it last changed is wrapped whole, as on a narrow pane its end says how long ago.
-  const changed = row.lastChange
-    ? folded(`last change ${row.lastChange}`, width).map((line) => paint(grey, line))
-    : [];
-  const happened = events.length
-    ? folded(events.join(" · "), width, eventLines).map((line) => paint(grey, line))
-    : [];
-  // Returns the parts that have something, with a blank line between each.
-  const parts = [
-    [...title, ...links],
-    [staged, ...(row.waits ? folded(row.waits, width) : []), ...ci, ...merge, ...rounds, ...found],
-    described,
-    [...changed, ...happened],
-  ].filter((part) => part.length > 0);
-  return parts.flatMap((part, i) => (i === 0 ? part : ["", ...part]));
+  // The description and the lead's updates, drawn as markdown and no wider than `textWidth`.
+  const task = section("Task", markdownLines(view.body, text));
+  const told =
+    updates.length === 0
+      ? []
+      : section(`Updates from the lead (${updates.length})`, dated(updates, text, markdownLines));
+  const activity = events.length === 0 ? [] : section("Activity", dated(events, width, folded));
+  // The parts that have something, with a blank line between each, under the title.
+  const parts = [callout, card, task, told, activity].filter((part) => part.length > 0);
+  return [...top, ...parts.flatMap((part, i) => (i === 0 ? part : ["", ...part]))];
 }
 
 // Returns text from an agent's screen safe to show, its colours kept: every escape sequence but
