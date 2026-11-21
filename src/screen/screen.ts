@@ -10,6 +10,16 @@ import { listShare, listWidth } from "../list/layout.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
+import {
+  answeredFolder,
+  copyDrops,
+  type Drop,
+  dropAnswerOption,
+  dropAsk,
+  dropSignalColumn,
+  escapeTime,
+  runWithDrops,
+} from "./drops.ts";
 
 // Returns how wide the sidebar is, with the line it draws at its edge, in a terminal `width`
 // columns wide: as wide as sc --list's list, as both show the same rows. On a terminal too narrow
@@ -31,6 +41,12 @@ const sidebarFormat = [
 // A word in the command of a right side attached to a builder. The screen's tmux finds it there,
 // so Ctrl-\ ends only that attachment, never the lead or a task's details.
 export const attachedMark = "skelcrew-attached";
+
+// Returns the name of the screen's session in one terminal. sc --remote picks the name on your
+// laptop and passes it along, so it can ask which agent shows. Otherwise it is this process's.
+export function screenName(given: string | undefined): string {
+  return given !== undefined && /^screen-[\w-]+$/.test(given) ? given : `screen-${process.pid}`;
+}
 
 // The tmux commands that set up the screen's server. They run each time the screen opens,
 // before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf
@@ -101,6 +117,10 @@ const config = [
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
   // into the agent. A paste that matters comes bracketed anyway.
   ["set", "-g", "assume-paste-time", "0"],
+  // tmux waits this long for the rest of a sequence cut off after its Esc. It is set, as its
+  // default was 500 ms before tmux 3.5, so it matches the wait of the layer that sees your pastes
+  // first: a paste start that layer lets go of unfinished is never one tmux still reads as a paste.
+  ["set", "-s", "escape-time", String(escapeTime)],
   // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-0 to
   // Alt-6, which open and close the task queue and the stages, go to the sidebar, in pane 0,
   // without moving your typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as
@@ -132,6 +152,19 @@ const config = [
     "run-shell",
     "-C",
     'send-keys -t :.0 -l "\x1b]skel-tab;#{mouse_status_range}\x07"',
+  ]),
+  // A right click on the top row, at a column past the edge of any real terminal, is how a file
+  // dropped onto the screen asks the sidebar which agent it goes to, after the keys typed before
+  // it. A real right click there does nothing, as before. tmux names the click by the part of the
+  // row it hit, so each name is bound.
+  ...["", "Default", "Left", "Right"].map((part) => [
+    "bind",
+    "-n",
+    `MouseDown3Status${part}`,
+    "if",
+    "-F",
+    `#{==:#{mouse_x},${dropSignalColumn}}`,
+    `send-keys -t :.0 -l "${dropAsk}"`,
   ]),
   // A click needs its own key: left alone, it reaches only the pane you type to. The wheel
   // goes on to the pane under it, as the agents' server decides what scrolling means.
@@ -273,8 +306,8 @@ export async function openScreen(
   if (env.TERM && !knownTerminal(env.TERM)) env.TERM = "xterm-256color";
   // The agents' server may have started under an older Skelcrew, so it gets today's settings.
   applyConfig(agents);
-  // This screen's session, named by this process, and the sidebar that opens on it.
-  const name = `screen-${process.pid}`;
+  // This screen's session, and the sidebar that opens on it.
+  const name = screenName(env.SKELCREW_SCREEN_NAME);
   // The name sc --remote passes along, such as simon@workbox. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
   // The title is the session's own: terminals on this server can come from different laptops.
@@ -310,7 +343,44 @@ export async function openScreen(
   const commands = open.flatMap((command) => [...command, ";"]).slice(0, -1);
   const argv = ["tmux", "-L", screenSocket(agents), "-f", "/dev/null", ...commands];
   // tmux runs in your terminal until you leave. Only a screen that couldn't open is an error.
-  const code = await Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
+  // Files dropped onto the screen are copied into the folder of the agent your typing goes to,
+  // once the sidebar answers, and to none while your typing goes to the sidebar. A sidebar that
+  // doesn't answer within two seconds leaves the paste as it came.
+  // Reads the sidebar's last answer. It never holds up the screen, and a tmux that doesn't answer
+  // within a second is stopped, so a drop never waits on it for long.
+  const answer = async () => {
+    const asked = ["display", "-p", "-t", `=${name}:`, `#{${dropAnswerOption}}`];
+    const run = Bun.spawn(["tmux", "-L", screenSocket(agents), ...asked], {
+      env,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const stop = setTimeout(() => run.kill(), 1000);
+    const said = await new Response(run.stdout).text();
+    clearTimeout(stop);
+    return said.trim();
+  };
+  const drop: Drop = {
+    where: async (ask) => {
+      const before = await answer();
+      ask();
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        await Bun.sleep(10);
+        const now = await answer();
+        if (now !== before) return answeredFolder(now);
+      }
+      return null;
+    },
+    put: async (folder, files) => copyDrops(folder, files),
+  };
+  // A screen opened from a laptop with sc --remote leaves drops to the laptop's sc, as a file you
+  // drop is on the laptop. A path in such a paste that names a file here too must never bring
+  // this machine's file to the agent.
+  const code =
+    where === ""
+      ? await runWithDrops(argv, drop, env)
+      : await Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);
   // tmux says [exited] on its way out, straight to your terminal, which reads like something went
   // wrong. Its line is the one above, so it is cleared, and the line saying what happened takes

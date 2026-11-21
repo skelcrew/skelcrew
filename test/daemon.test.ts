@@ -1060,7 +1060,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await until(() => claudeCalls().includes("--resume"));
     for (const line of claudeLines()) {
       expect(line).toContain("told: You are a lead");
-      expect(line).toContain("sc issue create");
+      expect(line).toContain('sc task add <repo> "<title>" "<body>" --issue');
       // The lead talks to the human, who sees issues and threads, never Skelcrew's word task. The
       // command that files work in the backlog is named sc task add, which the lead runs.
       expect(line.replaceAll("sc task add", "")).not.toMatch(/\btasks?\b/i);
@@ -1617,7 +1617,21 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await untilAnswers();
     await open("app");
     await open("web");
+    // Files you dropped onto the lead go with it.
+    const dropped = join(
+      home,
+      ".local",
+      "share",
+      "skelcrew",
+      "leads",
+      "simon",
+      "app",
+      ".skelcrew-drops",
+    );
+    mkdirSync(join(dropped, "one"), { recursive: true });
+    writeFileSync(join(dropped, "one", "shot.png"), "pixels");
     expect(removeRepo("app")).toBe("");
+    expect(existsSync(dropped)).toBe(false);
     expect(hasLead(leadName("app"))).toBe(false);
     expect(hasLead(leadName("web"))).toBe(true);
   });

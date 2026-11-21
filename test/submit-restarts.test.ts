@@ -775,6 +775,42 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(String(thread().review_post)).toContain('"id":"1001"');
   }, 120_000);
 
+  // The forge can take a review yet fail to answer, so its ID is never saved. The next round
+  // can end before any poll shows the review in Skelcrew's copy of the PR. It still finds the
+  // review by its marker, and edits it rather than posting a second one.
+  test("a review the forge took without answering is edited by the next round, not posted twice", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    writeFileSync(join(plugin, "fail-review"), "connection reset");
+    // No poll comes between the two rounds to bring the copy up to date.
+    await startApp12({ every: 600_000 });
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    // The forge took it: from now on PR 7 shows it with the body Skelcrew sent.
+    const body = String(asked(plugin).find((q) => q.ask === "review")?.body);
+    answer(plugin, "changed", {
+      items: [
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          reviews: [{ id: "1001", text: body, author: null, verdict: "commented", lines: [] }],
+        }),
+      ],
+      next: null,
+    });
+    answer(plugin, "edit review", { edited: true });
+    rmSync(join(plugin, "hold-review"));
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes("couldn't put its review on the forge"),
+    );
+    rmSync(join(plugin, "fail-review"));
+    await until(() => finished("success").length === 1, 60_000);
+    expect(reviews()).toHaveLength(1);
+    expect(edits().map((e) => [e.id, e.verdict])).toEqual([["1001", "approve"]]);
+    expect(String(thread().review_post)).toContain('"id":"1001"');
+  }, 120_000);
+
   // sc stop ends the round while its approval is being posted, and the daemon stops before the
   // post ends. A stopped thread isn't brought back, so the daemon's start posts it anyway.
   test("a stopped thread's verdict the daemon's stop kept from the PR is posted as it starts again", async () => {

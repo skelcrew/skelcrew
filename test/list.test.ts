@@ -1,7 +1,7 @@
 // The list that sc shows: its rows, read from a database of the test's own, and the list itself in
 // a terminal, on tmux servers of the test's own. One holds the agents, and a second stands in for
 // your terminal, so a test can press keys and read what you see.
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir, userInfo } from "node:os";
@@ -27,8 +27,6 @@ import {
   until as wait,
 } from "./harness.ts";
 
-// Longer than the waits below, so a test that fails says what it waited for.
-setDefaultTimeout(20_000);
 let home = "";
 let agents = "";
 let terminal = "";

@@ -5,14 +5,23 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
+import type { Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
-import { editReview, failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
+import {
+  askWhatChanged,
+  editReview,
+  failedLog,
+  forgeOf,
+  openPr,
+  postReview,
+  setStatus,
+} from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
-import { openPrs, prOf, threadTask } from "./copy.ts";
+import { openPrs, prOf, saveItems, threadTask } from "./copy.ts";
 import {
   afterReview,
   branchMoved,
@@ -780,10 +789,8 @@ function postVerdict(db: Database, folder: string): Promise<string | null> {
 
 // Tries again to put on the forge a verdict whose post failed, or that a stop of the daemon cut
 // short, on a stopped thread too, so the PR doesn't keep an older review than the thread says.
-// Each poll asks, once Skelcrew's copy of the PR is up to date, so a review the forge took just
-// before the stop is found by its marker rather than posted twice. A forge that still fails is
-// logged and asked again at the next. A done thread's PR is closed, so it is
-// left alone. A submit or review under way brings a newer verdict, which is posted in its place,
+// Each poll asks. A forge that still fails is logged and asked again at the next. A done
+// thread's PR is closed, so it is left alone. A submit or review under way brings a newer verdict, which is posted in its place,
 // so it is left to that round. So is a write to the forge still under way, such as the round's
 // own post: waiting behind it would hold up the whole poll, and a post that fails is tried
 // again at the next. A round that only waits to type its changes in, such as for a builder
@@ -827,11 +834,13 @@ async function postOrEdit(
   const body = `${reviewComment(review, review.round, commit)}\n\n${marker}`;
   // Only a review on this PR counts: a PR opened again after sc rm starts with none.
   const earlier = thread.review_post?.pr === pr ? thread.review_post : null;
-  // With no review saved, the forge may still have taken one just before the daemon stopped,
-  // with its ID not yet saved. The poll that posts after a restart has brought the copy up to
-  // date, so the review is there with its marker. One that already says this is counted as
-  // posted, so a restart never posts it twice, and any other is the one to edit. With a review
-  // saved, the copy is never asked: it may be older than Skelcrew's last edit.
+  // With no review saved, the forge may still have taken one with its ID never saved: its
+  // answer was lost, or the daemon stopped first. Skelcrew's copy of the PR may not show it
+  // yet, as a round can end before the next poll. So the forge is asked for the PR first, and
+  // the review is found there by its marker. One that already says this is counted as posted,
+  // so it is never posted twice, and any other is the one to edit. A forge that can't answer
+  // fails the post, which is tried again later. With a review saved, the forge isn't asked.
+  if (earlier === null) await refreshPr(db, repository, pr);
   const marked =
     earlier === null
       ? (prOf(db, thread.owner, thread.repo, pr)?.reviews ?? []).filter((posted) =>
@@ -867,6 +876,16 @@ async function postOrEdit(
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
   record(db, folder, { review_post: { pr, id, verdict, findings } }, `${how} on PR #${pr}`);
+}
+
+// Brings Skelcrew's copy of the PR up to date with its forge, for a review the thread saved no
+// ID for, as the copy can be a poll behind. Throws when the forge can't answer.
+async function refreshPr(db: Database, repository: Repository, pr: number): Promise<void> {
+  const forge = forgeOf(db, repository);
+  if (forge === null) throw new Error(`${repository.name} has no forge`);
+  const { items } = await askWhatChanged(db, forge, repository, ["forge"], null, [pr]);
+  const shown = items.filter((item) => item.kind === "pr" && item.id === String(pr));
+  saveItems(db, repository.owner, repository.repo, shown, []);
 }
 
 // Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,

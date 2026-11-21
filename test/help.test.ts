@@ -45,10 +45,7 @@ test("the help names every command", () => {
     "ps",
     "ls",
     "show",
-    "issue ls",
-    "issue show",
-    "issue create",
-    "pr show",
+    "task add",
     "start",
     "stop",
     "rm",
@@ -187,20 +184,35 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
   }
 });
 
-// Issues, tasks and threads are different things, so the help keeps them apart: an issue is
-// what you want done, in the tracker, a task is Skelcrew's record of the work on one, and a
-// thread is an agent on a task. The sidebar's list is called ISSUES, so the commands for the
-// tracker use the same word.
-test("the help lists the issue commands in a section of their own, and names tasks and threads as such", () => {
+// An issue is only where some tasks come from, and a PR is part of a task, so the help has no
+// commands of their own for them: the task commands cover both. A thread is an agent on a task.
+test("the help has no issue or PR commands, and names tasks and threads as such", () => {
   const out = skel(["--help"]).out;
-  const issues = out.slice(out.indexOf("\nISSUES\n"), out.indexOf("\nREPOSITORIES\n"));
-  expect(out).toContain("\nISSUES\n");
-  for (const command of ["issue ls", "issue show", "issue create"])
-    expect(issues).toContain(`  ${command} `);
-  expect(issues).not.toContain("  start ");
+  expect(out).not.toContain("\nISSUES\n");
+  expect(out).not.toContain("\nPULL REQUESTS\n");
+  expect(out).not.toContain("  issue ");
+  expect(out).not.toContain("  pr ");
+  expect(out).toContain("  show <task> ");
+  expect(out).not.toContain("show <task> | <#pr>");
+  expect(out).toContain("  --issue ");
+  expect(out).toContain("  --keep-issue ");
   for (const command of ["stop", "attach", "peek", "interrupt", "tell"])
     expect(out).toContain(`  ${command} <thread>`);
   for (const command of ["show", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
+});
+
+// sc issue and sc pr are gone. Leads started before then may still type them, so what replaced
+// them is named.
+test("sc issue and sc pr say which task commands replaced them", () => {
+  for (const args of [
+    ["issue", "create", "app", "t", "b"],
+    ["pr", "show", "7"],
+  ]) {
+    const ran = skel(args);
+    expect(ran.code).toBe(1);
+    expect(ran.err).toContain("sc show <task> shows one with its PR");
+    expect(ran.err).toContain("--issue");
+  }
 });
 
 // A task with no issue has a name of Skelcrew's, names show in uppercase and are typed in any
@@ -211,8 +223,7 @@ test("the help says how a task with no issue is named, and that names are typed 
   expect(out).toContain("Type a name in any case: app-t100 is APP-T100.");
 });
 
-// The issue commands replaced the task commands, which are gone with no alias.
-// sc task only files tasks in the backlog: sc ls and sc show list and show them.
+// sc task only files tasks: sc ls and sc show list and show them.
 test("sc task takes only add", () => {
   const ran = skel(["task", "ls"]);
   expect(ran.code).not.toBe(0);

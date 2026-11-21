@@ -1,6 +1,6 @@
 // The tabs, one for each repository: switching between them, a tab closing, a lead that
 // stopped being brought back, and a repository removed while the screen shows it.
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startSession } from "../src/agents/sessions.ts";
@@ -37,8 +37,6 @@ import {
   until,
 } from "./screen.ts";
 
-// Longer than the screen's waits, so a test that fails says what it waited for.
-setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 

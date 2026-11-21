@@ -15,8 +15,17 @@ import {
 import { isIP } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { screenSocket } from "../agents/tmux.ts";
 import { sshFolder } from "../paths.ts";
 import { quietly } from "../run.ts";
+import {
+  answeredFolder,
+  type Drop,
+  dropAnswerOption,
+  dropCommand,
+  dropPath,
+  runWithDrops,
+} from "../screen/drops.ts";
 import {
   built,
   checkoutFolder,
@@ -202,13 +211,14 @@ function sharedConnection(host: string): string[] {
 
 // Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
 // takes the environment to add to what it always passes, and gives back the exit code. `before`
-// is a command that runs sc in its turn, such as one that takes a lock first. With a terminal,
+// is a command that runs sc in its turn, such as one that takes a lock first. `run` runs ssh in
+// your terminal, such as through the layer that sends dropped files. With a terminal,
 // ssh says "Connection to <host> closed." each time it ends, several times in one setup, so it
 // is told to say only errors.
 const onServer =
-  (host: string, shared: string[], words: string[], before: string[] = []) =>
+  (host: string, shared: string[], words: string[], before: string[] = [], run = runInTerminal) =>
   (env: string[]) =>
-    runInTerminal([
+    run([
       "ssh",
       "-o",
       "LogLevel=ERROR",
@@ -271,24 +281,72 @@ export async function remote(host: string, args: string[]): Promise<number> {
   checkHost(host);
   if (args.length === 1 && args[0] === "install") return installServer(host);
   // The server can't see the checkout you are in, so its remote goes along as --from where the
-  // command needs it: plain sc, sc --list, and sc pr show with a PR's number, which names a PR
-  // of that repository. A thread's name already names its repository.
+  // command needs it: plain sc and sc --list. A thread's name already names its repository.
   const words = args.filter((arg) => arg !== "--json");
   const plain = words.length === 0 || (words[0] === "--list" && words.length === 1);
-  const numbered =
-    words[0] === "pr" &&
-    words[1] === "show" &&
-    /^#?\d+$/.test(words[2] ?? "") &&
-    words.length === 3;
-  const from = plain || numbered ? originHere() : null;
+  const from = plain ? originHere() : null;
   const machine = serverMachine(host);
-  const there = machine.sc(from ? [...args, "--from", from] : args);
+  const scWords = from ? [...args, "--from", from] : args;
+  // The screen there, which plain sc opens in your terminal, gets a name picked here, so files
+  // you drop onto it can go to the agent it shows.
+  const screen = words.length === 0 && process.stdin.isTTY ? `screen-${randomName()}` : null;
+  const there =
+    screen === null
+      ? machine.sc(scWords)
+      : (env: string[]) =>
+          machine.sc(scWords, undefined, (argv) =>
+            runWithDrops(argv, dropOnServer(machine, screen)),
+          )([...env, `SKELCREW_SCREEN_NAME=${screen}`]);
   const connect = () => runUpToDate(host, there, machine);
   const code = await connect();
   // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
   if (code !== 127 && code !== unfinished) return code;
   return setUpFirst(host, connect);
+}
+
+// Returns a short random name, of letters and digits.
+const randomName = () => Math.random().toString(36).slice(2, 10);
+
+// Returns how files dropped onto the server's screen, named `screen`, reach the agent it shows:
+// each is sent over the shared ssh connection into that agent's folder there, where the agent
+// reads it, and its path there is what the paste gives. The screen's sidebar there says which
+// agent that is, once it has the keys typed before the drop, as on one machine. While your typing
+// goes to the sidebar, nothing is sent. These ssh calls never ask for a password, as your
+// terminal is the screen's. The screen there runs on the tmux server beside Skelcrew's own,
+// skelcrew-screen.
+function dropOnServer(machine: Machine, screen: string): Drop {
+  const quiet = (script: string) => {
+    const [ssh = "ssh", ...rest] = machine.shell(script);
+    return [ssh, "-o", "BatchMode=yes", ...rest];
+  };
+  const read = `tmux -L ${screenSocket("skelcrew")} display -p -t =${screen}: '#{${dropAnswerOption}}'`;
+  // The sidebar's last answer, then the drop's question, then a wait there, of up to two seconds,
+  // for the answer to change.
+  const where = async (ask: () => void) => {
+    const before = await quietly(quiet(read));
+    if (!before.ok) return null;
+    ask();
+    const wait = `b=${quoted(before.out.trim())}; i=0; while [ $i -lt 200 ]; do a=$(${read}); [ "$a" != "$b" ] && { printf '%s\n' "$a"; exit 0; }; sleep 0.01; i=$((i+1)); done; exit 1`;
+    const asked = await quietly(quiet(`sh -c ${quoted(wait)}`));
+    return asked.ok ? answeredFolder(asked.out.trim()) : null;
+  };
+  const put = (folder: string, files: string[]) =>
+    Promise.all(
+      files.map(async (file) => {
+        // The same shell as on one machine, so a link the agent made never leads the copy
+        // outside its folder.
+        const copy = dropPath(folder, file);
+        const line = dropCommand(copy).map(quoted).join(" ");
+        const sent = Bun.spawn(quiet(line), {
+          stdin: Bun.file(file),
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        return (await sent.exited) === 0 ? copy : null;
+      }),
+    );
+  return { where, put };
 }
 
 // Sets up your server, for sc --remote <host> install, and returns the exit code. It sends your
@@ -442,7 +500,7 @@ function serverMachine(host: string): Machine {
   return {
     shell,
     push,
-    sc: (words, before) => onServer(host, shared, words, before),
+    sc: (words, before, run) => onServer(host, shared, words, before, run),
     // The unit names the Skelcrew the daemon runs, with each % doubled for systemd. A unit an
     // older Skelcrew wrote runs sc serve rather than sc up.
     daemonSkel: async () => {
@@ -463,8 +521,13 @@ export type Machine = {
   // Returns the command that sends a file to a path in your home there.
   push: (file: string, to: string) => string[];
   // Returns how to run sc there with these words in your terminal, through the command `before`
-  // when given. It takes the environment to add, and gives back the exit code.
-  sc: (words: string[], before?: string[]) => (env: string[]) => Promise<number>;
+  // when given, with `run` running ssh when given. It takes the environment to add, and gives
+  // back the exit code.
+  sc: (
+    words: string[],
+    before?: string[],
+    run?: (argv: string[]) => Promise<number>,
+  ) => (env: string[]) => Promise<number>;
   // Returns the sc the daemon's service starts there, or null when there is no service.
   daemonSkel: () => Promise<string | null>;
   // Copies a built Skelcrew there.
