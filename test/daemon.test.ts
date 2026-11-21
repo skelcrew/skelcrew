@@ -2131,4 +2131,3 @@ describe.skipIf(insideSandbox)("the lead from before", () => {
     await until(() => read(join(keptLead(), "typed")).includes("you are the lead of app"));
   }, 60_000);
 });
-
