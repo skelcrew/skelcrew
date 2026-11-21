@@ -372,7 +372,7 @@ test("sc rm closes an issue that never started, and the lead needs the human's w
 
 // The copy is only as fresh as the last poll, so an issue reopened since may be missing from it.
 // Work still under way closes its issue all the same, rather than say it closed and leave it open.
-test("sc rm on work under way closes its issue, though the copy doesn't have it open", async () => {
+test("sc rm on work closes its issue, though the copy doesn't have it open, and again after a failed try", async () => {
   addApp();
   serve();
   await untilCloned();
@@ -380,10 +380,17 @@ test("sc rm on work under way closes its issue, though the copy doesn't have it 
   db.run("PRAGMA busy_timeout = 5000");
   db.exec(threadSql({ task: "14", title: "Reopened", status: "stopped" }));
   db.close();
+  // The tracker fails once the work is removed, and sc rm run again still closes the issue.
+  writeFileSync(join(plugin, "fail-close-task"), "GitHub is down");
+  const failed = await skel("rm", "app-14");
+  expect(failed.err).toContain("APP-14's work is removed, but its issue didn't close");
+  expect(thread()).toMatchObject({ status: "done" });
+  rmSync(join(plugin, "fail-close-task"));
   const removed = await skel("rm", "app-14");
   expect(removed.err).toBe("");
   expect(removed.out).toBe("Removed APP-14 and closed issue #14.\n");
   expect(asked(plugin).filter((q) => q.ask === "close task")).toEqual([
+    { ask: "close task", repository: "simon/app", task: "14", comment: null },
     { ask: "close task", repository: "simon/app", task: "14", comment: null },
   ]);
 }, 60_000);

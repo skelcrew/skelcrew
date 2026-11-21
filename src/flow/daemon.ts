@@ -179,13 +179,14 @@ function removalOf(db: Database, repository: string, task: string, keepIssue: bo
   const name = taskName(repositoryName, task);
   const filed = filedOn(db, repository, task);
   const thread = threadOn(db, repository, task);
-  // Work still under way always closes its issue. The copy is only as fresh as the last poll,
-  // and an issue reopened since would otherwise stay open while sc rm says it is done. Closing
-  // one already closed changes nothing. With no work left, only the copy tells whether there is
-  // still an issue to close.
+  // A task with a thread always closes its issue, unless its work merged, which closed it. The
+  // copy is only as fresh as the last poll, and an issue reopened since would otherwise stay
+  // open while sc rm says it closed. So does a retry after the tracker failed, once the work is
+  // removed and its thread done. Closing an issue already closed changes nothing. A task with no
+  // thread has only the copy to tell whether its issue is open.
   const inCopy = openTasks(db, owner, repo).some((item) => item.id === task);
-  const live = thread !== null && thread.status !== "done";
-  const open = !ownTask(task) && (live || inCopy) ? task : null;
+  const worked = thread !== null && !thread.merged;
+  const open = !ownTask(task) && (worked || inCopy) ? task : null;
   const issue = keepIssue ? null : open;
   if (!filed && !thread && open === null) throw new Error(`there is no task ${name}`);
   if (!filed && !thread && issue === null)
