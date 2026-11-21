@@ -11,8 +11,10 @@
 // once, with unknown-<question> it fails it every time as an older plugin that doesn't know it,
 // with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
 // from a given time on. With a file lose-start, it starts the
-// next session but fails before saying its ID. Its one argument, its settings folder, is only
-// there so a test's clean-up can find its calls with ps.
+// next session but fails before saying its ID. Given `files` as it starts a session, it does as
+// a host that provides files: it makes the session a folder of dropped files, `files` in the
+// session's folder, and swaps the placeholder for it wherever it appears in the command. Its one
+// argument, its settings folder, is only there so a test's clean-up can find its calls with ps.
 import {
   appendFileSync,
   existsSync,
@@ -76,6 +78,11 @@ const answers: Record<string, () => unknown> = {
     writeFileSync(join(folder(id), "labels.json"), JSON.stringify(question.labels));
     writeFileSync(join(folder(id), "screen"), "");
     Bun.spawnSync(["mkfifo", join(folder(id), "input")]);
+    const drops = join(folder(id), "files");
+    if (question.files) mkdirSync(drops);
+    const command = question.command.map((word: string) =>
+      question.files ? word.replaceAll(question.files, drops) : word,
+    );
     const env = Object.entries(question.env).map(([key, value]) => `${key}=${value}`);
     // The session's folder comes in as $0, then the agent's folder and the pipe, then the
     // environment and the command, which env -i runs with nothing else.
@@ -89,7 +96,7 @@ const answers: Record<string, () => unknown> = {
         question.folder,
         join(folder(id), "input"),
         ...env,
-        ...question.command,
+        ...command,
       ],
       { detached: true, stdio: ["ignore", "ignore", "ignore"] },
     );

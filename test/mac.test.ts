@@ -220,6 +220,21 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   expect(seen).toContain("PGHOST=localhost\n");
 });
 
+test("an agent on a Mac gets no dropped files, as its host can't reach the sandbox's rules to show them", async () => {
+  const done =
+    await asMacRun(`import { filesFor } from ${JSON.stringify(source("plugins/runtime.ts"))};
+import { filesPlaceholder, sandboxArgs } from ${JSON.stringify(source("agents/sandbox.ts"))};
+const host = { plugin: "herdr", version: "0.1.0", folder: "/", session: ["true"], attach: ["true"], transport: true, status: true, files: true };
+console.log(filesFor(host) === undefined);
+try {
+  sandboxArgs({ home: process.env.HOME, path: "", mounts: [], cwd: "/", command: ["true"], files: filesPlaceholder() });
+} catch (error) {
+  console.log(error.message);
+}`);
+  expect(done.err).toBe("");
+  expect(done.out).toBe("true\na Mac's sandbox can't show an agent its dropped files yet\n");
+});
+
 test("the agent's socket is never resolved itself, as a Mac can't open one to find its real path", async () => {
   const socket = join(home, "run", "skelcrew", "lead", "skelcrew.sock");
   mkdirSync(join(socket, ".."), { recursive: true });

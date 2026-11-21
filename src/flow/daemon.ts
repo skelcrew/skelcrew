@@ -38,7 +38,7 @@ import {
   startThread,
   statusOnceBack,
 } from "./builder.ts";
-import { holdCheckSlot } from "./checks.ts";
+import { holdCheckSlot, slotHolders } from "./checks.ts";
 import { ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
 import { removeThread, removing, stopThread } from "./events.ts";
@@ -545,7 +545,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "repo named":
         return { named: repositoryNamed(db, request.word) !== undefined };
       case "ps":
-        return { threads: listThreads(db, request.repo) };
+        return { threads: listThreads(db, request.repo), slots: slotsShown(request.repo) };
       case "task ls":
         return { tasks: listTasks(db, request.repo) };
       case "task show":
@@ -901,6 +901,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
     }
   };
+  // Returns who holds the check slots, for sc ps. Asked for one repository, as a lead always is,
+  // a slot held in another is named only as that, so a lead learns no other repository's
+  // threads, yet still sees why its checks wait.
+  const slotsShown = (repository: string | undefined) => {
+    const one = repository === undefined ? null : findRepository(db, repository);
+    return slotHolders().map(({ holder, repository: of, since }) => ({
+      holder: one === null || of === `${one.owner}/${one.repo}` ? holder : "another repository",
+      since,
+    }));
+  };
   // Gives an sc check its place among the checks, with the test commands of the caller's
   // repository: the thread's for a builder or a reviewer, and for you the repository of the
   // checkout you ran it in.
@@ -910,10 +920,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     { from }: { from?: string | undefined },
   ) => {
     try {
-      const thread = caller !== "you" && "review" in caller ? caller.review : builderOf(caller);
+      const reviewer = caller !== "you" && "review" in caller ? caller.review : null;
+      const thread = reviewer ?? builderOf(caller);
       const repository = thread ?? (from === undefined ? undefined : repositoryAt(db, from));
       if (!repository) throw new Error("run sc check in a checkout of a repository Skelcrew has");
-      holdCheckSlot(connection, repositoryCommands(repository).test);
+      // sc ps names the slot's holder as it names threads, such as APP-12/reviewer.
+      const holder =
+        thread === null ? "you" : `${threadName(db, thread)}/${reviewer ? "reviewer" : "builder"}`;
+      holdCheckSlot(connection, repositoryCommands(repository).test, {
+        holder,
+        repository: `${repository.owner}/${repository.repo}`,
+      });
     } catch (error) {
       connection.end(`${JSON.stringify({ error: errorText(error) })}\n`);
     }

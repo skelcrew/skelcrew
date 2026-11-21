@@ -892,6 +892,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(existsSync(join(clone, "README"))).toBe(true);
     expect(await ask({ command: "ps" })).toEqual({
       threads: [stoppedApp1],
+      slots: [],
     });
     expect(await ask({ command: "repo ls" })).toMatchObject({
       repositories: [{ name: "app", tabClosed: true }],
@@ -1131,6 +1132,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     });
     expect(await askAsLead({ command: "ps" })).toEqual({
       threads: [stoppedApp1],
+      slots: [],
     });
     const refused = {
       error:

@@ -870,6 +870,42 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(thread().host).toBe(null);
   }, 60_000);
 
+  // A Mac's agents get no dropped files, as test/mac.test.ts checks.
+  test.skipIf(process.platform === "darwin")(
+    "a builder on a host that provides files reads the files you drop on it, and only those",
+    async () => {
+      addApp();
+      const host = fakeHost("sessions, files");
+      useHost("fake");
+      // Where the host saves what you drop on the builder, and the path it types for it.
+      const drops = join(host, "sessions", "fake-app-12", "files");
+      const shot = join(drops, "shot.png");
+      fakeClaude(
+        "",
+        `for i in $(seq 300); do [ -f ${shot} ] && break; sleep 0.1; done; { cat ${shot}; touch ${drops}/new 2>/dev/null || echo drops-read-only; test -e ${host}/asked || echo host-hidden; } > "$CLAUDE_CONFIG_DIR/seen.new" 2>&1; mv "$CLAUDE_CONFIG_DIR/seen.new" "$CLAUDE_CONFIG_DIR/seen"`,
+      );
+      serve();
+      await untilCloned();
+      expect((await skel("start", "app-12")).err).toBe("");
+      await until(() => existsSync(drops));
+      writeFileSync(shot, "a picture\n");
+      await until(() => read(join(config("app-12"), "seen")) !== "");
+      expect(read(join(config("app-12"), "seen"))).toBe(
+        "a picture\ndrops-read-only\nhost-hidden\n",
+      );
+      // The host was handed the placeholder, which the command held only in its read-only mount.
+      const start = read(join(host, "asked"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .find((question) => question.ask === "start");
+      expect(start.files).toMatch(/^\/skelcrew-files-[0-9a-f]{32}$/);
+      const at = start.command.indexOf(start.files);
+      expect(start.command.slice(at - 1, at + 2)).toEqual(["--ro-bind", start.files, start.files]);
+    },
+    60_000,
+  );
+
   test("a builder started on tmux stays there after the host changes, until it starts again", async () => {
     addApp();
     const first = serve();

@@ -78,9 +78,9 @@ const details: Details = {
 const plain = (lines: string[]) => lines.map((line) => Bun.stripANSI(line).trimEnd());
 
 test("the pane shows the task's details from the top, then its agent's screen below a line", () => {
-  const lines = drawPane(row, details, { screen: "I am app-12\n› \n\n\n" }, 50, 30, true);
+  const lines = drawPane(row, details, { screen: "I am app-12\n› \n\n\n" }, 50, 30).lines;
   expect(lines).toHaveLength(30);
-  expect(plain(lines).slice(0, 23)).toEqual([
+  expect(plain(lines)).toEqual([
     "Rate limit the API",
     "issue #42  https://github.com/acme/app/issues/42",
     "PR    #43  https://github.com/acme/app/pull/43",
@@ -94,22 +94,35 @@ test("the pane shows the task's details from the top, then its agent's screen be
     "  … 1 more",
     "",
     "Add a limit per user to the public API, so one",
-    "client can't starve the others. It resets each",
-    "minute. Clients over it get a 429 with a…",
+    "client can't starve the others.",
+    "",
+    "It resets each minute. Clients over it get a 429",
+    "with a Retry-After header. The limit is set per",
+    "repository.",
     "",
     "13:40 submitted · 13:52 reviewed · 14:02 submitted",
+    "",
+    "",
+    "",
+    "",
+    "",
     "",
     "─".repeat(50),
     "I am app-12",
     "›",
     "",
-    "",
   ]);
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(50);
+  // Shorter details leave the strip at the bottom all the same, and so does a builder not running.
+  const brief: Details = { ...details, findings: [], view: { ...details.view, body: "" } };
+  const short = plain(drawPane(row, brief, { screen: "I am app-12\n› \n" }, 50, 30).lines);
+  expect(short.slice(26)).toEqual(plain(lines).slice(26));
+  const stopped = plain(drawPane(row, brief, { note: "Builder not running" }, 50, 30).lines);
+  expect(stopped.slice(26, 28)).toEqual(["─".repeat(50), "Builder not running"]);
 });
 
 test("the details take the list's look: bold title, dim labels, verdicts in colour, links", () => {
-  const lines = drawPane(row, details, null, 50, 30);
+  const lines = drawPane(row, details, null, 50, 30).lines;
   const esc = "\x1b";
   // Returns the line that reads `text` once its colours are taken off.
   const line = (text: string) => lines.find((drawn) => Bun.stripANSI(drawn).trimEnd() === text);
@@ -128,14 +141,14 @@ test("the details take the list's look: bold title, dim labels, verdicts in colo
     `${esc}[90mRound 2 · ${esc}[22;39m${yellow}changes asked${esc}[22;39m`,
   );
   // The description is dimmer than the rest, and the events dimmer still.
-  expect(line("client can't starve the others. It resets each")).toStartWith(`${esc}[38;5;250m`);
+  expect(line("client can't starve the others.")).toStartWith(`${esc}[38;5;250m`);
   expect(line("13:40 submitted · 13:52 reviewed · 14:02 submitted")).toStartWith(`${esc}[90m`);
 });
 
 test("a link with control characters in it never reaches your terminal as codes", () => {
   const bad = "https://github.com/acme/app/issues/42\x07\x1b]2;owned\x07";
   const issue = { id: "#42", link: bad };
-  const drawn = drawPane(row, { ...details, view: { ...details.view, issue } }, null, 50, 30);
+  const drawn = drawPane(row, { ...details, view: { ...details.view, issue } }, null, 50, 30).lines;
   const text = drawn.join("\n");
   expect(text).not.toContain("\x07");
   expect(text).not.toContain("\x1b]2;");
@@ -154,7 +167,7 @@ test("an approved review and passed CI show green, a failed one red", () => {
       prPage: { ...page, ci: "passed", checks: [] },
     },
   };
-  const drawn = drawPane(row, passed, null, 50, 30);
+  const drawn = drawPane(row, passed, null, 50, 30).lines;
   expect(drawn).toContain(`\x1b[90mCI${"\x1b[22;39m"} ${green}passed\x1b[22;39m`);
   expect(drawn.find((line) => line.includes("approved"))).toContain(`${green}approved`);
   const failed: Details = {
@@ -165,22 +178,24 @@ test("an approved review and passed CI show green, a failed one red", () => {
       prPage: { ...page, ci: "failed", checks: [] },
     },
   };
-  const redLines = drawPane(row, failed, null, 50, 30);
+  const redLines = drawPane(row, failed, null, 50, 30).lines;
   expect(redLines).toContain(`\x1b[90mCI${"\x1b[22;39m"} ${red}failed\x1b[22;39m`);
   expect(redLines.find((line) => line.includes("review failed"))).toContain(`${red}review failed`);
 });
 
 test("by default the live view is a strip of the agent's last three lines, the details above it", () => {
   const screen = ["line 1", "", "line 2", "line 3", "", "line 4", "", "› ", "", ""].join("\n");
-  const lines = plain(drawPane(row, details, { screen }, 50, 30));
+  const lines = plain(drawPane(row, details, { screen }, 50, 30).lines);
   expect(lines).toHaveLength(30);
   // The details come whole, then the line over the strip, then the last three lines with text.
   const rule = lines.indexOf("─".repeat(50));
-  expect(lines.slice(0, rule)).toEqual(plain(drawPane(row, details, null, 50, 30)).slice(0, rule));
+  expect(lines.slice(0, rule)).toEqual(
+    plain(drawPane(row, details, null, 50, 30).lines).slice(0, rule),
+  );
   expect(lines.slice(rule + 1, rule + 4)).toEqual(["line 3", "line 4", "›"]);
   expect(lines.slice(rule + 4)).toEqual(Array(30 - rule - 4).fill(""));
   // In a short pane, the details tighten so the strip keeps its three lines.
-  const short = plain(drawPane(row, details, { screen }, 50, 12));
+  const short = plain(drawPane(row, details, { screen }, 50, 12).lines);
   expect(short.slice(-4)).toEqual(["─".repeat(50), "line 3", "line 4", "›"]);
   expect(short[0]).toBe("Rate limit the API");
 });
@@ -194,7 +209,7 @@ test("the live view shows the bottom of the screen, colours kept and long lines 
     "",
     "",
   ].join("\n");
-  const lines = drawPane(row, details, { screen }, 40, 30, true);
+  const lines = drawPane(row, details, { screen }, 40, 30, true).lines;
   const live = lines.slice(lines.findIndex((line) => line.includes("───")) + 1);
   expect(plain(live).slice(-3)).toEqual([
     "line 39",
@@ -220,7 +235,7 @@ test("a colour set on one line of the screen goes on over the lines after it unt
     "still blue\x1b[m",
     "plain again",
   ].join("\n");
-  const lines = drawPane(row, details, { screen }, 50, 30, true);
+  const lines = drawPane(row, details, { screen }, 50, 30, true).lines;
   const live = lines.slice(lines.findIndex((line) => line.includes("───")) + 1);
   const at = (text: string) => live.find((line) => Bun.stripANSI(line) === text) ?? "";
   // The green set above the part shown still colours the lines shown.
@@ -234,31 +249,35 @@ test("a colour set on one line of the screen goes on over the lines after it unt
 });
 
 test("a task with no running agent says so, and a row that isn't a task has an empty pane", () => {
-  const lines = plain(drawPane(row, details, { note: "Builder not running" }, 50, 30));
+  const lines = plain(drawPane(row, details, { note: "Builder not running" }, 50, 30).lines);
   expect(lines.slice(lines.indexOf("─".repeat(50)) + 1, -1).filter(Boolean)).toEqual([
     "Builder not running",
   ]);
   const lead: Row = { ...row, part: "lead", name: "lead", task: null };
-  expect(plain(drawPane(lead, null, null, 50, 30))).toEqual(Array(30).fill(""));
+  expect(plain(drawPane(lead, null, null, 50, 30).lines)).toEqual(Array(30).fill(""));
 });
 
-// A terminal 24 lines tall leaves the pane 22. The details are what the pane is for, so they keep
-// their room, and the live view has what is left.
-test("in a short pane the details show whole, and the live view has what is left", () => {
+// A terminal 24 lines tall leaves the pane 22. While it shows the agent's whole screen, the
+// details take half of it at most, and the agent's screen the rest.
+test("with the agent's whole screen, the details take half the pane, and the screen the rest", () => {
   const screen = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
-  const lines = plain(drawPane(row, details, { screen }, 50, 22, true));
+  const lines = plain(drawPane(row, details, { screen }, 50, 22, true).lines);
   expect(lines).toHaveLength(22);
-  expect(lines).toContain("minute. Clients over it get a 429 with a…");
-  expect(lines).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
+  expect(lines.slice(0, 11)).toEqual([
+    ...plain(drawPane(row, details, null, 50, 22).lines).slice(0, 10),
+    "↓ more",
+  ]);
   // What is left under the line shows the bottom of the agent's screen.
   const live = lines.slice(lines.indexOf("─".repeat(50)) + 1);
-  expect(live.length).toBeGreaterThan(0);
-  expect(live).toEqual(
-    Array.from({ length: live.length }, (_, i) => `line ${20 - live.length + i}`),
-  );
-  const stopped = plain(drawPane(row, details, { note: "Builder not running" }, 50, 22));
-  expect(stopped).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
-  expect(stopped).toContain("Builder not running");
+  expect(live).toEqual(Array.from({ length: 9 }, (_, i) => `line ${11 + i}`));
+  // Details that fit in half take only what they need.
+  const brief: Details = { ...details, findings: [], view: { ...details.view, body: "" } };
+  const short = plain(drawPane(row, brief, { screen }, 50, 22, true).lines);
+  expect(short.slice(8, 11)).toEqual([
+    "13:40 submitted · 13:52 reviewed · 14:02 submitted",
+    "",
+    "─".repeat(50),
+  ]);
 });
 
 test("a long title and long links show whole, and every check shows however many there are", () => {
@@ -276,7 +295,7 @@ test("a long title and long links show whole, and every check shows however many
       prPage: { ...page, checks, link },
     },
   };
-  const lines = plain(drawPane(row, long, null, 40, 40));
+  const lines = plain(drawPane(row, long, null, 40, 40).lines);
   expect(lines.slice(0, 7)).toEqual([
     "Rate limit the public API per user, so",
     "one client can never starve all the",
@@ -338,50 +357,80 @@ test("the pane shows beside the list only in a terminal wide enough for both", (
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(139);
 });
 
-// Details far taller than the pane, from a long title, a long description, many findings and many
-// checks, one of them failed.
-test("details too tall for the pane tighten so every part shows, and the live view keeps its lines", () => {
+// The description of an issue, with paragraphs, a list and a line too long for the pane.
+const written = [
+  "Add a limit per user to the public API.",
+  "",
+  "",
+  "Steps:",
+  "- Count each client's calls per minute, in the database rather than in memory",
+  "  1. Over the limit, answer 429 with a Retry-After header",
+  "",
+  "The limit is set per repository.",
+].join("\n");
+
+test("the description shows whole, its lines kept and long ones wrapped under their list item", () => {
+  const described: Details = { ...details, view: { ...details.view, body: written } };
+  const lines = plain(drawPane(row, described, null, 40, 40).lines);
+  const from = lines.indexOf("Add a limit per user to the public API.");
+  expect(lines.slice(from, from + 10)).toEqual([
+    "Add a limit per user to the public API.",
+    "",
+    "Steps:",
+    "- Count each client's calls per minute,",
+    "  in the database rather than in memory",
+    "  1. Over the limit, answer 429 with a",
+    "     Retry-After header",
+    "",
+    "The limit is set per repository.",
+    "",
+  ]);
+  expect(lines).not.toContain("…");
+});
+
+// Details far taller than the pane, from a long description and many checks.
+test("details taller than the pane scroll, say there is more below, and leave the strip in place", () => {
   const page = details.view.prPage;
   if (!page) throw new Error("the details have a PR");
   const checks = Array.from({ length: 60 }, (_, i) => ({
     name: `check-${i}`,
-    state: i === 50 ? ("failed" as const) : ("passed" as const),
+    state: "passed" as const,
     log: null,
   }));
+  const body = Array.from({ length: 30 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
   const tall: Details = {
     ...details,
-    view: { ...details.view, title: "A title ".repeat(40), prPage: { ...page, checks } },
+    view: { ...details.view, body, prPage: { ...page, checks } },
   };
   const screen = "first\nsecond\nthird";
-  const lines = plain(drawPane(row, tall, { screen }, 50, 22, true));
-  expect(lines).toHaveLength(22);
-  expect(lines[0]).toEndWith("…");
-  expect(lines).toContain("issue #42  https://github.com/acme/app/issues/42");
-  expect(lines).toContain("Building · question");
-  // The failed check comes first, so it stays in sight.
-  // The checks take one line, which ends with how many checks it leaves out of the 60.
-  const ci = lines.find((line) => line.startsWith("CI running:")) ?? "";
-  expect(ci).toStartWith("CI running:  check-50 ✗  check-0 ✓");
-  const shown = ci.split("  ").filter((item) => item.startsWith("check-")).length;
-  expect(ci).toEndWith(`  … ${60 - shown} more`);
-  expect(lines.indexOf(ci) + 1).toBe(lines.indexOf("Round 2 · changes asked"));
-  expect(lines).toContain("Round 2 · changes asked");
-  expect(lines).toContain("  - The limit resets per process, not per user");
-  expect(lines).toContain("Add a limit per user to the public API, so one…");
-  expect(lines).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
-  // Under the line, the agent's screen has at least two lines.
-  const rule = lines.indexOf("─".repeat(50));
-  expect(rule).toBeGreaterThan(0);
-  expect(rule).toBeLessThanOrEqual(22 - 3);
-  expect(
-    lines
-      .slice(rule + 1)
-      .filter(Boolean)
-      .slice(-2),
-  ).toEqual(["second", "third"]);
-  const stopped = plain(drawPane(row, tall, { note: "Builder not running" }, 50, 22));
-  expect(stopped).toContain("Builder not running");
-  expect(stopped).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
+  const whole = plain(drawPane(row, tall, null, 50, 500).lines).filter((_, i, all) =>
+    all.slice(i).some(Boolean),
+  );
+  // At the top, the details show from their title, and their last line says there is more.
+  const top = drawPane(row, tall, { screen }, 50, 22);
+  const lines = plain(top.lines);
+  expect(top.scroll).toBe(0);
+  expect(top.room).toBe(18);
+  expect(lines.slice(0, 17)).toEqual(whole.slice(0, 17));
+  expect(lines[17]).toBe("↓ more");
+  expect(lines.slice(18)).toEqual(["─".repeat(50), "first", "second", "third"]);
+  // Scrolled, they show from further down, and the strip stays where it was.
+  const down = plain(drawPane(row, tall, { screen }, 50, 22, false, 20).lines);
+  expect(down.slice(0, 18)).toEqual([...whole.slice(20, 37), "↓ more"]);
+  expect(down.slice(18)).toEqual(lines.slice(18));
+  // Scrolled past their end, they stop at it, with nothing more below.
+  const end = drawPane(row, tall, { screen }, 50, 22, false, 1000);
+  expect(end.scroll).toBe(whole.length - 18);
+  expect(plain(end.lines).slice(0, 18)).toEqual(whole.slice(-18));
+  expect(plain(end.lines).slice(18)).toEqual(lines.slice(18));
+  // With room for a single line, it shows the details, a line each way you scroll.
+  const tiny = (scroll: number) =>
+    plain(drawPane(row, tall, { screen }, 50, 5, false, scroll).lines)[0];
+  expect([0, 1, 2].map(tiny)).toEqual(whole.slice(0, 3));
+  // Scrolled above their top, they start at it.
+  expect(drawPane(row, tall, { screen }, 50, 22, false, -5).scroll).toBe(0);
+  const stopped = plain(drawPane(row, tall, { note: "Builder not running" }, 50, 22).lines);
+  expect(stopped.slice(17)).toEqual(["↓ more", "─".repeat(50), "Builder not running", "", ""]);
 });
 
 // A merged PR can leave the forge's copy, and its row keeps the link saved for it.
@@ -393,7 +442,7 @@ test("a PR no longer in the forge's copy shows the link saved on its row", () =>
     link: "https://github.com/acme/app/pull/43",
   };
   const gone: Details = { ...details, view: { ...details.view, prPage: null } };
-  expect(plain(drawPane(done, gone, null, 50, 30))).toContain(
+  expect(plain(drawPane(done, gone, null, 50, 30).lines)).toContain(
     "PR    #43  https://github.com/acme/app/pull/43",
   );
 });
@@ -411,7 +460,7 @@ test("the pane of a queued task says it is up next and what it waits on", () => 
     waits: "3rd in line: 4 of 4 builders busy",
   };
   const waiting: Details = { ...details, view: { ...details.view, prPage: null, pr: null } };
-  const lines = plain(drawPane(queued, waiting, null, 50, 30));
+  const lines = plain(drawPane(queued, waiting, null, 50, 30).lines);
   const at = lines.indexOf("Up next · 3rd in line");
   expect(at).toBeGreaterThan(0);
   expect(lines[at + 1]).toBe("3rd in line: 4 of 4 builders busy");
@@ -423,7 +472,7 @@ test("a queued task's wait reason wraps whole in a narrow pane", () => {
   const waits = "2nd in line: app-21 waits for its issue's claim to reach the tracker";
   const queued: Row = { ...row, section: "up next", says: "2nd in line", place: 2, waits };
   const waiting: Details = { ...details, view: { ...details.view, prPage: null, pr: null } };
-  const lines = plain(drawPane(queued, waiting, null, 30, 40));
+  const lines = plain(drawPane(queued, waiting, null, 30, 40).lines);
   const at = lines.indexOf("Up next · 2nd in line");
   expect(lines.slice(at + 1, at + 4)).toEqual([
     "2nd in line: app-21 waits for",

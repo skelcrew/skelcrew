@@ -160,7 +160,8 @@ function startServer(socket: string): void {
 // handed the name and labels to show. With `keepOnExit`, the session stays when its agent exits
 // cleanly too, so Skelcrew can tell a lead you exited from one that crashed: the first closes its
 // tab, the second doesn't. Only leads ask for that, and only tmux keeps it: a plugin's host isn't
-// asked to.
+// asked to. A plugin's host that provides files is handed `files`, the placeholder in the
+// command that it swaps for the session's folder of dropped files.
 export async function startSession(
   host: Host,
   name: string,
@@ -170,11 +171,12 @@ export async function startSession(
     env: Record<string, string>;
     labels: Labels;
     keepOnExit?: boolean;
+    files?: string | undefined;
   },
 ): Promise<string> {
   if (typeof host !== "string") {
-    const { folder, command, env, labels } = session;
-    const question = { ask: "start", name, folder, command, env, labels };
+    const { folder, command, env, labels, files } = session;
+    const question = { ask: "start", name, folder, command, env, labels, ...(files && { files }) };
     return (await askHost(host, question, z.object({ id: z.string().min(1) }))).id;
   }
   const socket = host;
