@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { checkThenSc, quoted } from "../src/machine/remote.ts";
 import { source } from "./harness.ts";
 
@@ -1505,7 +1505,18 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
     .replaceAll("\\ ", " ");
   expect(readFileSync(copy, "utf8")).toBe("pixels");
   // Git never sees the copy, so a builder doesn't commit it.
-  expect(readFileSync(join(dirname(copy), ".gitignore"), "utf8")).toBe("*\n");
+  expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
+});
+
+test("a dropped file named .gitignore reaches the server's agent like any other", async () => {
+  mkdirSync(join(home, "project"));
+  const ignore = join(home, "project", ".gitignore");
+  writeFileSync(ignore, "dist\n");
+  const { got } = await dropOnServer(ignore);
+  const copy = got.slice(got.indexOf("\x1b[200~") + "\x1b[200~".length, -"\x1b[201~".length);
+  expect(copy.startsWith(join(home, "server", "agent", ".skelcrew-drops"))).toBe(true);
+  expect(copy.endsWith("/.gitignore")).toBe(true);
+  expect(readFileSync(copy, "utf8")).toBe("dist\n");
 });
 
 test("a drops folder on the server that the agent made a link out of its folder is never written through", async () => {

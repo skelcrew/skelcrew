@@ -4,7 +4,7 @@
 // the agent's own folder and passes the paste on with the copies' paths. Everything else passes
 // through untouched.
 import { constants } from "node:fs";
-import { access, copyFile, lstat, mkdir, realpath, rmdir, stat, writeFile } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 // The folder inside an agent's folder that holds its dropped files. It ignores itself in git, so
@@ -136,6 +136,26 @@ export function dropPath(folder: string, file: string): string {
   return join(folder, dropsFolder, unique, basename(file));
 }
 
+// Shell that puts a copy, read from its input, at `copy`, a path dropPath gave, and the words to
+// run it with. The screen runs outside the agent's sandbox, and the agent can write its own
+// folder, so a link it put there, even one swapped in while the copy is made, must never lead
+// the screen to write elsewhere. So the shell changes into each folder on the way, checks it is
+// where it should be with every link followed, and makes each file by its name from there: a
+// shell stays in the folder it checked, whatever is renamed after. Nothing is written over. The
+// drops folder's .gitignore keeps git from seeing the copies, so a builder doesn't commit them.
+export function dropCommand(copy: string): string[] {
+  const unique = dirname(copy);
+  const script = [
+    'mkdir -p -- "$1" && cd -P -- "$1" && top=$(pwd -P)',
+    `mkdir -p ${dropsFolder} && cd -P ${dropsFolder} && [ "$(pwd -P)" = "$top/${dropsFolder}" ]`,
+    "set -C",
+    "{ printf '*\\n' > .gitignore 2>/dev/null; true; }",
+    `mkdir -- "$2" && cd -P -- "$2" && [ "$(pwd -P)" = "$top/${dropsFolder}/$2" ]`,
+    'cat > "$3"',
+  ].join(" && ");
+  return ["sh", "-c", script, "sh", dirname(dirname(unique)), basename(unique), basename(copy)];
+}
+
 // Says whether the agent can read `file` by that path already: a path inside its folder, with no
 // .. in it, that stays inside once every link on the way is followed. A link inside that points
 // out, such as into your home folder, leads where the sandbox hides it, so its file is copied.
@@ -155,38 +175,15 @@ export function copyDrops(folder: string, files: string[]): Promise<(string | nu
   return Promise.all(
     files.map(async (file) => {
       if (await readableBy(folder, file)) return null;
-      try {
-        const copy = dropPath(folder, file);
-        const inside = await dropFolder(folder, dirname(copy));
-        if (inside === null) return null;
-        // Nothing is ever written over: both files are new, in a folder just made.
-        await writeFile(join(inside, ".gitignore"), "*\n", { flag: "wx" });
-        await copyFile(file, join(inside, basename(copy)), constants.COPYFILE_EXCL);
-        return copy;
-      } catch {
-        return null;
-      }
+      const copy = dropPath(folder, file);
+      const copying = Bun.spawn(dropCommand(copy), {
+        stdin: Bun.file(file),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      return (await copying.exited) === 0 ? copy : null;
     }),
   );
-}
-
-// Makes the folder `unique` names inside an agent's drops folder, and returns its path with
-// every link on the way followed, or null when it isn't inside the agent's folder. The agent can
-// write its folder, and the screen runs outside its sandbox, so a link the agent put there must
-// never lead the screen to write elsewhere. A drops folder that is a link is refused. The new
-// folder is checked once made, as the drops folder could be swapped meanwhile, and the copy is
-// written by the path checked, which the agent can't make outside its sandbox. Each copy's own
-// folder holds its .gitignore, so git ignores the copy and no file of the agent's is written over.
-async function dropFolder(folder: string, unique: string): Promise<string | null> {
-  const drops = join(folder, dropsFolder);
-  // Its path up to the drops folder is Skelcrew's own, so a missing part is made.
-  await mkdir(drops, { recursive: true }).catch(() => {});
-  if (!(await lstat(drops)).isDirectory()) return null;
-  await mkdir(unique);
-  const real = await realpath(unique);
-  if (real === join(await realpath(folder), dropsFolder, basename(unique))) return real;
-  await rmdir(unique).catch(() => {});
-  return null;
 }
 
 // Where dropped files go: `where` asks the screen which agent's folder your typing goes to, and

@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   copyDrops,
   dropSignal,
@@ -96,7 +96,28 @@ test("one dropped file's path becomes its copy's, in the agent's folder", async 
   const [copy = ""] = copies(out);
   expect(readFileSync(copy, "utf8")).toBe("the text of shot.png");
   // Git never sees the copies, so a builder doesn't commit them.
-  expect(readFileSync(join(dirname(copy), ".gitignore"), "utf8")).toBe("*\n");
+  expect(readFileSync(join(agent, dropsFolder, ".gitignore"), "utf8")).toBe("*\n");
+});
+
+test("a dropped file named .gitignore is copied like any other", async () => {
+  mkdirSync(join(home, "project"));
+  const ignore = join(home, "project", ".gitignore");
+  writeFileSync(ignore, "dist\n");
+  filter()(Buffer.from(pasted(ignore)));
+  const [copy = ""] = copies(await afterCopies());
+  expect(copy.endsWith("/.gitignore")).toBe(true);
+  expect(readFileSync(copy, "utf8")).toBe("dist\n");
+});
+
+test("a .gitignore the agent made a link out of its folder is never written through", async () => {
+  const yours = file("yours.txt", "yours");
+  mkdirSync(join(agent, dropsFolder));
+  symlinkSync(yours, join(agent, dropsFolder, ".gitignore"));
+  const shot = file("shot.png");
+  filter()(Buffer.from(pasted(shot)));
+  const [copy = ""] = copies(await afterCopies());
+  expect(readFileSync(copy, "utf8")).toBe("the text of shot.png");
+  expect(readFileSync(yours, "utf8")).toBe("yours");
 });
 
 test("a drops folder the agent made a link out of its folder is never written through", async () => {
@@ -202,7 +223,9 @@ test("a missing path, a folder, a file you can't read and one too big keep their
   take(Buffer.from(pasted(`${join(home, "gone.png")} ${shot}`)));
   const out = await afterCopies();
   expect(out.startsWith(`\x1b[200~${join(home, "gone.png")} ${agent}/`)).toBe(true);
-  expect(readdirSync(join(agent, dropsFolder))).toHaveLength(1);
+  expect(
+    readdirSync(join(agent, dropsFolder)).filter((name) => name !== ".gitignore"),
+  ).toHaveLength(1);
 });
 
 test("a paste split over several reads arrives whole, and keys after it follow it", async () => {
