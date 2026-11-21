@@ -807,3 +807,31 @@ console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
   expect(seen.received).not.toContain("After.");
   expect(seen.waiting).toBe(1);
 });
+
+// A window that ended by itself while its notes wait behind a draft isn't settled yet. The
+// human writing still marks where their message came, so a note after it waits for the window
+// the answer opens.
+test("the human's message keeps its place when the window had ended by itself", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+leadTurnStarted(db, tmux, app, "What is left to do?");
+leadTurnEnded(db, tmux, app);
+db.run("UPDATE repositories SET reading_until = ?", [Date.now()]);
+messageLead(db, tmux, readThread(db, "app-12"), "Before.");
+await Bun.sleep(500);
+leadTurnStarted(db, tmux, app, "And now?");
+messageLead(db, tmux, readThread(db, "app-12"), "After.");
+await Bun.sleep(500);
+leadTurnEnded(db, tmux, app);
+(await import("node:fs")).rmSync(home + "/draft");
+await until(() => received().includes("Before."));
+await Bun.sleep(2000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
+  );
+  expect(seen.received).toContain("Before.");
+  expect(seen.received).not.toContain("After.");
+  expect(seen.waiting).toBe(1);
+});

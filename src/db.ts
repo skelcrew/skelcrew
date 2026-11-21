@@ -607,9 +607,8 @@ function prepareTables(db: Database): void {
   // when Skelcrew's routine notes last went into the lead, so the next digest waits its turn,
   // across a restart too. `reading_until` is when the lead's reading window ends: after the lead
   // answers the human, nothing is typed into it until then, so the human can read the answer.
-  // `reading_released` is the place in the notes' sequence where the human last ended a window
-  // early by writing to the lead, or where a window that ended by itself was last seen ended.
-  // What came before it goes in once the lead is idle, though its answer opens a new window.
+  // `reading_released` is the place in the notes' sequence of the human's last message to the
+  // lead. What came before it goes in once the lead is idle, though its answer opens a window.
   // `lead_human_turn` is whether the human started the lead's turn under way, whose end opens a
   // window.
   const repositoryColumns = {

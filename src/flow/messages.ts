@@ -666,15 +666,13 @@ export function leadTurnStarted(
     repo,
   ]);
   if (!yours) return;
-  // A window still open ends now. What came before the human's message is released from it,
-  // and from the window the lead's answer opens, so it waits only for the lead to be idle again.
-  const where = "WHERE owner = ? AND repo = ? AND reading_until > ?";
-  const open = db.query(`SELECT 1 FROM repositories ${where}`).get(owner, repo, Date.now());
-  if (open !== null)
-    db.run(
-      "UPDATE repositories SET reading_until = 0, reading_released = ? WHERE owner = ? AND repo = ?",
-      [nextSequence(db), owner, repo],
-    );
+  // Any window ends now, open or not. The human's message takes its place in the notes'
+  // sequence: what came before it goes in once the lead has answered, though the answer opens a
+  // new window, and what comes after waits for that window.
+  db.run(
+    "UPDATE repositories SET reading_until = 0, reading_released = ? WHERE owner = ? AND repo = ?",
+    [nextSequence(db), owner, repo],
+  );
   typeLeadNotes(db, sessions);
 }
 
@@ -692,19 +690,9 @@ export function leadTurnEnded(
   const turn = z.object({ lead_human_turn: z.coerce.boolean() }).nullable().parse(row);
   if (!turn?.lead_human_turn) return;
   db.run(`UPDATE repositories SET lead_human_turn = 0 ${where}`, [owner, repo]);
-  // A window that ended by itself, unseen, still releases what it held, though a new one opens.
-  const now = Date.now();
-  const ended = db
-    .query(`SELECT 1 FROM repositories ${where} AND reading_until > 0 AND reading_until <= ?`)
-    .get(owner, repo, now);
-  if (ended !== null)
-    db.run(`UPDATE repositories SET reading_released = ? ${where}`, [
-      nextSequence(db),
-      owner,
-      repo,
-    ]);
-  db.run("UPDATE repositories SET reading_until = ? WHERE owner = ? AND repo = ?", [
-    now + readingFor,
+  // The human's message ended any earlier window, so this is the only one.
+  db.run(`UPDATE repositories SET reading_until = ? ${where}`, [
+    Date.now() + readingFor,
     owner,
     repo,
   ]);
