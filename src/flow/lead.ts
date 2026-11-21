@@ -188,31 +188,45 @@ export function approvedFlowsTold(clone: string): string {
 // as builders do. Throws when that host isn't installed, or when the plugin the lead ran on is
 // gone, as the lead may still run there and a second one would share its conversation. A lead
 // running on another .agents/ than the one you approved now starts again on it, keeping its
-// conversation, as a lead reads its instructions only as it starts.
+// conversation, as a lead reads its instructions only as it starts. While it runs, the look for
+// exited leads leaves this lead alone: the session it replaces may be gone or ended, and would be
+// taken for a lead you exited, which would close the tab and end the new lead.
 export async function startLead(
   db: Database,
   sessions: string,
   repository: Repository,
 ): Promise<void> {
+  const key = `${repository.owner}/${repository.repo}`;
+  startingLeads.set(key, (startingLeads.get(key) ?? 0) + 1);
+  try {
+    // A look for exited leads may be ending this lead's last session, and a host can give the
+    // new one the same ID, so the start waits for that first.
+    await endingLeads.get(key);
+    await startLeadSession(db, sessions, repository);
+  } finally {
+    const left = (startingLeads.get(key) ?? 1) - 1;
+    if (left > 0) startingLeads.set(key, left);
+    else startingLeads.delete(key);
+  }
+}
+
+// How many starts of each lead are under way, by its repository's owner/name, for the look for
+// exited leads to leave those leads alone.
+const startingLeads = new Map<string, number>();
+
+// Does startLead's work: keeps the lead running, or ends what is left of its last session and
+// starts it again.
+async function startLeadSession(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+): Promise<void> {
   const { owner, repo } = repository;
-  // A look for exited leads may be ending this lead's last session, and a host can give the new
-  // one the same ID, so the start waits for that first.
-  await endingLeads.get(`${owner}/${repo}`);
   const lead = leadOf(db, owner, repo);
   const before = await leadSession(db, sessions, owner, repo);
   if (before === null)
     throw new Error(
       `${owner}/${repo}'s lead ran on ${lead.host}, which isn't installed now: install it again to reach the lead`,
-    );
-  // A look for exited leads that finds the session gone, or ended, while this replaces it would
-  // take the lead for one you exited. So its ID goes at once, and the look leaves a lead without
-  // one alone. A lead kept running gets it back, as does one whose host couldn't say, which may
-  // still run there.
-  db.run("UPDATE repositories SET lead_host_id = NULL WHERE owner = ? AND repo = ?", [owner, repo]);
-  const keepId = () =>
-    db.run(
-      "UPDATE repositories SET lead_host_id = ? WHERE owner = ? AND repo = ? AND lead_host_id IS NULL",
-      [before.id, owner, repo],
     );
   // A lead still running is kept. One on tmux started by a release before leads stayed on a
   // clean exit is given that setting now, or exiting it would end its session and never close
@@ -223,18 +237,11 @@ export async function startLead(
   // approved an .agents/ it may not run on. With none approved it runs on the built-in roles
   // already, and is left running, as upgrading Skelcrew shouldn't stop a lead's work.
   const approved = approvedAgents(repository) ?? "none";
-  const [found, failed] = await Promise.all([
-    hasSession(before.host, before.id),
-    failedScreen(before.host, before.id),
-  ]).catch((error) => {
-    keepId();
-    throw error;
-  });
-  if (found) {
+  if (await hasSession(before.host, before.id)) {
+    const failed = await failedScreen(before.host, before.id);
     const older = lead.agents === null ? approved !== "none" : lead.agents !== approved;
     if (failed === null && !older) {
       if (typeof before.host === "string") keepOnExit(before.host, before.id);
-      keepId();
       return;
     }
     console.log(
@@ -430,9 +437,8 @@ export function closeExitedLeads(db: Database, sessions: string, recover = false
 // one you just exited. The tab is marked closed before the session ends, so a sidebar that finds
 // the session gone also finds the tab closed, and doesn't bring the lead back. A plugin's host
 // that can't answer, or a lead still starting there, counts as not exited: a host can fail for a
-// moment, and a lead running there must not lose its tab. A lead that starts again while its
-// host answers, such as one you opened meanwhile, keeps its tab, as its start clears its ID
-// before it ends the session it replaces.
+// moment, and a lead running there must not lose its tab. A lead starting, or one that starts
+// while its host answers, such as one you opened meanwhile, is left alone and keeps its tab.
 export async function closeIfExited(
   db: Database,
   sessions: string,
@@ -441,11 +447,13 @@ export async function closeIfExited(
 ): Promise<boolean> {
   const lead = leadOf(db, owner, repo);
   const host = hostNamed(db, sessions, lead.host);
-  if (host === null || (typeof host !== "string" && lead.hostId === null)) return false;
+  const starting = () => startingLeads.has(`${owner}/${repo}`);
+  if (host === null || (typeof host !== "string" && lead.hostId === null) || starting())
+    return false;
   const id = lead.hostId ?? lead.name;
   if (!(await agentExited(host, id).catch(() => false))) return false;
   const now = leadOf(db, owner, repo);
-  if (now.host !== lead.host || now.hostId !== lead.hostId) return false;
+  if (now.host !== lead.host || now.hostId !== lead.hostId || starting()) return false;
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
   // The host may have forgotten the session already, or a look that ran at the same time ended
   // it, so only a session still there is ended. The tab is closed either way, and opening the

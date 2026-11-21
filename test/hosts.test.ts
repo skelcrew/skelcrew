@@ -614,6 +614,27 @@ console.log(await starting, tab());`,
   expect(said).toContain("started 0\n");
 }, 30_000);
 
+// The lead's last session ended with code 0 and the lead starts again in its place, slowly
+// ending that session first. Meanwhile, typing a note finds the old session by its labels, and a
+// look for exited leads comes.
+test("a lead starting in place of an ended session keeps its tab, whatever finds that session", () => {
+  const said = leadRace(
+    "'fake', NULL",
+    `const { leadSession } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { name } = leadOf(db, "simon", "app");
+const id = await startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["true"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("UPDATE repositories SET lead_host_id = ?", [id]);
+for (let i = 0; i < 200 && !fs.existsSync(fake + "/sessions/" + id + "/exit"); i++) await Bun.sleep(25);
+fs.writeFileSync(fake + "/slow-end", "");
+const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
+await Bun.sleep(1000);
+await leadSession(db, "unused", "simon", "app");
+await closeExitedLeads(db, "unused");
+console.log(await starting, tab(), await agentRuns(host, id));`,
+  );
+  expect(said).toContain("started 0 true\n");
+}, 30_000);
+
 // The look takes a while to end the lead you exited, and you open the repository meanwhile. The
 // host gives the new lead the same ID as the last one.
 test("a lead opened again while its exited session is being ended keeps running", () => {
