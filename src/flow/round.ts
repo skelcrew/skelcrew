@@ -676,9 +676,10 @@ async function actOnVerdict(
     record(db, folder, {}, `${why}; each poll tries again`);
     const line = `${threadName(db, thread)} ${why}`.replace(/\s+/g, " ").slice(0, 200);
     noteForLead(db, sessions, repository, `${line}. Skelcrew tries again at each poll.`);
-    typeLeadNotes(db, sessions);
   });
-  typeLeadNotes(db, sessions);
+  // The notes saved here, such as that the thread needs you at the round limit, are typed in once
+  // the review is on the PR, so a lead that looks at once finds this round's review there.
+  const told = posted.then(() => typeLeadNotes(db, sessions));
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
   // for when you start it again. A round cancelled meanwhile leaves them to the newer round,
   // which drops them, or to sc start, which types them in.
@@ -686,7 +687,7 @@ async function actOnVerdict(
     await builderBack;
     if (!signal.aborted) await queueChanges(db, sessions, folder, tell, signal);
   }
-  await posted;
+  await told;
 }
 
 // Ends a round whose task's flow has no review stage, once CI's first check had its chance to
@@ -815,7 +816,7 @@ export async function retryPost(db: Database, folder: string): Promise<void> {
 // When the forge can't edit it, it posts a new one only if the verdict or findings changed, so a
 // round that found the same again adds nothing. One deleted from the PR is posted again. The rounds one by one stay in the thread's log.
 // What it posted is saved on the thread at once, so a later round edits it though this one is
-// cancelled. Two rounds of a thread never post at once: a round's review starts only once the
+// cancelled. Skelcrew's copy of the PR then reads it back, so sc show has this round's review. Two rounds of a thread never post at once: a round's review starts only once the
 // round before has ended, posting included, so the later round always reads what the earlier
 // one saved, and its verdict is the one left on the PR.
 async function postOrEdit(
@@ -876,6 +877,13 @@ async function postOrEdit(
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
   record(db, folder, { review_post: { pr, id, verdict, findings } }, `${how} on PR #${pr}`);
+  // sc show and the list read the PR's review from Skelcrew's copy, which a poll brings up to
+  // date only later. Until then they would show the round before, beside this round's verdict.
+  // The review is on the PR already, so a forge that fails to answer here only leaves that to
+  // the next poll: failing the post would post it again.
+  await refreshPr(db, repository, pr).catch((error) =>
+    console.log(`${folder}: couldn't read PR #${pr} back after its review: ${errorText(error)}`),
+  );
 }
 
 // Brings Skelcrew's copy of the PR up to date with its forge, for a review the thread saved no
