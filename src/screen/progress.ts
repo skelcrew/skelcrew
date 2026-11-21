@@ -1,10 +1,11 @@
-// What each working builder is doing, for its row in the sidebar: the step it is on, the tokens
-// it used and how far through its plan it is, read from its harness's conversation file. The
-// sidebar looks each second, but a file is read at most every 10 seconds, and only what was
-// added since the last read.
+// What each working agent is doing, for its row in the sidebar, a builder's or the lead's: the
+// step it is on, the tokens it used and how far through its plan it is, read from its harness's
+// conversation file. The sidebar looks each second, but a file is read at most every 10 seconds,
+// and only what was added since the last read.
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { noProgress, type Progress } from "../agents/progress.ts";
-import { builderHarness, cloneOf, type Thread } from "../flow/thread.ts";
+import { cloneOf, type Thread } from "../flow/thread.ts";
 
 // What was read of a builder's conversation file: which file, if it has one yet, how far, what
 // that said, and when it was last looked at. `skipping` says the read stopped inside a line too
@@ -16,7 +17,7 @@ type Read = {
   progress: Progress;
   at: number;
 };
-// The reads, by the thread's folder, kept for as long as the sidebar runs.
+// The reads, by the agent's name, kept for as long as the sidebar runs.
 const reads = new Map<string, Read>();
 // How long what was read is shown before the file is looked at again.
 const every = 10_000;
@@ -24,20 +25,36 @@ const every = 10_000;
 // longer than this is passed over, as no harness writes what the sidebar shows in one so long.
 const most = 16 * 1024 * 1024;
 
+// An agent whose conversation is read: its name, which its harness saves the conversation
+// under, its harness, the folder it runs in, and its session's ID.
+type Agent = { name: string; harness: HarnessName; folder: () => string; session: string | null };
+
 // Returns what the thread's builder's conversation says of its work so far, at a moment in
-// milliseconds, with each part null while the harness hasn't given it. Only the builder's: a
-// review's conversation is saved elsewhere, or not at all.
-export function builderProgress(thread: Thread, now: number): Progress {
-  // A look less than 10 seconds ago is still good enough. A clock set back looks again.
-  const before = reads.get(thread.folder);
+// milliseconds. Only the builder's: a review's conversation is saved elsewhere, or not at all.
+export const builderProgress = (thread: Thread, now: number): Progress =>
+  agentProgress(
+    {
+      name: thread.folder,
+      harness: thread.harness ?? "claude",
+      folder: () => cloneOf(thread),
+      session: thread.session,
+    },
+    now,
+  );
+
+// Returns what an agent's conversation says of its work so far, at a moment in milliseconds,
+// with each part null while the harness hasn't given it. A look less than 10 seconds ago is
+// still good enough, and a clock set back looks again. Another file, such as a new conversation
+// after the old one couldn't be brought back, is read from its start. A folder that can't be
+// looked in means no file, and a reader that fails on what the agent wrote leaves the progress
+// as it was, as the sidebar must go on drawing.
+export function agentProgress(agent: Agent, now: number): Progress {
+  const before = reads.get(agent.name);
   if (before && now - before.at < every && now >= before.at) return before.progress;
-  // Another file, such as a new conversation after the old one couldn't be brought back, is
-  // read from its start. A folder that can't be looked in, such as one the agent made
-  // unreadable, means no file: the sidebar must go on drawing.
-  const harness = builderHarness(thread);
+  const harness = harnessNamed(agent.harness);
   let file: string | null = null;
   try {
-    file = thread.session && harness.conversation(thread.folder, cloneOf(thread), thread.session);
+    file = agent.session && harness.conversation(agent.name, agent.folder(), agent.session);
   } catch {
     file = null;
   }
@@ -46,9 +63,6 @@ export function builderProgress(thread: Thread, now: number): Progress {
     before && before.file === file
       ? { ...before, at: now }
       : { file, offset: 0, skipping: false, progress: noProgress, at: now };
-  // Reads what was added since. A file that shrank was written anew, so it is read again from
-  // its start. The file is the agent's to write, so a reader that fails on what it finds there
-  // leaves the progress as it was rather than end the sidebar.
   const added = file ? readAdded(file, read.offset, read.skipping) : null;
   if (file && added) {
     const { end: offset, skipping } = added;
@@ -59,7 +73,7 @@ export function builderProgress(thread: Thread, now: number): Progress {
       read = { ...read, offset, skipping };
     }
   }
-  reads.set(thread.folder, read);
+  reads.set(agent.name, read);
   return read.progress;
 }
 
