@@ -26,7 +26,6 @@ const sections: [string, [string, string][]][] = [
       ["merge --when-ready <task> | <#pr>", "Merge it once it is approved and green"],
       ["merge --skip-review <task> | <#pr>", "Merge it without Skelcrew's approval once CI passes"],
       ["merge --cancel <task> | <#pr>", "Stop a merge armed with either"],
-      ["<task>/<role>", "One thread, such as APP-12/builder, for a command that acts on one"],
     ],
   ],
   [
@@ -159,9 +158,8 @@ export function help(color = colorful()): string {
   lines.push(
     "",
     dim("  A task is named after its issue, such as APP-12, or, started with no issue,"),
-    dim("  by a T and a number, such as APP-T100. Its thread is named after its task and"),
-    dim("  role, APP-12/builder, or APP-12 for short. Type a name in any case: app-t100"),
-    dim("  is APP-T100. --remote keeps Skelcrew on the other side up to date with yours,"),
+    dim("  by a T and a number, such as APP-T100. Type a name in any case: app-t100 is"),
+    dim("  APP-T100. --remote keeps Skelcrew on the other side up to date with yours,"),
     dim("  after asking. See skelcrew.dev."),
     "",
   );

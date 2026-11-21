@@ -1,18 +1,9 @@
-// Reads what a command was given: the names of tasks and threads among its arguments, a task's
-// title and body on stdin, and the human's words in a file. Says so when a command can't run
-// as given.
+// Reads what a command was given: the names of tasks among its arguments, a task's title and
+// body on stdin, and the human's words in a file. Says so when a command can't run as given.
 
 export function splitTaskName(word?: string): [string, string] | undefined {
   const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/i);
   return parts?.[1] && parts[2] ? [parts[1], parts[2].toLowerCase()] : undefined;
-}
-
-export function splitThreadName(word?: string): [string, string] | undefined {
-  const parts = word?.match(/^(.+)\/([a-z]+)$/i);
-  const task = splitTaskName(parts?.[1] ?? word);
-  if (task && parts?.[2] && parts[2].toLowerCase() !== "builder")
-    throw new Error(`${parts[1]} has no ${parts[2]} thread: a task's only thread is its builder`);
-  return task;
 }
 
 export function parseTask(text: string, command: string): { title: string; body: string } {
@@ -69,7 +60,10 @@ const commands = [
   "plugin",
 ];
 
-function usageMessage(command: string): string {
+function usageMessage(command: string, word?: string): string {
+  const task = word?.match(/^(.+)\/builder$/i)?.[1];
+  if (task && splitTaskName(task))
+    return `sc ${command} names the task alone now, such as ${task.toUpperCase()}, not ${word}.`;
   if (command === "--remote") return "--remote needs a host, such as sc --remote simon@workbox.";
   if (command === "remote")
     return "sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install.";
@@ -82,7 +76,7 @@ function usageMessage(command: string): string {
   return "that isn't a Skelcrew command. Run sc --help to see them.";
 }
 
-export function usage(command?: string): never {
-  console.error(`Skelcrew: ${usageMessage(command ?? "")}`);
+export function usage(command?: string, word?: string): never {
+  console.error(`Skelcrew: ${usageMessage(command ?? "", word)}`);
   process.exit(1);
 }

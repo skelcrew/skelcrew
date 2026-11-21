@@ -658,17 +658,15 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
   // after the body, oldest first, as the thread's reviewer gets them. A builder's message to
   // the lead never does: a builder must not change what it is reviewed against.
   test("shows the lead's messages to the builder after the task, and not the builder's", async () => {
-    // app-12's builder waits at a bare prompt, so the lead's messages are typed in at once.
     tmux("kill-session", "-t", "=app-12");
     tmux("new-session", "-d", "-s", "app-12", "stty -echo; echo ❯; exec sleep 300");
     serve();
     await untilAnswers();
     await openApp();
     const builder = await builderSocket();
-    // The lead names the builder by its task, or by its task and role.
     const tell = (to: string, text: string) => asAgent(["tell", to, text], leadSocket());
     expect((await tell("app-12", "Keep the CSV export too.")).err).toBe("");
-    expect((await tell("app-12/builder", "Name the file export.json.")).err).toBe("");
+    expect((await tell("APP-12", "Name the file export.json.")).err).toBe("");
     expect((await asAgent(["tell", "lead", "Done with the CSV part."], builder)).err).toBe("");
     const log = () => read(join(data(), "threads", "app-12.log"));
     await until(() => log().includes("export.json"), { timeout: 15_000 });
@@ -678,7 +676,6 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
       /\nDescription\nExport threads as JSON\.\n\nKeep it small\.\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nKeep the CSV export too\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nName the file export\.json\.\n$/,
     );
     expect(shown.out).not.toContain("Done with the CSV part.");
-    // The thread's log keeps each one, with who sent it and when.
     const last = JSON.parse(log().trim().split("\n").at(-1) ?? "{}");
     expect(last.updates).toEqual([
       { from: "lead", at: expect.any(Number), text: "Keep the CSV export too." },
@@ -1106,8 +1103,6 @@ describe("sc peek and sc interrupt", () => {
     const peeked = await skel(["peek", "app-12"]);
     expect(peeked.err).toBe("");
     expect(peeked.out).toBe("Writing the export\n");
-    // A thread is also named by its task and role.
-    expect((await skel(["peek", "app-12/builder"])).out).toBe("Writing the export\n");
   });
 
   test("sc interrupt sends the builder Esc, and its session goes on", async () => {
@@ -1132,8 +1127,11 @@ describe("sc peek and sc interrupt", () => {
     const interrupted = await skel(["interrupt", "app-9"]);
     expect(interrupted.err).toBe("Skelcrew: APP-9's builder isn't running: the thread is failed\n");
     expect((await skel(["peek", "APP-99"])).err).toBe("Skelcrew: there is no thread APP-99\n");
-    expect((await skel(["peek", "app-12/reviewer"])).err).toBe(
-      "Skelcrew: app-12 has no reviewer thread: a task's only thread is its builder\n",
+    expect((await skel(["peek", "app-12/builder"])).err).toBe(
+      "Skelcrew: sc peek names the task alone now, such as APP-12, not app-12/builder.\n",
+    );
+    expect((await skel(["peek", "app-12/reviewer"])).err).toContain(
+      "sc peek was given arguments it doesn't take",
     );
     expect((await skel(["peek"])).err).toContain("sc peek was given arguments it doesn't take");
   });
