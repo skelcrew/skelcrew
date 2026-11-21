@@ -11,7 +11,7 @@ import { drawPane } from "../list/pane.ts";
 import { listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine } from "../plugins/runtime.ts";
-import { attachedMark, panes, skelcrewCommand } from "./screen.ts";
+import { attachedMark, panes, skelcrewCommand, zoomIn } from "./screen.ts";
 
 // What the details pane scrolls by: Page Up, as 5, or Page Down, as 6, then the wheel up, as 64,
 // or down, as 65, as your terminal reports a press of the mouse.
@@ -88,7 +88,7 @@ export async function attachTask(
   // which shows every pane again.
   if (takeTyping()) {
     screenTmux(agents, ["select-pane", "-t", pane]);
-    if (zoom) screenTmux(agents, ["resize-pane", "-Z", "-t", pane]);
+    if (zoom) screenTmux(agents, zoomIn(pane));
   }
   const started = screenTmux(agents, ["respawn-pane", "-k", "-t", pane, "--", ...attach]);
   if (!started.ok) {

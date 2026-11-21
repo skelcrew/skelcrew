@@ -20,6 +20,7 @@ const base: Top = {
   versions: ["v0.1.0"],
   typingRight: true,
   fullScreen: false,
+  side: "",
 };
 // Returns the header and the boxes' row as tmux formats, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
@@ -249,4 +250,20 @@ test("at every width both rows are exactly as wide as the terminal, so the box's
 test("a repository's name is shown, never read as a format", () => {
   const tabs = [tab("a#[fg=red]b")];
   expect(headerRow({ tabs, open: "simon/a#[fg=red]b" })).toContain("  a##[fg=red]b  ");
+});
+
+test("on a screen that shows one side at a time, the header names it, with a way back to tap", () => {
+  const narrow = { sidebar: 28, right: 25 };
+  const agent = { side: "APP-12", typingRight: true, fullScreen: true };
+  expect(above(agent, narrow)).toBe("Skelcrew ‹ sidebar · APP-12 v0.1.0");
+  expect(headerRow(agent, narrow)).toContain("#[range=user|sidebar]");
+  expect(seen(headerRow(agent, narrow))).toHaveLength(terminal(narrow));
+  const sidebar = { side: "sidebar", typingRight: false, fullScreen: true };
+  expect(above(sidebar, narrow)).toBe("Skelcrew sidebar v0.1.0");
+  expect(headerRow(sidebar, narrow)).not.toContain("range=user|sidebar");
+});
+
+test("a side's name too long for the header gives way, and the version stays", () => {
+  const agent = { side: "a-very-long-task-name-indeed", typingRight: true, fullScreen: true };
+  expect(above(agent, { sidebar: 20, right: 5 })).toBe("Skelcrew v0.1.0");
 });

@@ -41,10 +41,10 @@ import { pluginHost } from "../plugins/runtime.ts";
 import { versionLabels } from "../version.ts";
 import { dropAnswerOption, dropAsk, escapeTime, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
-import { filled, pad, removeControlCodes } from "./look.ts";
-import { attachedMark, leadOnHost, panes } from "./screen.ts";
+import { filled, grey, pad, paint, removeControlCodes } from "./look.ts";
+import { attachedMark, leadOnHost, narrowBelow, panes, sidebarFor, zoomIn } from "./screen.ts";
 import { attachTask, showTask } from "./task.ts";
-import { drawTop } from "./top.ts";
+import { drawTop, sidebarRange } from "./top.ts";
 
 // The repository open in the sidebar, by its owner and name, and its lead's session.
 type Open = { owner: string; repo: string; lead: string };
@@ -104,7 +104,7 @@ const keyNames: Record<string, string> = {
 
 function sidebarFooter(row: Row, restarts: boolean): string {
   const first = "↑↓ move  w/⌥W close";
-  const end = `${restarts ? "  R restart" : ""}  ⌥Q quit`;
+  const end = `${restarts ? "  R restart" : ""}  q/⌥Q quit`;
   if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎/a full screen  0-6 sections${end}`;
   if (row.part === "heading") {
     const fixed = row.section === "needs you";
@@ -266,6 +266,7 @@ export async function runSidebar(
   let held = false;
   // Where your typing went at the last look, which the top of the boxes shows and the footer says.
   let typingRight = true;
+  let narrow = false;
   // What the footer says in place of its keys until the next key, the question it asks, and
   // whether the daemon is at work on an answer.
   let said: string | null = null;
@@ -331,7 +332,16 @@ export async function runSidebar(
     if (rows[here]?.part !== "lead" && !command.includes(attachedMark)) return;
     held = false;
     screenTmux(agents, ["select-pane", "-t", rightPane]);
-    if (zoom) screenTmux(agents, ["resize-pane", "-Z", "-t", rightPane]);
+    if (zoom) screenTmux(agents, zoomIn(rightPane));
+  };
+  const toSidebar = () => {
+    held = true;
+    screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
+  };
+  const endAttachment = () => {
+    const command = screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_start_command}"]);
+    if (!command.out.includes(attachedMark)) return toSidebar();
+    screenTmux(agents, ["run-shell", "-t", rightPane, "pkill -P #{pane_pid}"]);
   };
   const follow = () => {
     const row = rows[here];
@@ -409,7 +419,7 @@ export async function runSidebar(
   // you need most and what Esc stops.
   const footerText = () => {
     if (closing) return closingText(closing).footer;
-    if (empty) return "⌥Q quit";
+    if (empty) return "q/⌥Q quit";
     if (said ?? asking) return said ?? asking?.question.ask ?? "";
     const row = rows[here];
     if (!typingRight && row) return sidebarFooter(row, restartOf(row) !== null);
@@ -423,20 +433,20 @@ export async function runSidebar(
     const { width, height } = size();
     const headings = sectionHeadings(all, opened, builders);
     const room = Math.max(width - 1, 1);
+    const keys = narrow && !typingRight ? keyLines(lastFooter, room) : [];
+    const rowsHeight = Math.max(height - 1 - keys.length, 1);
     const drawn = closing
       ? { lines: questionLines(closingText(closing).lines, room), targets: [], top }
-      : drawRows(rows, headings, here, top, room, height - 1);
+      : drawRows(rows, headings, here, top, room, rowsHeight);
     top = drawn.top;
     targets = [...notice.map((): Target => null), null, ...drawn.targets];
-    // The lines of the question are padded to the sidebar's height, so none of the rows before
-    // it shows under it.
-    const below = Math.max(height - 1 - drawn.lines.length, 0);
-    const shownLines = closing ? [...drawn.lines, ...Array<string>(below).fill("")] : drawn.lines;
-    const lines = ["", ...shownLines].map((line) => filled(line, width));
+    const below = Math.max(rowsHeight - drawn.lines.length, 0);
+    const padded = closing || keys.length > 0;
+    const shownLines = padded ? [...drawn.lines, ...Array<string>(below).fill("")] : drawn.lines;
+    const lines = ["", ...shownLines, ...keys].map((line) => filled(line, width));
     const frame = [...notice, ...lines].join("\n");
     if (frame === lastFrame) return;
     lastFrame = frame;
-    // Every line fills the pane, so nothing of the last frame is left to clear.
     doing("drawing the sidebar", () =>
       process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`),
     );
@@ -484,13 +494,14 @@ export async function runSidebar(
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
     // anything is drawn, as the top rows and the footer show it.
     // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it.
-    const [active, zoomed] = doing("asking tmux where your typing goes", () =>
-      screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active} #{window_zoomed_flag}"])
-        .out.trim()
-        .split(" "),
+    const format = "#{pane_active} #{window_zoomed_flag} #{window_width}";
+    const [active, zoomed, across] = doing("asking tmux where your typing goes", () =>
+      screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim().split(" "),
     );
     typingRight = active === "1";
     const fullScreen = zoomed === "1";
+    const windowWidth = Number(across);
+    narrow = windowWidth < narrowBelow;
     notice = noticeLines(updateNotice(db), size().width);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
@@ -539,8 +550,11 @@ export async function runSidebar(
     // The header and the top of the boxes go to tmux's status lines, and only when they changed.
     // A right side that fills the terminal is as wide as it, so the rows keep the sidebar's places
     // and the tabs take what is left.
-    const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
-    const right = fullScreen ? width - size().width - 5 : width;
+    const sidebar = narrow ? sidebarFor(windowWidth) - 2 : size().width;
+    const right = fullScreen
+      ? windowWidth - sidebar - 5
+      : doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
+    const name = shown === open.lead ? "lead" : (rows[here]?.name ?? "");
     const look = {
       tabs,
       open: empty ? "" : `${open.owner}/${open.repo}`,
@@ -548,8 +562,9 @@ export async function runSidebar(
       versions: versionLabels(),
       typingRight,
       fullScreen,
+      side: narrow ? (typingRight ? name : "sidebar") : "",
     };
-    const top = drawTop(look, { sidebar: size().width, right });
+    const top = drawTop(look, { sidebar, right });
     if (`${top.header}\n${top.boxes}` !== lastTop) {
       lastTop = `${top.header}\n${top.boxes}`;
       doing("drawing the top row", () => showTop(agents, session, top));
@@ -634,7 +649,7 @@ export async function runSidebar(
     held = back.held;
     if (!back.right) return;
     screenTmux(agents, ["select-pane", "-t", rightPane]);
-    if (back.zoomed) screenTmux(agents, ["resize-pane", "-Z", "-t", rightPane]);
+    if (back.zoomed) screenTmux(agents, zoomIn(rightPane));
   };
   // Closes or removes the repository the question is about once you said y, as sc repo rm does
   // for a removal, which refuses the same way. The screen moves to the next tab as the closed one
@@ -749,6 +764,7 @@ export async function runSidebar(
     respawnPane(agents, rightPane, ["sh", "-c", say, "sh", ...lines]);
     tty = paneTty(agents, rightPane);
     shown = refused;
+    if (narrow) said = reason;
   };
 
   const enter = (zoom = false) => {
@@ -803,17 +819,17 @@ export async function runSidebar(
       return toRight();
     }
     if (target.row === here) return enter();
+    if (narrow) {
+      moveTo(target.row);
+      return enter();
+    }
     moveTo(target.row);
   };
 
   const press = (key: string) => {
     if (key === dropAsk) return answerDrop();
     const name = keyNames[key] ?? key;
-    if (name === "to sidebar") {
-      held = true;
-      screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
-      return;
-    }
+    if (name === "to sidebar") return toSidebar();
     if (working) return;
     if (closing) return answerClosing(closing, name);
     if (name === "close") return askToClose();
@@ -833,6 +849,10 @@ export async function runSidebar(
       else void goAhead(offer);
       return;
     }
+    if (key === "q") {
+      screenTmux(agents, ["kill-session", "-t", `=${session}`]);
+      return;
+    }
     said = null;
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
@@ -847,6 +867,7 @@ export async function runSidebar(
       const range = key.slice(`${esc}]skel-tab;`.length, -1);
       const tab = /^\d+$/.test(range) ? tabs[Number(range)] : undefined;
       if (tab) switchTo(tab.fullName);
+      if (range === sidebarRange) endAttachment();
       return refresh();
     }
     if (button && column && line) return click(button, Number(column), Number(line));
@@ -935,6 +956,18 @@ function questionLines(paragraphs: string[], room: number): string[] {
       .split("\n")
       .map((line) => `${pad}${line}`),
   ]);
+}
+
+function keyLines(keys: string, room: number): string[] {
+  const width = Math.max(room - pad.length, 1);
+  const lines: string[] = [];
+  for (const group of keys.split("  ").filter(Boolean)) {
+    const last = lines.at(-1);
+    if (last !== undefined && Bun.stringWidth(`${last}  ${group}`) <= width)
+      lines[lines.length - 1] = `${last}  ${group}`;
+    else lines.push(group);
+  }
+  return lines.map((line) => paint(grey, `${pad}${line}`));
 }
 
 // Returns the lines that go above the rest of the sidebar for a notice, such as a release installed
