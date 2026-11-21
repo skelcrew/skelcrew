@@ -817,14 +817,25 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { running: true, pid: process.pid, release, ...runningCode, ...thread };
       }
       case "lead": {
-        // A lead you exited this second is closed first, so the daemon's next look can't close
-        // the tab again while the lead starts, and a tab can't bring it back. It comes before
-        // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
-        await closeExitedLeads(db, sessions);
-        // From outside any repository Skelcrew has, the one you opened last.
-        const repository =
-          (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
-          lastOpened(db);
+        // From outside any repository Skelcrew has, the one you opened last. A lead you exited
+        // this second is closed first, so the daemon's next look can't close the tab again while
+        // the lead starts, and a tab can't bring it back. Only the repository asked for is
+        // checked, so a slow host of another repository's lead holds up nothing here. Plain sc
+        // picks again when the one it picked just closed, as it then opens another: each pass
+        // closes an open tab, so this ends.
+        const here = request.from === undefined ? undefined : repositoryAt(db, request.from);
+        let repository = here ?? lastOpened(db);
+        const tabOpen = (one: Repository) =>
+          db
+            .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
+            .get(one.owner, one.repo) !== null;
+        while (
+          repository &&
+          tabOpen(repository) &&
+          (await closeIfExited(db, sessions, repository.owner, repository.repo)) &&
+          !here
+        )
+          repository = lastOpened(db);
         if (!repository) throw new Error(noRepositories);
         const { owner, repo } = repository;
         // A tab never brings back a lead you exited, not even from a screen that still shows
