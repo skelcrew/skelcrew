@@ -465,6 +465,10 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // of the queue, as the daemon decides, so the question says so, and what the queue waits on.
   const full =
     builders.limit !== null && (builders.queued > 0 || builders.running >= builders.limit);
+  // f offers a start over the limit only while no builder's place is free. Tasks can wait with
+  // a place free, such as behind a claim the tracker hasn't taken, and a start then isn't over
+  // the limit.
+  const noPlace = builders.limit !== null && builders.running >= builders.limit;
   // Returns the row of a task not started yet, which Enter asks to start, as sc start does.
   const notStarted = (task: string, title: string, changed: number): Row => {
     const name = taskName(repository.name, task);
@@ -499,7 +503,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
             request: { command: "start", repo: `${open.owner}/${open.repo}`, task },
             queues: false,
           },
-      startNow: full ? startNow(task) : null,
+      startNow: noPlace ? startNow(task) : null,
       merge: null,
       link: null,
       branch: null,

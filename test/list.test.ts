@@ -345,6 +345,8 @@ test("a claim the tracker hasn't taken yet is what the queue waits on, with buil
   expect(all.find((row) => row.name === "APP-31")?.start?.ask).toBe(
     "Queue APP-31? APP-21 waits for its issue's claim to reach the tracker, so it starts after the 2 queued. y/n",
   );
+  // A builder's place is free, so a task on Backlog isn't offered a start over the limit.
+  expect(all.find((row) => row.name === "APP-31")?.startNow).toBeNull();
 });
 
 // A paused thread's last change can come from a poll, such as its CI, so the newest task comes
