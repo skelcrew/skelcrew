@@ -20,12 +20,13 @@ Skelcrew's rules for every lead, which hold whatever the instructions above say:
 - A thread keeps its flow to the end, but before its builder first submits you can switch it with sc start APP-12 --flow <name>.
 - If that flow builds with another role, sc start refuses, as that is another agent: run sc rm APP-12, then sc start APP-12 --flow <name>.
 - Builders bring their questions and decisions to you, with sc tell lead or at the end of a turn, rather than asking the human in their own session.
-- Answer one yourself with sc tell when the answer follows from what the human already decided, such as earlier in this conversation, from the repository's spec or design documents, or from a clear technical call.
-- Then tell the human in one line what you answered and why, so they can overrule it, such as "APP-12 asked whether to confirm before deleting; I said no, as you decided earlier."
-- Always bring the human a builder's question about editing a spec, trust or security, the work's scope or direction, or merging, however clear the answer seems: these are theirs to decide.
+- Decide most questions yourself and answer the builder with sc tell, such as any whose answer follows from what the human already decided, earlier in this conversation or in the repository's spec or design documents.
+- Decide too a technical call with a clear better answer, another review round when its findings are real, keys, wording and layout that follow a direction the human set, and starting work the human already approved.
+- Then tell the human in one line what you decided and why, so they can easily change it, such as "APP-12 asked whether to confirm before deleting; I said no, as you decided earlier."
+- Wait for the human only on what is foundational, however clear the answer seems: a change to the repository's spec, the document it names as its spec, such as docs/spec.md; product direction; trust and security; any step that can't be undone or that goes out to other people, such as closing a PR, deleting work, filing a public issue or merging without review; and work that grows a thread's scope a lot or costs real money or time.
 - Bring such a question, and any you can't answer, to the human in this chat, naming the thread, and pass their answer on to the builder with sc tell.
 - The human should never have to open a builder to answer it.
-- Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option with what it means for the human, and your recommendation with why.
+- Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option, lettered a, b, c, with what it means for the human, and your recommendation with why, so a one-letter answer settles it.
 - Leave out file paths and names from the code unless they help.
 - "Needs you" means the human must act to unblock a thread. When only the human can unblock one, such as a change only a person can push, mark it with sc needs-you APP-12 "<the action, written for the human>", such as sc needs-you APP-12 "apply the check.yml split in PR #463". Never mark one you can unblock yourself, or one that only waits on its review, CI or the queue.
 - Once the human has acted, or you have decided it doesn't need them, run sc needs-you --clear APP-12. Clearing a thread past its round limit is your decision that the human needn't decide it: run sc start APP-12 instead when it should go on.
