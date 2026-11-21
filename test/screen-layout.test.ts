@@ -246,6 +246,8 @@ test("the footer ends with the machine's own load, even with no thread working",
 });
 
 test("the header and the tabs share a row of their own, and the boxes start right under it", async () => {
+  // A version short enough for the header's own part, so the tabs start above the right side.
+  checkoutAt("6f1c2ab");
   open("lead");
   await ready("lead");
   await toSecondThread();
@@ -268,9 +270,11 @@ function checkoutAt(commit: string, changes = ""): void {
   given.before = `PATH=${join(home, "checkout")}:$PATH `;
 }
 
-// The header on the top row, as it reads before the tabs, in a terminal `width` columns wide.
-const header = (window = "one", width = 120) =>
-  (seen(window).split("\n")[0] ?? "").slice(0, sidebarFor(width) + 1).trim();
+// The header on the top row, as it reads before the tabs, which start with the open one, app.
+const header = (window = "one") => {
+  const line = seen(window).split("\n")[0] ?? "";
+  return line.slice(0, line.indexOf("  app")).trim();
+};
 
 test("above the sidebar it says Skelcrew, in white, and the checkout's commit when no laptop sent you here", async () => {
   checkoutAt("6f1c2ab");
@@ -283,26 +287,22 @@ test("above the sidebar it says Skelcrew, in white, and the checkout's commit wh
   expect(topRow).toContain("38;5;231m");
 });
 
-// git gives a longer commit in a repository with many, or with core.abbrev set. In a terminal
-// wide enough for the sidebar's widest, 58 columns, the header has room for 44 columns after the
-// name. Words around the commit give way, never the commit.
-const roomy = 210;
+// git gives a longer commit in a repository with many, or with core.abbrev set. The header has
+// the row up to the tabs, so in a terminal 120 columns wide even the longest shows whole.
 test.each([
   ["a6bfe6f", " M src/main.ts", "a6bfe6f* (checkout, * = uncommitted changes)"],
-  ["a6bfe6fe12", " M src/main.ts", "checkout a6bfe6fe12+changes"],
+  ["a6bfe6fe12", " M src/main.ts", "a6bfe6fe12* (checkout, * = uncommitted changes)"],
   ["a6bfe6fe1234567890", "", "a6bfe6fe1234567890 (checkout)"],
-  ["a6bfe6fe1234567890a6bfe6fe1234567890abcd", "", "a6bfe6fe1234567890a6bfe6fe1234567890abcd"],
-  // Too long to show with +changes, it keeps a * for them, rather than look clean.
   [
     "a6bfe6fe1234567890a6bfe6fe1234567890abcd",
     " M src/main.ts",
-    "a6bfe6fe1234567890a6bfe6fe1234567890abcd*",
+    "a6bfe6fe1234567890a6bfe6fe1234567890abcd* (checkout, * = uncommitted changes)",
   ],
-])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
+])("commit %p with changes %p shows in the header as %p", async (commit, changes, shown) => {
   checkoutAt(commit, changes);
-  open("lead", "one", "xterm-256color", String(roomy));
+  open("lead");
   await ready("lead");
-  await until(() => header("one", roomy) === `Skelcrew ${shown}`, "the header");
+  await until(() => header("one") === `Skelcrew ${shown}`, "the header");
 });
 
 test("each terminal says where it came from, as they can come from different laptops", async () => {
@@ -311,7 +311,10 @@ test("each terminal says where it came from, as they can come from different lap
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
-  await until(() => header("one").startsWith("Skelcrew 6f1c2ab (checkout) · s"), "the first place");
+  await until(
+    () => header("one") === "Skelcrew 6f1c2ab (checkout) · simon@workbox",
+    "the first place",
+  );
   await until(() => header("two") === "Skelcrew 6f1c2ab (checkout)", "the second header", "two");
 });
 

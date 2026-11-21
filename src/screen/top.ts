@@ -33,10 +33,9 @@ const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 // Returns text in a colour, as a tmux format, for the lines of the boxes.
 const inColour = (colour: string, text: string) => `#[fg=${colour}]${text}#[default]`;
 
-// Returns the header's left part, `width` columns wide, which spans the screen up to where the
-// right side starts: Skelcrew's name in line with the sidebar's marks, then dim the longest name of
-// its version that fits, such as v0.4.2 or 6f1c2ab (checkout), then, on a remote, a dot and where
-// it runs, then spaces out to the end. `where` is empty on this machine. It comes from outside,
+// Returns the header's left part, `width` columns wide, before the tabs: Skelcrew's name in line
+// with the sidebar's marks, then dim the longest name of its version that fits, such as v0.4.2 or
+// 6f1c2ab (checkout), then, on a remote, a dot and where it runs, then spaces out to the end. `where` is empty on this machine. It comes from outside,
 // so it is made safe as a title is. What follows the name stops a column before the end, so a
 // space always parts it from the tabs. The place gives way first. A version is never cut, as half
 // a number would be a different one.
@@ -142,19 +141,32 @@ export type Top = {
 // Returns the screen's two top rows as tmux formats, given what they show and how wide the
 // sidebar's pane and the right side's are. tmux's status lines span the whole terminal.
 // The header is a row of its own: Skelcrew, its version and where it runs, then the tabs, which
-// start where the right side does, so they sit above it. Under it, the boxes' row draws the top of
-// the box round each side, which tmux's lines between the panes can't: ┬ above each of those
-// lines, and a stub of dim line above each pad at the outer edges, as tmux's line under the panes
-// has. The box your typing goes to is lit, the line the sides share always, and the rest is dim,
-// as tmux draws the lines below. While the right side fills the terminal, tmux hides the panes
-// that draw the boxes' lines, so the whole boxes' row is lit, as the one mark left that your
-// typing goes to the agent, with no corner over lines that aren't there. It reads nothing, so
-// what you see can be tested without a terminal.
+// start where the right side does, so they sit above it. When one of the two doesn't fit its
+// part, it takes what the other leaves, so nothing is left out while the row has room for it.
+// Under it, the boxes' row draws the top of the box round each side, which tmux's lines between
+// the panes can't: ┬ above each of those lines, and a stub of dim line above each pad at the
+// outer edges, as tmux's line under the panes has. The box your typing goes to is lit, the line
+// the sides share always, and the rest is dim, as tmux draws the lines below. While the right
+// side fills the terminal, tmux hides the panes that draw the boxes' lines, so the whole boxes'
+// row is lit, as the one mark left that your typing goes to the agent, with no corner over lines
+// that aren't there. It reads nothing, so what you see can be tested without a terminal.
 export function drawTop(top: Top, size: Size): { header: string; boxes: string } {
-  // The header's left part covers the pad, the sidebar and the lines beside it. The tabs get the
-  // right side and its pad, with spaces after them out to the terminal's edge.
-  const tabs = drawTabs(top.tabs, top.open, Math.max(size.right + 2, 0));
-  const after = " ".repeat(Math.max(size.right + 2 - tabs.width, 0));
+  // The header's own part covers the pad, the sidebar and the lines beside it, and the tabs' the
+  // right side and its pad. What each needs to show whole: the header's name, its longest version
+  // and the place, with a space after, and every tab.
+  const width = size.sidebar + 3 + size.right + 2;
+  const place = removeControlCodes(top.where);
+  const version = top.versions[0] ?? "";
+  const headerNeeds =
+    13 + (version ? 1 + Bun.stringWidth(version) : 0) + (place ? 3 + Bun.stringWidth(place) : 0);
+  const tabsNeed = drawTabs(top.tabs, top.open, Number.POSITIVE_INFINITY).width;
+  // A header too wide for its part grows into what the tabs leave, and tabs too wide for theirs
+  // into what the header leaves. With both too wide, each keeps its part.
+  let split = size.sidebar + 3;
+  if (headerNeeds > split) split = Math.max(split, Math.min(headerNeeds, width - tabsNeed));
+  else if (tabsNeed > width - split) split = Math.max(headerNeeds, width - tabsNeed);
+  const tabs = drawTabs(top.tabs, top.open, Math.max(width - split, 0));
+  const after = " ".repeat(Math.max(width - split - tabs.width, 0));
   const [left, right] = top.fullScreen ? [lit, lit] : top.typingRight ? [dim, lit] : [lit, dim];
   const [outer, corner] = top.fullScreen ? [lit, "─"] : [dim, "┬"];
   const boxes = [
@@ -165,7 +177,7 @@ export function drawTop(top: Top, size: Size): { header: string; boxes: string }
     inColour(outer, "─"),
   ].join("");
   return {
-    header: `${header(top.where, size.sidebar + 3, top.versions)}${tabs.text}${after}`,
+    header: `${header(top.where, split, top.versions)}${tabs.text}${after}`,
     boxes,
   };
 }

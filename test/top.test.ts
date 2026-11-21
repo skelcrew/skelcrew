@@ -29,11 +29,11 @@ const headerRow = (more: Partial<Top> = {}, given = size) => top(more, given).he
 const boxRow = (more: Partial<Top> = {}, given = size) => top(more, given).boxes;
 // Returns a line as you see it, without tmux's styles. A ## is how tmux is told to show one #.
 const seen = (line: string) => line.replace(/#\[[^\]]*\]/g, "").replaceAll("##", "#");
-// What the header says before the tabs, over the sidebar and the lines beside it.
-const above = (more: Partial<Top> = {}, given = size) =>
-  seen(headerRow(more, given))
-    .slice(0, given.sidebar + 3)
-    .trim();
+// What the header says before the tabs, which all start with the open one, app.
+const above = (more: Partial<Top> = {}, given = size) => {
+  const line = seen(headerRow(more, given));
+  return line.slice(0, line.indexOf("  app")).trim();
+};
 // How wide the terminal is, for the panes' widths: the two pads, the sidebar, the line the sides
 // share, the right side, and the two lines at the outer edges.
 const terminal = (given: { sidebar: number; right: number }) =>
@@ -41,6 +41,9 @@ const terminal = (given: { sidebar: number; right: number }) =>
 
 // A sidebar wide enough for the version and a whole place after it.
 const roomy = { sidebar: 37, right: 99 };
+// A right side whose part of the header holds just the one tab, so the header has only its own
+// part, over the sidebar.
+const tight = 5;
 
 test("the header says Skelcrew in white in line with the marks, then dim a dot and where it runs", () => {
   const line = headerRow({ where: "simon@workbox" }, roomy);
@@ -68,34 +71,48 @@ test("the version shows dim right after the name, here and on a remote", () => {
 
 test("the place is cut before the version, which stays whole", () => {
   const where = "simon@a-very-long-server-name.example.com";
-  expect(above({ where, versions: ["v0.4.2"] })).toBe("Skelcrew v0.4.2 · simon@…");
+  expect(above({ where, versions: ["v0.4.2"] }, { sidebar: 27, right: tight })).toBe(
+    "Skelcrew v0.4.2 · simon@…",
+  );
 });
 
 test("with no room for both, the place goes first, and then the version, never half of it", () => {
   const line = (sidebar: number) =>
-    above({ where: "workbox", versions: ["v0.4.2"] }, { sidebar, right: 40 });
+    above({ where: "workbox", versions: ["v0.4.2"] }, { sidebar, right: tight });
   expect(line(21)).toBe("Skelcrew v0.4.2 · …");
   expect(line(20)).toBe("Skelcrew v0.4.2");
   expect(line(17)).toBe("Skelcrew v0.4.2");
   expect(line(16)).toBe("Skelcrew");
-  // Too narrow for the name, the header has only the tabs.
-  expect(seen(headerRow({}, { sidebar: 9, right: 40 }))).toStartWith(`${" ".repeat(12)}  app  `);
+  // A row too narrow for even the name and the open tab cuts the tab, and the name goes.
+  expect(seen(headerRow({}, { sidebar: 1, right: 1 }))).toBe("    app");
+});
+
+test("a header too wide for its part takes the room the tabs leave, so nothing is left out", () => {
+  // The sidebar is too narrow for the name, and the tabs need little of the row.
+  expect(seen(headerRow({}, { sidebar: 9, right: 40 }))).toStartWith("    Skelcrew v0.1.0   app  ");
+  // A long place shows whole, and the tabs follow it.
+  const where = "simon@a-very-long-server-name.example.com";
+  const line = seen(headerRow({ where, versions: ["v0.4.2"] }));
+  expect(line).toStartWith(`    Skelcrew v0.4.2 · ${where}   app  `);
+  expect(line).toHaveLength(terminal(size));
+  // With the tabs needing the rest of the row, the header keeps its own part only.
+  const tabs = ["one", "two", "three", "four", "five"].map((name) => tab(name));
+  expect(seen(headerRow({ where, tabs, open: "simon/one" }, { sidebar: 27, right: 37 }))).toBe(
+    "    Skelcrew v0.1.0 · simon@…   one    two    three    four    five  ",
+  );
 });
 
 test("a narrow sidebar shows the longest name of the version that fits", () => {
   const versions = ["6f1c2ab* (checkout, * = uncommitted changes)", "checkout 6f1c2ab+changes"];
   const wide = { sidebar: 58, right: 99 };
   expect(above({ versions }, wide)).toBe("Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)");
-  const usual = { sidebar: 35, right: 99 };
+  const usual = { sidebar: 35, right: tight };
   expect(above({ versions }, usual)).toBe("Skelcrew checkout 6f1c2ab+changes");
-  expect(above({ versions }, { sidebar: 34, right: 99 })).toBe("Skelcrew");
+  expect(above({ versions }, { sidebar: 34, right: tight })).toBe("Skelcrew");
 });
 
 test("the header has no lines of the boxes, and its tabs start where the right side does", () => {
-  for (const more of [
-    {},
-    { where: "simon@a-very-long-server-name.example.com", versions: ["v0.4.2"] },
-  ]) {
+  for (const more of [{}, { where: "box", versions: ["v0.4.2"] }]) {
     const line = seen(headerRow(more));
     expect(line).toHaveLength(terminal(size));
     expect(line).not.toMatch(/[─┬│]/);
@@ -134,11 +151,15 @@ test("where Skelcrew runs can't run commands, restyle the row or reach your term
   expect(line).not.toMatch(/\p{Cc}/u);
 });
 
-// The tabs as you read them, with tmux's styles and click ranges left out.
-const tabText = (tabs: Tab[], open: string, width: number) =>
+// The tabs as you read them, with tmux's styles and click ranges left out, beside a sidebar 28
+// columns wide. Tabs with room start above the right side. Those without take the room the header
+// leaves, and start right after its name and version.
+const tabText = (tabs: Tab[], open: string, width: number, start = 28 + 3) =>
   seen(headerRow({ tabs, open }, { sidebar: 28, right: width }))
-    .slice(28 + 3)
+    .slice(start)
     .trimEnd();
+// Where tabs too many or too wide for the right side start: after "    Skelcrew v0.1.0 ".
+const afterName = 20;
 
 test("tabs name each repository in order, after the header, with a badge for what needs you", () => {
   const tabs = [tab("app"), tab("site", 1)];
@@ -177,22 +198,22 @@ test("the row is there with one repository too, so nothing moves when a second c
 
 test("tabs furthest from the open one give way first, and a dim count says how many", () => {
   const tabs = ["one", "two", "three", "four", "five", "six", "seven"].map((name) => tab(name));
-  expect(tabText(tabs, "simon/four", 37)).toBe("  three    four    five    six    +3");
-  expect(headerRow({ tabs, open: "simon/four" }, { sidebar: 28, right: 37 })).toContain(
+  expect(tabText(tabs, "simon/four", 26, afterName)).toBe("  three    four    five    six    +3");
+  expect(headerRow({ tabs, open: "simon/four" }, { sidebar: 28, right: 26 })).toContain(
     "#[fg=brightblack]  +3",
   );
-  expect(tabText(tabs, "simon/one", 37)).toBe("  one    two    three    four    +3");
+  expect(tabText(tabs, "simon/one", 26, afterName)).toBe("  one    two    three    four    +3");
 });
 
 test("an open tab too wide for the right side loses the count, then its spaces, then is cut with …", () => {
   const long = tab("a-repository-with-a-very-long-name", 2, 1);
   const open = "simon/a-repository-with-a-very-long-name";
-  expect(tabText([long], open, 17)).toBe("a-repository-with-…");
-  expect(tabText([long, tab("site")], open, 17)).toBe("a-repository-with-…");
+  expect(tabText([long], open, 6, afterName)).toBe("a-repository-with-…");
+  expect(tabText([long, tab("site")], open, 6, afterName)).toBe("a-repository-with-…");
   // One that fits only without the count shows whole, and the count goes.
-  expect(tabText([tab("sixteen-letters!"), tab("site")], "simon/sixteen-letters!", 18)).toBe(
-    "  sixteen-letters!",
-  );
+  expect(
+    tabText([tab("sixteen-letters!"), tab("site")], "simon/sixteen-letters!", 7, afterName),
+  ).toBe("  sixteen-letters!");
 });
 
 // The tab sets the widths test draws: one short tab, a long one with a badge, several with the
