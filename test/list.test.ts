@@ -1884,7 +1884,7 @@ test("Esc with a question open answers no and stays, and a second Esc leaves", a
   await until(() => read(join(home, "left")) === "left", "the list to leave");
 });
 
-// Only Building is open at first, so a task ready for review waits under its closed heading.
+// Ready is closed at first, so a task ready for review waits under its closed heading.
 test("with nothing needing you, the list opens on the lead", async () => {
   sql(`UPDATE threads SET asking = 0, needs_you = 0 WHERE folder = 'app-12';
 UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
@@ -1892,6 +1892,27 @@ UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
   expect(here()).toStartWith("▸ ○ lead");
   expect(seen()).toContain("   Needs you 0");
   expect(seen()).toContain(" 5 Ready     1");
+});
+
+test("Building, Reviewing and Checks are open at first, and Backlog, Ready and Done closed", async () => {
+  // Nothing waits under Needs you or Up next, so every open stage fits the terminal.
+  sql(`UPDATE threads SET asking = 0, needs_you = 0 WHERE folder = 'app-12';
+DELETE FROM threads WHERE folder IN ('app-9', 'app-14');
+${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", pr: 45 })}
+${threadSql({ task: "16", title: "Approved", status: "waiting", verdict: "approve", checks: "pending", pr: 46 })}
+${threadSql({ task: "18", title: "Shipped", status: "done", changed: now })}`);
+  await open();
+  await until(() => seen().includes("○ APP-16"), "Checks' rows");
+  expect(seen()).toContain("○ APP-7");
+  expect(seen()).toContain("○ APP-15");
+  expect(seen()).not.toContain("APP-31");
+  expect(seen()).not.toContain("APP-18");
+  // They stay toggles: 3 closes Reviewing and opens it again.
+  type("3");
+  await until(() => !seen().includes("APP-15"), "Reviewing closed");
+  expect(seen()).toContain("○ APP-16");
+  type("3");
+  await until(() => seen().includes("○ APP-15"), "Reviewing open again");
 });
 
 test("the number keys open and close the stages, which stay so in another repository", async () => {
