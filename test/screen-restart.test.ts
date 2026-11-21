@@ -43,7 +43,7 @@ test("R on a task whose builder runs asks, n restarts nothing, and y restarts it
   open("lead");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
+  await until(() => / 12\b/.test(selected()) && onDetails(), "APP-12's details");
   await until(() => footer().includes("R restart"), "the task's keys");
   type("R");
   await until(
@@ -65,7 +65,7 @@ test("a task whose builder isn't running offers no restart, and R there does not
   open("lead");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
+  await until(() => / 12\b/.test(selected()) && onDetails(), "APP-12's details");
   // Its row offers no R, though its old session still runs in this test.
   await until(() => footer().includes("w/⌥W close"), "the task's keys");
   expect(footer()).not.toContain("R restart");

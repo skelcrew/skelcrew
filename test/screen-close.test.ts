@@ -198,11 +198,11 @@ test("closing the last tab leaves the screen on how to open a repository, until 
   );
   expect(footer()).toBe("  ⌥Q quit");
   expect(screenSessions()).toHaveLength(1);
-  expect(seen()).not.toContain("APP-12");
+  expect(seen()).not.toMatch(/[○●] 12\b/);
   // Opening app again, such as with sc in another terminal, brings its tab back here.
   sql("UPDATE repositories SET tab_closed = 0 WHERE repo = 'app'");
   agent("lead");
-  await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
+  await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
 });
 
 // Adding or removing a repository can rename others while the question is open, and a name
@@ -230,7 +230,7 @@ test("on an 80-column terminal, a task's row still shows the close key in the fo
   open("lead", "one", "xterm-256color", "80");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12"), "APP-12's row");
+  await until(() => / 12\b/.test(selected()), "APP-12's row");
   await until(() => footer().startsWith("  ↑↓ move  w/⌥W close  ⏎ attach"), "the task's keys");
   // The footer is cut: the row's last keys don't fit.
   expect(footer()).not.toContain("⌥Q quit");

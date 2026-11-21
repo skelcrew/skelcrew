@@ -8,7 +8,7 @@ import { z } from "zod";
 import { roundLimit as roundLimitOf, threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
-import { passedReviewStage, reviewCheck } from "../flow/decide.ts";
+import { nextRound, passedReviewStage, reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { type LeadRequest, requestsOf } from "../flow/lead-requests.ts";
 import {
@@ -48,10 +48,13 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // heading, which you can stand on too, so Enter there opens or closes it. `section` is the section
 // it shows under: Needs you while the task waits on you, Task queue while it is queued or paused,
 // its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in,
-// `says` is its short word, in `colour`, and `step` what its builder is doing, such as `Editing
-// rows.ts`. Then dim its PR, such as `#41`, its CI, such as `CI passed`, and how long ago it last
-// changed, such as `4m`. Each is empty where it has none. `changed` is that moment in
-// milliseconds, or null, which the details pane gives by the clock, so the two always agree. `needsYou` is whether it waits on you for
+// `label` is the name the row shows, such as T139, without the repository its tab already names,
+// while `name`, such as APP-T139, is what everything else goes by. `says` is its short word, in
+// `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then its PR, such as
+// `#41`, what its CI says, its review's round and the colour of where that review stands, and how
+// long ago it last changed, such as `4m`. Each is empty or null where it has none. `changed` is
+// that moment in milliseconds, or null, which the details pane gives by the clock, so the two
+// always agree. `needsYou` is whether it waits on you for
 // something other than a merge. `session` is the agent's session, which Enter attaches to,
 // `running` whether its agent runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\
 // comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
@@ -70,6 +73,7 @@ export type Row = {
   part: "lead" | "request" | "heading" | ListStage;
   section: "lead" | Section;
   name: string;
+  label: string;
   task: string | null;
   title: string;
   mark: { sign: string; colour: Colour };
@@ -77,7 +81,8 @@ export type Row = {
   colour: Colour;
   step: string;
   pr: string;
-  checks: string;
+  ci: Ci | null;
+  review: { round: number; colour: Colour } | null;
   when: string;
   changed: number | null;
   needsYou: boolean;
@@ -94,6 +99,9 @@ export type Row = {
   waits: string;
   request: number | null;
 };
+
+// What a task's CI says, by its checks as the last poll saved them.
+export type Ci = "passed" | "running" | "failed";
 
 // The repository the list shows, by its owner/name.
 export type Open = { owner: string; repo: string };
@@ -178,6 +186,7 @@ function leadRow(db: Database, open: Open): Row {
     part: "lead",
     section: "lead",
     name: "lead",
+    label: "lead",
     task: null,
     title: lead.harness ?? "",
     mark: asking ? { sign: "●", colour: "yellow" } : { sign: "○", colour: runs ? "bright" : "dim" },
@@ -185,7 +194,8 @@ function leadRow(db: Database, open: Open): Row {
     colour: asking ? "yellow" : "dim",
     step: "",
     pr: "",
-    checks: "",
+    ci: null,
+    review: null,
     when: "",
     changed: null,
     needsYou: asking,
@@ -213,6 +223,7 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     part: "request",
     section: "lead",
     name: `request-${request.id}`,
+    label: "",
     task: null,
     title: removeControlCodes(request.says),
     mark: { sign: "●", colour: "yellow" },
@@ -220,7 +231,8 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     colour: "yellow",
     step: "",
     pr: "",
-    checks: "",
+    ci: null,
+    review: null,
     when: "",
     changed: null,
     needsYou: false,
@@ -246,9 +258,10 @@ const SavedLink = z.object({ pr_link: z.string().nullable() });
 // Returns the row of a task with a thread, given the thread and the stage it is in. Its word says
 // in one or two words what is happening, or when the thread needs you, why, in its mark's colour.
 // An ended task says whether it merged. A builder at work, or at work while its review runs, also
-// has the step it is on, as the sidebar shows it. Then come its PR, its CI and when it last
-// changed. The rest, such as a merge when ready or messages waiting, is for sc show, so a row
-// stays short. A task ready for review offers m when it has a PR to merge.
+// has the step it is on, as the sidebar shows it.
+// Then come its PR, its CI, its review's round and when it last changed. The rest, such as a
+// merge when ready or messages waiting, is for sc show, so a row stays short. A task ready for
+// review offers m when it has a PR to merge.
 function taskRow(
   db: Database,
   open: Open,
@@ -274,7 +287,7 @@ function taskRow(
   const pr = thread.pr === null ? "" : `#${thread.pr}`;
   const copy = thread.pr === null ? null : prOf(db, open.owner, open.repo, thread.pr);
   // No CI runs on the PR's head once the wait for CI's first check on it ended with none. Its
-  // checks then count as passed, and the row says "no CI".
+  // checks then count as passed for a merge, and the row shows no CI.
   const noCi = copy !== null && copy.head !== null && thread.no_ci === copy.head;
   const changed = thread.changed ?? thread.started;
   // The step comes from the builder's conversation file, read at most every 10 seconds, and only
@@ -345,6 +358,7 @@ function taskRow(
           ? "task queue"
           : stage,
     name,
+    label: thread.task.toUpperCase(),
     task: thread.task,
     title: removeControlCodes(thread.short ?? thread.title ?? ""),
     mark,
@@ -352,7 +366,8 @@ function taskRow(
     colour: mark.colour,
     step,
     pr,
-    checks: thread.checks === null ? (noCi ? "no CI" : "") : ciWords[thread.checks],
+    ci: thread.checks === null ? null : ciOf[thread.checks],
+    review: reviewOf(thread),
     ...shownTime(changed, now),
     needsYou,
     session: ended ? null : thread.folder,
@@ -373,12 +388,34 @@ function taskRow(
   };
 }
 
-// What a task's CI says, by its checks as the last poll saved them, in sc ps's words.
-const ciWords: Record<NonNullable<Thread["checks"]>, string> = {
-  passing: "CI passed",
-  failing: "CI failed",
-  pending: "CI running",
+// What a task's CI says, by its checks as the last poll saved them. A PR on which no CI runs
+// has none, as has one with no checks yet.
+const ciOf: Record<NonNullable<Thread["checks"]>, Ci> = {
+  passing: "passed",
+  failing: "failed",
+  pending: "running",
 };
+
+// The colour of a finished review, by its verdict.
+const verdictColours: Record<Exclude<NonNullable<Thread["verdict"]>, "not reviewed">, Colour> = {
+  approve: "green",
+  changes: "yellow",
+  failed: "red",
+  "timed out": "red",
+};
+
+// Returns a task's review as its row shows it: its round, green once approved, yellow while it
+// runs or after it asked for changes, and red when it failed. A round under way is the next
+// one, and a task its flow doesn't review, or none reviewed yet, has none. Only the thread is
+// read, as the list draws every second.
+function reviewOf(thread: Thread): Row["review"] {
+  if (thread.verdict === "not reviewed") return null;
+  const live = thread.status === "working" || thread.status === "waiting";
+  if (live && (thread.submitting !== null || thread.reviewing !== null))
+    return { round: nextRound(thread), colour: thread.review_failed ? "red" : "yellow" };
+  if (thread.verdict === null || thread.review_round === null) return null;
+  return { round: thread.review_round, colour: verdictColours[thread.verdict] };
+}
 
 // How many ended tasks Done shows at least, when fewer than that ended today.
 const doneShown = 10;
@@ -506,6 +543,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       part: "backlog",
       section: "backlog",
       name,
+      label: task.toUpperCase(),
       task,
       title: removeControlCodes(title),
       mark: { sign: "○", colour: "dim" },
@@ -513,7 +551,8 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       colour: "dim",
       step: "",
       pr: "",
-      checks: "",
+      ci: null,
+      review: null,
       ...shownTime(changed, now),
       needsYou: false,
       session: null,
@@ -615,6 +654,7 @@ export function cutBacklog(rows: Row[], whole: boolean): Row[] {
     part: "backlog",
     section: "backlog",
     name: `${rest} more`,
+    label: `${rest} more`,
     mark: { sign: "…", colour: "dim" },
     more: rest,
   };
@@ -629,6 +669,7 @@ const emptyRow: Row = {
   part: "lead",
   section: "lead",
   name: "",
+  label: "",
   task: null,
   title: "",
   mark: { sign: "", colour: "dim" },
@@ -636,7 +677,8 @@ const emptyRow: Row = {
   colour: "dim",
   step: "",
   pr: "",
-  checks: "",
+  ci: null,
+  review: null,
   when: "",
   changed: null,
   needsYou: false,

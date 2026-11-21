@@ -52,6 +52,13 @@ const ciColours: Record<NonNullable<TaskView["prPage"]>["ci"], string> = {
   none: grey,
 };
 
+// The mark CI as a whole takes when it has no checks to list, as a row shows it.
+const ciSigns: Record<Exclude<NonNullable<TaskView["prPage"]>["ci"], "none">, string> = {
+  passed: "✓",
+  running: "●",
+  failed: "✗",
+};
+
 // The colour each state of a review takes on the pane's round line, as the list shows it.
 const reviewColours: Record<NonNullable<TaskView["review"]>["state"], string> = {
   none: grey,
@@ -204,7 +211,7 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   const prLink = view.prPage?.link ?? row.link ?? "";
   const pr = view.pr === null ? [] : linkLines(`#${view.pr}`, prLink, value);
   // CI: each check after its mark, going on over as many lines as they need, or with no checks
-  // its verdict as a whole, in colour.
+  // its verdict as a whole, after the mark a row shows for it, both in its colour.
   const page = view.prPage;
   const ci = !page
     ? []
@@ -212,15 +219,15 @@ function detailLines(row: Row, details: Details, width: number): string[] {
       ? checkLines(page.checks, value)
       : page.ci === "none"
         ? []
-        : [paint(ciColours[page.ci], page.ci)];
-  // The review: its round, dim, and its verdict in colour, then what it found, numbered, each
-  // finding on one line cut short.
+        : [paint(ciColours[page.ci], `${ciSigns[page.ci]} ${page.ci}`)];
+  // The review: its round as a row shows it, such as r2, and its verdict, both in the verdict's
+  // colour, then what it found, numbered, each finding on one line cut short.
   const review = view.review;
   const said = review && review.state !== "none" ? reviewWords[review.state] : "";
-  const round = typeof review?.round === "number" ? `Round ${review.round} · ` : "";
+  const round = typeof review?.round === "number" ? `r${review.round} · ` : "";
   const verdict =
     review && Bun.stringWidth(`${round}${said}`) <= value
-      ? `${round ? paint(grey, round) : ""}${paint(reviewColours[review.state], said)}`
+      ? paint(reviewColours[review.state], `${round}${said}`)
       : fitted(`${round}${said}`, value);
   const findingWidth = Math.max(text - labelWidth, 1);
   const more = findings.length - findingsShown;

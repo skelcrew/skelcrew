@@ -112,7 +112,7 @@ test("in the sidebar plain keys work as in the list, keep your typing there, and
   type("2");
   await until(() => !isOpen("2 Building"), "Building to close");
   type("2");
-  await until(() => isOpen("2 Building") && selected().includes("APP-12"), "Building on APP-12");
+  await until(() => isOpen("2 Building") && / 12\b/.test(selected()), "Building on APP-12");
   // Up stops on each heading on the way back to the lead, and your typing stays in the sidebar
   // on the lead's row, so a digit there opens a stage rather than reach the lead.
   while (!onLead()) await step("Up");
@@ -138,7 +138,7 @@ test("Ctrl-\\ in the sidebar leaves a question there open", async () => {
   open("lead");
   await ready("lead");
   press("M-1");
-  await until(() => selected().includes("APP-31") && onDetails(), "APP-31 in Backlog");
+  await until(() => / 31\b/.test(selected()) && onDetails(), "APP-31 in Backlog");
   type("s");
   await until(() => footer().includes("Start APP-31? y/n"), "the question");
   press("C-\\");
@@ -155,7 +155,7 @@ test("your typing stays in the sidebar on a task's details, and onto the lead's 
   press("C-\\");
   await until(typingToSidebar, "the sidebar to take your typing");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
+  await until(() => / 12\b/.test(selected()) && onDetails(), "APP-12's details");
   press("M-S-Up");
   await until(onLead, "the lead's row");
   await Bun.sleep(300);
@@ -179,7 +179,7 @@ test("Enter on a task gives its builder your typing, and Ctrl-\\ brings it back 
   press("C-\\");
   await until(onDetails, "app-7's details");
   await until(typingToSidebar, "the sidebar to take your typing");
-  expect(selected()).toContain("APP-7");
+  expect(selected()).toMatch(/ 7\b/);
   // The footer is a pane of its own, told what to say a moment after the sidebar redraws.
   await until(() => footer().includes("⏎ attach  ⇧⏎/a full screen"), "the sidebar's footer");
 });
@@ -211,7 +211,7 @@ test("a on a task's row attaches full screen to its builder, and Ctrl-\\ comes b
   await ready("lead");
   press("M-S-Down");
   press("M-Down");
-  await until(() => selected().includes("APP-7") && onDetails(), "APP-7's details");
+  await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
   type("a");
   await until(() => fullScreen() && seen().includes("I am app-7"), "app-7 full screen");
   await until(topLit, "the top of the boxes to light up");
@@ -219,7 +219,7 @@ test("a on a task's row attaches full screen to its builder, and Ctrl-\\ comes b
   await until(() => read("app-7.typed") === "go\n", "the typing to reach the builder");
   press("C-\\");
   await until(() => !fullScreen() && onDetails() && typingToSidebar(), "app-7's details again");
-  expect(selected()).toContain("APP-7");
+  expect(selected()).toMatch(/ 7\b/);
 });
 
 // Shift-Enter typed to an agent is a new line in its prompt, so it reaches the agent.
@@ -254,7 +254,7 @@ UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-7'`);
   await ready("lead");
   press("M-S-Down");
   press("M-Down");
-  await until(() => selected().includes("APP-7") && onDetails(), "APP-7's details");
+  await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
   press("Enter");
   await Bun.sleep(300);
   press("C-\\");
@@ -270,7 +270,7 @@ test("Enter on a stage's heading closes it, keeping you there, and opens it on i
   open("lead");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
+  await until(() => / 12\b/.test(selected()) && onDetails(), "APP-12's details");
   await step("Up");
   expect(selected()).toStartWith("2 Building");
   await until(
@@ -281,7 +281,7 @@ test("Enter on a stage's heading closes it, keeping you there, and opens it on i
   await until(() => !isOpen("2 Building"), "Building to close");
   expect(selected()).toStartWith("2 Building");
   press("Enter");
-  await until(() => isOpen("2 Building") && selected().includes("APP-12"), "Building on APP-12");
+  await until(() => isOpen("2 Building") && / 12\b/.test(selected()), "Building on APP-12");
   expect(read("lead.typed")).toBe("");
   expect(read("app-12.typed")).toBe("");
 });
