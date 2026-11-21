@@ -477,7 +477,7 @@ test("repo rm stops when the daemon is too busy to end the lead, ends nothing it
   const refused = await skel(["repo", "rm", "app"], "", home, { SKELCREW_END_LEAD_WAIT_MS: "300" });
   expect(refused.code).toBe(1);
   expect(refused.err).toBe(
-    "Skelcrew: the daemon didn't answer in time. app's tab stays closed, and the daemon ends its lead in its turn. Remove app again once it has.\n",
+    "Skelcrew: the daemon is still ending app's lead. If that fails, its tab opens again. Remove app again once it has.\n",
   );
   expect(readFileSync(join(home, "calls"), "utf8")).toBe("daemon end lead\n");
   expect(existsSync(clone("simon/app"))).toBe(true);

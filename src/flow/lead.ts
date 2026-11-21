@@ -414,16 +414,18 @@ export async function closeExitedLeads(db: Database, sessions: string): Promise<
 // repository, which `verb` names. It takes the lead's turn, so a start asked for meanwhile, as
 // when you open the repository again, comes after it and starts the lead afresh. A tab opened
 // again before its turn came ends nothing, and this returns false. Throws when the lead's host
-// can't be reached or won't end it.
+// can't be reached or won't end it. The tab then goes back to `wasClosed`, unless it was opened
+// again meanwhile, so a repository whose lead still runs never hides.
 export async function endLeadOfClosedTab(
   db: Database,
   sessions: string,
   repository: Repository,
   verb: "close" | "remove",
+  wasClosed: boolean,
 ): Promise<boolean> {
   const { owner, repo, name } = repository;
   let ended = false;
-  await leadAgent(owner, repo).end({
+  const ending = leadAgent(owner, repo).end({
     stop: async () => {
       const closed = db
         .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
@@ -435,6 +437,15 @@ export async function endLeadOfClosedTab(
       ended = true;
     },
   });
+  try {
+    await ending;
+  } catch (error) {
+    db.run(
+      "UPDATE repositories SET tab_closed = ? WHERE owner = ? AND repo = ? AND tab_closed = 1",
+      [wasClosed ? 1 : 0, owner, repo],
+    );
+    throw error;
+  }
   return ended;
 }
 

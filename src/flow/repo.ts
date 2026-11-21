@@ -919,10 +919,10 @@ const endLeadWait = z.coerce
 // Closes a repository's tab, then ends its lead and waits for it, for closing and removing a
 // repository, which `verb` names for what it says when it fails. The daemon ends the lead in the
 // lead's own turn, so a start asked for meanwhile comes after it. With no daemon, nothing else
-// starts the lead, so it is ended here. A daemon too slow to answer may still end it, so its tab
-// stays closed and this throws, as ending the lead here too could end one opened again meanwhile.
-// When the lead can't be ended, its tab goes back as it
-// was and this throws, rather than hiding a repository whose lead still runs. A repository you
+// starts the lead, so it is ended here. When the lead can't be ended, its tab goes back as it was
+// and this throws, rather than hiding a repository whose lead still runs. A daemon too slow to
+// answer is still ending it, and puts the tab back itself if that fails, so this ends nothing and
+// throws, as ending the lead here too could end one opened again meanwhile. A repository you
 // open again before its lead ends keeps its lead, and this throws too. A lead on a plugin no
 // longer installed may still run there, so the repository waits until that host is back. The tab
 // closes first, so an open screen moves on at once, and a lead the daemon is starting meanwhile
@@ -940,32 +940,25 @@ async function closeTabAndEndLead(
       `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then ${verb} ${name}.`,
     );
   const where = "WHERE owner = ? AND repo = ?";
-  const tab = z
-    .object({ tab_closed: z.number() })
+  const { tab_closed: wasClosed } = z
+    .object({ tab_closed: z.coerce.boolean() })
     .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(found.owner, found.repo));
   const { askInTime } = await import("../client.ts");
   db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
   const fullName = `${found.owner}/${found.repo}`;
-  const reply = await askInTime({ command: "end lead", repo: fullName, verb }, endLeadWait);
+  const reply = await askInTime(
+    { command: "end lead", repo: fullName, verb, wasClosed },
+    endLeadWait,
+  );
   if (reply === "slow") {
     const again = verb === "remove" ? ` Remove ${name} again once it has.` : "";
     throw new Error(
-      `the daemon didn't answer in time. ${name}'s tab stays closed, and the daemon ends its lead in its turn.${again}`,
+      `the daemon is still ending ${name}'s lead. If that fails, its tab opens again.${again}`,
     );
   }
-  let ended: boolean;
-  try {
-    const Reply = z.union([z.object({ ended: z.boolean() }), z.object({ error: z.string() })]);
-    const answer = reply === "absent" ? null : Reply.parse(reply.reply);
-    if (answer !== null && "error" in answer) throw new Error(answer.error);
-    ended = answer?.ended ?? (await endLeadOfClosedTab(db, sessions, found, verb));
-  } catch (error) {
-    db.run(`UPDATE repositories SET tab_closed = ? ${where} AND tab_closed = 1`, [
-      tab.tab_closed,
-      found.owner,
-      found.repo,
-    ]);
-    throw error;
-  }
+  const Reply = z.union([z.object({ ended: z.boolean() }), z.object({ error: z.string() })]);
+  const answer = reply === "absent" ? null : Reply.parse(reply.reply);
+  if (answer !== null && "error" in answer) throw new Error(answer.error);
+  const ended = answer?.ended ?? (await endLeadOfClosedTab(db, sessions, found, verb, wasClosed));
   if (!ended) throw new Error(`${name} was opened again meanwhile, so it isn't ${verb}d`);
 }

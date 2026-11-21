@@ -701,6 +701,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             sessions,
             findRepository(db, request.repo),
             request.verb,
+            request.wasClosed,
           ),
         };
       // Says only yes or no, so a lead learns no other repository's name from it.

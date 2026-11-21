@@ -528,7 +528,8 @@ process.exit(0);`,
 }
 
 test("a repository opened again while its lead's host is slow to end it starts the lead only after the end", () => {
-  const said = closingLead(`const ending = endLeadOfClosedTab(db, "unused", repository, "close");
+  const said =
+    closingLead(`const ending = endLeadOfClosedTab(db, "unused", repository, "close", true);
 await Bun.sleep(500);
 const sawOld = await reopen();
 const ended = await ending;`);
@@ -537,9 +538,28 @@ const ended = await ending;`);
 
 test("a repository opened again before its lead's end came keeps its lead running", () => {
   const said = closingLead(`db.run("UPDATE repositories SET tab_closed = 0 WHERE repo = 'app'");
-const ended = await endLeadOfClosedTab(db, "unused", repository, "close");
+const ended = await endLeadOfClosedTab(db, "unused", repository, "close", true);
 const sawOld = await reopen();`);
   expect(JSON.parse(said)).toEqual({ ended: false, sawOld: true, running: true });
+}, 40_000);
+
+test("a lead its host fails to end gets its tab back, unless it was opened again meanwhile", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said =
+    closingLead(`const failEnd = () => require("node:fs").writeFileSync(${JSON.stringify(join(fake, "fail-end"))}, "");
+failEnd();
+const tab = () => db.query("SELECT tab_closed FROM repositories").get().tab_closed;
+const failed = await endLeadOfClosedTab(db, "unused", repository, "close", false).catch(() => "failed");
+console.log(failed, tab());
+db.run("UPDATE repositories SET tab_closed = 1");
+failEnd();
+const opening = endLeadOfClosedTab(db, "unused", repository, "close", true).catch(() => "failed");
+await Bun.sleep(500);
+db.run("UPDATE repositories SET tab_closed = 0");
+console.log(await opening, tab());
+const ended = false;
+const sawOld = null;`);
+  expect(said.split("\n").slice(0, 2)).toEqual(["failed 0", "failed 0"]);
 }, 40_000);
 
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
