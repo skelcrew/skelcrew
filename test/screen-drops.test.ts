@@ -1,7 +1,7 @@
 // Files dropped onto the screen reach the agent your typing goes to as copies in its own folder,
 // which its sandbox lets it read, through the screen's real tmux servers.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   attachTo,
@@ -15,6 +15,7 @@ import {
   ready,
   screen,
   screenSessions,
+  seen,
   startTest,
   tmux,
   type,
@@ -120,6 +121,26 @@ test("a drop right after a key that moves off the lead goes with that move, so n
   await Bun.sleep(500);
   expect(existsSync(join(skelcrew(), "lead", ".skelcrew-drops"))).toBe(false);
   expect(read("lead.typed")).toBe("");
+});
+
+test("a file dropped while your typing goes to the sidebar presses none of its keys", async () => {
+  // 2 closes Building and a attaches full screen, and the test's own folder adds more such
+  // letters and digits, so any key pressed would show.
+  const dir = join(home, "2a");
+  mkdirSync(dir);
+  const notes = join(dir, "notes.txt");
+  writeFileSync(notes, "notes");
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onDetails, "APP-12's details");
+  // Everything but the last line, whose load changes on its own.
+  const shown = () => seen().trimEnd().split("\n").slice(0, -1).join("\n");
+  const before = shown();
+  type(`\x1b[200~${notes}\x1b[201~`);
+  await Bun.sleep(500);
+  expect(shown()).toBe(before);
+  expect(existsSync(join(skelcrew(), "threads", "app-12", ".skelcrew-drops"))).toBe(false);
 });
 
 test("a right click on the top row does what it did before a drop could ask there", async () => {

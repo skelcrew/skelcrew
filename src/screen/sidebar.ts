@@ -773,11 +773,16 @@ export async function runSidebar(
   process.stdin.setRawMode(true);
   // Without the cursor hidden it would blink at the end of the sidebar. 1000 and 1006 ask for
   // clicks and the wheel, in the form tmux can give a place of any size.
-  process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h");
+  // 2004 has tmux mark a paste's start and end, so text pasted here, such as a file's path dropped
+  // onto your terminal, is skipped whole rather than pressing the keys its letters and digits are.
+  process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?2004h");
+  let pasting = false;
   // Acts on each key and click that came together, then redraws.
   process.stdin.on("data", (bytes) => {
-    for (const [key] of bytes.toString().matchAll(keyPattern))
-      doing("acting on a key", () => press(key));
+    for (const [key] of bytes.toString().matchAll(keyPattern)) {
+      if (key === "\x1b[200~" || key === "\x1b[201~") pasting = key === "\x1b[200~";
+      else if (!pasting) doing("acting on a key", () => press(key));
+    }
     refresh();
   });
   // Draws now, on each resize and each second, until the pane goes and its input closes.
