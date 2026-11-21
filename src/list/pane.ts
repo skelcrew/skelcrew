@@ -77,18 +77,23 @@ const reviewWords: Record<NonNullable<TaskView["review"]>["state"], string> = {
   "not reviewed": "not reviewed",
 };
 
-// Returns items as lines `width` columns wide at most, as many on each line as fit, with two
-// spaces between them, so none is left out. Each item is its plain text and how it shows, in
-// colour. An item wider than a line alone is cut, without its colours.
-function packed(items: { plain: string; shown: string }[], width: number): string[] {
+// Returns CI's checks as lines `width` columns wide at most, as many on each line as fit, with two
+// spaces between them, so none is left out. Each is its mark, in its colour, then its name. A
+// check too wide for a line alone has its name cut, never its mark, so a long failed check
+// still shows red.
+function checkLines(checks: NonNullable<TaskView["prPage"]>["checks"], width: number): string[] {
   const lines: { plain: string; shown: string }[] = [];
-  for (const item of items) {
+  for (const check of checks) {
+    const mark = checkMarks[check.state];
+    const plain = `${Bun.stripANSI(mark)} ${check.name}`;
     const last = lines.at(-1);
-    if (last && Bun.stringWidth(`${last.plain}  ${item.plain}`) <= width) {
-      last.plain += `  ${item.plain}`;
-      last.shown += `  ${item.shown}`;
-    } else if (Bun.stringWidth(item.plain) <= width) lines.push({ ...item });
-    else lines.push({ plain: fitted(item.plain, width), shown: fitted(item.plain, width) });
+    if (last && Bun.stringWidth(`${last.plain}  ${plain}`) <= width) {
+      last.plain += `  ${plain}`;
+      last.shown += `  ${mark} ${check.name}`;
+    } else {
+      const name = fitted(check.name, width - Bun.stringWidth(Bun.stripANSI(mark)) - 1);
+      lines.push({ plain: `${Bun.stripANSI(mark)} ${name}`, shown: `${mark} ${name}` });
+    }
   }
   return lines.map((line) => line.shown);
 }
@@ -197,14 +202,10 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   // CI: each check after its mark, going on over as many lines as they need, or with no checks
   // its verdict as a whole, in colour.
   const page = view.prPage;
-  const checks = (page?.checks ?? []).map((check) => ({
-    plain: `${Bun.stripANSI(checkMarks[check.state])} ${check.name}`,
-    shown: `${checkMarks[check.state]} ${check.name}`,
-  }));
   const ci = !page
     ? []
-    : checks.length > 0
-      ? packed(checks, value)
+    : page.checks.length > 0
+      ? checkLines(page.checks, value)
       : page.ci === "none"
         ? []
         : [paint(ciColours[page.ci], page.ci)];

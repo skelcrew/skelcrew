@@ -703,3 +703,17 @@ test("a code block's first line keeps its indent, and a long link wraps inside a
     "e.com/docs)",
   ]);
 });
+
+test("a check too long for the card has its name cut, and keeps its mark's colour", () => {
+  const page = details.view.prPage;
+  if (!page) throw new Error("the details have a PR");
+  const name = "end-to-end tests on every supported browser";
+  const long: Details = {
+    ...details,
+    view: { ...details.view, prPage: { ...page, checks: [{ name, state: "failed", log: null }] } },
+  };
+  const lines = drawPane(row, long, null, 30, 40).lines;
+  const ci = lines.find((line) => Bun.stripANSI(line).startsWith("CI ")) ?? "";
+  expect(Bun.stripANSI(ci)).toBe("CI       ✗ end-to-end tests o…");
+  expect(ci).toContain("\x1b[38;5;210m✗\x1b[22;39m");
+});
