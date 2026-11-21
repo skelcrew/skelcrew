@@ -470,8 +470,8 @@ export function drawRows(
   const room = Math.max(height - lead.length, 1);
   // Returns the requests and the sections' lines: each heading, with an open section's rows under
   // it. With `parted`, an open section with rows has a blank line after them, which parts it from
-  // the next heading. The task queue has one, open or closed, as it is no stage, so the stages
-  // under it read as one block.
+  // the next heading. The task queue always has one, open or closed, scrolled or not, as it is no
+  // stage, so the stages under it read as one block.
   const sections = (parted: boolean): BodyLine[] => [
     ...requests,
     ...(requests.length > 0 ? [blankLine] : []),
@@ -482,7 +482,7 @@ export function drawRows(
           : [],
       );
       const queue = heading.section === "task queue";
-      const after = parted && (queue || ours.length > 0) ? [blankLine] : [];
+      const after = queue || (parted && ours.length > 0) ? [blankLine] : [];
       const plain = headingLine(heading, countWidth, width);
       const text = onHeading === heading.section ? shaded(plain, width) : plain;
       const line = { text, row: null, target: { section: heading.section } };
@@ -492,7 +492,7 @@ export function drawRows(
   let body = sections(true);
   let shown = body;
   let start = 0;
-  // Too many to fit: the blank lines go, and the sections scroll between the two edge lines, just
+  // Too many to fit: the blank lines go but the task queue's, and the sections scroll between the two edge lines, just
   // enough to keep the row you are on in view, from where they were last drawn.
   if (body.length > room) {
     body = sections(false);
@@ -524,6 +524,11 @@ export function drawRows(
     const cut = body[start];
     const atRowEnd = cut && cut.row !== null && body[start - 1]?.row === cut.row;
     if (atRowEnd && (first === undefined || start < first)) start += 1;
+    // Nor does it start on a blank line, which the top edge already parts from what is above, when
+    // there is more below to show in its place.
+    const blankFirst = body[start]?.row === null && body[start]?.target === null;
+    const below = start < body.length - view;
+    if (blankFirst && below && (first === undefined || start < first)) start += 1;
     // Returns a blank line of the body, which a click reaches nothing on.
     const edge = (text: string) => ({ text, row: null, target: null });
     // The view never ends on a heading whose rows are all below it, which would look closed. When

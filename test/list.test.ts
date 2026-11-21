@@ -1341,6 +1341,20 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
     " ↓ Checks 0   Ready 0   Done 0",
   ]);
   expect(lines).toHaveLength(16);
+  // Scrolled too, a blank line parts the task queue from the stages, as it is no stage.
+  const queued = drawn(3, 20, 80, ["needs you", "task queue", "building"]).map((line) =>
+    line.trimEnd(),
+  );
+  const queue = queued.indexOf(" 0 Task queue  1");
+  expect(queued.slice(queue, queue + 5)).toEqual([
+    " 0 Task queue  1",
+    " ▸ ○ APP-9   Old work",
+    "     paused · 14:59",
+    "",
+    " 1 Backlog     1",
+  ]);
+  expect(queued.at(-3)).toStartWith(" ↓");
+  expect(queued.at(-1)).toStartWith(" ↑↓ move");
 });
 
 test("on the lead, the list starts at Needs you, with what is below at the bottom edge", () => {
@@ -1371,15 +1385,15 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   // On the first task in Building, the stages below it are pinned at the bottom edge.
   const top = at(16, 5);
   expect(top.slice(5, 14)).toEqual([
-    " ↑ 2 more in Needs you   Needs you 2   Task queue 1",
-    "   ○ APP-9   Old work",
-    "     paused · 14:59",
+    " ↑ 3 more   Needs you 2   Task queue 1",
     " 1 Backlog    1",
     "   ○ APP-31  Export as CSV  5 Nov",
     " 2 Building   7",
     " ▸ ○ APP-7   Login redirect",
     "     working · 14:55",
-    " ↓ 9 more   Reviewing 1   Checks 2   Ready 0   Done 0",
+    "   ○ APP-50  Task 50",
+    "     working · 14:50",
+    " ↓ 8 more   Reviewing 1   Checks 2   Ready 0   Done 0",
   ]);
   // On the last task in Checks, its heading and both its rows show, and the stages above it are
   // pinned at the top edge.
