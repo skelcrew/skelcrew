@@ -28,6 +28,7 @@ import type { Settings } from "../settings.ts";
 import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
+import { supervisor } from "./supervisor.ts";
 
 // What Skelcrew's database keeps about a repository's lead, checked as it is read back.
 const LeadRow = z.object({
@@ -376,15 +377,29 @@ export function leadPrompted(db: Database, owner: string, repo: string): void {
 // closed, and doesn't bring the lead back. Only a lead on tmux keeps its session on a clean exit,
 // so a lead on a plugin's host is never taken for one you exited: it comes back as one that
 // crashed. Only tmux is asked, which answers at once, so a plugin's host that hangs holds up
-// nothing here.
+// nothing here. A lead being started or ended is left to that, which ends what it left behind:
+// closed meanwhile, a lead you just opened again would have its tab closed under it.
 export async function closeExitedLeads(db: Database, sessions: string): Promise<void> {
   for (const { owner, repo } of openedRepositories(db)) {
     const { name, host, hostId } = leadOf(db, owner, repo);
-    if (host !== "tmux") continue;
+    const agent = leadAgent(owner, repo);
     const id = hostId ?? name;
-    if (!exitedCleanly(sessions, id)) continue;
-    db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
-    await endSession(sessions, id);
-    console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
+    if (host !== "tmux" || agent.state().busy || !exitedCleanly(sessions, id)) continue;
+    await agent.end({
+      stop: async () => {
+        if (!exitedCleanly(sessions, id)) return;
+        db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
+          owner,
+          repo,
+        ]);
+        await endSession(sessions, id);
+        console.log(
+          `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
+        );
+      },
+    });
   }
 }
+
+// Returns the supervisor of a repository's lead, which starts and ends it one at a time.
+export const leadAgent = (owner: string, repo: string) => supervisor(`${owner}/${repo}`);

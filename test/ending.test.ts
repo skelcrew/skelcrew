@@ -67,7 +67,8 @@ function withThread(body: string): unknown {
   const code = `import { existsSync, mkdirSync } from "node:fs";
 import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { failThread, startThread } from ${JSON.stringify(source("flow/builder.ts"))};
-import { endThread, removing } from ${JSON.stringify(source("flow/events.ts"))};
+import { endThread } from ${JSON.stringify(source("flow/events.ts"))};
+import { supervisor } from ${JSON.stringify(source("flow/supervisor.ts"))};
 import { noteForLead } from ${JSON.stringify(source("flow/messages.ts"))};
 import { cloneOf, readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
@@ -91,8 +92,9 @@ test("a poll's end leaves a thread sc rm started removing while it waited", () =
   const seen =
     withThread(`const ending = endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
 // The poll's end is now waiting for the builder, and sc rm starts removing the thread.
-removing.add(thread.folder);
+const removal = supervisor(thread.folder).remove(() => ending);
 await ending;
+await removal;
 const notes = db.query("SELECT text FROM notes").all();
 console.log(JSON.stringify({ status: readThread(db, thread.folder).status, notes }));`);
   expect(seen).toEqual({ status: "working", notes: [] });

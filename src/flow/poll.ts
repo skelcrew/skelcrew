@@ -31,7 +31,13 @@ import {
   labeledToStart,
   type PullRequest,
 } from "./decide.ts";
-import { endThread, noticeEndedBuilder, removing, tellBuilder, tellingEvents } from "./events.ts";
+import {
+  beingRemoved,
+  endThread,
+  noticeEndedBuilder,
+  tellBuilder,
+  tellingEvents,
+} from "./events.ts";
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
@@ -312,7 +318,7 @@ async function actOnPr(
   if ("end" in decision) {
     // A PR sc rm closed is its to end, and to take you off its issue. endThread checks again,
     // as sc rm can start while this waits.
-    if (removing.has(folder)) return;
+    if (beingRemoved(folder)) return;
     // A merge leaves you assigned, as the closed issue's record of who did it. Asked before
     // the thread ends, so an sc start that starts it over once it is done assigns you after.
     if (pr.state === "closed") unassignIssue(db, folder);
@@ -425,7 +431,7 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   const unchanged = () => {
     const now = readThread(db, thread.folder);
     const same = now.status === thread.status && now.started === thread.started;
-    return same && !removing.has(thread.folder);
+    return same && !beingRemoved(thread.folder);
   };
   if (!(await onRemote(db, repository, thread.branch))) {
     if (unchanged())
@@ -616,7 +622,7 @@ async function pollRepository(
       // Once the PR's events are acted on, an armed merge when ready merges it if it is ready.
       // A thread sc rm is removing is its to end.
       // One that fails is logged, so the poll's other threads still get their events.
-      if (!removing.has(before.folder))
+      if (!beingRemoved(before.folder))
         await mergeIfReady(db, sessions, before, pr).catch((error) =>
           console.log(`couldn't merge ${before.folder} when ready: ${errorText(error)}`),
         );
