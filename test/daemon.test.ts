@@ -1757,8 +1757,9 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await open("web");
     expect(leadHost("web")).toMatchObject({ lead_host: "fake" });
     await stop(first);
-    // From here on, the fake host holds every list it is asked for, until the file goes.
-    writeFileSync(join(fakeHostSettings(), "hold-list"), "0");
+    // From here on, the fake host holds every list it is asked for, until the file goes. It
+    // counts from the first, as 0 would hold none.
+    writeFileSync(join(fakeHostSettings(), "hold-list"), "1");
     const started = Date.now();
     serve();
     await untilAnswers();

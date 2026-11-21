@@ -719,11 +719,11 @@ test("a session kept on exit tells an agent that exited cleanly from one that fa
 });
 
 // Gives simon/app, opened, a lead on this test's tmux server with its ID saved, running `command`
-// unless it is null, as a lead whose session went. Then the look for exited leads runs, as the
-// daemon makes it at its start with `atStart`, and this returns whether the tab closed.
+// unless it is null, as a lead whose session went. With `atStart`, the daemon's start settles the
+// lead first. Then the look for exited leads runs, and this returns whether the tab closed.
 function tabClosedAfterLook(command: string[] | null, atStart = false): string {
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-const { closeExitedLeads, leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { closeExitedLeads, closeLeadAtStart, leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
 const { startSession } = await import(${JSON.stringify(source("agents/sessions.ts"))});
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo, remote, opened) VALUES ('app', 'simon', 'app', '', 1)");
@@ -734,7 +734,8 @@ if (command) {
   await startSession(${JSON.stringify(socket)}, name, { folder: ${JSON.stringify(home)}, command, env: {}, labels: { repository: "simon/app", role: "lead" }, keepOnExit: true });
   await Bun.sleep(500);
 }
-await closeExitedLeads(db, ${JSON.stringify(socket)}, ${atStart});
+if (${atStart}) await closeLeadAtStart(db, ${JSON.stringify(socket)}, { owner: "simon", repo: "app" });
+await closeExitedLeads(db, ${JSON.stringify(socket)});
 console.log(db.query("SELECT tab_closed FROM repositories").get().tab_closed);`;
   const run = Bun.spawnSync([process.execPath, "-e", script], {
     env: { ...process.env, ...homeEnv(home) },
@@ -749,7 +750,8 @@ test("a lead whose tmux session went while the daemon runs is taken as exited", 
   expect(tabClosedAfterLook(null)).toBe("1");
 });
 
-// As after the machine restarted, when every session is gone.
+// As after the machine restarted, when every session is gone. A lead that then can't come back,
+// such as one whose clone is missing, keeps its tab through the looks that follow too.
 test("a lead whose tmux session went before the daemon started is brought back, not exited", () => {
   expect(tabClosedAfterLook(null, true)).toBe("0");
 });

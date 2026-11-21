@@ -505,7 +505,7 @@ function afterLeadLook(
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   return runWithFakeHost(
     "sessions",
-    `const { closeExitedLeads } = await import(${JSON.stringify(source("flow/lead.ts"))});
+    `const { closeExitedLeads, closeLeadAtStart } = await import(${JSON.stringify(source("flow/lead.ts"))});
 const { attachOnHost, pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
 const fs = require("node:fs");
 fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
@@ -519,7 +519,8 @@ if (${gone}) fs.rmSync(${JSON.stringify(join(fake, "sessions", "fake-lead-app"))
 attachOnHost(host, "fake-lead-app");
 const hold = ${JSON.stringify(join(fake, "hold-list"))};
 if (${hung}) fs.writeFileSync(hold, "1");
-await closeExitedLeads(db, "unused", ${unsaved});
+if (${unsaved}) await closeLeadAtStart(db, "unused", { owner: "simon", repo: "app" });
+else await closeExitedLeads(db, "unused");
 fs.rmSync(hold, { force: true });
 const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
 console.log(row.tab_closed, await hasSession(host, "fake-lead-app"));`,
@@ -789,8 +790,9 @@ console.log(await brief, await hasSession(host, id), await look);`,
 }, 30_000);
 
 // The daemon's look can't end the lead you exited, and a brief that waited for it must not go on
-// as if the old session were gone.
-test("a check waiting for an ending that failed fails too", () => {
+// as if the old session were gone. Once the host can end it, the next look does, though the tab
+// is closed by then.
+test("a check waiting for an ending that failed fails too, and the next look ends the lead", () => {
   const said = leadRace(
     "'fake', NULL",
     `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
@@ -804,11 +806,14 @@ const look = closeIfExited(db, "unused", "simon", "app");
 for (let i = 0; i < 200 && tab() === 0; i++) await Bun.sleep(25);
 const brief = await closeIfExited(db, "unused", "simon", "app").then(String, (error) => error.message);
 console.log(brief);
-console.log(await look, tab());`,
+console.log(await look.then(String, (error) => error.message), tab());
+fs.rmSync(fake + "/say-end");
+fs.rmSync(fake + "/slow-end");
+await closeExitedLeads(db, "unused");
+console.log(await hasSession(host, id), tab());`,
   );
-  expect(said).toContain(
-    "couldn't end simon/app's exited lead: fake couldn't end: the host can't end it\ntrue 1\n",
-  );
+  const failed = "couldn't end simon/app's exited lead: fake couldn't end: the host can't end it";
+  expect(said).toContain(`${failed}\n${failed} 1\nfalse 1\n`);
 }, 30_000);
 
 test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {

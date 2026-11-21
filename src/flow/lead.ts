@@ -413,26 +413,32 @@ export function leadPrompted(db: Database, owner: string, repo: string): void {
 let looking: Promise<void> | null = null;
 
 // Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
-// session. A lead that crashed exits with another code and keeps its tab. The daemon looks at
-// its start and every second, so a lead that exited while no screen was open, or while the
-// daemon was down, has its tab closed too. Only the lead ends: the repository, its threads and
-// its clone stay, and its conversation is kept for when you open it again. Leads on every host
-// are looked at all at once, so a slow host holds up only its own leads, and a look asked for
-// while one runs waits for that one. With `atStart`, as the daemon starts, a lead on a plugin's
-// host whose ID never got saved is found by its labels first, so one that exited while the
-// daemon was down closes its tab too. Only then: a lead starting meanwhile has no ID either, and
-// the session it is replacing would be found and taken for one you exited. A lead whose session
-// is gone then is brought back, as after the machine restarted, rather than taken as exited.
-export function closeExitedLeads(db: Database, sessions: string, atStart = false): Promise<void> {
+// session. A lead that crashed exits with another code and keeps its tab. The daemon looks every
+// second, so a lead that exited while no screen was open has its tab closed too. Only the lead
+// ends: the repository, its threads and its clone stay, and its conversation is kept for when you
+// open it again. Leads on every host are looked at all at once, so a slow host holds up only its
+// own leads, and a look asked for while one runs waits for that one. A lead whose ending failed
+// is looked at again, though its tab is closed, so the ending is tried again. `skip` leaves out
+// the leads the daemon's start hasn't settled yet, by their owner/name.
+export function closeExitedLeads(
+  db: Database,
+  sessions: string,
+  skip: (key: string) => boolean = () => false,
+): Promise<void> {
+  const opened = openedRepositories(db).map(({ owner, repo }) => `${owner}/${repo}`);
+  const keys = [...new Set([...opened, ...unended])].filter((key) => !skip(key));
   looking ??= Promise.all(
-    openedRepositories(db).map(async ({ owner, repo }) => {
-      if (atStart) await leadSession(db, sessions, owner, repo).catch(() => null);
-      // A check that waited for another's ending that failed has nothing to close: that one
-      // said why.
-      if (await closeIfExited(db, sessions, owner, repo, atStart).catch(() => false))
-        console.log(
-          `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
-        );
+    keys.map(async (key) => {
+      const [owner = "", repo = ""] = key.split("/");
+      const retry = unended.has(key);
+      try {
+        if ((await closeIfExited(db, sessions, owner, repo)) && !retry)
+          console.log(
+            `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
+          );
+      } catch (error) {
+        console.log(errorText(error));
+      }
     }),
   )
     .then(() => {})
@@ -441,6 +447,40 @@ export function closeExitedLeads(db: Database, sessions: string, atStart = false
     });
   return looking;
 }
+
+// Settles a repository's lead as the daemon starts, before it is brought back. A lead on a
+// plugin's host whose ID never got saved is found by its labels first, so one that exited while
+// the daemon was down closes its tab too. Only now: a lead starting later has no ID either, and
+// the session it replaces would be found and taken for one you exited. A lead whose session is
+// gone is brought back, as after the machine restarted, rather than taken as exited. Its saved ID
+// names nothing now, so it goes: a lead that then can't start, such as one whose clone is
+// missing, would otherwise be taken for one you exited by the next look, and lose its tab.
+export async function closeLeadAtStart(
+  db: Database,
+  sessions: string,
+  { owner, repo }: { owner: string; repo: string },
+): Promise<void> {
+  const found = await leadSession(db, sessions, owner, repo).catch(() => null);
+  try {
+    if (await closeIfExited(db, sessions, owner, repo, true)) {
+      console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
+      return;
+    }
+  } catch (error) {
+    console.log(errorText(error));
+    return;
+  }
+  if (found && !(await hasSession(found.host, found.id).catch(() => true)))
+    db.run(
+      "UPDATE repositories SET lead_host_id = NULL WHERE owner = ? AND repo = ? AND lead_host_id = ?",
+      [owner, repo, found.id],
+    );
+}
+
+// The leads whose ending failed, by their repository's owner/name, which may still have the
+// session you exited. Each look for exited leads tries again, and until one works, every check of
+// the lead fails, so nothing opens its tab again while that session is there.
+const unended = new Set<string>();
 
 // Closes a repository's tab and ends its lead's session when you exited the lead, and says
 // whether it did. A lead you exited leaves its session behind, so its host can say how it ended,
@@ -468,10 +508,13 @@ export async function closeIfExited(
   // so whoever asked, such as a brief about to open the tab again, carries on only once the old
   // session is gone. An ending that failed may have left that session, and a daemon started
   // then would close the tab again with the brief waiting, so this then fails too.
+  const failed = (error: unknown) =>
+    new Error(`couldn't end ${key}'s exited lead: ${errorText(error)}`);
   const settled = async () => {
     await endings.get(key)?.catch((error) => {
-      throw new Error(`couldn't end ${key}'s exited lead: ${errorText(error)}`);
+      throw failed(error);
     });
+    if (unended.has(key)) throw failed("its last ending failed, and is tried again each second");
     return false;
   };
   if (endings.has(key)) return settled();
@@ -481,7 +524,18 @@ export async function closeIfExited(
     return false;
   const id = lead.hostId ?? lead.name;
   const goneIsExited = !atStart && lead.hostId !== null;
-  if (!(await agentExited(host, id, goneIsExited).catch(() => false))) return settled();
+  // A lead whose ending failed and that no longer counts as exited, such as one started again,
+  // has nothing left to end. A host that can't answer says nothing of that.
+  let exited: boolean;
+  try {
+    exited = await agentExited(host, id, goneIsExited);
+  } catch {
+    return settled();
+  }
+  if (!exited) {
+    unended.delete(key);
+    return settled();
+  }
   // Nothing waits from this look to the ending being queued, so no start or other check can
   // come in between.
   if (changed()) return settled();
@@ -489,12 +543,16 @@ export async function closeIfExited(
   // The host may have forgotten the session already, so only a session still there is ended.
   // The tab is closed either way, and opening the lead again ends whatever is left of it. A lead
   // has one ending at a time, as a second check sees the generation change and waits for this.
+  // An ending that failed may leave the session, so it isn't done: this check fails, the lead is
+  // remembered, and the next look tries again.
   const ending = inLeadQueue(key, () => stopSession(host, id));
   endings.set(key, ending);
   try {
     await ending;
+    unended.delete(key);
   } catch (error) {
-    console.log(`couldn't end ${key}'s exited lead: ${errorText(error)}`);
+    unended.add(key);
+    throw failed(error);
   } finally {
     endings.delete(key);
   }
