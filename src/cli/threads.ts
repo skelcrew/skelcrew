@@ -1,6 +1,6 @@
 // The commands that act on one thread: starting, stopping, removing, reviewing, peeking at,
 // interrupting and attaching to it, merging its PR, and running the checks.
-import { bodyFor, readAsked, splitTask, splitTaskName, splitThreadName, usage } from "./input.ts";
+import { bodyFor, parseTask, readAsked, splitTaskName, splitThreadName, usage } from "./input.ts";
 
 export async function mergeCommand(args: string[]): Promise<void> {
   const [, how, named, ...rest] = args;
@@ -137,7 +137,7 @@ export async function startCommand(args: string[], asking: boolean): Promise<voi
   if (sub && !task && title && body !== undefined && words.length === 2)
     given = { title, body: bodyFor(shown, body) };
   else if (sub && !task && words.length === 0 && !process.stdin.isTTY)
-    given = splitTask(await Bun.stdin.text(), shown);
+    given = parseTask(await Bun.stdin.text(), shown);
   if (!sub || !given) return usage(asking ? "ask" : "start");
   console.log(
     asking
