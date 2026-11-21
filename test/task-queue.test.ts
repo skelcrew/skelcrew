@@ -139,3 +139,18 @@ console.log(JSON.stringify({ said, first: leave() }));`,
     first: ["app-13"],
   });
 });
+
+test("a task started over the limit counts as running, so the queue waits until it ends", () => {
+  // app-12 was started now over the limit of one, while app-11 worked, so it never joined.
+  const sql = `${twoQueued(1, 2)}
+UPDATE threads SET status = 'working', queued_since = NULL, session = 't' WHERE folder = 'app-12';`;
+  const left = onQueue(
+    sql,
+    `const both = leave();
+db.run("UPDATE threads SET status = 'done' WHERE folder = 'app-11'");
+const forced = leave();
+db.run("UPDATE threads SET status = 'done' WHERE folder = 'app-12'");
+console.log(JSON.stringify({ both, forced, none: leave() }));`,
+  );
+  expect(left).toEqual({ both: [], forced: [], none: ["app-13"] });
+});

@@ -8,7 +8,7 @@ import { z } from "zod";
 import { roundLimit as roundLimitOf, threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
-import { passedReviewStage, reviewCheck } from "../flow/decide.ts";
+import { nextRound, passedReviewStage, reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { type LeadRequest, requestsOf } from "../flow/lead-requests.ts";
 import {
@@ -48,13 +48,18 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // heading, which you can stand on too, so Enter there opens or closes it. `section` is the section
 // it shows under: Needs you while the task waits on you, Task queue while it is queued or paused,
 // its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in,
-// `says` is its short word, in `colour`, and `step` what its builder is doing, such as `Editing
-// rows.ts`. Then dim its PR, such as `#41`, its CI, such as `CI passed`, and when it last changed,
-// such as `14:31`. Each is empty where it has none. `needsYou` is whether it waits on you for
+// `label` is the name the row shows, such as T139, without the repository its tab already names,
+// while `name`, such as APP-T139, is what everything else goes by. `says` is its short word, in
+// `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then its PR, such as
+// `#41`, what its CI says, its review's round and the colour of where that review stands, and how
+// long ago it last changed, such as `4m`. Each is empty or null where it has none. `changed` is
+// that moment in milliseconds, or null, which the details pane gives by the clock, so the two
+// always agree. `needsYou` is whether it waits on you for
 // something other than a merge. `session` is the agent's session, which Enter attaches to,
 // `running` whether its agent runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\
 // comes back, rather than on a runtime plugin's host, which has a key of its own. `start` is what
-// Enter does on an issue, and `merge` what m does on a task ready for review. `link` is its PR's,
+// Enter does on an issue, `startNow` what f does on a queued task, or on an issue while every
+// builder is busy, which starts it at once over limits.threads, and `merge` what m does on a task ready for review. `link` is its PR's,
 // which Enter opens, and `branch` the branch a task that is ready without a forge waits on. Each is
 // null where it doesn't apply. `more` is how many issues the row stands for on the `… more` row at
 // the end of a cut Backlog, which Enter shows, and 0 on every other row. `task` is the task's ID,
@@ -68,6 +73,7 @@ export type Row = {
   part: "lead" | "request" | "heading" | ListStage;
   section: "lead" | Section;
   name: string;
+  label: string;
   task: string | null;
   title: string;
   mark: { sign: string; colour: Colour };
@@ -75,13 +81,16 @@ export type Row = {
   colour: Colour;
   step: string;
   pr: string;
-  checks: string;
+  ci: Ci | null;
+  review: { round: number; colour: Colour } | null;
   when: string;
+  changed: number | null;
   needsYou: boolean;
   session: string | null;
   running: boolean;
   tmux: boolean;
   start: Question | null;
+  startNow: Question | null;
   merge: Action | null;
   link: string | null;
   branch: string | null;
@@ -90,6 +99,9 @@ export type Row = {
   waits: string;
   request: number | null;
 };
+
+// What a task's CI says, by its checks as the last poll saved them.
+export type Ci = "passed" | "running" | "failed";
 
 // The repository the list shows, by its owner/name.
 export type Open = { owner: string; repo: string };
@@ -114,26 +126,40 @@ const roundLimit = (thread: Thread) => {
   }
 };
 
-// Returns when a task last changed as a clock time for a moment today, such as 14:32, and as a
-// date for an earlier one, such as 12 Nov, in this machine's time zone. It changes only when the
-// task does, or at midnight, so a list left open writes nothing.
+// Returns when something happened as a clock time, such as 14:32, with the date before it for a
+// day before today, such as 12 Nov 23:59, in this machine's time zone. The details pane says when
+// a task last changed with it, beside how long ago.
 export function changedAt(at: number, now: number): string {
   const when = new Date(at);
-  if (when.toDateString() === new Date(now).toDateString())
-    return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })}`;
+  const clock = `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  if (when.toDateString() === new Date(now).toDateString()) return clock;
+  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })} ${clock}`;
 }
 
 // Returns how long ago a moment was, before `now`, both in milliseconds, in its largest whole
 // unit, such as `4m ago`, `2h ago` or `3d ago`, or `just now` within a minute. The details pane
 // says when things happened this way, as a clock time makes you work out how long it has been.
-export function ago(at: number, now: number): string {
+// `short` leaves out the words, as `4m` or `now`, for a row, where room is tight. A moment after
+// `now` counts as just now, as another machine's clock can run ahead.
+export function ago(at: number, now: number, short = false): string {
   const minutes = Math.floor(Math.max(now - at, 0) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}h ago`;
-  return `${Math.floor(minutes / (24 * 60))}d ago`;
+  if (minutes < 1) return short ? "now" : "just now";
+  const unit =
+    minutes < 60
+      ? `${minutes}m`
+      : minutes < 24 * 60
+        ? `${Math.floor(minutes / 60)}h`
+        : `${Math.floor(minutes / (24 * 60))}d`;
+  return short ? unit : `${unit} ago`;
 }
+
+// Returns the time a row shows: how long ago its task last changed, short, such as 4m, and that
+// moment, which the details pane gives by the clock. Both come from here, so a row and its details
+// always agree. A task with no time, or one that can't be read, shows none.
+const shownTime = (at: number | null, now: number) =>
+  at === null || Number.isNaN(at)
+    ? { when: "", changed: null }
+    : { when: ago(at, now, true), changed: at };
 
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.
@@ -160,6 +186,7 @@ function leadRow(db: Database, open: Open): Row {
     part: "lead",
     section: "lead",
     name: "lead",
+    label: "lead",
     task: null,
     title: lead.harness ?? "",
     mark: asking ? { sign: "●", colour: "yellow" } : { sign: "○", colour: runs ? "bright" : "dim" },
@@ -167,13 +194,16 @@ function leadRow(db: Database, open: Open): Row {
     colour: asking ? "yellow" : "dim",
     step: "",
     pr: "",
-    checks: "",
+    ci: null,
+    review: null,
     when: "",
+    changed: null,
     needsYou: asking,
     session: lead.name,
     running: runs,
     tmux: true,
     start: null,
+    startNow: null,
     merge: null,
     link: null,
     branch: null,
@@ -193,6 +223,7 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     part: "request",
     section: "lead",
     name: `request-${request.id}`,
+    label: "",
     task: null,
     title: removeControlCodes(request.says),
     mark: { sign: "●", colour: "yellow" },
@@ -200,13 +231,16 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     colour: "yellow",
     step: "",
     pr: "",
-    checks: "",
+    ci: null,
+    review: null,
     when: "",
+    changed: null,
     needsYou: false,
     session: lead.session,
     running: lead.running,
     tmux: false,
     start: null,
+    startNow: null,
     merge: null,
     link: null,
     branch: null,
@@ -224,9 +258,10 @@ const SavedLink = z.object({ pr_link: z.string().nullable() });
 // Returns the row of a task with a thread, given the thread and the stage it is in. Its word says
 // in one or two words what is happening, or when the thread needs you, why, in its mark's colour.
 // An ended task says whether it merged. A builder at work, or at work while its review runs, also
-// has the step it is on, as the sidebar shows it. Then come its PR, its CI and when it last
-// changed. The rest, such as a merge when ready or messages waiting, is for sc show, so a row
-// stays short. A task ready for review offers m when it has a PR to merge.
+// has the step it is on, as the sidebar shows it.
+// Then come its PR, its CI, its review's round and when it last changed. The rest, such as a
+// merge when ready or messages waiting, is for sc show, so a row stays short. A task ready for
+// review offers m when it has a PR to merge.
 function taskRow(
   db: Database,
   open: Open,
@@ -252,7 +287,7 @@ function taskRow(
   const pr = thread.pr === null ? "" : `#${thread.pr}`;
   const copy = thread.pr === null ? null : prOf(db, open.owner, open.repo, thread.pr);
   // No CI runs on the PR's head once the wait for CI's first check on it ended with none. Its
-  // checks then count as passed, and the row says "no CI".
+  // checks then count as passed for a merge, and the row shows no CI.
   const noCi = copy !== null && copy.head !== null && thread.no_ci === copy.head;
   const changed = thread.changed ?? thread.started;
   // The step comes from the builder's conversation file, read at most every 10 seconds, and only
@@ -323,6 +358,7 @@ function taskRow(
           ? "task queue"
           : stage,
     name,
+    label: thread.task.toUpperCase(),
     task: thread.task,
     title: removeControlCodes(thread.short ?? thread.title ?? ""),
     mark,
@@ -330,14 +366,16 @@ function taskRow(
     colour: mark.colour,
     step,
     pr,
-    checks: thread.checks === null ? (noCi ? "no CI" : "") : ciWords[thread.checks],
-    when: changed === null ? "" : changedAt(changed, now),
+    ci: thread.checks === null ? null : ciOf[thread.checks],
+    review: reviewOf(thread),
+    ...shownTime(changed, now),
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
     // Enter attaches to the builder of a task at work, or of a ready one that needs you.
     tmux: !ended && !ready && (thread.host ?? "tmux") === "tmux",
     start: null,
+    startNow: null,
     merge,
     // The saved link stands in only for this attempt's PR: a task started over has none until
     // it opens one, and must never open the previous attempt's.
@@ -350,12 +388,34 @@ function taskRow(
   };
 }
 
-// What a task's CI says, by its checks as the last poll saved them, in sc ps's words.
-const ciWords: Record<NonNullable<Thread["checks"]>, string> = {
-  passing: "CI passed",
-  failing: "CI failed",
-  pending: "CI running",
+// What a task's CI says, by its checks as the last poll saved them. A PR on which no CI runs
+// has none, as has one with no checks yet.
+const ciOf: Record<NonNullable<Thread["checks"]>, Ci> = {
+  passing: "passed",
+  failing: "failed",
+  pending: "running",
 };
+
+// The colour of a finished review, by its verdict.
+const verdictColours: Record<Exclude<NonNullable<Thread["verdict"]>, "not reviewed">, Colour> = {
+  approve: "green",
+  changes: "yellow",
+  failed: "red",
+  "timed out": "red",
+};
+
+// Returns a task's review as its row shows it: its round, green once approved, yellow while it
+// runs or after it asked for changes, and red when it failed. A round under way is the next
+// one, and a task its flow doesn't review, or none reviewed yet, has none. Only the thread is
+// read, as the list draws every second.
+function reviewOf(thread: Thread): Row["review"] {
+  if (thread.verdict === "not reviewed") return null;
+  const live = thread.status === "working" || thread.status === "waiting";
+  if (live && (thread.submitting !== null || thread.reviewing !== null))
+    return { round: nextRound(thread), colour: thread.review_failed ? "red" : "yellow" };
+  if (thread.verdict === null || thread.review_round === null) return null;
+  return { round: thread.review_round, colour: verdictColours[thread.verdict] };
+}
 
 // How many ended tasks Done shows at least, when fewer than that ended today.
 const doneShown = 10;
@@ -435,6 +495,18 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     : "";
   // Returns what the task at a place in the queue, counted from 0, waits on.
   const waitsOn = (at: number) => (holder && at >= held ? claim : busy);
+  // Returns the question f asks of a task, which starts it now over limits.threads, as sc start
+  // --now does. It says the limit it goes over, as that is what you decide.
+  const over = builders.limit === null ? "limits.threads" : `the limit of ${builders.limit}`;
+  const startNow = (task: string): Question => {
+    const name = taskName(repository.name, task);
+    return {
+      ask: `Start ${name} now, over ${over}? y/n`,
+      working: `Starting ${name}…`,
+      request: { command: "start", repo: `${open.owner}/${open.repo}`, task, now: true },
+      queues: false,
+    };
+  };
   // A queued or paused task says where it is in line, or that it is paused, and the pane says
   // what it waits on, under Needs you too. Task queue's rows say it in their word as well. One
   // under Needs you keeps its word, as it says what you must do.
@@ -443,6 +515,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     const at = queue.findIndex((queued) => taskName(repository.name, queued.task) === row.name);
     if (at >= 0) {
       row.place = at + 1;
+      if (row.task !== null) row.startNow = startNow(row.task);
       row.waits = `${at === 0 ? "Starts next" : `${ordinal(at + 1)} in line`}: ${waitsOn(at)}`;
       if (row.section === "task queue")
         row.says = at === 0 ? "starts next" : `${ordinal(at + 1)} in line`;
@@ -458,6 +531,10 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // of the queue, as the daemon decides, so the question says so, and what the queue waits on.
   const full =
     builders.limit !== null && (builders.queued > 0 || builders.running >= builders.limit);
+  // f offers a start over the limit only while no builder's place is free. Tasks can wait with
+  // a place free, such as behind a claim the tracker hasn't taken, and a start then isn't over
+  // the limit.
+  const noPlace = builders.limit !== null && builders.running >= builders.limit;
   // Returns the row of a task not started yet, which Enter asks to start, as sc start does.
   const notStarted = (task: string, title: string, changed: number): Row => {
     const name = taskName(repository.name, task);
@@ -466,6 +543,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       part: "backlog",
       section: "backlog",
       name,
+      label: task.toUpperCase(),
       task,
       title: removeControlCodes(title),
       mark: { sign: "○", colour: "dim" },
@@ -473,8 +551,9 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       colour: "dim",
       step: "",
       pr: "",
-      checks: "",
-      when: Number.isNaN(changed) ? "" : changedAt(changed, now),
+      ci: null,
+      review: null,
+      ...shownTime(changed, now),
       needsYou: false,
       session: null,
       running: false,
@@ -492,6 +571,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
             request: { command: "start", repo: `${open.owner}/${open.repo}`, task },
             queues: false,
           },
+      startNow: noPlace ? startNow(task) : null,
       merge: null,
       link: null,
       branch: null,
@@ -574,6 +654,7 @@ export function cutBacklog(rows: Row[], whole: boolean): Row[] {
     part: "backlog",
     section: "backlog",
     name: `${rest} more`,
+    label: `${rest} more`,
     mark: { sign: "…", colour: "dim" },
     more: rest,
   };
@@ -588,6 +669,7 @@ const emptyRow: Row = {
   part: "lead",
   section: "lead",
   name: "",
+  label: "",
   task: null,
   title: "",
   mark: { sign: "", colour: "dim" },
@@ -595,13 +677,16 @@ const emptyRow: Row = {
   colour: "dim",
   step: "",
   pr: "",
-  checks: "",
+  ci: null,
+  review: null,
   when: "",
+  changed: null,
   needsYou: false,
   session: null,
   running: false,
   tmux: false,
   start: null,
+  startNow: null,
   merge: null,
   link: null,
   branch: null,

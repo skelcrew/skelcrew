@@ -365,7 +365,7 @@ export const release = () => {
 export function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, id, yes } = z
+      const { command, from, tab, repo, task, pr, commit, by, id, yes, now } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
@@ -377,6 +377,7 @@ export function daemon(): void {
           by: z.number().default(0),
           id: z.number().default(0),
           yes: z.boolean().default(false),
+          now: z.boolean().default(false),
         })
         .parse(JSON.parse(data.toString()));
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
@@ -402,7 +403,11 @@ export function daemon(): void {
         connection.end("{}\n");
         return;
       }
-      acted.push(command === "start" ? `start ${repo} ${task}` : `merge ${repo} ${pr} ${commit}`);
+      acted.push(
+        command === "start"
+          ? `start ${repo} ${task}${now ? " now" : ""}`
+          : `merge ${repo} ${pr} ${commit}`,
+      );
       const said = command === "start" ? { started: `Started app-${task}.` } : given.mergeAnswer;
       const reply = () => connection.end(`${JSON.stringify(said)}\n`);
       if (given.holding) waiting.push(reply);

@@ -47,9 +47,9 @@ export function openPr(
   return `Copied ${row.link}`;
 }
 
-// A question open on the bottom line: what it asks, the row it is about by name, and whether it
-// is a merge or a start.
-export type Asking = { question: Question; row: string; merge: boolean };
+// A question open on the bottom line: what it asks, the row it is about by name, and which of
+// the row's offers it is: a start, a start now over limits.threads, or a merge.
+export type Asking = { question: Question; row: string; offer: "start" | "startNow" | "merge" };
 
 // Returns the start or merge to go ahead with once you said yes, given the rows read again just
 // now, or what the bottom line says instead. The task can change while the question is open: CI
@@ -57,7 +57,7 @@ export type Asking = { question: Question; row: string; merge: boolean };
 // the row still offers the very same request.
 export function stillOffered(asking: Asking, rows: Row[]): Question | string {
   const row = rows.find((candidate) => candidate.name === asking.row);
-  const offer = asking.merge ? row?.merge : row?.start;
+  const offer = row?.[asking.offer];
   if (offer && "ask" in offer && Bun.deepEquals(offer.request, asking.question.request))
     return offer;
   return offer && "refused" in offer

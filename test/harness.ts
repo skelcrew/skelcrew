@@ -42,8 +42,11 @@ export async function until(
 // they start find their state, their socket and the test's fake programs through it, and so
 // never reach the real ones. The temporary folders the test was given pass through: inside
 // Skelcrew's sandbox on a Mac /tmp is hidden, and tmux and temporary files must go elsewhere.
+// Routine notes go into a lead as they come, rather than in a digest every 10 minutes, so a test
+// waiting on one isn't held for the next digest. The digest has tests of its own.
 export function homeEnv(home: string): Record<string, string> {
   const env: Record<string, string> = {
+    SKELCREW_DIGEST_MS: "0",
     HOME: home,
     XDG_RUNTIME_DIR: join(home, "run"),
     PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,

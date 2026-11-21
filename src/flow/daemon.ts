@@ -80,6 +80,8 @@ import {
 import {
   briefLead,
   deliverAllWaiting,
+  leadTurnEnded,
+  leadTurnStarted,
   messageBuilder,
   messageLead,
   noteForLead,
@@ -664,7 +666,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Starts a task, for sc start: brings back a stopped thread, lets one go on past the round
   // limit, switches the flow or short title of one at work, or records a new thread and starts
-  // its builder. Returns what to say of it. `yes` is the ID of your yes to a lead's request that
+  // its builder. With `now`, from sc start --now or f in the list, a start over limits.threads
+  // goes ahead at once, and a task in the queue leaves it to start. Returns what to say of it. `yes` is the ID of your yes to a lead's request that
   // asked for this start. Whatever the start changes, the request keeps what it said in the same
   // step, so a stop of the daemon before the lead hears never has the yes done again.
   const startTask = async (
@@ -688,6 +691,36 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // Another flow for a thread at work switches it, as switchFlow allows. The flow it runs
     // already is no switch, so sc start goes on as without one, such as past the round limit.
     const switching = before !== null && request.flow !== undefined && request.flow !== before.flow;
+    // Takes a queued task out of the queue and starts it at once, over the limit, for --now.
+    // A claim it still owes is no longer waited for: it is made as a new start makes one, in the
+    // background, whatever the tracker answers, so a tracker that is down can't hold it back.
+    // Its place is let go too, so a start the engine's stop cuts short is taken for any start
+    // cut short, not put back in the queue.
+    const startNowFromQueue = (queued: Thread) => {
+      const name = threadName(db, queued);
+      if (removing.has(queued.folder)) throw new Error(`${name} is being removed`);
+      const { owner, repo, task } = queued;
+      const where = "WHERE owner = ? AND repo = ? AND task = ?";
+      const owed = db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) !== null;
+      const status = queued.session === null ? "working" : statusOnceBack(queued);
+      const short = request.short ? { short: request.short } : {};
+      let starting: Promise<string | null> = Promise.resolve(null);
+      let started = queued;
+      const answer = done(`Started ${name} now, out of the queue, over limits.threads.`, () => {
+        db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+        const change = { status, queued_since: null, ...short };
+        started = record(db, queued.folder, change, "started now, over limits.threads");
+        starting = started.session === null ? setUpAndStart(started) : comeBack(started);
+      });
+      // You are assigned its issue whatever happened to the claim: the start that queued it
+      // assigns you only while it is still queued, and may find it started by now.
+      assignIssue(db, started, owed);
+      return { ...answer, starting };
+    };
+    if (before?.status === "queued" && request.now) {
+      if (switching && request.flow) switchFlow(before, request.flow);
+      return startNowFromQueue(readThread(db, before.folder));
+    }
     if (before && atWork && switching && request.flow) {
       const flow = request.flow;
       return done(`${threadName(db, before)} now runs the flow ${flow}.`, () =>
@@ -715,8 +748,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       const now = readThread(db, before.folder);
       if (now.status !== before.status || now.started !== before.started)
         throw new Error(`${name} changed while Skelcrew asked its host: run sc start again`);
-      // Over the limit, it waits its turn in the queue, and comes back then.
-      if (joinsQueue(db, before)) {
+      // Over the limit, it waits its turn in the queue, and comes back then, unless --now
+      // brings it back at once.
+      if (!request.now && joinsQueue(db, before)) {
         const change = { status: "queued" as const, queued_since: joinTime(db) };
         const short = request.short ? { short: request.short } : {};
         // What it says names its place in the queue, which only the change gives.
@@ -765,6 +799,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       // short title and flow given here still go on that thread, so they aren't lost, as long
       // as its builder hasn't submitted meanwhile.
       const started = threadOn(db, request.repo, request.task);
+      // One the poll queued still starts now, as --now asked.
+      if (!before && started?.status === "queued" && request.now) {
+        if (request.flow && request.flow !== started.flow) switchFlow(started, request.flow);
+        return startNowFromQueue(readThread(db, started.folder));
+      }
       if (!before && started)
         return done(`Started ${threadName(db, started)}.`, () => {
           if (request.flow && request.flow !== started.flow)
@@ -812,13 +851,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // no default, so the typecheck fails if a request is left out.
   const handle = async (request: DaemonRequest, caller: Caller): Promise<object> => {
     // A hook's request first keeps what the agent is doing. A lead's stops there: you see a lead
-    // whenever you open its repository, so nothing it does flags needs you.
+    // whenever you open its repository, so nothing it does flags needs you. Its turns starting
+    // and ending only open and close its reading window.
     const state = stateAfter(request.command);
     if (state !== null) {
       const lead = leadOfCaller(caller);
       keepState(db, lead ?? callingThread(caller), state);
       if (lead) {
-        if (request.command === "question answered") leadPrompted(db, lead.owner, lead.repo);
+        if (request.command === "question answered") {
+          leadPrompted(db, lead.owner, lead.repo);
+          leadTurnStarted(db, sessions, lead, request.prompt);
+        }
+        if (request.command === "turn ended" || request.command === "turn interrupted")
+          leadTurnEnded(db, sessions, lead);
         return { state };
       }
     }

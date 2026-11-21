@@ -106,7 +106,8 @@ const keyNames: Record<string, string> = {
 // section's heading, none on the heading of Needs you, which never closes, attach where it attaches
 // to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter or `a`
 // attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued
-// task in the task queue, and s or m show only where the row can be started, or queued, or merged.
+// task in the task queue, and s, f or m show only where the row can be started, or queued, started
+// now over limits.threads, or merged.
 // A request of the lead's offers y and n, which answer it, in place of Enter. R shows where the
 // row's agent runs, so it can be restarted. w, which closes or removes the repository, is always
 // there, with Alt-W beside it, as that is the key that works while an agent has your typing. It
@@ -124,9 +125,10 @@ function sidebarFooter(row: Row, restarts: boolean): string {
   const scroll = row.task ? " · pgup/pgdn scroll" : "";
   const reorder = row.section === "task queue" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
+  const now = row.startNow ? "  f start now" : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `${first}  ${enter}${scroll}  0-6 sections${reorder}${start}${merge}${end}`;
+  return `${first}  ${enter}${scroll}  0-6 sections${reorder}${start}${now}${merge}${end}`;
 }
 
 // The question the close key asks about the open repository, by the step it is at: which of
@@ -793,7 +795,7 @@ export async function runSidebar(
       return reshow();
     }
     if (row.part === "backlog" && row.start) {
-      asking = { question: row.start, row: row.name, merge: false };
+      asking = { question: row.start, row: row.name, offer: "start" };
       return;
     }
     // A task in the task queue has no builder running yet, so the footer says what it waits on.
@@ -910,12 +912,14 @@ export async function runSidebar(
     if (answer) void goAhead(answer);
     else if (key === "R" && row && restartOf(row)) {
       const question = restartOf(row);
-      if (question) asking = { question, row: row.name, merge: false };
+      if (question) asking = { question, row: row.name, offer: "start" };
     } else if (key === "s" && row?.part === "backlog" && row.start)
-      asking = { question: row.start, row: row.name, merge: false };
+      asking = { question: row.start, row: row.name, offer: "start" };
+    else if (key === "f" && row?.startNow)
+      asking = { question: row.startNow, row: row.name, offer: "startNow" };
     else if (key === "m" && row?.merge) {
       if ("refused" in row.merge) said = row.merge.refused;
-      else asking = { question: row.merge, row: row.name, merge: true };
+      else asking = { question: row.merge, row: row.name, offer: "merge" };
     } else if (key === "m" && row?.part === "ready")
       said = row.needsYou
         ? `${row.name}'s builder needs you first: press Enter to reach it`

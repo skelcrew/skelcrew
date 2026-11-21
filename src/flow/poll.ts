@@ -146,10 +146,11 @@ async function startLabeled(
     const name = taskName(repository.name, task.id);
     // The claim is forgotten in the same transaction as the note is saved, so a stop between the
     // two can't leave the claim forgotten and the lead never told.
-    const forgetAndTell = (note: string) =>
+    const forgetAndTell = (note: string, urgent = false) =>
       db.transaction(() => {
         forget(task.id);
-        noteForLead(db, sessions, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
+        const line = note.replace(/\s+/g, " ").slice(0, 200);
+        noteForLead(db, sessions, { owner, repo }, line, null, urgent);
       })();
     if (!claimed && unsure) {
       const note = `${name}'s claim was cut short, so Skelcrew can't tell if this machine holds it. If no other machine works on it, sc start ${name}.`;
@@ -183,6 +184,7 @@ async function startLabeled(
       );
       forgetAndTell(
         `couldn't start ${name} from its label; once fixed, sc start ${name}: ${errorText(error)}`,
+        true,
       );
       passed.add(key);
       return null;

@@ -254,7 +254,14 @@ export async function startLead(
       [session, harness.name, hostName, approved, owner, repo],
     );
     if (stored === null)
-      noteForLead(db, sessions, repository, openingNote(repositoryCommands(repository)));
+      noteForLead(
+        db,
+        sessions,
+        repository,
+        openingNote(repositoryCommands(repository)),
+        null,
+        true,
+      );
   })();
   // The lead reads the flows you approved at their ref, and starts with today's instructions, so
   // it needs no note of them, nor of briefing another lead.

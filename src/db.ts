@@ -128,7 +128,8 @@ function heardInLog(folder: string, round: number): string | null {
 // one since, which waits on the lead. It is null on a thread an earlier release saved, until the
 // daemon moves its `stalled` over. The rest of the flags say why it needs you.
 // `noting` holds a note for the lead about that, kept until it is typed in, so one the daemon's
-// stop cut short carries on when it starts again. `changed` is when anything last went in the
+// stop cut short carries on when it starts again, and `noting_seq` its place in the notes'
+// sequence, as nextSequence gives it, so the lead's reading window lets in only what it held. `changed` is when anything last went in the
 // thread's log. `working_since` is when the builder's current stretch of work began, for the
 // sidebar. It changes with every message typed into the builder, so it is kept out of the
 // thread's log, which would otherwise fill with it. `state` is what the builder is doing, from
@@ -168,6 +169,7 @@ const threadColumns = {
   submitted: "INTEGER NOT NULL DEFAULT 0",
   told_lead: "INTEGER NOT NULL DEFAULT 0",
   noting: "TEXT",
+  noting_seq: "INTEGER",
   started: "INTEGER",
   harness: "TEXT",
   changed: "INTEGER",
@@ -331,6 +333,19 @@ function linkIssues(db: Database): void {
 
 // Opens Skelcrew's database and prepares its tables so repositories, their leads and threads
 // survive restarts.
+// Takes the next number in the sequence that numbers the notes, which no note will be given, and
+// returns it. A thread starting to need you, and the human ending a reading window, take their
+// places in that one sequence, so which came first is never a tie, as two times in the same
+// millisecond would be. AUTOINCREMENT numbers the next note past the sequence's last number.
+export function nextSequence(db: Database): number {
+  db.run(`INSERT INTO sqlite_sequence (name, seq) SELECT 'notes', COALESCE(MAX(id), 0) FROM notes
+    WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'notes')`);
+  const row = db.query(
+    "UPDATE sqlite_sequence SET seq = seq + 1 WHERE name = 'notes' RETURNING seq",
+  );
+  return z.object({ seq: z.number() }).parse(row.get()).seq;
+}
+
 export function openDb(): Database {
   mkdirSync(dataDir(), { recursive: true });
   const db = new Database(join(dataDir(), "skelcrew.db"), { strict: true });
@@ -588,7 +603,14 @@ function prepareTables(db: Database): void {
   // session's ID there. A lead from before hosts runs on tmux, where its ID is its name.
   // `lead_agents` is the tree of the approved .agents/ the running lead started on, `none` for
   // the built-in roles, or null for a lead started before Skelcrew kept it, which starts again
-  // on the approved .agents/ the next time it is asked for, if you approved one.
+  // on the approved .agents/ the next time it is asked for, if you approved one. `digest_at` is
+  // when Skelcrew's routine notes last went into the lead, so the next digest waits its turn,
+  // across a restart too. `reading_until` is when the lead's reading window ends: after the lead
+  // answers the human, nothing is typed into it until then, so the human can read the answer.
+  // `reading_released` is the place in the notes' sequence of the human's last message to the
+  // lead. What came before it goes in once the lead is idle, though its answer opens a window.
+  // `lead_human_turn` is whether the human started the lead's turn under way, whose end opens a
+  // window.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -608,6 +630,10 @@ function prepareTables(db: Database): void {
     lead_host: "TEXT DEFAULT 'tmux'",
     lead_host_id: "TEXT",
     lead_agents: "TEXT",
+    digest_at: "INTEGER NOT NULL DEFAULT 0",
+    reading_until: "INTEGER NOT NULL DEFAULT 0",
+    reading_released: "INTEGER NOT NULL DEFAULT 0",
+    lead_human_turn: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
@@ -781,7 +807,7 @@ function prepareTables(db: Database): void {
     db.run("ALTER TABLE notes_new RENAME TO notes");
   }
   // `urgent` marks a note the human may need soon, such as a builder's message, which goes
-  // ahead of Skelcrew's routine notes when several wait for the lead.
+  // at once rather than in the next digest of Skelcrew's routine notes.
   if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'urgent'").get())
     db.run("ALTER TABLE notes ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0");
   // `wrapped` marks a builder's message or a brief, which Skelcrew wraps in its own tags, apart

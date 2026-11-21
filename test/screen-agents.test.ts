@@ -69,9 +69,10 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   expect(left(6)).toBe("");
   expect(left(7)).toBe(" 1 Backlog    0");
   expect(left(8)).toBe(" 2 Building   2");
-  expect(left(9)).toMatch(/^ {3}○ APP-12/);
-  expect(left(10)).toMatch(/^ {5}working/);
-  expect(left(11)).toMatch(/^ {3}○ APP-7/);
+  expect(left(9)).toMatch(/^ {3}○ 12\b/);
+  // Building already says it works, and it has no time yet, so nothing else shows under it.
+  expect(left(10)).toBe("");
+  expect(left(11)).toMatch(/^ {3}○ 7\b/);
   expect(left(13)).toBe("");
   expect(left(14)).toBe(" 3 Reviewing  0");
   expect(left(17)).toBe(" 6 Done       1");
@@ -86,9 +87,9 @@ test("Alt-Down and Alt-Up move the sidebar, and Enter on a task types to its bui
   open("lead");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
+  await until(() => / 12\b/.test(selected()) && onDetails(), "APP-12's details");
   press("M-Down");
-  await until(() => selected().includes("APP-7"), "the sidebar to move");
+  await until(() => / 7\b/.test(selected()), "the sidebar to move");
   await attachTo("app-7");
   type("hello\r");
   // The agent's shell makes the file before it writes the line, so wait for the whole line.
@@ -105,9 +106,9 @@ test("a click on a task shows its details, and a second click types to its build
   await ready("lead");
   const y = seen()
     .split("\n")
-    .findIndex((line) => line.includes("○ APP-7"));
+    .findIndex((line) => /○ 7\b/.test(line));
   click(5, y + 1);
-  await until(() => selected().includes("APP-7") && onDetails(), "APP-7's details");
+  await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
   click(5, y + 1);
   await until(() => !onDetails() && seen().includes("I am app-7"), "app-7");
   type("hello\r");
@@ -143,7 +144,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(onDetails, "app-12's details");
   press("Enter");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
-  await until(() => selected().includes("APP-12"), "the sidebar to follow");
+  await until(() => / 12\b/.test(selected()), "the sidebar to follow");
 });
 
 // Writes a fake runtime plugin named fake into the test's home and records it, whose host lists
@@ -313,7 +314,7 @@ test("the screen starts on the lead's row, even while a task needs you", async (
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
   await ready("lead");
-  await until(() => seen().includes("● APP-12"), "APP-12 under Needs you");
+  await until(() => /● 12\b/.test(seen()), "APP-12 under Needs you");
   expect(selected()).toMatch(/^▸ ○ lead\b/);
   await until(() => litBox() === "right", "the right side's box to light up");
 });
@@ -324,12 +325,12 @@ test("updates on its own, with needs you in the sidebar", async () => {
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   await until(() => colours().includes("\x1b[38;5;221m●"), "needs you");
-  expect(seen()).toContain("● APP-12");
+  expect(seen()).toMatch(/● 12\b/);
   expect(seen()).toContain("Needs you  1");
   // Its tab says so too, as other repositories' tabs would.
   expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^─┬─ Skelcrew .* ─*┬ {2}app •1 {2}─+┬─$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
-  await until(() => !seen().includes("APP-7"), "the done thread to go");
+  await until(() => !/[○●] 7\b/.test(seen()), "the done thread to go");
 });
 
 test("Alt-Q leaves the whole screen, ends no agent, and says so", async () => {
@@ -471,7 +472,7 @@ test("with a terminal that sends extended keys, the screen's own keys still work
   open("lead");
   await ready("lead");
   await toSecondThread();
-  expect(selected()).toContain("APP-7");
+  expect(selected()).toMatch(/ 7\b/);
   type("hello");
   press("Enter");
   await until(() => read("app-7.typed") === "hello\n", "the typing");
@@ -517,7 +518,7 @@ test("the wheel scrolls back through the agent's output, and typing returns you 
   for (let turn = 0; turn < 4; turn++) wheel(64);
   await until(() => seen().includes("line 160"), "the agent's older output");
   expect(seen()).not.toContain("I am output");
-  expect(seen()).toContain("APP-12");
+  expect(seen()).toMatch(/[○●] 12\b/);
   type("æble\r");
   // The agent's shell makes the file before it writes the line, so wait for the whole line.
   await until(() => read("output.typed").endsWith("\n"), "the typing");
@@ -572,7 +573,7 @@ test("Ctrl-Q and switching still work while scrolled back", async () => {
   wheel(64);
   await until(() => !seen().includes("I am output"), "the scrollback");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12"), "the first task");
+  await until(() => / 12\b/.test(selected()), "the first task");
   press("C-q");
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
@@ -777,12 +778,12 @@ test("two terminals each get their own session, and leaving one leaves the other
   await ready("lead", "two");
   expect(screenSessions()).toHaveLength(2);
   press("M-S-Down", "two");
-  await until(() => selected("two").includes("APP-12"), "the second to switch", "two");
+  await until(() => / 12\b/.test(selected("two")), "the second to switch", "two");
   expect(onLead("one")).toBe(true);
   press("C-q", "one");
   await until(() => screenSessions().length === 1, "the first to end");
   press("M-Down", "two");
-  await until(() => selected("two").includes("APP-7"), "the second to go on working", "two");
+  await until(() => / 7\b/.test(selected("two")), "the second to go on working", "two");
 });
 
 test("a terminal that just goes leaves no session behind, and no sidebar running", async () => {
@@ -807,7 +808,7 @@ test("when the builder you attached to ends, the right side goes back to its det
   await toSecondThread();
   tmux(agents, "kill-session", "-t", "=app-7");
   await until(onDetails, "app-7's details");
-  expect(selected()).toContain("APP-7");
+  expect(selected()).toMatch(/ 7\b/);
 });
 
 test("a task that ends while you are on it stays yours, under Done, which opens", async () => {
@@ -816,8 +817,8 @@ test("a task that ends while you are on it stays yours, under Done, which opens"
   await toSecondThread();
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => seen().includes("6 Done       2"), "app-7 to end");
-  await until(() => selected().includes("APP-7"), "the sidebar to stay on APP-7");
-  expect(seen()).toContain("○ APP-12");
+  await until(() => / 7\b/.test(selected()), "the sidebar to stay on APP-7");
+  expect(seen()).toMatch(/○ 12\b/);
 });
 
 test("Enter on a task whose builder isn't running says so on the right, until the next key", async () => {
@@ -826,7 +827,7 @@ test("Enter on a task whose builder isn't running says so on the right, until th
   open("lead");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("APP-12"), "APP-12's row");
+  await until(() => / 12\b/.test(selected()), "APP-12's row");
   await until(onDetails, "app-12's details");
   press("Enter");
   const why = "APP-12's builder isn't running: sc start APP-12";

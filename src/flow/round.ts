@@ -648,14 +648,14 @@ async function actOnVerdict(
   };
   record(db, folder, change, outcome.why);
   if (!hasForge && limitNote !== null && neededYou(thread))
-    noteForLead(db, sessions, repository, limitNote);
+    noteForLead(db, sessions, repository, limitNote, null, true);
   // A review that failed doesn't need you: the lead hears of it, with the error the harness
   // gave, and can run it again, or mark the thread if only you can fix what stops it.
   if (failed) {
     const said =
       verdict.verdict === "failed" ? `'s review failed: ${verdict.body}` : `: ${verdict.body}`;
     const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
-    noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`);
+    noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`, null, true);
   }
   // The approved commit is kept for the next submit to compare with. It is written at once,
   // with no await since the save, so sc review, which deletes it as it asks for a review, never
@@ -821,7 +821,7 @@ function postVerdict(db: Database, sessions: string, folder: string): Promise<st
         const left = { ...posting, review: null, note: null };
         const tell = () => {
           if (note !== null && limitWaits(readThread(db, folder)))
-            noteForLead(db, sessions, thread, note);
+            noteForLead(db, sessions, thread, note, null, true);
         };
         if (!took(posting, left, tell)) return null;
         posting = left;
@@ -1083,6 +1083,8 @@ function trackRound(
       sessions,
       repositoryOf(db, thread),
       `${line}. sc review ${name} runs it again.`,
+      null,
+      true,
     );
     typeLeadNotes(db, sessions);
   });

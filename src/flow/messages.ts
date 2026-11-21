@@ -4,12 +4,13 @@
 // PR's events. They wait in the database until the builder can take them, so none is dropped
 // while it is busy or stopped, or while the daemon restarts, and sc ps and the sidebar can count
 // them. A lead's notes wait there too, until the lead has started and is idle, and the human
-// isn't reading further up or typing in it.
+// isn't reading further up or typing in it. Its routine notes wait for the next digest as well.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, scrolledBack } from "../agents/sessions.ts";
 import { deliver, draftReason, midTurn, type Typed, whyBusy } from "../agents/transport.ts";
+import { nextSequence } from "../db.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { leadOf, leadSession } from "./lead.ts";
@@ -28,7 +29,13 @@ import {
 
 // A note waiting to be typed into a lead.
 // `wrapped` marks a message Skelcrew wrapped itself, whose tags are its own.
-const Note = z.object({ id: z.number(), text: z.string(), wrapped: z.coerce.boolean() });
+// `urgent` marks one that goes in at once, rather than in the next digest of routine notes.
+const Note = z.object({
+  id: z.number(),
+  text: z.string(),
+  wrapped: z.coerce.boolean(),
+  urgent: z.coerce.boolean(),
+});
 
 // The PR's reviews and comments a message carries, for the forge to mark seen once it is typed.
 const TypedIn = z.array(z.object({ kind: z.enum(["review", "comment"]), id: z.string() }));
@@ -111,7 +118,8 @@ function noteMissing(db: Database, sessions: string, thread: Thread, why: string
   record(db, thread.folder, { status: "waiting" }, missing);
   const name = threadName(db, thread);
   const back = `sc stop ${name}, then sc start ${name}, brings it back`;
-  noteForLead(db, sessions, thread, `${name}'s builder isn't running, so ${wait} for it. ${back}.`);
+  const note = `${name}'s builder isn't running, so ${wait} for it. ${back}.`;
+  noteForLead(db, sessions, thread, note, null, true);
 }
 
 // Returns why the thread's builder can't take a message right now, in plain words, or empty
@@ -208,8 +216,8 @@ function afterTyped(db: Database, folder: string, message: Message): void {
       );
 }
 
-// What Skelcrew typed into each builder and its harness hasn't reported yet, by the builder's
-// folder, so the hook that reports something typed in can tell Skelcrew's messages from a
+// What Skelcrew typed into each agent and its harness hasn't reported yet, by the builder's
+// folder or the lead's owner/name, which never meet as folders hold no /, so the hook that reports something typed in can tell Skelcrew's messages from a
 // person's typing. Each text is kept from just before its paste, as the hook can come before
 // the typing returns. Only the last few are kept, so a text whose hook never came, such as one a
 // harness dropped, is forgotten.
@@ -627,15 +635,98 @@ export function briefLead(
   saveNote(db, sessions, to, `${rules}${message}`, null, true, true);
 }
 
+// How long Skelcrew's routine notes collect before they go into a lead together. Each note wakes
+// the lead, and its reply scrolls the chat the human may be reading, so reports that need
+// nothing soon, such as a task's end, arrive at most this often, in milliseconds. Tests of the
+// daemon set SKELCREW_DIGEST_MS to 0, so each note they wait for goes in as it comes.
+const digestEvery = z.coerce
+  .number()
+  .min(0)
+  .catch(10 * 60_000)
+  .parse(process.env.SKELCREW_DIGEST_MS ?? 10 * 60_000);
+
+// How long, after the lead answers the human, nothing more is typed into it, so the human can
+// read the answer without the chat moving on. It needs no look at the screen, so it works on
+// every host, such as a phone app where Skelcrew can't see the human scroll.
+const readingFor = 2 * 60_000;
+
+// Something was typed into a repository's lead, which starts a turn. `prompt` is what was typed,
+// when the harness says: text Skelcrew didn't type is the human's. The human writing ends any
+// reading window early, and what it held goes in as soon as the lead has answered them.
+export function leadTurnStarted(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+  prompt?: string,
+): void {
+  const { owner, repo } = repository;
+  const key = `${owner}/${repo}`;
+  // Only a turn the human started opens a reading window as it ends: a note or a builder's
+  // message the lead answers isn't the human reading. It is kept in the database, so a restart
+  // while the lead answers still opens the window.
+  const yours = prompt !== undefined && !typedBySkelcrew(key, prompt);
+  db.run("UPDATE repositories SET lead_human_turn = ? WHERE owner = ? AND repo = ?", [
+    yours ? 1 : 0,
+    owner,
+    repo,
+  ]);
+  if (!yours) return;
+  // Any window ends now, open or not. The human's message takes its place in the notes'
+  // sequence: what came before it goes in once the lead has answered, though the answer opens a
+  // new window, and what comes after waits for that window.
+  db.run(
+    "UPDATE repositories SET reading_until = 0, reading_released = ? WHERE owner = ? AND repo = ?",
+    [nextSequence(db), owner, repo],
+  );
+  typeLeadNotes(db, sessions);
+}
+
+// A repository's lead ended its turn. A turn the human started opens a reading window, so the
+// notes and messages that come next wait until the human has had time to read the answer.
+export function leadTurnEnded(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+): void {
+  const { owner, repo } = repository;
+  const key = `${owner}/${repo}`;
+  const where = "WHERE owner = ? AND repo = ?";
+  const row = db.query(`SELECT lead_human_turn FROM repositories ${where}`).get(owner, repo);
+  const turn = z.object({ lead_human_turn: z.coerce.boolean() }).nullable().parse(row);
+  if (!turn?.lead_human_turn) return;
+  db.run(`UPDATE repositories SET lead_human_turn = 0 ${where}`, [owner, repo]);
+  // The human's message ended any earlier window, so this is the only one.
+  db.run(`UPDATE repositories SET reading_until = ? ${where}`, [
+    Date.now() + readingFor,
+    owner,
+    repo,
+  ]);
+  // Typing that waits for the lead to be idle stops, and looks again. A host with its own
+  // transport never asks the hold's question, so only cancelling keeps it from typing in.
+  leadTyping.get(key)?.abort();
+  typeLeadNotes(db, sessions);
+}
+
+// What wakes each repository's lead, by its owner/name, once its routine notes are due or its
+// reading window ends.
+const digestTimers = new Map<string, Timer>();
+
+// What cancels the typing under way into each repository's lead, by its owner/name.
+const leadTyping = new Map<string, AbortController>();
+
 // Types the saved notes for a repository's lead into it, such as "started app-12 from github:
 // Fix the login redirect" or "app-12 needs you: its builder asked a question", and forgets each
-// once typed. The lead's chat is the human's too, so typing waits while the lead is busy, while
-// a person's unsent draft is at its prompt, and while the human has scrolled back in it, as the
-// paste would throw them back to the bottom. Everything that waited then goes in as one
-// message, its notes a blank line apart, so the chat jumps once. Threads needing you come first,
-// then urgent notes such as a builder's message, then the rest, as the human must see those
-// soonest. A lead that isn't running, or never started, gets nothing: its notes stay saved until
-// it starts.
+// once typed. Routine notes collect, and go in as one digest at most once every digestEvery,
+// unless something urgent goes: a thread needing you, or an urgent note such as a builder's
+// message. Then the digest is cut short and goes in with it: threads needing you first, then the
+// notes in the order they came, routine ones in a row making one digest. The lead's chat is the
+// human's too, so typing waits while the lead is busy, while a person's unsent draft is at its
+// prompt, and while the human has scrolled back in it, as the paste would throw them back to the
+// bottom. Everything that waited then goes in as one message, its parts a blank line apart, so
+// the chat jumps once. A lead that isn't running, or never started, gets nothing: its notes stay
+// saved until it starts. While the lead's reading window is open, nothing that came during it
+// goes in, urgent or not. Once it ends, by itself or as the human writes to the lead, everything
+// it held goes in together.
 async function typeNotes(
   db: Database,
   sessions: string,
@@ -645,41 +736,108 @@ async function typeNotes(
   const { harness } = leadOf(db, owner, repo);
   const where = "owner = ? AND repo = ?";
   // Returns what the lead would be told now: the threads needing you, the notes in the order
-  // they go in, and the message they make together.
+  // they go in, and the message they make together. Routine notes left out until their digest
+  // is due give `wait`, how long until it is.
   const batch = () => {
-    const sql = `SELECT id, text, wrapped FROM notes WHERE ${where} ORDER BY urgent DESC, id`;
-    const notes = z.array(Note).parse(db.query(sql).all(owner, repo));
+    const sql = `SELECT id, text, wrapped, urgent FROM notes WHERE ${where} ORDER BY id`;
+    const saved = z.array(Note).parse(db.query(sql).all(owner, repo));
     const rows = db
       .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
       .all(owner, repo);
     const needing = z.array(Thread).parse(rows);
+    const columns = "digest_at, reading_until, reading_released";
+    const last = z
+      .object({ digest_at: z.number(), reading_until: z.number(), reading_released: z.number() })
+      .nullable()
+      .parse(db.query(`SELECT ${columns} FROM repositories WHERE ${where}`).get(owner, repo));
+    const time = Date.now();
+    const until = last?.reading_until ?? 0;
+    const reading = until > time;
+    // What a reading window held is what came before it ended, as the human wrote to the lead,
+    // or by itself: the notes saved and the threads that started needing you. It goes in at
+    // once, routine notes too, whatever the window open now. Which came first is told by their
+    // places in one sequence, never by time, which can tie. A window that ended by itself and
+    // isn't settled yet releases everything waiting.
+    const cut = last?.reading_released ?? 0;
+    const ended = until > 0 && !reading;
+    const held = (place: number | null) => ended || (cut > 0 && (place ?? 0) < cut);
+    const released = saved.filter((note) => held(note.id));
+    // An open window holds the rest.
+    const free = reading ? released : saved;
+    const notedAt = new Map(
+      z
+        .array(z.object({ folder: z.string(), noting_seq: z.number().nullable() }))
+        .parse(db.query("SELECT folder, noting_seq FROM threads WHERE noting IS NOT NULL").all())
+        .map(({ folder, noting_seq }) => [folder, noting_seq]),
+    );
+    const told = reading
+      ? needing.filter((thread) => held(notedAt.get(thread.folder) ?? null))
+      : needing;
+    if (reading && free.length === 0 && told.length === 0)
+      return { notes: [], needing: [], digest: false, text: "", wait: until - time };
+    const wait = (last?.digest_at ?? 0) + digestEvery - time;
+    const urgent = free.some((note) => note.urgent);
+    const due = wait <= 0 || released.length > 0 || told.length > 0 || urgent;
+    const notes = due ? free : free.filter((note) => note.urgent);
+    // A note Skelcrew didn't write or wrap itself may hold outside text, saved by an older
+    // Skelcrew before it escaped tags, so the start of any tag in it is escaped again.
+    const said = (note: z.infer<typeof Note>) =>
+      note.wrapped ? note.text : tagsEscaped(note.text);
+    // The notes keep the order they came in. Routine notes in a row make one digest, one line
+    // each, and each urgent note stands alone.
+    const parts: string[] = [];
+    notes.forEach((note, i) => {
+      const inDigest = !note.urgent && i > 0 && notes[i - 1]?.urgent === false;
+      if (inDigest) parts.push(`${parts.pop() ?? ""}\n${said(note)}`);
+      else parts.push(note.urgent ? said(note) : `Skelcrew digest:\n${said(note)}`);
+    });
     const lines = [
       // Why a thread needs you can quote its builder, whose words never pass for a tag.
-      ...needing.map(
+      ...told.map(
         (thread) => `${threadName(db, thread)} needs you: ${tagsEscaped(thread.noting ?? "")}`,
       ),
-      // A note Skelcrew didn't write or wrap itself may hold outside text, saved by an older
-      // Skelcrew before it escaped tags, so the start of any tag in it is escaped again.
-      ...notes.map(({ text, wrapped }) => (wrapped ? text : tagsEscaped(text))),
+      ...parts,
     ];
     // Notes can quote outside text, such as a plugin's or a failed check's, so no control
     // character in them reaches the paste.
-    return { notes, needing, text: controlsAsCodes(lines.join("\n\n")) };
+    const text = controlsAsCodes(lines.join("\n\n"));
+    // A window still open is looked at again when it ends, as is a digest not yet due.
+    const next = reading ? until - time : due ? 0 : wait;
+    const digest = notes.some((note) => !note.urgent);
+    return { notes, needing: told, digest, text, wait: next };
   };
   while (true) {
     const now = batch();
+    // Routine notes not due yet have the lead's notes looked at again once they are. The timer
+    // never keeps a process alive by itself, as the notes stay saved for the next start.
+    const key = `${owner}/${repo}`;
+    clearTimeout(digestTimers.get(key));
+    if (now.wait > 0) {
+      const timer = setTimeout(() => typeLeadNotes(db, sessions), now.wait);
+      digestTimers.set(key, timer.unref());
+    }
+    // A window that ended by itself is settled once nothing it held waits, so what comes later
+    // waits for its digest again.
+    const settle = () =>
+      db.run(
+        `UPDATE repositories SET reading_until = 0 WHERE ${where} AND reading_until > 0 AND reading_until <= ?`,
+        [owner, repo, Date.now()],
+      );
     // Stop when nothing is left to say, or nobody is there to hear it.
-    if (now.text === "") return;
+    if (now.text === "") return void settle();
     const on = await leadSession(db, sessions, owner, repo);
     if (on === null || !(await agentRuns(on.host, on.id))) return;
     const { host, id } = on;
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
+    // The lead's harness reports the paste as typed in, which mustn't pass for the human's.
+    typingIn(key, now.text);
     // Typing asks this right before readying the paste and again right before it goes in. What
     // would be said may have changed while the lead was busy or scrolled back: a question you
     // answered, a thread's end note dropped as it starts over, or a new note to go in with the
     // rest. Then this typing is cancelled, and the next pass types what is said now.
     const cancel = new AbortController();
+    leadTyping.set(key, cancel);
     const hold = () => {
       if (batch().text !== now.text) cancel.abort();
       // Only tmux can say yet whether someone scrolled back, so on a plugin's host the paste
@@ -700,10 +858,14 @@ async function typeNotes(
       typed = await deliver(host, id, marks, now.text, waits);
     } finally {
       for (const { id } of now.notes) typingNote.delete(id);
+      if (leadTyping.get(key) === cancel) leadTyping.delete(key);
     }
     if (typed !== "typed") continue;
     // A note's ID is never used twice, so a note saved meanwhile is never deleted as one of these.
     for (const { id } of now.notes) db.run("DELETE FROM notes WHERE id = ?", [id]);
+    settle();
+    if (now.digest)
+      db.run(`UPDATE repositories SET digest_at = ? WHERE ${where}`, [Date.now(), owner, repo]);
     // A thread may have stopped needing you and started again while this was typed.
     for (const thread of now.needing)
       if (readThread(db, thread.folder).noting === thread.noting)
@@ -772,11 +934,12 @@ export function typeLeadNotes(db: Database, sessions: string): void {
 
 // Saves a note for the lead of a repository, and has the daemon type it in. Notes already
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
-// `ended` is the folder of the thread whose end or failure the note reports, if it does. An `urgent` note,
-// such as a builder's message, goes ahead of the rest when several wait. A note can quote outside
-// text, such as an issue's title, which could hold a skelcrew tag and pass for a message from an
-// agent, or a brief marked asked="yes". So the start of any such tag in it is escaped: only
-// Skelcrew's own wrapping of an agent's message, which saveNote keeps, carries one.
+// `ended` is the folder of the thread whose end or failure the note reports, if it does. An
+// `urgent` note, such as a thread needing you or failing, goes in at once. The rest only report,
+// such as a task's end, and wait for the next digest. A note can quote outside text, such as an
+// issue's title, which could hold a skelcrew tag and pass for a message from an agent, or a brief
+// marked asked="yes". So the start of any such tag in it is escaped: only Skelcrew's own wrapping
+// of an agent's message, which saveNote keeps, carries one.
 export function noteForLead(
   db: Database,
   sessions: string,
@@ -790,14 +953,15 @@ export function noteForLead(
 
 // Saves a note Skelcrew wrote itself for a lead, with no outside text in it, which may name a
 // brief's tags, such as one telling a lead running from before briefs how to read them. Its
-// tags are kept, as they are Skelcrew's own words.
+// tags are kept, as they are Skelcrew's own words. It changes how the lead works, so it goes in
+// at once, not in a digest.
 export function skelcrewNoteForLead(
   db: Database,
   sessions: string,
   repository: { owner: string; repo: string },
   text: string,
 ): void {
-  saveNote(db, sessions, repository, text, null, false, true);
+  saveNote(db, sessions, repository, text, null, true, true);
 }
 
 // Saves a note for a lead and has the daemon type it in. `wrapped` marks one of the messages this
