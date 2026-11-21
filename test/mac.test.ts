@@ -224,7 +224,7 @@ test("an agent on a Mac gets no dropped files, as its host can't reach the sandb
   const done =
     await asMacRun(`import { filesFor } from ${JSON.stringify(source("plugins/runtime.ts"))};
 import { filesPlaceholder, sandboxArgs } from ${JSON.stringify(source("agents/sandbox.ts"))};
-const host = { plugin: "herdr", folder: "/", session: ["true"], attach: ["true"], transport: true, status: true, files: true };
+const host = { plugin: "herdr", version: "0.1.0", folder: "/", session: ["true"], attach: ["true"], transport: true, status: true, files: true };
 console.log(filesFor(host) === undefined);
 try {
   sandboxArgs({ home: process.env.HOME, path: "", mounts: [], cwd: "/", command: ["true"], files: filesPlaceholder() });

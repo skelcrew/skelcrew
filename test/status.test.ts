@@ -143,16 +143,25 @@ test("a thread the lead marked needs you, and its word is the action", () => {
   expect(threadWord({ ...state, ...marked, erred: true }, 3)).toBe("error");
 });
 
-// Past the round limit the thread needs you until someone decides: you arm a merge, or the lead
-// or you clear it, and then it shows the round limit without needing you.
-test("the round limit needs you only until a merge is armed or its mark is cleared", () => {
-  const past = { status: "waiting", needs_you: true, rounds: 4, verdict: "changes" } as const;
+// Past the round limit the thread needs you until someone decides about its latest review: you
+// arm a merge, or the lead or you clear it, and then it shows the round limit without needing you.
+// A merge armed before that review reached the limit decided nothing about it.
+test("the round limit needs you until someone decides about its latest review", () => {
+  const past = {
+    status: "waiting",
+    needs_you: true,
+    rounds: 4,
+    verdict: "changes",
+    held: "Fix it.",
+  } as const;
   const word = (more: Partial<Thread>) => threadWord({ ...state, ...past, ...more }, 3);
   expect(status(past)).toBe("needs you");
   expect(word({})).toBe("round limit");
-  expect(status({ ...past, merge_plan: "armed" })).toBe("idle");
-  expect(word({ merge_plan: "armed" })).toBe("round limit");
-  expect(shownOf({ ...state, ...past, merge_plan: "armed" }, 3).mark.sign).toBe("○");
+  expect(status({ ...past, merge_plan: "armed" })).toBe("needs you");
+  const decided = { ...past, merge_plan: "armed", limit_decided: true } as const;
+  expect(status(decided)).toBe("idle");
+  expect(word(decided)).toBe("round limit");
+  expect(shownOf({ ...state, ...decided }, 3).mark.sign).toBe("○");
   expect(status({ ...past, limit_decided: true })).toBe("idle");
 });
 
