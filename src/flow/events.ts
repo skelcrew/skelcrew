@@ -84,7 +84,16 @@ export const removing = new Set<string>();
 // names. A builder whose host can't be reached, or won't end, throws and keeps its host: it may
 // still run, and must neither get a second builder nor lose its clone under it. Its round and
 // any wake after a usage limit then carry on, whoever asked for the end, a stop or a poll.
-async function endBuilder(db: Database, sessions: string, folder: string, drop: boolean) {
+// `ended` runs in the same transaction that takes the thread's host away, so what the end
+// means, such as the thread stopped, is saved with it. Saved after, a daemon that stops in
+// between would find a live thread with no builder, and start one again.
+async function endBuilder(
+  db: Database,
+  sessions: string,
+  folder: string,
+  drop: boolean,
+  ended: () => void = () => {},
+) {
   // At once: the round and any wake stop, and nothing more is typed into it, even while an
   // earlier end still runs.
   // A wake typing "continue" is waited for too, and the limit it cleared put back if the end
@@ -93,7 +102,7 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
   const waking = endWake(folder);
   endRound(folder);
   try {
-    await endInTurn(db, sessions, folder, drop, waking);
+    await endInTurn(db, sessions, folder, drop, waking, ended);
   } catch (error) {
     resumeRound(db, sessions, folder);
     const cut = await waking;
@@ -113,6 +122,7 @@ function endInTurn(
   folder: string,
   drop: boolean,
   waking: Promise<unknown>,
+  then: () => void,
 ) {
   // It takes its turn with the builder's other starts and ends, so a slow end never finishes
   // after a later one, nor misses a builder still starting. Nothing is typed into it while its
@@ -129,10 +139,14 @@ function endInTurn(
       // clone.
       await stopSession(host, id);
       if (drop) stopDelivering(db, folder, true);
-      // Only the session it ended is forgotten: a builder started meanwhile keeps its own.
-      const now = readThread(db, folder);
-      if (now.host === ended.host && now.host_id === ended.host_id)
+      // Only the session it ended is forgotten: a builder started meanwhile keeps its own, and
+      // its thread isn't changed.
+      db.transaction(() => {
+        const now = readThread(db, folder);
+        if (now.host !== ended.host || now.host_id !== ended.host_id) return;
         record(db, folder, { host: null, host_id: null });
+        then();
+      })();
     }),
   );
 }
@@ -239,8 +253,9 @@ function stopLiveThread(
 // no builder has started on it since: one whose end cleared its session and found no other. A
 // merge or close can end the thread while this waits its turn to end the builder, and remove
 // its clone. Marked stopped then, it would look like work sc start could bring back, so the
-// stop says the thread is done instead. `note` is saved for the lead in the same transaction
-// as the stop, so the thread is never stopped without it.
+// stop says the thread is done instead. The stop and `note`, for the lead, are saved in the
+// transaction that takes the thread's host away, so a daemon that stops meanwhile never finds
+// a live thread with no builder, which it would start again, nor a stop the lead never heard of.
 async function stopNow(
   db: Database,
   sessions: string,
@@ -249,12 +264,13 @@ async function stopNow(
   why: string,
   note: string | null,
 ): Promise<void> {
-  await endBuilder(db, sessions, thread.folder, drop);
-  const now = readThread(db, thread.folder);
-  if (now.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
-  if (now.started !== thread.started || now.host_id !== null) return;
-  // The note is typed only once this has returned, as typing starts on a promise.
-  db.transaction(() => {
+  // Marked once its host is taken away, in the same transaction, unless the thread was done or
+  // started over meanwhile. The note is typed only once this has returned, as typing starts on
+  // a promise.
+  let stopped = false;
+  await endBuilder(db, sessions, thread.folder, drop, () => {
+    const now = readThread(db, thread.folder);
+    if (now.status === "done" || now.started !== thread.started) return;
     if (note !== null) noteForLead(db, sessions, thread, note, thread.folder);
     record(
       db,
@@ -272,8 +288,11 @@ async function stopNow(
       },
       why,
     );
-  })();
-  unassignIssue(db, thread.folder);
+    stopped = true;
+  });
+  if (readThread(db, thread.folder).status === "done")
+    throw new Error(`${threadName(db, thread)} is done already`);
+  if (stopped) unassignIssue(db, thread.folder);
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
