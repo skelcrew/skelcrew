@@ -303,7 +303,7 @@ export async function endThread(
 // but only if Skelcrew pushed it for this thread. A running thread is marked stopped first, so
 // a builder that submits while it exits is refused. If the forge fails, the thread stays
 // short of done, so sc rm can run again. Refuses a thread that is done, and one still setting
-// up, whose setup would go on to start its builder.
+// up, whose setup would go on to start its builder, and one another sc rm is removing.
 export async function removeThread(
   db: Database,
   sessions: string,
@@ -314,6 +314,10 @@ export async function removeThread(
   // Refuse what can't be removed, then stop a thread still running.
   const name = threadName(db, thread);
   if (thread.status === "done") throw new Error(`${name} is done already`);
+  // One removal at a time: a second would end the first one's wait for answers, such as a
+  // claim's, while the first still waits on the forge.
+  if (removing.has(thread.folder))
+    throw new Error(`${name} is being removed already: wait for that sc rm to end`);
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && thread.session === null)
     throw new Error(`${name} is still setting up: remove it once its builder has started`);

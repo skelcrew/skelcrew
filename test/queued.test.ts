@@ -710,3 +710,30 @@ test("a claim that fails while sc rm waits on the forge doesn't assign the issue
   expect(asked(plugin).filter((q) => q.ask === "assign" && q.on === true)).toHaveLength(0);
   expect(statuses()["app-12"]).toBe("done");
 }, 60_000);
+
+test("a second sc rm while the first waits on the forge is refused, and the claim still waits for the first", async () => {
+  addApp();
+  await serveApp();
+  const hold = join(plugin, "hold-took");
+  writeFileSync(hold, "");
+  const starting = sc("start", "app-12");
+  await until(() => asked(plugin).some((q) => q.ask === "took"));
+  givePr("12", 7);
+  writeFileSync(join(plugin, "hold-close-pr"), "");
+  const first = runSkel(["rm", "app-12"], env());
+  await until(() => asked(plugin).some((q) => q.ask === "close pr"));
+  // The second sc rm is refused at once, so it can't end the first one's wait.
+  const second = await runSkel(["rm", "app-12"], env());
+  expect(second.code).not.toBe(0);
+  expect(second.err).toContain("APP-12 is being removed already");
+  // The claim answers, and still waits for the first removal.
+  rmSync(hold);
+  await queueLooked();
+  expect(asked(plugin).filter((q) => q.ask === "assign" && q.on === true)).toHaveLength(0);
+  rmSync(join(plugin, "hold-close-pr"));
+  expect((await first).code).toBe(0);
+  expect(await starting).toContain("APP-12 is queued");
+  await queueLooked();
+  expect(asked(plugin).filter((q) => q.ask === "assign" && q.on === true)).toHaveLength(0);
+  expect(statuses()["app-12"]).toBe("done");
+}, 60_000);
