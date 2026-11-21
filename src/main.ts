@@ -1,6 +1,6 @@
 // Skelcrew's command line: reads the command and hands it to the file that does it.
 import { agentCommand, askCommand, needsYouCommand, tellCommand } from "./cli/agents.ts";
-import { runByAgent, usage } from "./cli/input.ts";
+import { runByAgent, serverName, usage } from "./cli/input.ts";
 import {
   leadCommand,
   machineCommand,
@@ -52,7 +52,7 @@ async function runCommand(args: string[]): Promise<void> {
 
   const onScreen = ["sidebar", "footer", "details"].includes(command ?? "");
 
-  if (process.env.SKELCREW_REMOTE_NAME && command !== "install" && !onScreen && !runByAgent()) {
+  if (serverName() && command !== "install" && !onScreen && !runByAgent()) {
     const { setupDone } = await import("./machine/setup.ts");
     if (!setupDone()) process.exit(unfinished);
   }
@@ -61,7 +61,7 @@ async function runCommand(args: string[]): Promise<void> {
 
   if (!onScreen && command !== "install" && process.env.SKELCREW_LAPTOP_LOCK && !runByAgent()) {
     const { lockDiffers } = await import("./machine/your-files.ts");
-    const where = process.env.SKELCREW_REMOTE_NAME;
+    const where = serverName();
     if (lockDiffers())
       console.error(
         `Your lock on ${where} differs from your laptop's. To send yours there, run on your laptop:\n  sc --remote ${where} install`,
