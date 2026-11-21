@@ -160,7 +160,7 @@ test("a lead decides most things and tells the human, and waits for them only on
     "Then tell the human in one line what you decided and why, so they can easily change it",
   ];
   const waits =
-    "Wait for the human only on what is foundational, however clear the answer seems: a change to the repository's spec, the document it names as its spec, such as docs/spec.md; product direction; trust and security; any step that can't be undone or that goes out to other people, such as closing a PR, deleting work, filing a public issue or merging without review; and work that grows a task's scope a lot or costs real money or time.";
+    "Wait for the human only on what is foundational, however clear the answer seems: a change to the repository's spec, the document it names as its spec, such as docs/spec.md; product direction; trust and security; any step that can't be undone or that goes out to other people, such as closing a PR, deleting work, filing a public issue or merging without review; and work that grows a thread's scope a lot or costs real money or time.";
   const framed =
     "Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option, lettered a, b, c, with what it means for the human, and your recommendation with why, so a one-letter answer settles it.";
   const lead = builtInRole("lead").instructions;
