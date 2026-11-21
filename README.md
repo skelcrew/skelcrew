@@ -19,13 +19,15 @@ curl -fsSL https://skelcrew.dev/install.sh | sh
 sc install
 ```
 
-`sc install` checks for `tmux`, `git`, a sandbox (`bwrap` 0.11 or newer on Linux, `sandbox-exec` on a Mac) and a harness, Claude Code or Codex. If one is missing, it says what to install and stops. If `bwrap` is there but can't start a sandbox, as AppArmor can cause on Ubuntu 24.04 and later, it says what may block it, with the lines that allow it when AppArmor is the likely cause.
+`sc install` checks for `tmux`, `git`, a sandbox (`bwrap` 0.11 or newer on Linux, `sandbox-exec` on a Mac) and a harness: Claude Code, Codex or Pi. If one is missing, it says what to install and stops. If `bwrap` is there but can't start a sandbox, as AppArmor can cause on Ubuntu 24.04 and later, it says what may block it, with the lines that allow it when AppArmor is the likely cause.
 
 Then it asks:
 
 - **The coding agent**, the harness agents run on.
-- **The coding agent for reviews**, only when both are installed. It offers the other one first, as a second model sees what the first one misses. With one installed, reviews run on it.
-- **A sign-in for Skelcrew's agents.** For Claude Code, you run `claude setup-token` in another terminal and paste the token. Codex gets a login of Skelcrew's own, apart from yours.
+- **The coding agent for reviews**, only when more than one is installed. It offers the others first, as a second model sees what the first one misses. With one installed, reviews run on it.
+- **A sign-in for Skelcrew's agents.** For Claude Code, you run `claude setup-token` in another terminal and paste the token. Codex gets a login of Skelcrew's own, apart from yours. For Pi, you name a model provider, such as `google` or `github-copilot`, and sign in to it with an account or an API key. That login is Skelcrew's own too, and each Pi agent gets a copy of it.
+
+Pi runs any model its providers offer. Name one as `provider/model` in your config, such as `model: google/gemini-4-neon`, with `:high` after it for more thinking. A model of your own, such as a local one, goes in `~/.local/share/skelcrew/pi/models.json`, which every Pi agent gets a copy of. Use an API key or an account like GitHub Copilot's: a sign-in that renews by replacing its refresh token goes stale, as each agent renews its own copy.
 
 It ends with `Skelcrew is set up.` Running it again changes nothing that is done.
 

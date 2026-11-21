@@ -180,6 +180,38 @@ that covers the code you are about to write.
   before its `Stop` hooks, which run only when the model needs no follow-up. The abort path
   runs the `Interrupt` hooks instead. `Stop`'s input has `last_assistant_message`.
 
+## Starting Pi
+
+- **Its empty input shows nothing but a blank line between two rules.** A bare prompt can't be
+  told from any blank line, and a draft starts at the left edge. So Skelcrew's extension swaps
+  in an editor that draws `› ` before the first line, as Codex shows its input, and sets the
+  working message to "esc to interrupt". The working row's spinner redraws, as a live status
+  line must. The `›` shows mid-turn too.
+- **Its hooks are an extension's events.** `input` is a message going in, also the first one
+  given on the command line. `agent_settled` ends the turn: `aborted` is Esc, and an assistant
+  message whose `stopReason` is `error` is a failed turn, a 429 included. Pi retries a 429 three
+  times first. `agent_end` comes too early, as a retry or a queued message can follow it.
+- **An unknown model still ends in a hook.** A model Pi doesn't know under a provider it knows
+  is sent as written, and the provider's error fails the turn. A provider it doesn't know stops
+  Pi at once. So, unlike Codex, nothing has to be checked first.
+- **`auth.json` can run commands.** A key written as `!command` runs it whenever Pi reads the
+  key. A login shared between sessions, writable by each, would let one agent run commands in
+  every other session. So each session gets a copy, made at each start, and Skelcrew never runs
+  Pi outside the sandbox on a folder an agent can write. A copy that renews by replacing its
+  refresh token spends the original's, so only API keys and accounts like GitHub Copilot's,
+  whose refresh token stays, keep working.
+- **Turn off what it would load from the folder.** `-ne`, `-ns`, `-np` and `--no-themes` stop
+  it loading extensions, skills, prompt templates and themes it finds, the repository's
+  `.agents/skills/` included, and `-na` ignores the project's `.pi/`. `AGENTS.md` still loads.
+  The approved skills come in with `--skill`.
+- **Skelcrew picks its session ID.** `--session-id` creates the session in `--session-dir`,
+  as `<time>_<id>.jsonl`, and opens it again when it exists.
+- **Print mode reads the prompt from stdin**, and needs no message. Its reviewer answers with
+  a tool of Skelcrew's extension that writes `answer.json` and returns `terminate: true`, so no
+  turn follows it. Pi's errors go to stderr, after any `Warning:` lines.
+- **It may download `fd` into its agent folder** at the first start. The folder is kept between
+  starts, so that happens once per session.
+
 ## The sandbox
 
 - **The boundary holds against mistakes and overreach, not an agent set on escaping.**
