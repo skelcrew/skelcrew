@@ -11,7 +11,7 @@ import { unassignIssue } from "./assign.ts";
 import { baseOf, inTurn, seenRunning } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
-import { roundMoved } from "./ledger.ts";
+import { failureOver, roundMoved } from "./ledger.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
 import {
   noteForLead,
@@ -287,9 +287,9 @@ async function stopNow(
       db,
       thread.folder,
       {
+        ...failureOver(now, Date.now(), true),
         status: "stopped",
         needs_you: false,
-        review_failed: false,
         asking: false,
         turn_ended: false,
         ended_at: null,
@@ -539,7 +539,10 @@ export async function tellBuilder(
     };
     send(notices, []);
     send(decision.tell, decision.typedIn);
-    record(db, thread.folder, moved ? { seen: handled } : { seen: handled, ...change }, why);
+    // A review that failed is over once the builder works again, as the round's record says.
+    const { review_failed, ...rest } = change;
+    const over = review_failed === false ? failureOver(now, Date.now()) : {};
+    record(db, thread.folder, moved ? { seen: handled } : { seen: handled, ...rest, ...over }, why);
     typeLeadNotes(db, sessions);
   } catch (error) {
     console.log(

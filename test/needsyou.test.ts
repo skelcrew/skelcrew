@@ -36,7 +36,7 @@ function inProcess(body: string): Record<string, unknown> {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { markForgotten, markNeedsYou, needsYou, needsYouFor, questionAnswered, threadWord, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { goOn, noteLimit, submitRound } from ${JSON.stringify(source("flow/round.ts"))};
-import { verdictReached } from ${JSON.stringify(source("flow/ledger.ts"))};
+import { verdictPosted, verdictReached } from ${JSON.stringify(source("flow/ledger.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { bringBack } from ${JSON.stringify(source("flow/builder.ts"))};
 import { armMerge, cancelMerge } from ${JSON.stringify(source("flow/merging.ts"))};
@@ -304,7 +304,10 @@ const changesAsked = `const changesAsked = () => {
   const o = verdictReached(t, reached);
   record(db, "app-12", { ...o.change, noting: null }, o.why);
   const unposted = noting();
-  noteLimit(db, "none", "app-12", o.limitNote);
+  const saved = thread();
+  const posted = verdictPosted(saved, saved.posting, Date.now());
+  record(db, "app-12", posted.change);
+  noteLimit(db, "none", "app-12", posted.note);
   const seen = { needsYou: needsYou(thread()), noting: unposted === null ? noting() : "noted before the post" };
   record(db, "app-12", { noting: null });
   return seen;

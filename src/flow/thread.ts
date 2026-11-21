@@ -17,7 +17,7 @@ import {
 } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { threadTask } from "./copy.ts";
-import { RoundEvent } from "./ledger.ts";
+import { Posting, ReviewPost, RoundEvent } from "./ledger.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -29,39 +29,6 @@ export type AgentState = z.infer<typeof AgentState>;
 // One message the lead told a thread's builder: who sent it, when it was typed in, in
 // milliseconds since 1970, and its text.
 const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
-
-// Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict and findings it
-// last said, so each round edits that one review, or posts again only when what it says changed.
-const ReviewPost = z.object({
-  pr: z.number(),
-  id: z.string(),
-  verdict: z.enum(["approve", "changes"]),
-  findings: z.array(z.string()),
-});
-export type ReviewPost = z.infer<typeof ReviewPost>;
-
-// A verdict saved on the thread but not yet on the forge: the commit, Skelcrew's check on it,
-// and the review to post on the PR with the commit it covers, or null when there is none to
-// post. A failed review posts none, but keeps the review before it that is still to post.
-// `note` is what the lead hears once it is on the forge, when the round limit holds its
-// changes, so the note never names a review the PR doesn't show yet. Null in a row from before.
-const Posting = z.object({
-  commit: z.string(),
-  check: z.enum(["success", "failure"]),
-  description: z.string(),
-  review: z
-    .object({
-      pr: z.number(),
-      commit: z.string(),
-      verdict: z.enum(["approve", "changes"]),
-      body: z.string(),
-      findings: z.array(z.string()),
-      round: z.number(),
-    })
-    .nullable(),
-  note: z.string().nullable().default(null),
-});
-export type Posting = z.infer<typeof Posting>;
 
 // A thread with its task, as Skelcrew's database keeps them, one row per thread from the
 // task_threads view. The task's fields are those openDb's taskColumns name, and they are saved on

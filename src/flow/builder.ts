@@ -210,8 +210,6 @@ async function recordThread(
       session: null,
       pr: null,
       needs_you: false,
-      submitting: null,
-      reviewing: null,
       queued: null,
       seen: [],
       last_review: null,

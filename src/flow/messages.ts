@@ -189,7 +189,7 @@ function afterTyped(db: Database, folder: string, message: Message): void {
   const thread = readThread(db, folder);
   if (message.sender === "review") {
     if (thread.telling !== null && tagsEscaped(thread.telling) === message.text)
-      record(db, folder, changesTyped, "typed the review into the builder");
+      record(db, folder, changesTyped(thread, Date.now()), "typed the review into the builder");
     return;
   }
   if (message.sender === "lead") {

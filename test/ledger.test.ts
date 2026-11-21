@@ -3,11 +3,17 @@
 import { expect, test } from "bun:test";
 import {
   atRoundLimit,
+  changesTyped,
+  failureOver,
   letGoOn,
   limitDecided,
   limitWaits,
   nextRound,
+  reviewAsked,
+  reviewStarted,
+  roundFailed,
   roundMoved,
+  roundOf,
   submitted,
   verdictPosted,
   verdictReached,
@@ -110,6 +116,7 @@ const changes = {
 };
 const failed = { verdict: "failed" as const, body: "no verdict" };
 const sha = "a".repeat(40);
+const reachedNote = "changes asked for after 3 rounds of changes, so the round limit is reached";
 
 // Returns what the review's verdict means for the thread, under a round limit of `maxRounds`,
 // with a forge unless `ready` says why the branch is ready at once without one.
@@ -186,7 +193,7 @@ test("a thread's round numbers never go backwards, through sc start past the lim
   expect(numbers).toEqual([1, 2, 3, 3, 4, 5, 6]);
   expect(saved.top_round).toBe(6);
   // A submit asks for the next round, and brings none of the numbers back.
-  saved = { ...saved, ...submitted(saved, 2000, false) };
+  saved = { ...saved, ...submitted(saved, "Fix", 2000, false) };
   expect(nextRound(saved)).toBe(7);
   // The numbers come from the record, so a field written back by hand can't lower them.
   expect(nextRound({ ...saved, top_round: 1, rounds: 0 })).toBe(7);
@@ -210,7 +217,10 @@ test("a row with no record starts its record from its own counts", () => {
   expect(nextRound(old)).toBe(6);
   const { change } = reach(old, changes);
   expect(change).toMatchObject({ rounds: 3, top_round: 6, review_round: 6 });
-  expect(change.round_log?.[0]).toEqual({ kind: "before", rounds: 2, top: 5, decided: false });
+  expect(change.round_log?.[0]).toMatchObject({
+    kind: "before",
+    round: { rounds: 2, top_round: 5 },
+  });
 });
 
 // The lead hears that the round limit holds a thread's changes only once the review is on the PR,
@@ -218,19 +228,31 @@ test("a row with no record starts its record from its own counts", () => {
 // post, and nothing the verdict saves says it to the lead.
 test("the round limit's note waits for the review to be posted", () => {
   const past = reach(thread({ rounds: 3 }), changes);
-  expect(past.limitNote).toBe(
-    "changes asked for after 3 rounds of changes, so the round limit is reached",
-  );
+  expect(past.note).toBeNull();
   expect("noting" in past.change).toBe(false);
-  expect(past.change.posting).toMatchObject({ note: past.limitNote, review: { round: 4 } });
+  expect(past.change.posting).toMatchObject({ note: reachedNote, review: { round: 4 } });
   // Within the limit, and for an approval, there is no note to post.
   expect(reach(thread({ rounds: 1 }), changes).change.posting?.note).toBeNull();
-  expect(reach(thread({ rounds: 3 }), approval).limitNote).toBeNull();
+  expect(reach(thread({ rounds: 3 }), approval).change.posting?.note).toBeNull();
   // A review that failed posts no review, so the one before it still to post stays, without its
   // note, as the failed review no longer holds changes.
   const waiting = { ...thread({ rounds: 4 }), ...past.change };
   const after = reach(waiting, failed);
   expect(after.change.posting).toMatchObject({ review: { round: 4 }, note: null });
+});
+
+// Without a forge there is no PR to put the review on, so the verdict is posted at once, in the
+// same change, and the note still comes from that posted event.
+test("without a forge, the verdict is posted at once and brings the note with it", () => {
+  const ready = "app-12 is ready on branch skelcrew/12-add-export";
+  const past = reach(thread({ rounds: 3, pr: null }), changes, 3, ready);
+  expect(past.note).toBe(reachedNote);
+  expect(past.change.round_log?.slice(-2).map((event) => event.kind)).toEqual([
+    "verdict",
+    "posted",
+  ]);
+  expect(past.change.round_log?.at(-1)).toMatchObject({ kind: "posted", note: reachedNote });
+  expect(reach(thread({ rounds: 1, pr: null }), changes, 3, ready).note).toBeNull();
 });
 
 // The note comes from the posted event: once the review is on the PR, the record says so with its
@@ -249,7 +271,7 @@ test("posting the verdict brings the round limit's note, unless a submit came fi
     round: 4,
     note: posting.note,
   });
-  const resubmitted = { ...past, ...submitted(past, 1500, false) };
+  const resubmitted = { ...past, ...submitted(past, "Fix", 1500, false) };
   expect(verdictPosted(resubmitted, posting, 2000).note).toBeNull();
   const decided = { ...past, ...limitDecided(past, 1500) };
   expect(verdictPosted(decided, posting, 2000).note).toBeNull();
@@ -281,12 +303,56 @@ test("letting a thread go on types its held changes in and stops the round limit
   expect(reach(on, changes).change).toMatchObject({ rounds: 4, needs_you: true });
 });
 
-// What the forge said while a round moved on is about the older round.
-test("a submit, a review that ends and a counted round all move the round", () => {
-  const before = thread();
-  expect(roundMoved(before, thread())).toBe(false);
-  expect(roundMoved(before, thread({ submitting: "Fix" }))).toBe(true);
-  expect(roundMoved(before, { ...before, ...reach(before, approval).change })).toBe(true);
-  expect(roundMoved(before, thread({ rounds: 1 }))).toBe(true);
-  expect(roundMoved(before, thread({ needs_you: true }))).toBe(false);
+// What the forge said while a round moved on is about the older round. Posting a verdict or
+// deciding the limit moves nothing on.
+test("a submit, a review that starts or ends and letting a thread go on move the round", () => {
+  const fresh = thread({ round_log: [] });
+  const later = (from: Thread, change: Partial<Thread>): Thread => ({ ...from, ...change });
+  expect(roundMoved(fresh, fresh)).toBe(false);
+  const sent = later(fresh, submitted(fresh, "Fix", 1000, false));
+  expect(roundMoved(fresh, sent)).toBe(true);
+  const started = later(sent, reviewStarted(sent, sha, 1100));
+  expect(roundMoved(sent, started)).toBe(true);
+  expect(reviewStarted(started, sha, 1200)).toEqual({});
+  const past = later(started, reach(later(started, { rounds: 3 }), changes).change);
+  expect(roundMoved(started, past)).toBe(true);
+  const { posting } = past;
+  if (posting === null) throw new Error("the verdict saved nothing to post");
+  const posted = later(past, verdictPosted(past, posting, 1300).change);
+  expect(roundMoved(past, posted)).toBe(false);
+  const decided = later(posted, limitDecided(later(posted, { needs_you: true }), 1400));
+  expect(roundMoved(posted, decided)).toBe(false);
+  expect(roundMoved(decided, later(decided, letGoOn(decided, 3, 1500)))).toBe(true);
+});
+
+// Every round field is what the record says, after every event, so the two never disagree.
+test("the round fields are always what the record comes to", () => {
+  let saved = thread({ round_log: [] });
+  const steps: ((from: Thread) => Partial<Thread>)[] = [
+    (from) => submitted(from, "Add export", 1000, false),
+    (from) => reviewStarted(from, sha, 1100),
+    (from) => reach(from, changes, 1).change,
+    (from) => changesTyped(from, 1200),
+    (from) => submitted(from, "Fix", 1300, false),
+    (from) => reviewStarted(from, sha, 1400),
+    (from) => reach(from, changes, 1).change,
+    (from) => ({ needs_you: true, ...limitDecided({ ...from, needs_you: true }, 1500) }),
+    (from) => letGoOn(from, 1, 1600),
+    (from) => reviewAsked(from, sha, 1700),
+    (from) => reach(from, failed, 1).change,
+    (from) => roundFailed(from, 1800),
+    (from) => failureOver(from, 1900),
+    (from) => reach(from, approval, 1).change,
+  ];
+  for (const step of steps) {
+    saved = { ...saved, ...step(saved) };
+    expect(saved).toMatchObject(roundOf(saved));
+    expect(roundOf({ ...saved, round_log: null })).toEqual(roundOf(saved));
+  }
+  expect(saved).toMatchObject({
+    verdict: "approve",
+    rounds: 1,
+    top_round: 3,
+    review_failed: false,
+  });
 });

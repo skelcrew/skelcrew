@@ -555,12 +555,11 @@ function fillTopRounds(db: Database): void {
         top = Math.max(top, counted(thread.data));
     }
     if (top > 0)
-      db.run("UPDATE tasks SET top_round = ? WHERE owner = ? AND repo = ? AND task = ?", [
-        top,
-        row.owner,
-        row.repo,
-        row.task,
-      ]);
+      // A task with a record of its rounds already counts them from there.
+      db.run(
+        "UPDATE tasks SET top_round = ? WHERE owner = ? AND repo = ? AND task = ? AND round_log IS NULL",
+        [top, row.owner, row.repo, row.task],
+      );
   }
 }
 
