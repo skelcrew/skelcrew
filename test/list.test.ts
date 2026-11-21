@@ -991,6 +991,25 @@ test("the rows shown have every heading among them, a heading you are on is shad
   expect(outlined[0]).not.toContain("48;5;238");
 });
 
+// Scrolling down onto a heading can leave it on the last line before the bottom edge, with its
+// rows all below. A heading there is pinned at the edge, but not the one you are on, which must
+// stay where you see it, shaded, with a row of its section under it.
+test("the heading you are on never hides at the bottom edge, as the view goes down to its first row", () => {
+  const all = rows();
+  const opened = new Set<Section>(["needs you", "up next", "building"]);
+  const shown = shownRows(all, opened, false);
+  const at = shown.findIndex((row) => row.part === "heading" && row.section === "building");
+  // The lead's 3 lines, then 10 lines of sections between the edges, end on Building's heading.
+  const { lines } = drawRows(shown, sectionHeadings(all, opened), at, 0, 60, 15);
+  const plain = lines.map((line) => Bun.stripANSI(line).trimEnd());
+  const heading = plain.findIndex((line) => line.startsWith(" 2 Building"));
+  expect(heading).toBeGreaterThan(0);
+  expect(lines[heading]).toContain("\x1b[48;5;238m");
+  expect(plain[heading + 1]).toContain("APP-7");
+  expect(plain.at(-1)).toStartWith(" ↓");
+  expect(plain.at(-1)).not.toContain("Building");
+});
+
 // Returns SQL for the tasks of the stages 1 to 4 test: more at work, one under review and two
 // approved and waiting on CI.
 const fourStagesSql = () => `${Array.from({ length: 6 }, (_, i) =>

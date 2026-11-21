@@ -501,12 +501,25 @@ export function drawRows(
     if (atRowEnd && (first === undefined || start < first)) start += 1;
     // Returns a blank line of the body, which a click reaches nothing on.
     const edge = (text: string) => ({ text, row: null, target: null });
-    // The view never ends on a heading whose rows are all below it, which would look closed. It
-    // goes past the bottom edge instead, which pins it there, and a blank line takes its place.
+    // The view never ends on a heading whose rows are all below it, which would look closed. When
+    // it is the heading you are on, the view goes down until a row of it shows, so the heading
+    // stays where you see it, past a tall row's second line too. Any other heading goes past the
+    // bottom edge instead, which pins it there, and a blank line takes its place.
+    const endsOnHeading = (at: number) =>
+      body[at + view - 1]?.row === null && (body[at + view]?.row ?? null) !== null;
+    if (onHeading !== undefined && first === start + view - 1 && endsOnHeading(start)) {
+      let moved = start + 1;
+      while (
+        moved < first &&
+        body[moved]?.row !== null &&
+        body[moved - 1]?.row === body[moved]?.row
+      )
+        moved += 1;
+      if (moved <= first) start = moved;
+    }
     let end = start + view;
-    const lastShown = body[end - 1];
-    const next = body[end];
-    if (lastShown && lastShown.row === null && next && next.row !== null) end -= 1;
+    const ownAtEnd = onHeading !== undefined && first === start + view - 1;
+    if (endsOnHeading(start) && !ownAtEnd) end -= 1;
     const visible = [...body.slice(start, end), ...(end < start + view ? [edge("")] : [])];
     shown = edges
       ? [
