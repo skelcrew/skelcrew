@@ -583,7 +583,7 @@ function givePr(task: string, pr: number): void {
   }
 }
 
-test("a claim taken elsewhere while sc rm waits on the forge leaves the task queued when sc rm fails", async () => {
+test("a claim taken elsewhere while sc rm waits on the forge waits for sc rm, and ends the task when it fails", async () => {
   addApp();
   // app-12 waits in the queue, with a PR, and still owes the claim of its issue.
   const rows = `${threadSql({ task: "12", title: "Add export", status: "queued", session: "t", pr: 7, queued_since: 1 })}
@@ -601,13 +601,17 @@ openDb().exec(${JSON.stringify(rows)});`;
   await until(() => asked(plugin).some((q) => q.ask === "close pr"));
   answer(plugin, "took", { took: false });
   rmSync(failing);
-  await until(() => claimsSaved() === 0);
+  await until(() => asked(plugin).some((q) => q.ask === "took"));
+  await queueLooked();
+  // The answer waits for sc rm, so the task is still queued, and still owes its claim.
   expect(statuses()["app-12"]).toBe("queued");
-  // sc rm fails, so the task keeps its place, and sc rm can run again.
+  expect(claimsSaved()).toBe(1);
+  // sc rm fails, and only then does the taken issue end the task, which the lead hears.
   rmSync(join(plugin, "hold-close-pr"));
   expect((await removal).code).not.toBe(0);
-  expect(statuses()["app-12"]).toBe("queued");
-  expect(leadHears()).not.toContain("APP-12 left the queue");
+  await until(() => statuses()["app-12"] === "done");
+  expect(claimsSaved()).toBe(0);
+  expect(leadHears()).toContain("APP-12 left the queue: its issue was claimed");
 }, 60_000);
 
 test("a claim that answers while sc rm waits on the forge doesn't assign the issue again", async () => {
@@ -631,4 +635,28 @@ test("a claim that answers while sc rm waits on the forge doesn't assign the iss
   await queueLooked();
   expect(asked(plugin).filter((q) => q.ask === "assign" && q.on === true)).toHaveLength(0);
   expect(statuses()["app-12"]).toBe("done");
+}, 60_000);
+
+test("a claim that answers while sc rm waits on the forge assigns the issue once sc rm fails", async () => {
+  addApp();
+  await serveApp();
+  const hold = join(plugin, "hold-took");
+  writeFileSync(hold, "");
+  const starting = sc("start", "app-12");
+  await until(() => asked(plugin).some((q) => q.ask === "took"));
+  // sc rm takes you off the issue, then waits on the forge, which fails.
+  givePr("12", 7);
+  writeFileSync(join(plugin, "hold-close-pr"), "");
+  writeFileSync(join(plugin, "fail-close-pr"), "the forge is down");
+  const removal = runSkel(["rm", "app-12"], env());
+  await until(() => asked(plugin).some((q) => q.ask === "close pr"));
+  rmSync(hold);
+  await queueLooked();
+  expect(asked(plugin).filter((q) => q.ask === "assign" && q.on === true)).toHaveLength(0);
+  rmSync(join(plugin, "hold-close-pr"));
+  expect((await removal).code).not.toBe(0);
+  // The task stays queued, so you are put back on its issue.
+  expect(await starting).toContain("APP-12 is queued");
+  await until(() => asked(plugin).some((q) => q.ask === "assign" && q.on === true));
+  expect(statuses()["app-12"]).toBe("queued");
 }, 60_000);
