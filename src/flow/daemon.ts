@@ -41,7 +41,7 @@ import {
 import { holdCheckSlot, slotHolders } from "./checks.ts";
 import { openTasks, ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
-import { removeThread, removing, stopThread } from "./events.ts";
+import { removalEnded, removeThread, removing, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import {
   closeExitedLeads,
@@ -780,6 +780,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       );
       // sc rm may have taken the task out of the queue while the tracker answered, and
       // taken you off its issue: assigning you now would put you back on a task nobody runs.
+      // So a removal under way is waited for, even when the claim failed, and one that failed
+      // leaves the task queued, and assigns you again.
+      await removalEnded(thread.folder);
       const now = readThread(db, thread.folder);
       if (now.status === "queued" && now.started === thread.started) assignIssue(db, thread, false);
       return { started: `${queuedText(db, thread)}${owed}` };
