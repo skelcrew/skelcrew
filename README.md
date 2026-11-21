@@ -116,7 +116,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 
 ## Status
 
-Skelcrew is in beta. The full design is in [docs/spec.md](docs/spec.md).
+Skelcrew is in beta. The design is in [docs/spec.md](docs/spec.md). How each part works today is in the detail docs: [the screen](docs/screen.md), [commands](docs/commands.md), [the flow](docs/flow.md), [files and settings](docs/files.md), and [plugins and base modules](docs/runtime.md).
 
 ## License
 
