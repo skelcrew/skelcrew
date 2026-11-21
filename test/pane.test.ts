@@ -766,3 +766,49 @@ test("a task ready to merge says so in the callout", () => {
     "Needs you: merges when ready",
   );
 });
+
+// Returns the styles on at the first place `word` shows in a line: bold, italic, struck and dim,
+// as the codes before it turned them on and off.
+function stylesAt(line: string, word: string): string[] {
+  const on = new Set<string>();
+  const codes: Record<string, [string, boolean]> = {
+    "1": ["bold", true],
+    "22": ["bold", false],
+    "3": ["italic", true],
+    "23": ["italic", false],
+    "9": ["struck", true],
+    "29": ["struck", false],
+    "90": ["dim", true],
+    "39": ["dim", false],
+  };
+  const before = line.slice(0, line.indexOf(word));
+  for (const [, numbers = ""] of before.matchAll(new RegExp(`${"\x1b"}\\[([0-9;]*)m`, "g")))
+    for (const number of numbers.split(";")) {
+      const [name, set] = codes[number] ?? [];
+      if (name) set ? on.add(name) : on.delete(name);
+    }
+  return [...on].sort();
+}
+
+// Each case nests one span in another, then ends the inner one before `tail`, which must keep
+// the outer style alone, and `inner` both.
+test.each([
+  ["# **inner** tail", ["bold"], ["bold"]],
+  ["# `inner` tail", ["bold", "dim"], ["bold"]],
+  ["**`inner` tail**", ["bold", "dim"], ["bold"]],
+  ["**[inner](https://example.com) tail**", ["bold"], ["bold"]],
+  ["**[inner `x`](https://example.com) tail**", ["bold"], ["bold"]],
+  ["*inner **bold** tail*", ["italic"], ["italic"]],
+  ["~~**inner** tail~~", ["bold", "struck"], ["struck"]],
+  ["***inner** tail*", ["bold", "italic"], ["italic"]],
+  ["**a *inner* tail**", ["bold", "italic"], ["bold"]],
+] as const)(
+  "nested markdown keeps the outer style after the inner one ends: %s",
+  (written, inner, tail) => {
+    const described: Details = { ...details, view: { ...details.view, body: written } };
+    const lines = drawPane(row, described, null, 60, 40).lines;
+    const line = lines.find((drawn) => Bun.stripANSI(drawn).includes("tail")) ?? "";
+    expect(stylesAt(line, "inner")).toEqual([...inner]);
+    expect(stylesAt(line, "tail")).toEqual([...tail]);
+  },
+);

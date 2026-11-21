@@ -1,12 +1,17 @@
 // A task's description, or a message of the lead's, drawn as markdown for the details pane:
 // headings bold, lists and code blocks kept, inline code dim, and no raw # or ** left over.
 
-// Codes that turn a style on and off again. Each turns off only its own, so inline code inside
-// a bold heading leaves the heading bold.
-const bold = (text: string) => `\x1b[1m${text}\x1b[22m`;
-const italic = (text: string) => `\x1b[3m${text}\x1b[23m`;
-const struck = (text: string) => `\x1b[9m${text}\x1b[29m`;
-const dim = (text: string) => `\x1b[90m${text}\x1b[39m`;
+// Returns a style that wraps text in the codes that turn it on and off. Each turns off only its
+// own, so inline code in a bold heading leaves it bold. A style nested in the same one, such as
+// bold text in a heading, would turn it off for the rest of the outer text, so the outer one
+// turns itself on again after each of those ends. Bun's parser draws the innermost span first,
+// so each span's text already holds its nested spans' codes when it is wrapped.
+const style = (on: string, off: string) => (text: string) =>
+  `${on}${text.replaceAll(off, `${off}${on}`)}${off}`;
+const bold = style("\x1b[1m", "\x1b[22m");
+const italic = style("\x1b[3m", "\x1b[23m");
+const struck = style("\x1b[9m", "\x1b[29m");
+const dim = style("\x1b[90m", "\x1b[39m");
 
 // Returns a link as its text, then its address, dim, when the two differ, so the address can
 // always be read. A link wraps like any other text: a terminal link around it couldn't be broken
