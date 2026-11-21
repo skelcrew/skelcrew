@@ -2,13 +2,13 @@
 // merge, sc stop or sc rm, which must cancel any typing still under way.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
-import { stopSession } from "../agents/sessions.ts";
+import { agentRuns, stopSession } from "../agents/sessions.ts";
 import { cloneDir } from "../paths.ts";
 import { closePr, failedLog } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
-import { baseOf, inTurn } from "./builder.ts";
+import { baseOf, inTurn, seenRunning } from "./builder.ts";
 import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
@@ -94,7 +94,16 @@ export function removalEnded(folder: string): Promise<void> {
 // names. A builder whose host can't be reached, or won't end, throws and keeps its host: it may
 // still run, and must neither get a second builder nor lose its clone under it. Its round and
 // any wake after a usage limit then carry on, whoever asked for the end, a stop or a poll.
-async function endBuilder(db: Database, sessions: string, folder: string, drop: boolean) {
+// `ended` runs in the same transaction that takes the thread's host away, so what the end
+// means, such as the thread stopped, is saved with it. Saved after, a daemon that stops in
+// between would find a live thread with no builder, and start one again.
+async function endBuilder(
+  db: Database,
+  sessions: string,
+  folder: string,
+  drop: boolean,
+  ended: () => void = () => {},
+) {
   // At once: the round and any wake stop, and nothing more is typed into it, even while an
   // earlier end still runs.
   // A wake typing "continue" is waited for too, and the limit it cleared put back if the end
@@ -103,7 +112,7 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
   const waking = endWake(folder);
   endRound(folder);
   try {
-    await endInTurn(db, sessions, folder, drop, waking);
+    await endInTurn(db, sessions, folder, drop, waking, ended);
   } catch (error) {
     resumeRound(db, sessions, folder);
     const cut = await waking;
@@ -123,6 +132,7 @@ function endInTurn(
   folder: string,
   drop: boolean,
   waking: Promise<unknown>,
+  then: () => void,
 ) {
   // It takes its turn with the builder's other starts and ends, so a slow end never finishes
   // after a later one, nor misses a builder still starting. Nothing is typed into it while its
@@ -139,10 +149,14 @@ function endInTurn(
       // clone.
       await stopSession(host, id);
       if (drop) stopDelivering(db, folder, true);
-      // Only the session it ended is forgotten: a builder started meanwhile keeps its own.
-      const now = readThread(db, folder);
-      if (now.host === ended.host && now.host_id === ended.host_id)
+      // Only the session it ended is forgotten: a builder started meanwhile keeps its own, and
+      // its thread isn't changed.
+      db.transaction(() => {
+        const now = readThread(db, folder);
+        if (now.host !== ended.host || now.host_id !== ended.host_id) return;
         record(db, folder, { host: null, host_id: null });
+        then();
+      })();
     }),
   );
 }
@@ -176,23 +190,69 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
   await stopLiveThread(db, sessions, thread, false, "stopped");
 }
 
+// Stops a working or waiting thread whose builder no longer runs, for each poll, and tells its
+// lead. Only sc stop and sc rm end a builder, so one that ended, such as killed on its host or
+// exited, ended outside Skelcrew, and nothing else would notice: its thread would show work that
+// nobody does. Stopped, it keeps its clone, branch and PR, and sc start brings it back. Only a
+// builder Skelcrew saw running counts: one that never started is its start's to fail, and one
+// missing as the daemon starts is brought back. A thread whose builder is starting or ending is
+// left alone, as its session may be missing for a moment. A host that can't be asked says
+// nothing, so the thread stays as it was.
+// A stop that fails, such as a host that can't end what an ended builder left, throws why.
+export async function noticeEndedBuilder(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<void> {
+  // Returns whether the thread still runs a builder this may look at: one with a host, whose
+  // setup is over, which nothing is starting or ending right now.
+  const ours = (now: Thread) =>
+    (now.status === "working" || now.status === "waiting") &&
+    now.host !== null &&
+    now.session !== null &&
+    now.started === thread.started &&
+    !stopping.has(now.folder) &&
+    !removing.has(now.folder);
+  if (!ours(thread)) return;
+  // The look takes its turn with the builder's starts and ends, so it never sees a session a
+  // start hasn't made yet.
+  const ended = await inTurn(thread.folder, async (earlier) => {
+    await earlier;
+    const now = readThread(db, thread.folder);
+    if (!ours(now)) return false;
+    const { host, id } = await builderSession(db, sessions, now);
+    if (!(await agentRuns(host, id))) return seenRunning.has(now.folder);
+    seenRunning.add(now.folder);
+    return false;
+  }).catch(() => false);
+  if (!ended || !ours(readThread(db, thread.folder))) return;
+  const name = threadName(db, thread);
+  // The stop ends what the session left behind, such as an agent's last screen. The lead's note
+  // is saved with the stop, so a daemon that stops in between never leaves a stopped thread no
+  // poll looks at again, and a lead that never hears of it.
+  const note = `${name}'s builder ended outside Skelcrew, so the thread is stopped. sc start ${name} brings it back.`;
+  await stopLiveThread(db, sessions, thread, false, "its builder ended outside Skelcrew", note);
+}
+
 // Ends a working or waiting thread's builder, then marks the thread stopped, with `why`, and
 // takes you off its issue, for sc stop and sc rm. The thread stays live until its builder has
 // ended, and its builder's submits are refused meanwhile. One whose host can't be reached, or
 // won't end it, may still run, so the thread stays as it was: its round and any wake after a
 // usage limit carry on, its messages wait for it, and this throws why. `drop` drops its
-// messages once it has ended, for a thread that is going. A second stop or sc rm while one is
-// under way joins it, and gets its outcome, rather than ending the builder again.
+// messages once it has ended, for a thread that is going. `note`, if any, goes to the lead,
+// saved with the stop. A second stop or sc rm while one is under way joins it, and gets its
+// outcome, rather than ending the builder again.
 function stopLiveThread(
   db: Database,
   sessions: string,
   thread: Thread,
   drop: boolean,
   why: string,
+  note: string | null = null,
 ): Promise<void> {
   const under = stopping.get(thread.folder);
   if (under) return under;
-  const stop = stopNow(db, sessions, thread, drop, why).finally(() => {
+  const stop = stopNow(db, sessions, thread, drop, why, note).finally(() => {
     if (stopping.get(thread.folder) === stop) stopping.delete(thread.folder);
   });
   stopping.set(thread.folder, stop);
@@ -203,35 +263,46 @@ function stopLiveThread(
 // no builder has started on it since: one whose end cleared its session and found no other. A
 // merge or close can end the thread while this waits its turn to end the builder, and remove
 // its clone. Marked stopped then, it would look like work sc start could bring back, so the
-// stop says the thread is done instead.
+// stop says the thread is done instead. The stop and `note`, for the lead, are saved in the
+// transaction that takes the thread's host away, so a daemon that stops meanwhile never finds
+// a live thread with no builder, which it would start again, nor a stop the lead never heard of.
 async function stopNow(
   db: Database,
   sessions: string,
   thread: Thread,
   drop: boolean,
   why: string,
+  note: string | null,
 ): Promise<void> {
-  await endBuilder(db, sessions, thread.folder, drop);
-  const now = readThread(db, thread.folder);
-  if (now.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
-  if (now.started !== thread.started || now.host_id !== null) return;
-  record(
-    db,
-    thread.folder,
-    {
-      status: "stopped",
-      needs_you: false,
-      review_failed: false,
-      asking: false,
-      turn_ended: false,
-      ended_at: null,
-      erred: false,
-      limited: false,
-      limit_reset: null,
-    },
-    why,
-  );
-  unassignIssue(db, thread.folder);
+  // Marked once its host is taken away, in the same transaction, unless the thread was done or
+  // started over meanwhile. The note is typed only once this has returned, as typing starts on
+  // a promise.
+  let stopped = false;
+  await endBuilder(db, sessions, thread.folder, drop, () => {
+    const now = readThread(db, thread.folder);
+    if (now.status === "done" || now.started !== thread.started) return;
+    if (note !== null) noteForLead(db, sessions, thread, note, thread.folder);
+    record(
+      db,
+      thread.folder,
+      {
+        status: "stopped",
+        needs_you: false,
+        review_failed: false,
+        asking: false,
+        turn_ended: false,
+        ended_at: null,
+        erred: false,
+        limited: false,
+        limit_reset: null,
+      },
+      why,
+    );
+    stopped = true;
+  });
+  if (readThread(db, thread.folder).status === "done")
+    throw new Error(`${threadName(db, thread)} is done already`);
+  if (stopped) unassignIssue(db, thread.folder);
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
