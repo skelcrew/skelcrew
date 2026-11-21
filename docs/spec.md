@@ -2,7 +2,7 @@
 
 Nov 21, 2026 · @Simon · the design of Skelcrew v6.
 
-This spec says what Skelcrew is and what it guarantees. It should rarely need to change. How each part works today, down to keys, wording and output, is in the detail docs, which builders keep true to the code: [the screen](screen.md), [commands](commands.md), [the flow in detail](flow.md), [files and settings](files.md), and [plugins and base modules](runtime.md). Where a detail doc and this spec differ, this spec wins.
+This spec says what Skelcrew is and what it guarantees: intent, not keys, wording or layouts. It should rarely need to change. The detail lives in the code and its tests.
 
 ## Goal
 
@@ -83,13 +83,13 @@ The backlog is shared between machines through the repository's git remote, neve
 - a task removed before it started is gone from the remote too, while its name stays claimed, so it never names other work;
 - once a task is removed, or its start is recorded, no ref on the remote holds its words.
 
-A task of the backlog that starts keeps its words in its thread, and ends in `closed` like any task with no issue. How the refs and claims work is in [the flow in detail](flow.md#the-backlog).
+A task of the backlog that starts keeps its words in its thread, and ends in `closed` like any task with no issue.
 
 ### Names
 
 A task has one name, used everywhere. It is the issue's ID with the repository's short name in front when the ID doesn't name a repository: GitHub issue #12 in app is `APP-12`, and Linear's `JOTT-12` stays `JOTT-12`. A task with no issue gets a `t` and a number of Skelcrew's, such as `APP-T103`, so it never clashes with an issue's name, and an issue whose ID has that shape is left out of Skelcrew's copy of the tracker.
 
-- Two machines on one repository never take the same name, as Skelcrew claims each on the remote before using it. A name is never below one claimed before it. One narrow gap, for names from before claims existed, is in [the flow in detail](flow.md#names).
+- Two machines on one repository never take the same name, as Skelcrew claims each on the remote before using it. A name is never below one claimed before it. One narrow gap remains, for names from before claims existed: a machine that hasn't run since claims began may share one old name with another.
 - A name never changes, so you can always tell which issue a task is.
 - A name is typed in any case. Skelcrew shows it in uppercase wherever you read it, and stores and matches it in lowercase wherever it is kept, such as folders, branches and sessions, so a file system that ignores case never sees two spellings of one task.
 
@@ -113,7 +113,7 @@ As a **mirror**, Skelcrew shows the task's progress in the tracker through the t
 
 ## Files
 
-A repository describes how its agents work in files. Skelcrew ships the same files inside itself as its defaults, so a repository with none of them works exactly as one with the defaults written out. Every setting, its shape and its default is in [files and settings](files.md).
+A repository describes how its agents work in files. Skelcrew ships the same files inside itself as its defaults, so a repository with none of them works exactly as one with the defaults written out.
 
 ```
 skelcrew.yaml            the repository's setup
@@ -153,7 +153,7 @@ A flow is the stages a task goes through and their settings. Skelcrew ships one 
 
 **Picking a flow.** Every task gets `default` unless the repository has other flows. Then the lead picks one as it starts or proposes a task, and tells you which and why whenever it isn't `default`. A task started from the label gets `default`. The flow can change only until the builder first submits. A flow with no review is only for a change too small to need one, and the lead always tells you, as nobody will review it. The built-in lead's instructions say this, so it holds in every repository.
 
-Your own confirmations are never flow settings: you always merge, you always add repositories, and you always say yes before a lead starts work or briefs another lead.
+Your own confirmations are never flow settings: you always merge, you always add repositories, and you always say yes before a lead starts work.
 
 ### `.agents/skills/`
 
@@ -212,13 +212,13 @@ The folder only names the repository: agents never work in your checkout, and Sk
 
 **A repository with no forge** must take Skelcrew's pushes on your own git login, so Skelcrew checks the engine can push before adding it, and otherwise shows what git said and what to fix.
 
-**Each lead, its own repository.** A repository's lead works only in that repository: its clone, read-only, its tasks, and its issues and PRs. The engine knows which lead is calling from its socket. It can also read every other repository Skelcrew has, read-only. It starts the first time you open its repository, with an opening turn so you don't have to know to speak first, and from then on runs. When work belongs in another repository, it briefs that repository's lead itself, as **Messages** says. That lead starts work on a brief only when the brief carries your own words, and otherwise asks you.
+**Each lead, its own repository.** A repository's lead works only in that repository: its clone, read-only, its tasks, and its issues and PRs. The engine knows which lead is calling from its socket. It can also read every other repository Skelcrew has, read-only. It starts the first time you open its repository, with an opening turn so you don't have to know to speak first, and from then on runs. When work belongs in another repository, it briefs that repository's lead itself, as **Messages** says, with no confirmation from you, and tells you in one line. That lead starts work on a brief only when the brief carries your own words, and otherwise asks you.
 
 **Issues in public repositories.** The lead asks you before filing an issue in a public repository's tracker, or one it can't tell is private. For a security hole, it asks each time whether to file it at all. Issues, PRs and commits say what to change, never how a hole could be used, and the builder gets the details from the lead.
 
 ## Commands
 
-The command line follows npm: files describe what a repository needs, `sc install` makes the machine match, and `sc add`, `sc remove` and `sc update` change the files and the machine together. Each command, what it takes and what it prints is in [commands](commands.md).
+The command line follows npm: files describe what a repository needs, `sc install` makes the machine match, and `sc add`, `sc remove` and `sc update` change the files and the machine together.
 
 Every command that lists or shows something takes `--json`. Commands that do something print one line or fail with a clear message and a non-zero exit. A command Skelcrew shows you to run reads as a step to take, and only a real error looks like one.
 
@@ -256,7 +256,7 @@ The engine is Skelcrew's daemon: one per machine, on the machine where its agent
 
 ## The flow
 
-One task, in the `default` flow, in a repository with GitHub as its tracker and forge. Each step's detail, with the notes and records Skelcrew writes, is in [the flow in detail](flow.md).
+One task, in the `default` flow, in a repository with GitHub as its tracker and forge.
 
 1. **A task is started**: by the `skelcrew` label on an issue, from anywhere, or by the lead once you say yes, on an issue, a task of the backlog, or a task with no issue. You can start one yourself too.
 2. **Skelcrew sets up the builder**: a clone of its own, on a branch of its own, with the repository's setup run once in it.
@@ -361,7 +361,7 @@ An event changes the task at once, before the builder hears of it. Without a for
 
 ## Plugins
 
-A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at its root. It is one of two kinds, and says in its manifest what it provides within that kind. Skelcrew's flow knows what a plugin provides, never which plugin provides it. The protocol's every detail is in [plugins and base modules](runtime.md).
+A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at its root. It is one of two kinds, and says in its manifest what it provides within that kind. Skelcrew's flow knows what a plugin provides, never which plugin provides it.
 
 | Kind | What it is for | Provides | Examples |
 | --- | --- | --- | --- |
@@ -393,7 +393,7 @@ Each command is a list of words, run in the plugin's folder and never through a 
 
 A tracker or forge is asked by running its `call` command with one JSON question on stdin. It prints one JSON answer and exits within 60 seconds, or exits with an error on its last line of stderr. Exit code 2 means the plugin needs its setup again, and Skelcrew says so, or runs it there and then when you are at your terminal. Every answer is checked before Skelcrew uses it, and an older plugin's missing answer is read the safe way.
 
-The questions are `claims` (whether a remote is this plugin's, and the repository's names, links, whether you can push and whether it is a fork), `changed` (every item updated since the last answer, or everything open), `create task`, `took` (claiming an issue, saying whether this call took it), `assign`, `seen`, `open pr`, `merge pr` (only if the PR's head is still the approved commit), `close pr`, `review`, `edit review`, `status` and `log` (what failed in a check). Their fields are in [plugins and base modules](runtime.md#io-plugins). A forge posts and gives back a review's body unchanged, so Skelcrew can find its own markers.
+The questions are `claims` (whether a remote is this plugin's, and the repository's names, links, whether you can push and whether it is a fork), `changed` (every item updated since the last answer, or everything open), `create task`, `took` (claiming an issue, saying whether this call took it), `assign`, `seen`, `open pr`, `merge pr` (only if the PR's head is still the approved commit), `close pr`, `review`, `edit review`, `status` and `log` (what failed in a check). A forge posts and gives back a review's body unchanged, so Skelcrew can find its own markers.
 
 An **item** is an issue or a PR: its kind, ID, title, body, state, author, labels, link and times. An issue adds the line that closes it on merge. A PR adds its branch, base, whether it conflicts, its checks, and its reviews and comments. A `cancelled` check isn't the builder's to fix. An author says whether it is a bot, whether it is you, and whether it can push.
 
@@ -431,7 +431,7 @@ How Skelcrew runs agents is split into five base modules. Each has a built-in de
 
 ### Sessions
 
-Every agent runs in a terminal session of its own: one for each repository's lead and one per builder. The rest of Skelcrew reaches a session only through this module, with plain data in and out. Its functions are `start`, `paste` (one bracketed paste), `keys`, `read` (the screen, and whether someone scrolled back), `interrupt`, `attach`, `end` (once every process it ran has exited), `list`, `rename` and `check` (whether a session exists, whether its agent runs and exited cleanly, and its last screen, so Skelcrew reconnects instead of starting an agent twice). Each is described in [plugins and base modules](runtime.md#sessions).
+Every agent runs in a terminal session of its own: one for each repository's lead and one per builder. The rest of Skelcrew reaches a session only through this module, with plain data in and out. Its functions are `start`, `paste` (one bracketed paste), `keys`, `read` (the screen, and whether someone scrolled back), `interrupt`, `attach`, `end` (once every process it ran has exited), `list`, `rename` and `check` (whether a session exists, whether its agent runs and exited cleanly, and its last screen, so Skelcrew reconnects instead of starting an agent twice).
 
 Every session carries its repository, task and role as labels for as long as it lives, so a starting engine knows whose each session is, and a host's own apps can group and filter by them.
 
@@ -450,7 +450,7 @@ The built-in transport works on any host's sessions, as it uses only `paste`, `k
 
 ### Messages
 
-Every message Skelcrew types into an agent goes through this module, on whichever transport is active. The exact wrapping, escaping and order of notes are in [the flow in detail](flow.md#messages).
+Every message Skelcrew types into an agent goes through this module, on whichever transport is active.
 
 - **Who may send what to whom.** The lead may tell any thread of its own repository, and brief another repository's lead, never its own. A builder may tell only its repository's lead. Skelcrew sends event messages to a builder and notes to the lead. A reviewer sends nothing. A brief carries your exact words, in a form only Skelcrew can write, when you asked for the work, and only then may the receiving lead start threads from it, for exactly what your words ask. Anything else is refused.
 - **Nothing passes for someone else.** Every message from an agent is wrapped in a tag that says who it is from and how to answer. No agent's text, and no outside text such as an issue's title, can end that tag, fake another, pass for your words, or end the paste early and type as if it were you.
@@ -484,11 +484,11 @@ Skelcrew reports every change of status to the host when the host can show it, t
 
 ## The screen
 
-The screen is how you see and steer a repository's work. What it shows, its keys and its layout are in [the screen](screen.md). It guarantees:
+The screen is how you see and steer a repository's work. It guarantees:
 
 - **Three ways in.** Plain `sc` shows the repository's list as a sidebar, with the lead or the row you are on beside it. `sc --list` shows the list alone with a details pane. `sc attach` attaches full screen to one agent.
 - **The lead first.** The screen starts on the lead, so what you type first goes to it, and the lead's requests for your yes show under it.
-- **Tasks, not threads**, in sections: everything that waits on you, always open, so one key reaches it; what waits for a builder, in the order it starts; then the stages. Each task shows in exactly one place, decided from its state alone.
+- **Tasks, not threads**, in sections: everything that waits on you, always open, so one key reaches it; Up next, what waits for a builder, in the order it starts; then the stages. Each task shows in exactly one place, decided from its state alone.
 - **Words, not colours.** A task's word always says what is happening. Outside text has its control codes removed first.
 - **Always a way back.** One key brings you back from an agent, and pressing it once too often never leaves the screen. Leaving keeps every agent running, and says so.
 - **Seeing without touching.** A task's details show what `sc show` gives, with its agent live beside them. Nothing typed there reaches the agent, and its session is never resized.
@@ -502,7 +502,7 @@ A runtime plugin's host shows the same agents in its own apps, and its sessions 
 
 ## Remote machines
 
-The engine runs on the same machine as its agents. So `--remote` is only "run `sc` on that machine", over plain `ssh -t`. Everything must work over it: no local display, no browser on the same machine, no clipboard. Logins that need a browser use a code and a link you open on your laptop. The steps are in [commands](commands.md#sc---remote).
+The engine runs on the same machine as its agents. So `--remote` is only "run `sc` on that machine", over plain `ssh -t`. Everything must work over it: no local display, no browser on the same machine, no clipboard. Logins that need a browser use a code and a link you open on your laptop.
 
 - **One setup for all your machines.** `sc --remote <host> install` sends your personal files and runs `sc install` there, putting Skelcrew there first if needed, so a server feels like your laptop. Sign-ins that renew themselves are made on each machine, as two sharing one would break each other.
 - **Commands act where you are.** `sc --remote <host> <command>` acts on the repository you are in on the laptop. With no command, it opens the server's screen.
@@ -514,7 +514,7 @@ Seeing agents from elsewhere is the session host's job, such as herdr's own mach
 
 ## State
 
-One SQLite file per machine, with `bun:sqlite`, holds the repositories, tasks, threads, the copy, the messages waiting for each agent, and every queue and hold, as [plugins and base modules](runtime.md#state) lists. Every armed or queued state is in it, so a restart or a migration keeps it: an armed merge stays armed, a queued review or task keeps its place, and a held review still waits. Only the queue of check slots lives in the engine's memory. Every change is also logged per task, as one JSON line, so a task's history can be read and replayed. A database from an earlier release is moved forward once, after saving a copy, never while another engine still writes the old way.
+One SQLite file per machine, with `bun:sqlite`, holds the repositories, tasks, threads, the copy, the messages waiting for each agent, and every queue and hold. Every armed or queued state is in it, so a restart or a migration keeps it: an armed merge stays armed, a queued review or task keeps its place, and a held review still waits. Only the queue of check slots lives in the engine's memory. Every change is also logged per task, as one JSON line, so a task's history can be read and replayed. A database from an earlier release is moved forward once, after saving a copy, never while another engine still writes the old way.
 
 **Tokens stay out.** Agents never see a GitHub token, or any plugin's. They don't push or call GitHub. They call `sc` commands, and the engine and its plugins, outside the sandbox, push and post as Skelcrew's GitHub App, or push with your own git login when a repository has no forge. Commits are authored by `skelcrew[bot]`, with you as co-author.
 
@@ -541,6 +541,5 @@ One SQLite file per machine, with `bun:sqlite`, holds the repositories, tasks, t
 - A remote protocol of our own (SSH only), teams and permissions
 - Projects: a named context above repositories, with one lead across several of them, its own memory beyond `AGENTS.md`, and tasks across repositories
 - A command of Skelcrew's own to stop the background engine: systemd or launchd's own commands do it
-- An `Up next` section in the screen's sidebar
 
 If something seems missing, ask instead of adding it.

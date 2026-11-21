@@ -3,9 +3,7 @@
 Skelcrew is a crew of coding agents, always on, in parallel and isolated, from issue to
 merged PR. Bring your own harness and model. The design is in `docs/spec.md`: what
 Skelcrew is and what it guarantees. Read it before changing anything it covers.
-How things work today, down to keys, wording and output, is in the detail docs:
-`docs/screen.md`, `docs/commands.md`, `docs/flow.md`, `docs/files.md` and `docs/runtime.md`.
-Where a detail doc and the spec differ, the spec wins.
+The detail, down to keys, wording and output, lives in the code and its tests.
 The traps earlier versions found are in `docs/learnings.md`. Read the part that covers
 typing into a session, starting Claude Code or the sandbox before touching them.
 
@@ -44,7 +42,8 @@ These are correctness requirements. If a task asks you to break one, stop and sa
   where bubblewrap can't nest. Anywhere else they must run.
 - **The spec is never edited to match the code.** If they disagree, stop and report it.
   Stop and report too when the work would change `docs/spec.md` or contradict it, unless
-  the task says to change it.
+  the task says to change it. Reviewers flag a pull request that changes `docs/spec.md`
+  when its task doesn't say to.
 - **Ask before adding a dependency.** The expected ones are `yaml` and `zod`. State uses
   `bun:sqlite`.
 - **Agents never see a GitHub token.** Only the daemon, outside the sandbox, pushes or calls
@@ -81,16 +80,6 @@ bun run check
 It runs the format and lint check, the typecheck and the tests, and never changes files.
 Commit in small slices. Each commit passes `bun run check` on its own, and its message says
 what changed and why.
-
-## Detail docs
-
-The detail docs describe how Skelcrew works today. Change them freely, in the same pull
-request as the code they describe, and keep them true to it: a change to a key, a message,
-a flag or an output updates the doc that names it. A detail doc found out of date is fixed
-to match the code, unless the code breaks the spec. A detail doc never contradicts the spec.
-
-Reviewers check the detail docs a change touches against the code, and flag a pull request
-that changes `docs/spec.md` when its task doesn't say to.
 
 ## Writing for the human
 
