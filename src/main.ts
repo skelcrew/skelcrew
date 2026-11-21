@@ -44,16 +44,21 @@ const agentRefusals: Record<string, string> = {
 
 async function runCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
+
   if (args.length === 1 && command === "--version") {
     console.log(versionLine());
     return;
   }
+
   const onScreen = ["sidebar", "footer", "details"].includes(command ?? "");
+
   if (process.env.SKELCREW_REMOTE_NAME && command !== "install" && !onScreen && !runByAgent()) {
     const { setupDone } = await import("./machine/setup.ts");
     if (!setupDone()) process.exit(unfinished);
   }
+
   if (!onScreen && outOfDate()) process.exit(outdated);
+
   if (!onScreen && command !== "install" && process.env.SKELCREW_LAPTOP_LOCK && !runByAgent()) {
     const { lockDiffers } = await import("./machine/your-files.ts");
     const where = process.env.SKELCREW_REMOTE_NAME;
@@ -62,13 +67,17 @@ async function runCommand(args: string[]): Promise<void> {
         `Your lock on ${where} differs from your laptop's. To send yours there, run on your laptop:\n  sc --remote ${where} install`,
       );
   }
+
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
     return;
   }
+
   if (runByAgent() && command === "--remote")
     throw new Error("running sc on a server is only for your own terminal, not for agents");
+
   if (command === "--remote" && sub) process.exit(await remote(sub, rest));
+
   const json = args.includes("--json");
   const words = args.filter((arg) => arg !== "--json");
   const [first, second] = words;
@@ -77,10 +86,12 @@ async function runCommand(args: string[]): Promise<void> {
     agentRefusals[first === "repo" || first === "plugin" ? `${first} ${second}` : named];
   if (runByAgent() && refusal)
     throw new Error(`${refusal} is only for your own terminal, not for agents`);
+
   const list = first === "--list";
   const lead = list ? words.slice(1) : words;
   if (lead.length === 0 || (lead[0] === "--from" && lead[1] && lead.length === 2))
     return leadCommand(list, lead[1]);
+
   switch (first) {
     case "up":
     case "serve":
