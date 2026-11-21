@@ -9,8 +9,6 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import {
   agentRuns,
-  endExitedSession,
-  exitedCleanly,
   interruptSession,
   processTree,
   readSession,
@@ -45,6 +43,7 @@ import { removeThread, removing, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import {
   closeExitedLeads,
+  closeIfExited,
   lastOpened,
   leadOf,
   leadPrompted,
@@ -1078,21 +1077,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // second leaves its ended session behind, which would be kept, and a look for exited
         // leads would close its tab again with the brief waiting. So that session goes first,
         // with its tab closed, as such a look would leave it. Then saving the brief and opening
-        // the tab are one change. Nothing waits between the steps, and a daemon stopped after
-        // any of them finds things as one of its own looks would: the lead closed with no brief,
-        // or open with its brief, which its start brings back and types in. A repository never
-        // opened gets its first time, or its lead would have no tab. One opened before keeps its
-        // time, so plain sc still opens the one you opened last.
-        // Only a lead on tmux keeps its session after you exit it.
-        const { name, host, hostId } = leadOf(db, to.owner, to.repo);
-        const id = hostId ?? name;
-        if (host === "tmux" && exitedCleanly(sessions, id)) {
-          db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
-            to.owner,
-            to.repo,
-          ]);
-          endExitedSession(sessions, id);
-        }
+        // the tab are one change. A daemon stopped after any of the steps finds things as one of
+        // its own looks would: the lead closed with no brief, or open with its brief, which its
+        // start brings back and types in. A repository never opened gets its first time, or its
+        // lead would have no tab. One opened before keeps its time, so plain sc still opens the
+        // one you opened last.
+        await closeIfExited(db, sessions, to.owner, to.repo);
         db.transaction(() => {
           briefLead(db, sessions, caller, to, request.text, request.asked);
           db.run(

@@ -491,6 +491,67 @@ console.log(await hasSession(host, "fake-lead-app"));`,
   expect(readFileSync(join(fake, "asked"), "utf8")).toContain('"ask":"end"');
 });
 
+// Runs simon/app's lead on the fake host with `command`, waits for it to end unless it runs on,
+// then has you attach and detach through the host's attach, and lets the daemon look for leads
+// you exited. Returns whether the tab closed, then whether the lead's session is still there.
+// With `files`, those files are in the host's settings folder first, such as no-ended.
+function afterLeadLook(command: string[], { ends = true, files = [] as string[] } = {}): string {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  return runWithFakeHost(
+    "sessions",
+    `const { closeExitedLeads } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { attachOnHost, pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+for (const file of ${JSON.stringify(files)}) fs.writeFileSync(${JSON.stringify(fake)} + "/" + file, "");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 1, 'fake', 'fake-lead-app')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ${JSON.stringify(command)}, env: {}, labels: { repository: "simon/app", role: "lead" }, keepOnExit: true });
+const exit = ${JSON.stringify(join(fake, "sessions", "fake-lead-app", "exit"))};
+for (let i = 0; ${ends} && i < 200 && !fs.existsSync(exit); i++) await Bun.sleep(25);
+attachOnHost(host, "fake-lead-app");
+await closeExitedLeads(db, "unused");
+const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
+console.log(row.tab_closed, await hasSession(host, "fake-lead-app"));`,
+    {},
+  );
+}
+
+// What the daemon says as it closes the tab of a lead you exited.
+const closed = "simon/app's lead exited, so its tab is closed until you open it again.\n";
+
+// A host's attach returns alike when you detach and when the agent ends, as herdr's exits 0 for
+// both, so only what the host lists says which it was.
+test("detaching from a lead on a plugin's host keeps the lead and its tab", () => {
+  expect(afterLeadLook(["sleep", "30"], { ends: false })).toBe("0 true\n");
+});
+
+test("a lead you exited on a plugin's host closes its tab and ends its session", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 0"])).toBe(`${closed}1 false\n`);
+});
+
+test("a lead that crashed on a plugin's host keeps its tab, to be brought back", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 3"])).toBe("0 true\n");
+});
+
+// Skelcrew can't tell how it ended, and takes such a lead as exited.
+test("a lead that ended on a host that can't say how is taken as exited", () => {
+  expect(afterLeadLook(["sh", "-c", "exit 3"], { files: ["no-ended"] })).toBe(`${closed}1 false\n`);
+});
+
+test("a lead's session asks a plugin's host to keep it when its agent exits, and a builder's doesn't", async () => {
+  const lead = { repository: "simon/app", role: "lead" } as const;
+  const on = host();
+  const session = { folder: home, command: ["sleep", "30"], env: {}, labels: lead };
+  await startSession(on, "lead-app", { ...session, keepOnExit: true });
+  await startSession(on, "app-12", { ...session, labels });
+  const starts = readFileSync(join(settings(), "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).keepOnExit);
+  expect(starts).toEqual([true, undefined]);
+});
+
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
   const said = runWithFakeHost(
     "sessions",

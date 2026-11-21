@@ -10,8 +10,8 @@
 // alike, with say-<question> it fails it with the file's words, with fail-<question> it fails it
 // once, with unknown-<question> it fails it every time as an older plugin that doesn't know it,
 // with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
-// from a given time on. With a file lose-start, it starts the
-// next session but fails before saying its ID. Given `files` as it starts a session, it does as
+// from a given time on. With a file lose-start, it starts the next session but fails before
+// saying its ID. Its list says how a session ended, unless a file no-ended says it can't tell. Given `files` as it starts a session, it does as
 // a host that provides files: it makes the session a folder of dropped files, `files` in the
 // session's folder, and swaps the placeholder for it wherever it appears in the command. Its one
 // argument, its settings folder, is only there so a test's clean-up can find its calls with ps.
@@ -131,12 +131,19 @@ const answers: Record<string, () => unknown> = {
     while (left()) await Bun.sleep(50);
     rmSync(folder(question.id), { recursive: true, force: true });
   },
+  // A session whose agent ended says its exit code, as a host that knows it does, unless a file
+  // no-ended says the host can't tell.
   list: () => ({
-    sessions: (existsSync(sessions) ? readdirSync(sessions) : []).map((id) => ({
-      id,
-      running: running(id),
-      labels: JSON.parse(readFileSync(join(folder(id), "labels.json"), "utf8")),
-    })),
+    sessions: (existsSync(sessions) ? readdirSync(sessions) : []).map((id) => {
+      const exit = join(folder(id), "exit");
+      const told = existsSync(exit) && !existsSync(join(dir, "no-ended"));
+      return {
+        id,
+        running: running(id),
+        labels: JSON.parse(readFileSync(join(folder(id), "labels.json"), "utf8")),
+        ...(told && { ended: { code: Number(readFileSync(exit, "utf8")) } }),
+      };
+    }),
   }),
   // Stores the session's new title with its labels, and prints nothing at all, as Skelcrew
   // doesn't read the answer to a rename.

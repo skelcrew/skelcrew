@@ -82,16 +82,19 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead again");
 });
 
-test("a lead on a plugin's host shows through that host from its tab, and comes back once it ends", async () => {
+// Opens site's lead on a fake plugin's host from its tab, then has the host list it as ended with
+// exit code `code`, and returns how many times the daemon was asked to open site, and how.
+async function leadOnHostEnds(code: number) {
   daemon();
   sql(`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')`);
-  // The host lists site's lead as running while its file running says true.
+  // The host lists site's lead as running while its file running says true, and else as ended
+  // with that code.
   const plugin = join(home, "plugin-fake");
   mkdirSync(plugin, { recursive: true });
   writeFileSync(join(plugin, "running"), "true");
   writeFileSync(
     join(plugin, "session.sh"),
-    `read -r question; echo >> listed; echo "{\\"sessions\\":[{\\"id\\":\\"fake-site-lead\\",\\"running\\":$(cat running),\\"labels\\":null}]}"\n`,
+    `read -r question; echo >> listed; echo "{\\"sessions\\":[{\\"id\\":\\"fake-site-lead\\",\\"running\\":$(cat running),\\"labels\\":null,\\"ended\\":{\\"code\\":${code}}}]}"\n`,
   );
   writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
   writeFileSync(
@@ -107,13 +110,27 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-site-lead' WHER
   await until(() => onLead(), "the sidebar on site's lead");
   const opened = () => asked.filter((one) => one === "open simon/site from a tab").length;
   await until(() => opened() === 1, "the daemon to open site");
-  // Once the sidebar has seen the lead run on its host, a lead that ends there is brought back.
+  // Once the sidebar has seen the lead run on its host, the lead ends there, and the sidebar
+  // looks at the host a few more times.
   const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
   await until(() => looks() > 2, "the sidebar to ask the host");
   writeFileSync(join(plugin, "running"), "false");
+  const ended = looks();
+  await until(() => looks() > ended + 3 || opened() === 2, "the sidebar to look again");
+  return opened;
+}
+
+test("a lead on a plugin's host shows through that host from its tab, and comes back once it crashes", async () => {
+  const opened = await leadOnHostEnds(1);
   await until(() => opened() === 2, "the daemon to bring site's lead back");
   press("M-S-Left");
   await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
+});
+
+// The daemon closes its tab instead, as it does for a lead you exit on tmux.
+test("a lead you exit on a plugin's host isn't brought back", async () => {
+  const opened = await leadOnHostEnds(0);
+  expect(opened()).toBe(1);
 });
 
 test("a click on a tab switches to its repository", async () => {
