@@ -1,8 +1,9 @@
-// Skelcrew's own clones of a repository never start git's background maintenance, which could
-// hold a lock file another clone or fetch trips over while it copies the clone's files.
+// Skelcrew's own clones of a repository never start git's background maintenance, nor write a
+// commit graph after a fetch. Either could leave a lock file that a clone from Skelcrew's clone
+// trips over while it copies the clone's files.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cloneRepository, fetchInto, updateClone } from "../src/flow/git.ts";
@@ -24,14 +25,20 @@ const ran = () =>
     .split("\n")
     .filter((line) => / (cmd_name|child_start\[\d+\]) /.test(line))
     .join("\n");
+// Whether git wrote a commit graph in the clone, as a fetch does when your settings ask for one.
+const graphed = (clone: string) =>
+  existsSync(join(clone, ".git", "objects", "info", "commit-graphs"));
 
 beforeEach(() => {
   folder = mkdtempSync(join(tmpdir(), "skelcrew-git-test-"));
   git(folder, "init", "-q", "app");
   git(join(folder, "app"), "commit", "-q", "--allow-empty", "-m", "one");
   // git writes its trace where a global setting says, and the code under test hands its git
-  // this process's environment.
-  writeFileSync(join(folder, "gitconfig"), `[trace2]\n\tnormalTarget = ${join(folder, "trace")}\n`);
+  // this process's environment. Your own settings may ask each fetch for a commit graph.
+  writeFileSync(
+    join(folder, "gitconfig"),
+    `[trace2]\n\tnormalTarget = ${join(folder, "trace")}\n[fetch]\n\twriteCommitGraph = true\n`,
+  );
   savedGlobal = process.env.GIT_CONFIG_GLOBAL;
   process.env.GIT_CONFIG_GLOBAL = join(folder, "gitconfig");
 });
@@ -54,6 +61,7 @@ test("cloning and fetching into Skelcrew's clone start no background maintenance
   await fetchInto(db, repository(), clone, "topic");
   expect(ran()).toContain("cmd_name fetch");
   expect(ran()).not.toContain("maintenance");
+  expect(graphed(clone)).toBe(false);
 });
 
 test("git run by anyone else in Skelcrew's clone starts no background maintenance either", async () => {
@@ -66,4 +74,18 @@ test("git run by anyone else in Skelcrew's clone starts no background maintenanc
   Bun.spawnSync(["git", "-C", clone, "fetch", "-q", "origin"], { env: process.env });
   expect(ran()).toContain("cmd_name fetch");
   expect(ran()).not.toContain("maintenance");
+  expect(graphed(clone)).toBe(false);
+});
+
+test("a clone Skelcrew made before keeps maintenance off too, once Skelcrew updates it", async () => {
+  const db = new Database(":memory:");
+  const clone = join(folder, "clone");
+  git(folder, "clone", "-q", join(folder, "app"), clone);
+  git(join(folder, "app"), "commit", "-q", "--allow-empty", "-m", "two");
+  await updateClone(db, repository(), clone);
+  git(join(folder, "app"), "commit", "-q", "--allow-empty", "-m", "three");
+  Bun.spawnSync(["git", "-C", clone, "fetch", "-q", "origin"], { env: process.env });
+  expect(ran()).toContain("cmd_name fetch");
+  expect(ran()).not.toContain("maintenance");
+  expect(graphed(clone)).toBe(false);
 });

@@ -581,11 +581,16 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **git maintains a clone in the background, and other git trips over it.** After a fetch,
   commit or merge, git may start `git maintenance` detached. It holds
   `objects/maintenance.lock` for a moment. A clone from that folder copies its files and fails
-  when the lock vanishes mid-copy, as a CI run did. Skelcrew runs its git with
-  `maintenance.auto=false` and `gc.auto=0`, and writes both into every clone it makes. A plain
-  `git clone` never starts maintenance; a `git fetch` does. Only a clone from a folder on the
-  same disk copies its files: a fetch from that folder goes through git's own transport and
+  when the lock vanishes mid-copy, as a CI run did. A fetch also writes a commit graph when
+  your own settings ask for `fetch.writeCommitGraph`, with lock files of its own. Skelcrew runs
+  its git with `maintenance.auto=false`, `gc.auto=0` and `fetch.writeCommitGraph=false`. It
+  writes them into every clone it makes, and into its older clones at their first update. A
+  plain `git clone` never starts maintenance; a `git fetch` does. Only a clone from a folder on
+  the same disk copies its files: a fetch from that folder goes through git's own transport and
   never failed in 467 tries against nonstop maintenance, where 5 clones did.
+- **A fake git that looks for a word sees the options too.** Skelcrew's git options include
+  `fetch.writeCommitGraph=false`, so a fake git matching `*fetch*` takes an `ls-remote` for a
+  fetch. Match `*" fetch "*` instead.
 
 ## Runtime plugins
 
