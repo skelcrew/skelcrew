@@ -631,7 +631,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Starts a task, for sc start: brings back a stopped thread, lets one go on past the round
   // limit, switches the flow or short title of one at work, or records a new thread and starts
-  // its builder. Returns what to say of it. `yes` is the ID of your yes to a lead's request that
+  // its builder. With `now`, from sc start --now or f in the list, a start over limits.threads
+  // goes ahead at once, and a task in the queue leaves it to start. Returns what to say of it. `yes` is the ID of your yes to a lead's request that
   // asked for this start. Whatever the start changes, the request keeps what it said in the same
   // step, so a stop of the daemon before the lead hears never has the yes done again.
   const startTask = async (
@@ -655,6 +656,33 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // Another flow for a thread at work switches it, as switchFlow allows. The flow it runs
     // already is no switch, so sc start goes on as without one, such as past the round limit.
     const switching = before !== null && request.flow !== undefined && request.flow !== before.flow;
+    // --now takes a task out of the queue and starts it at once, over the limit, as you chose.
+    if (before?.status === "queued" && request.now) {
+      const name = threadName(db, before);
+      if (removing.has(before.folder)) throw new Error(`${name} is being removed`);
+      if (switching && request.flow) switchFlow(before, request.flow);
+      // A task from the tracker may still owe its claim, which it makes first, as a queued sc
+      // start does. Whatever the tracker answers, the task is yours to start.
+      await claimQueued(db, sessions, before, false);
+      // sc rm may have taken it out of the queue meanwhile, or another start started it.
+      const now = readThread(db, before.folder);
+      if (now.status !== "queued" || now.started !== before.started)
+        throw new Error(`${name} left the queue meanwhile, so it wasn't started now`);
+      // It starts as when its turn comes, but its place is let go: a start the engine's stop
+      // cuts short is then taken for any start cut short, not put back in the queue.
+      const status = now.session === null ? "working" : statusOnceBack(now);
+      const change = {
+        status,
+        queued_since: null,
+        ...(request.short ? { short: request.short } : {}),
+      };
+      let starting: Promise<string | null> = Promise.resolve(null);
+      const answer = done(`Started ${name} now, out of the queue, over limits.threads.`, () => {
+        const started = record(db, now.folder, change, "started now, over limits.threads");
+        starting = started.session === null ? setUpAndStart(started) : comeBack(started);
+      });
+      return { ...answer, starting };
+    }
     if (before && atWork && switching && request.flow) {
       const flow = request.flow;
       return done(`${threadName(db, before)} now runs the flow ${flow}.`, () =>
@@ -675,8 +703,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const choice = startChoice(before);
     if (before && choice === "bring back") {
       const name = threadName(db, before);
-      // Over the limit, it waits its turn in the queue, and comes back then.
-      if (joinsQueue(db, before)) {
+      // Over the limit, it waits its turn in the queue, and comes back then, unless --now
+      // brings it back at once.
+      if (!request.now && joinsQueue(db, before)) {
         const change = { status: "queued" as const, queued_since: joinTime(db) };
         const short = request.short ? { short: request.short } : {};
         // What it says names its place in the queue, which only the change gives.

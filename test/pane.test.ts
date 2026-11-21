@@ -26,6 +26,7 @@ const row: Row = {
   running: true,
   tmux: true,
   start: null,
+  startNow: null,
   merge: null,
   link: "https://github.com/acme/app/pull/43",
   branch: "skelcrew/12",

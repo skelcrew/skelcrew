@@ -100,8 +100,8 @@ const keyNames: Record<string, string> = {
 // without Alt. Enter says what it does on the row: to the lead on the lead's row, open/close on a
 // stage's heading, none on the heading of Needs you or Up next, which never close, attach where it
 // attaches to the builder, and open elsewhere. Where it attaches, or on the lead's row, Shift-Enter
-// or `a` attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued task in Up next, and s or m show
-// only where the row can be started, or queued, or merged. A request of the lead's offers y and
+// or `a` attach full screen. Page Up and Page Down scroll the details, Shift with an arrow moves a queued task in Up next, and s, f or m show
+// only where the row can be started, or queued, started now over limits.threads, or merged. A request of the lead's offers y and
 // n, which answer it, in place of Enter.
 function sidebarFooter(row: Row): string {
   if (row.part === "lead") return "↑↓ move  ⏎ to lead  ⇧⏎/a full screen  1-6 stages  ⌥Q quit";
@@ -113,9 +113,10 @@ function sidebarFooter(row: Row): string {
   const scroll = row.task ? " · pgup/pgdn scroll" : "";
   const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
+  const now = row.startNow ? "  f start now" : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `↑↓ move  ${enter}${scroll}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
+  return `↑↓ move  ${enter}${scroll}  1-6 stages${reorder}${start}${now}${merge}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
@@ -631,7 +632,7 @@ export async function runSidebar(
       return reshow();
     }
     if (row.part === "backlog" && row.start) {
-      asking = { question: row.start, row: row.name, merge: false };
+      asking = { question: row.start, row: row.name, offer: "start" };
       return;
     }
     // A task up next has no builder running yet, so the footer says what it waits on.
@@ -741,10 +742,12 @@ export async function runSidebar(
     const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
     if (answer) void goAhead(answer);
     else if (key === "s" && row?.part === "backlog" && row.start)
-      asking = { question: row.start, row: row.name, merge: false };
+      asking = { question: row.start, row: row.name, offer: "start" };
+    else if (key === "f" && row?.startNow)
+      asking = { question: row.startNow, row: row.name, offer: "startNow" };
     else if (key === "m" && row?.merge) {
       if ("refused" in row.merge) said = row.merge.refused;
-      else asking = { question: row.merge, row: row.name, merge: true };
+      else asking = { question: row.merge, row: row.name, offer: "merge" };
     } else if (key === "m" && row?.part === "ready")
       said = row.needsYou
         ? `${row.name}'s builder needs you first: press Enter to reach it`

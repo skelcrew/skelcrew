@@ -54,7 +54,8 @@ export const sections: Section[] = ["needs you", "up next", ...ListStage.options
 // merge. `session` is the agent's session, which Enter attaches to, `running` whether its agent
 // runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\ comes back, rather than on
 // a runtime plugin's host, which has a key of its own. `start` is what Enter does on an issue,
-// and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
+// `startNow` what f does on a queued task, or on an issue while every builder is busy, which
+// starts it at once over limits.threads, and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
 // `branch` the branch a task that is ready without a forge waits on. Each is null where it
 // doesn't apply. `more` is how many issues the row stands for on the `… more` row at the end of
 // a cut Backlog, which Enter shows, and 0 on every other row. `task` is the task's ID, such as 12,
@@ -82,6 +83,7 @@ export type Row = {
   running: boolean;
   tmux: boolean;
   start: Question | null;
+  startNow: Question | null;
   merge: Action | null;
   link: string | null;
   branch: string | null;
@@ -163,6 +165,7 @@ function leadRow(db: Database, open: Open): Row {
     running: runs,
     tmux: true,
     start: null,
+    startNow: null,
     merge: null,
     link: null,
     branch: null,
@@ -196,6 +199,7 @@ function requestRow(request: LeadRequest, lead: Row): Row {
     running: lead.running,
     tmux: false,
     start: null,
+    startNow: null,
     merge: null,
     link: null,
     branch: null,
@@ -327,6 +331,7 @@ function taskRow(
     // Enter attaches to the builder of a task at work, or of a ready one that needs you.
     tmux: !ended && !ready && (thread.host ?? "tmux") === "tmux",
     start: null,
+    startNow: null,
     merge,
     // The saved link stands in only for this attempt's PR: a task started over has none until
     // it opens one, and must never open the previous attempt's.
@@ -424,6 +429,18 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     : "";
   // Returns what the task at a place in the queue, counted from 0, waits on.
   const waitsOn = (at: number) => (holder && at >= held ? claim : busy);
+  // Returns the question f asks of a task, which starts it now over limits.threads, as sc start
+  // --now does. It says the limit it goes over, as that is what you decide.
+  const over = builders.limit === null ? "limits.threads" : `the limit of ${builders.limit}`;
+  const startNow = (task: string): Question => {
+    const name = taskName(repository.name, task);
+    return {
+      ask: `Start ${name} now, over ${over}? y/n`,
+      working: `Starting ${name}…`,
+      request: { command: "start", repo: `${open.owner}/${open.repo}`, task, now: true },
+      queues: false,
+    };
+  };
   // A queued or paused task says where it is in line, or that it is paused, and the pane says
   // what it waits on, under Needs you too. Up next's rows say it in their word as well. One
   // under Needs you keeps its word, as it says what you must do.
@@ -432,6 +449,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     const at = queue.findIndex((queued) => taskName(repository.name, queued.task) === row.name);
     if (at >= 0) {
       row.place = at + 1;
+      if (row.task !== null) row.startNow = startNow(row.task);
       row.waits = `${at === 0 ? "Starts next" : `${ordinal(at + 1)} in line`}: ${waitsOn(at)}`;
       if (row.section === "up next")
         row.says = at === 0 ? "starts next" : `${ordinal(at + 1)} in line`;
@@ -481,6 +499,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
             request: { command: "start", repo: `${open.owner}/${open.repo}`, task },
             queues: false,
           },
+      startNow: full ? startNow(task) : null,
       merge: null,
       link: null,
       branch: null,
@@ -591,6 +610,7 @@ const emptyRow: Row = {
   running: false,
   tmux: false,
   start: null,
+  startNow: null,
   merge: null,
   link: null,
   branch: null,

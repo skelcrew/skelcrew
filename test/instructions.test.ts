@@ -467,6 +467,7 @@ test("a custom lead role that drops the safety rules still gets them after its o
     "Whenever you pick a flow other than default, tell the human which and why",
     "before its builder first submits you can switch it with sc start APP-12 --flow <name>",
     "If that flow builds with another role, sc start refuses, as that is another agent: run sc rm APP-12, then sc start APP-12 --flow <name>.",
+    "Use sc start --now only when the human asks in this conversation to start a task now, over the limit",
   ])
     expect(told).toContain(rule);
   // And where to read the flows it picks from.

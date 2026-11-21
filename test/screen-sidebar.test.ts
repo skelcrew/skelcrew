@@ -1,6 +1,8 @@
 // The screen's sidebar as the list: its stages opening and closing by key and by click, moving
 // between sections, and the list's keys on a task's row, which never reach an agent.
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { itemSql, threadSql } from "./harness.ts";
 import {
   acted,
@@ -8,6 +10,7 @@ import {
   daemon,
   endTest,
   footer,
+  home,
   onDetails,
   onLead,
   open,
@@ -170,6 +173,30 @@ test("Shift-Up on a queued task in Up next moves it in the queue, and the footer
   press("S-Up");
   await until(() => acted.includes("queue move simon/app 20 -1"), "the daemon to move APP-20");
   await until(() => footer().includes("APP-20 starts next"), "its place in the footer");
+  expect(read("lead.typed")).toBe("");
+});
+
+// f on a queued task in Up next asks first, as it starts the task over the limit, and y has the
+// daemon start it now. No agent gets the keys.
+test("f on a queued task in Up next asks to start it now over the limit, and y starts it", async () => {
+  daemon();
+  // app's threads 7 and 12 work already, so its one place is taken.
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\nlimits: { threads: 1 }\n");
+  sql(threadSql({ task: "20", title: "Dark mode", status: "queued", queued_since: 1000 }));
+  open("lead");
+  await ready("lead");
+  await until(() => left().some((line) => line.includes("Up next")), "Up next");
+  press("M-S-Down");
+  await until(() => selected().includes("APP-20") && onDetails(), "APP-20's details");
+  await until(() => footer().includes("f start now"), "the key in the footer");
+  type("f");
+  await until(
+    () => footer().includes("Start APP-20 now, over the limit of 1? y/n"),
+    "the question",
+  );
+  type("y");
+  await until(() => acted.includes("start simon/app 20 now"), "the daemon to start APP-20");
   expect(read("lead.typed")).toBe("");
 });
 

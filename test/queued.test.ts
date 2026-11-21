@@ -249,6 +249,27 @@ test("a start over limits.threads waits as queued, and starts in order once a bu
   expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
 }, 60_000);
 
+// sc start --now is your way past the limit: a new task starts at once, and a queued one leaves
+// the queue, while the tasks behind it keep waiting.
+test("sc start --now starts a new task at once over the limit, and a queued one out of the queue", async () => {
+  addApp();
+  await serveApp();
+  expect(await sc("start", "app-12")).toContain("APP-12 is queued");
+  // A new task never joins the queue.
+  const fresh = await sc("start", "app-13", "--now");
+  expect(fresh).toContain("Started APP-13");
+  expect(logOf("app-13").map((line) => line.status)).not.toContain("queued");
+  expect(statuses()["app-12"]).toBe("queued");
+  // A queued task leaves it, though app-11's builder still works.
+  expect(await sc("start", "APP-12", "--now")).toContain("Started APP-12 now, out of the queue");
+  await until(() => statuses()["app-12"] === "failed");
+  expect(statuses()["app-11"]).toBe("working");
+  expect(logOf("app-12").some((line) => line.why === "started now, over limits.threads")).toBe(
+    true,
+  );
+  expect(leftQueue("app-12")).toHaveLength(0);
+}, 60_000);
+
 // Moves app's queued task one place earlier or later, as a key in the list asks the daemon, and
 // returns what the daemon said.
 async function moveQueued(task: string, by: -1 | 1): Promise<string> {
