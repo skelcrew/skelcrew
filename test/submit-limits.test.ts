@@ -1,9 +1,19 @@
 // When a round or a review can't go on, against a running daemon: the round limit, a review that
 // fails, a push refused, Codex's usage limit, and a review past its time limit.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { answer, asked, git, insideSandbox, read, source, until as waitFor } from "./harness.ts";
+import {
+  answer,
+  asked,
+  git,
+  insideSandbox,
+  prItem,
+  read,
+  source,
+  taskItem,
+  until as waitFor,
+} from "./harness.ts";
 import {
   addApp,
   builder,
@@ -11,6 +21,7 @@ import {
   clone,
   codexHome,
   config,
+  copiedPr,
   data,
   env,
   finished,
@@ -115,6 +126,124 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       .map((q) => /^Round (\d+)/.exec(String(q.body))?.[1]);
     expect(posted).toEqual(["1", "2", "3", "4"]);
   }, 240_000);
+
+  // The lead reads the PR's review from Skelcrew's copy, as sc show does. So after sc start, the
+  // next review to reach the limit tells the lead only once that review is on the PR and the copy
+  // has read it back. Before, the lead could find the round before on the PR beside this one's
+  // verdict. The forge here can't edit a review, as GitHub's plugin can't, so each round posts one.
+  test("past the round limit after sc start, the lead hears of the next review only once the PR's copy has it", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    verdict(3, "changes", "Third problem.");
+    await startApp12({ every: 2000 });
+    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
+    const reached = "APP-12 needs you: changes asked for after 1 rounds of changes";
+    const notes = () => read(join(lead(), "typed")).split(reached).length - 1;
+    await until(() => notes() === 1);
+    // The forge holds the next review's post until the test lets it go.
+    const hold = join(plugin, "hold-review");
+    writeFileSync(hold, "");
+    expect((await skel(["start", "app-12"])).out).toContain("APP-12 goes on");
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    await until(() => thread().review_round === 3 && thread().needs_you === 1);
+    expect(thread()).toMatchObject({ verdict: "changes", reviewed_commit: pushed() });
+    await Bun.sleep(1500);
+    expect(notes()).toBe(1);
+    // The review goes on the PR, but reading the PR back fails, so the lead still waits.
+    const third = (q: Record<string, unknown>) =>
+      q.ask === "review" && String(q.body).startsWith("Round 3 · commit ");
+    const readBacks = () => {
+      const questions = asked(plugin);
+      return questions
+        .slice(questions.findIndex(third) + 1)
+        .filter((q) => q.ask === "changed" && JSON.stringify(q.jobs) === `["forge"]`);
+    };
+    writeFileSync(join(plugin, "fail-changed"), "the forge is down");
+    rmSync(hold);
+    await until(() => asked(plugin).some(third) && readBacks().length > 0, 30_000);
+    await Bun.sleep(1500);
+    expect(notes()).toBe(1);
+    expect(thread().posting).not.toBeNull();
+    // Once the forge answers again, a poll reads the PR back, and the lead hears. The forge's
+    // first answer is from before it took the review, with only round 2's. The retry posts
+    // nothing, as the review is on the PR and this forge can't edit it, yet the copy shows round
+    // 3's review, as the forge said it took it.
+    const stale = {
+      id: "1002",
+      text: "Round 2 · commit 0000000\n\nSecond problem.\n\n<!-- skelcrew:review thread=app-12 -->",
+      author: { login: "skelcrew[bot]", bot: true, you: false, push: false },
+      verdict: "changes requested",
+      lines: [],
+    };
+    answer(plugin, "changed.once", {
+      items: [taskItem("12", "Add export"), prItem("7", "Add export", { reviews: [stale] })],
+      next: null,
+    });
+    rmSync(join(plugin, "fail-changed"));
+    await until(() => notes() === 2, 30_000);
+    const shown = JSON.parse(copiedPr()).reviews.at(-1);
+    expect(shown).toMatchObject({ id: "1003", author: stale.author });
+    expect(shown.text).toStartWith(`Round 3 · commit ${pushed().slice(0, 7)}`);
+    await until(() => thread().posting === null);
+    expect(readBacks()[0]).toMatchObject({ next: null, prs: [7] });
+    // The review of the commit just submitted was posted once, though its read-back was tried
+    // again.
+    const posted = asked(plugin).filter(third);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ commit: pushed() });
+    expect(readBacks().length).toBeGreaterThan(1);
+  }, 120_000);
+
+  // The note waits on the review alone. Skelcrew's check on the commit goes on by itself, so a
+  // forge that fails to take it never keeps the lead from hearing of a review it can already read.
+  test("the round limit's note reaches the lead once its review is on the PR, though setting the check fails", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    await startApp12();
+    await until(() => thread().review_round === 1 && thread().posting === null, 30_000);
+    // The forge fails to take the failed check of the second review, which reaches the limit.
+    const failing = join(plugin, "fail-status-failure");
+    writeFileSync(failing, "the forge is down");
+    const typed = () => read(join(lead(), "typed"));
+    await until(() => typed().includes("round limit is reached"), 45_000);
+    await until(() => typed().includes("couldn't put its review on the forge"));
+    expect(asked(plugin).filter((q) => q.ask === "review")).toHaveLength(2);
+    const saved = JSON.parse(String(thread().posting));
+    expect(saved).toMatchObject({ check: "failure", review: null, note: null });
+    // Once the forge takes the check, at a poll, the review isn't posted again, nor the note sent.
+    rmSync(failing);
+    await until(() => thread().posting === null, 90_000);
+    expect(asked(plugin).filter((q) => q.ask === "review")).toHaveLength(2);
+    expect(typed().split("round limit is reached").length - 1).toBe(1);
+  }, 120_000);
+
+  // Your mark while the review waits for the forge decides its round limit, as a mark does. So
+  // once the review is on the PR the lead hears of your mark, not of a limit already decided,
+  // though the thread still needs you for the mark.
+  test("a round limit decided while its review waits for the forge sends the lead no note of it", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    await startApp12();
+    // The forge holds the second review's post, which reaches the round limit.
+    await until(() => thread().review_round === 1 && thread().posting === null, 30_000);
+    const hold = join(plugin, "hold-review");
+    writeFileSync(hold, "");
+    await until(() => thread().review_round === 2 && thread().needs_you === 1, 45_000);
+    await until(() => existsSync(join(plugin, "held-review")));
+    expect((await skel(["needs-you", "app-12", "check the export format"])).err).toBe("");
+    rmSync(hold);
+    await until(() => thread().posting === null, 30_000);
+    await until(() => read(join(lead(), "typed")).includes("you marked it: check the export"));
+    await Bun.sleep(1500);
+    expect(read(join(lead(), "typed"))).not.toContain("round limit is reached");
+    expect(thread()).toMatchObject({ needs_you: 1, limit_decided: 1 });
+  }, 120_000);
 
   // Clearing it is the lead's or your decision that you have nothing to do. A review after it
   // asks again, as its changes are held anew.

@@ -12,13 +12,15 @@ import type { Thread } from "./thread.ts";
 
 // Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict, findings and
 // round it last said, so each round edits that one review, or posts again only when what it says
-// changed. The round is null in a row from before Skelcrew kept it.
+// changed. The round is null in a row from before Skelcrew kept it. `text` is the whole review
+// as the forge took it, for Skelcrew's copy of the PR, or null in a row from before it was kept.
 export const ReviewPost = z.object({
   pr: z.number(),
   id: z.string(),
   verdict: z.enum(["approve", "changes"]),
   findings: z.array(z.string()),
   round: z.number().nullable().default(null),
+  text: z.string().nullable().default(null),
 });
 export type ReviewPost = z.infer<typeof ReviewPost>;
 

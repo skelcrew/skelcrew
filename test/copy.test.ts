@@ -35,7 +35,7 @@ const task = (id: number, more: object = {}) => ({
 // own, as the database's folder comes from the HOME a process started with.
 function run(code: string): unknown {
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { saveItems, openTasks, taskOf } from ${JSON.stringify(source("flow/copy.ts"))};
+import { saveItems, saveOwnReview, openTasks, prOf, taskOf } from ${JSON.stringify(source("flow/copy.ts"))};
 const db = openDb();
 db.run("INSERT OR IGNORE INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
 db.run(${JSON.stringify(threadSql({ task: "12" }))});
@@ -128,4 +128,49 @@ ${closes()}`),
     run(`db.run("UPDATE tasks SET closes = NULL");
 ${closes()}`),
   ).toBe("Fixes JOTT-12");
+});
+
+// A forge can answer a read with data from before it took Skelcrew's review. The copy then
+// shows the review as the forge said it took it, with the author its other reviews have, so
+// sc show never shows the round before beside the new round's verdict.
+test("a review Skelcrew posted goes in the copy over the forge's older answer", () => {
+  const bot = { login: "skelcrew[bot]", bot: true, you: false, push: false };
+  const marker = "<!-- skelcrew:review thread=app-12 -->";
+  const posted = (id: string, round: number) => ({
+    id,
+    text: `Round ${round} · commit abc1234\n\nNo test.\n\n${marker}`,
+    author: bot,
+    verdict: "changes requested",
+    lines: [],
+  });
+  const human = { id: "900", text: "Looks close.", author: null, verdict: "commented", lines: [] };
+  const pr = {
+    kind: "pr",
+    id: "7",
+    title: "Add export",
+    body: "",
+    state: "open",
+    author: bot,
+    labels: [],
+    link: "https://github.com/simon/app/pull/7",
+    created: "2026-11-05T10:00:00Z",
+    updated: "2026-11-05T10:00:00Z",
+    branch: "skelcrew/12-add-export",
+    head: null,
+    base: "main",
+    conflicts: false,
+    checks: [],
+    reviews: [posted("1002", 2), human],
+    comments: [],
+  };
+  const reviews = run(`saveItems(db, "simon", "app", ${JSON.stringify([pr])}, ["pr"]);
+saveOwnReview(db, "simon", "app", 7, { id: "1003", text: ${JSON.stringify(posted("1003", 3).text)}, verdict: "changes" });
+saveOwnReview(db, "simon", "app", 7, { id: "1002", text: "edited", verdict: "approve" });
+saveOwnReview(db, "simon", "app", 8, { id: "1004", text: "no such PR", verdict: "approve" });
+console.log(JSON.stringify(prOf(db, "simon", "app", 7).reviews));`);
+  expect(reviews).toEqual([
+    human,
+    posted("1003", 3),
+    { id: "1002", text: "edited", author: bot, verdict: "approved", lines: [] },
+  ]);
 });

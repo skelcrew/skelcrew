@@ -293,7 +293,13 @@ test("without a forge, the verdict is posted at once and brings the note with it
 // note, and the lead gets it only while the limit still holds the changes.
 test("posting the verdict brings the round limit's note, unless a submit came first", () => {
   const before = thread({ rounds: 3 });
-  const onPr = { pr: 7, id: "9", verdict: "changes" as const, findings: changes.findings };
+  const onPr = {
+    pr: 7,
+    id: "9",
+    verdict: "changes" as const,
+    findings: changes.findings,
+    text: null,
+  };
   const reached = { ...before, ...reach(before, changes).change };
   const past = { ...reached, ...reviewOnPr(reached, { ...onPr, round: 4 }, 1900) };
   const { posting } = past;
@@ -324,7 +330,13 @@ test("posting the verdict brings the round limit's note, unless a submit came fi
 test("a review on the PR brings the note though its check is still to set", () => {
   const before = thread({ rounds: 3 });
   const reached = { ...before, ...reach(before, changes).change };
-  const onPr = { pr: 7, id: "9", verdict: "changes" as const, findings: changes.findings };
+  const onPr = {
+    pr: 7,
+    id: "9",
+    verdict: "changes" as const,
+    findings: changes.findings,
+    text: null,
+  };
   const past = { ...reached, ...reviewOnPr(reached, { ...onPr, round: 4 }, 1900) };
   const { posting } = past;
   if (posting === null) throw new Error("the verdict saved nothing to post");
@@ -398,7 +410,11 @@ test("the round fields are always what the record comes to", () => {
     (from) => reviewStarted(from, sha, 1100),
     (from) => reach(from, changes, 1).change,
     (from) =>
-      reviewOnPr(from, { pr: 7, id: "9", verdict: "changes", findings: [], round: 1 }, 1150),
+      reviewOnPr(
+        from,
+        { pr: 7, id: "9", verdict: "changes", findings: [], round: 1, text: null },
+        1150,
+      ),
     (from) => changesTyped(from, 1200),
     (from) => submitted(from, "Fix", 1300, false),
     (from) => reviewStarted(from, sha, 1400),

@@ -394,6 +394,37 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(read(join(data(), "threads", "app-12.log"))).toContain("1. The export has no test.");
   }, 60_000);
 
+  // A forge that can edit gets each round's number and commit, so the PR never shows an older
+  // round than Skelcrew's record, even when a round says exactly what the one before said.
+  test("a forge that can edit has its one review edited every round, though the findings are the same", async () => {
+    addApp();
+    answer(plugin, "edit review", { edited: true });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "changes", "The export has no test.");
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => finished("success").length === 1, 45_000);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    expect(reviews()).toHaveLength(1);
+    const second = finished("failure")[1]?.sha ?? "";
+    expect(edits()).toEqual([
+      {
+        pr: 7,
+        id: "1001",
+        verdict: "changes",
+        body: `Round 2 · commit ${second.slice(0, 7)}\n\nThe export has no test.\n\n1. The export has no test.`,
+      },
+      {
+        pr: 7,
+        id: "1001",
+        verdict: "approve",
+        body: `Round 3 · commit ${pushed().slice(0, 7)}\n\nReady to merge.`,
+      },
+    ]);
+    expect(second).not.toBe(pushed());
+    expect(thread()).toMatchObject({ review_round: 3, reviewed_commit: pushed() });
+  }, 90_000);
+
   // A forge that can't edit gets a new review only when what it says changed, so a round that
   // finds the same problems again adds nothing to the PR.
   test("a forge that can't edit gets no new review when the verdict and findings are the same", async () => {

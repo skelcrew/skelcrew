@@ -21,7 +21,7 @@ import {
 import { repositoryRole } from "../roles.ts";
 import { capture } from "../run.ts";
 import { baseOf } from "./builder.ts";
-import { openPrs, prOf, saveItems, threadTask } from "./copy.ts";
+import { openPrs, prOf, saveItems, saveOwnReview, threadTask } from "./copy.ts";
 import {
   branchMoved,
   ciResult,
@@ -755,6 +755,20 @@ function postVerdict(db: Database, sessions: string, folder: string): Promise<st
       // so a check that keeps failing never holds back the note, nor a stop between the two.
       if (review !== null) {
         await postOrEdit(db, folder, review.pr, review.commit, review, posting.note !== null);
+        // sc show and the list read the PR's review from Skelcrew's copy, which a poll brings up
+        // to date only later. So the copy reads the PR back, and the review counts as on the
+        // forge only once it has. A forge that fails here leaves it saved, to try again: the
+        // review saved as posted is edited or left as it is then, never posted twice. A forge can
+        // answer with data from before it took the review, so the review saved as posted goes in
+        // the copy on top, on a retry too, when this round's post is long done.
+        await refreshPr(db, repositoryOf(db, thread), review.pr);
+        const post = roundOf(readThread(db, folder)).review_post;
+        if (post !== null && post.pr === review.pr && post.text !== null)
+          saveOwnReview(db, thread.owner, thread.repo, review.pr, {
+            id: post.id,
+            text: post.text,
+            verdict: post.verdict,
+          });
         const posted = verdictPosted(readThread(db, folder), posting, Date.now());
         if (posted === null) return null;
         db.transaction(() => {
@@ -863,7 +877,7 @@ async function postOrEdit(
       : [];
   const already = marked.find((posted) => posted.text.trim() === body.trim());
   if (already) {
-    const post = { pr, id: already.id, verdict, findings, round };
+    const post = { pr, id: already.id, verdict, findings, round, text: body };
     const saved = reviewOnPr(readThread(db, folder), post, Date.now());
     record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
     return;
@@ -884,13 +898,15 @@ async function postOrEdit(
     earlier !== null &&
     earlier.verdict === verdict &&
     JSON.stringify(earlier.findings) === JSON.stringify(findings);
-  if (edit === "can't" && same && !noted) return;
+  // A forge that can't edit and already took this very review, such as when reading the PR back
+  // failed after the post, gets nothing on a retry, as the PR would show it twice.
+  if (edit === "can't" && (earlier?.text === body || (same && !noted))) return;
   const id =
     edited && editing !== null
       ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
-  const post = { pr, id, verdict, findings, round };
+  const post = { pr, id, verdict, findings, round, text: body };
   record(db, folder, reviewOnPr(readThread(db, folder), post, Date.now()), `${how} on PR #${pr}`);
 }
 

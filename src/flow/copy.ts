@@ -192,6 +192,42 @@ export function prOf(
   return found?.kind === "pr" ? found : null;
 }
 
+// Puts a review Skelcrew just posted or edited on a PR into the copy, as the forge said it took
+// it, so sc show and the list show it at once. A forge can answer a read with data from before
+// it took the review, which would show the round before. The next poll brings the forge's own
+// copy of it. A PR the copy doesn't have yet gets it from that poll.
+export function saveOwnReview(
+  db: Database,
+  owner: string,
+  repo: string,
+  pr: number,
+  review: { id: string; text: string; verdict: "approve" | "changes" },
+): void {
+  const item = prOf(db, owner, repo, pr);
+  if (item === null) return;
+  // Its author is the one the forge gave it, or failing that the one it gave Skelcrew's other
+  // reviews, found by the marker that ends each of them.
+  const marker = review.text.slice(review.text.lastIndexOf("<!--"));
+  const author = (
+    item.reviews.find((posted) => posted.id === review.id) ??
+    item.reviews.find((posted) => posted.text.includes(marker))
+  )?.author;
+  const own = {
+    id: review.id,
+    text: review.text,
+    author: author ?? null,
+    verdict: review.verdict === "approve" ? ("approved" as const) : ("changes requested" as const),
+    lines: [],
+  };
+  const reviews = [...item.reviews.filter((posted) => posted.id !== review.id), own];
+  db.run("UPDATE items SET item = ? WHERE owner = ? AND repo = ? AND kind = 'pr' AND id = ?", [
+    JSON.stringify({ ...item, reviews }),
+    owner,
+    repo,
+    String(pr),
+  ]);
+}
+
 // Returns a repository's open tasks, newest first, for sc ls and for starting a thread
 // on each one labeled to start.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {

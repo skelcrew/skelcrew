@@ -123,6 +123,43 @@ console.log(JSON.stringify({
   expect(seen.needsYou).toBe(false);
 });
 
+// A verdict the forge hasn't taken yet holds back only its own note, such as the round limit's.
+// The lead hears of a builder's question at once, though the forge keeps failing.
+test("a builder's question reaches the lead while the thread's review still waits for the forge", () => {
+  const typed = run(`
+await lead();
+const review = { pr: 7, commit: "a".repeat(40), verdict: "changes", body: "No test.", findings: ["No test."], round: 2 };
+const posting = { commit: "a".repeat(40), check: "failure", description: "Skelcrew's reviewer asked for changes", review, note: null };
+record(db, "app-12", { posting }, "the forge didn't take its review");
+record(db, "app-12", { asking: true }, "its builder asked a question");
+typeLeadNotes(db, tmux);
+await until(() => received().includes("asked a question"));
+console.log(received());`);
+  expect(typed).toContain("APP-12 needs you: its builder asked a question");
+});
+
+// Past the round limit, the thread needs you as soon as its review is saved, but the lead hears
+// of the limit only once the review is on the PR. A question meanwhile is news to the lead, so
+// it gets its own note, and the limit's note still waits for its review.
+test("a builder's question reaches the lead while the round limit's note waits for its review", () => {
+  const typed = run(`
+await lead();
+const review = { pr: 7, commit: "a".repeat(40), verdict: "changes", body: "No test.", findings: ["No test."], round: 3 };
+const note = "APP-12 needs you: changes asked for after 1 rounds of changes, so the round limit is reached";
+const posting = { commit: "a".repeat(40), check: "failure", description: "Skelcrew's reviewer asked for changes", review, note };
+const held = "Skelcrew's reviewer asked for changes: No test.";
+record(db, "app-12", { needs_you: true, held, posting, noting: null }, "changes asked for after 1 rounds");
+record(db, "app-12", {}, "couldn't put its review on the forge");
+record(db, "app-12", { asking: true }, "its builder asked a question");
+typeLeadNotes(db, tmux);
+await until(() => received().includes("asked a question"));
+await Bun.sleep(500);
+console.log(received());`);
+  expect(typed).toContain("APP-12 needs you: its builder asked a question");
+  expect(typed).not.toContain("round limit");
+  expect(typed).not.toContain("couldn't put");
+});
+
 // A paste while the human reads further up would throw them back to the bottom. Back at the
 // bottom, everything that waited goes in as one message, once. A thread needing you goes first,
 // though it came last, then Skelcrew's routine note in its digest, then the builder's message,
