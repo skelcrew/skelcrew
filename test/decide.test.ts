@@ -69,6 +69,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     reviewer: null,
     reviewed_by: null,
     review_round: null,
+    top_round: null,
     verdict: null,
     review_line: null,
     reviewed_commit: null,
@@ -820,7 +821,9 @@ test("a thread's round numbers only go up, through sc start past the limit and a
   const reviewed = (review: typeof changes | typeof failed | typeof approval) => {
     const round = nextRound(saved);
     const { rounds } = afterReview(saved.rounds, review, 1, null);
-    saved = { ...saved, rounds, review_round: round, verdict: review.verdict };
+    const counted = review.verdict !== "failed";
+    const top_round = counted ? round : saved.top_round;
+    saved = { ...saved, rounds, review_round: round, top_round, verdict: review.verdict };
     numbers.push(round);
   };
   // sc start past the limit sets the rounds of changes back to the limit.

@@ -240,14 +240,10 @@ const stuckWaits = [
 ];
 
 // Returns the number the thread's next review round gets, counted from 1 over the thread's whole
-// life, which the PR's review and sc ps show. Only a review that gave a verdict counts, so one
-// that failed is run again under the same number. It never goes down: sc start past the round
-// limit sets the count of rounds of changes back, but not the rounds themselves.
-export function nextRound(thread: Pick<Thread, "review_round" | "verdict">): number {
-  if (thread.review_round === null) return 1;
-  const counted = thread.verdict === "approve" || thread.verdict === "changes";
-  return counted ? thread.review_round + 1 : thread.review_round;
-}
+// life, which the PR's review and sc ps show. It is one above the highest round a review that
+// gave a verdict took, so a review that failed is run again under the same number. It never goes
+// down: sc start past the round limit sets the count of rounds of changes back, but not this.
+export const nextRound = (thread: Pick<Thread, "top_round">) => (thread.top_round ?? 0) + 1;
 
 // Returns how a wait that needs someone starts, which names it whatever its details, or null for
 // a wait that is on its way. A forge's own words, after its name, change from poll to poll.

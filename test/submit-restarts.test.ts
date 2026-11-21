@@ -47,9 +47,9 @@ afterEach(tearDown);
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(insideSandbox)("sc submit", () => {
   // Moves main on the fake GitHub with a commit of its own, then merges it into the thread's
-  // clone, as a builder brings in main when its PR falls behind.
-  function mergeMain(work: string): void {
-    writeFileSync(join(work, "OTHER"), "other\n");
+  // clone, as a builder brings in main when its PR falls behind. Main's commit changes `file`.
+  function mergeMain(work: string, file = "OTHER"): void {
+    writeFileSync(join(work, file), "other\n");
     git(work, "add", ".");
     git(work, "commit", "-qm", "main moved");
     git(work, "push", "-q", "origin", "main");
@@ -158,6 +158,64 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     // The merge is a round of its own, so its number goes up.
     expect(edits()[0]?.body).toBe(`Round 2 · commit ${merged.slice(0, 7)}\n\nTests pass.`);
   }, 180_000);
+
+  // Each sc start past the round limit decides only the review that reached it, and a merge of
+  // main in between is a round like any other. The rounds' own numbers, on the PR's review, only
+  // go up, and the limit needs you at each review asking for changes past it.
+  test("merges of main between sc starts past the round limit keep the round going up", async () => {
+    const work = addApp();
+    config("max_rounds: 1\n");
+    // The builder submits its first round, then leaves each later one to the test.
+    fakeClaude(true, false);
+    answer(plugin, "edit review", { edited: true });
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    verdict(3, "changes", "The merge broke the export.");
+    verdict(4, "approve", "Ready to merge.");
+    verdict(5, "approve", "Tests pass.");
+    const asBuilder = { SKELCREW_SOCKET: builderSocket() };
+    const submit = async (summary: string) =>
+      expect((await skel(["submit", summary], asBuilder)).err).toBe("");
+    const fix = async (n: number) => {
+      writeFileSync(join(clone(), "change"), `fix ${n}\n`);
+      git(clone(), "commit", "-qam", `fix ${n}`);
+      await submit(`Fix ${n}`);
+    };
+    const ps = async () => JSON.parse((await skel(["ps", "--json"])).out)[0];
+    const typed = () => read(join(builder(), "typed"));
+    await startApp12();
+    await until(() => typed().includes("First problem."), longWait);
+    await fix(1);
+    await until(() => finished("failure").length === 2 && thread().needs_you === 1, longWait);
+    expect(thread()).toMatchObject({ review_round: 2 });
+    expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
+    expect((await skel(["start", "app-12"])).out).toContain("APP-12 goes on");
+    await until(() => typed().includes("Second problem."), longWait);
+    expect(await ps()).toMatchObject({ needsYou: false });
+    // A merge of main, reviewed as it isn't approved, asks for changes past the limit again.
+    mergeMain(work);
+    await submit("Merged main");
+    await until(() => finished("failure").length === 3 && thread().needs_you === 1, longWait);
+    expect(thread()).toMatchObject({ review_round: 3 });
+    expect(typed()).not.toContain("The merge broke the export.");
+    expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
+    expect((await skel(["start", "app-12"])).out).toContain("APP-12 goes on");
+    await until(() => typed().includes("The merge broke the export."), longWait);
+    await fix(2);
+    await until(() => finished("success").length === 1, longWait);
+    await untilReviewSaved();
+    expect(thread()).toMatchObject({ needs_you: 0, held: null, review_round: 4 });
+    // With no CI on the PR, a merge of main after the approval is reviewed, as round 5.
+    mergeMain(work, "OTHER2");
+    await submit("Merged main again");
+    await until(() => finished("success").length === 2, longWait);
+    await untilReviewSaved();
+    expect(thread()).toMatchObject({ needs_you: 0, review_round: 5 });
+    const posted = asked(plugin)
+      .filter((q) => q.ask === "review" || q.ask === "edit review")
+      .map((q) => /^Round (\d+)/.exec(String(q.body))?.[1]);
+    expect(posted).toEqual(["1", "2", "3", "4", "5"]);
+  }, 300_000);
 
   // The builder merged main as GitHub has it, but its own origin/main is still where the thread
   // started. Diffed against that, main's new commits would read as the PR's.
@@ -270,7 +328,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await until(() => edits().length === 1, longWait);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(edits()[0]?.body).toBe(
-      `Round 1 · commit ${merged.slice(0, 7)}\n\nReviewed against next.`,
+      `Round 2 · commit ${merged.slice(0, 7)}\n\nReviewed against next.`,
     );
     expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
   }, 180_000);
@@ -809,7 +867,8 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending", "failure"]);
     expect(reviews().map((r) => r.verdict)).toEqual(["approve", "changes"]);
     await until(() => thread().posting === null);
-    expect(thread()).toMatchObject({ verdict: "changes", review_round: 1, rounds: 1 });
+    // The approval was round 1, so the newer review is round 2.
+    expect(thread()).toMatchObject({ verdict: "changes", review_round: 2, rounds: 1 });
   }, 120_000);
 
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {

@@ -761,7 +761,7 @@ function forgeThreads(): string {
   ('site', 'simon', 'site', NULL, 1, 'https://example.com/simon/site.git');
 ${threadSql({ task: "9", status: "failed", title: "Old" })}
 ${threadSql({ task: "12", status: "waiting", session: "s12", title: "Add\nexport", short: "JSON export", pr: 31, checks: "failing", rounds: 3, verdict: "changes", review_round: 3, review_at: 1763290800000 })}
-${threadSql({ task: "14", status: "waiting", session: "s14", title: "Fix login", pr: 33, checks: "pending", rounds: 1, verdict: "changes", review_round: 1, review_at: 1763294400000, reviewing: "abc" })}
+${threadSql({ task: "14", status: "waiting", session: "s14", title: "Fix login", pr: 33, checks: "pending", rounds: 1, verdict: "changes", review_round: 1, top_round: 1, review_at: 1763294400000, reviewing: "abc" })}
 ${threadSql({ repo: "site", task: "7", status: "waiting", session: "s7", title: "Add docs", verdict: "approve", review_round: 1, review_at: 1763290800000 })}`);
   const bot = { login: "skelcrew[bot]", bot: true, you: false, push: false };
   sql(
@@ -796,8 +796,8 @@ ${threadSql({ repo: "site", task: "7", status: "waiting", session: "s7", title: 
 // its push, as its clone was never set up. app-19 failed while CI still ran on its PR, and CI
 // passed after, which only the copy of its PR has heard.
 function moreThreads(): void {
-  sql(`${threadSql({ task: "16", status: "waiting", session: "s16", title: "Asks", pr: 35, rounds: 2, asking: 1, verdict: "changes", review_round: 2, reviewing: "def" })}
-${threadSql({ task: "17", status: "waiting", session: "s17", title: "Past", pr: 36, rounds: 4, needs_you: 1, verdict: "changes", review_round: 4, reviewing: "ghi" })}
+  sql(`${threadSql({ task: "16", status: "waiting", session: "s16", title: "Asks", pr: 35, rounds: 2, asking: 1, verdict: "changes", review_round: 2, top_round: 2, reviewing: "def" })}
+${threadSql({ task: "17", status: "waiting", session: "s17", title: "Past", pr: 36, rounds: 4, needs_you: 1, verdict: "changes", review_round: 4, top_round: 4, reviewing: "ghi" })}
 ${threadSql({ task: "18", status: "waiting", session: "s18", title: "Push", pr: 37, submitting: "Go" })}
 ${threadSql({ task: "19", status: "failed", title: "Late CI", pr: 38, checks: "pending" })}
 ${threadSql({ task: "20", status: "waiting", title: "Docs", pr: 39, verdict: "approve", no_ci: "d0c5" })}`);

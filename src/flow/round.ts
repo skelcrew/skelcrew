@@ -617,6 +617,7 @@ async function actOnVerdict(
     held,
     reviewed_by: by,
     review_round: round,
+    top_round: failed ? thread.top_round : round,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
     reviewed_commit: sha,
