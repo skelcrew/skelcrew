@@ -164,6 +164,21 @@ export async function createTask(
   return task;
 }
 
+// Closes the task's issue in the repository's tracker, for sc rm, first posting the comment
+// when there is one, so the issue says why it closed.
+export async function closeTask(
+  db: Database,
+  repository: Repository,
+  task: { task: string; comment: string | null },
+): Promise<void> {
+  await callPlugin(
+    db,
+    requireTracker(db, repository),
+    { ask: "close task", repository: repositoryKey(repository), ...task },
+    z.null(),
+  );
+}
+
 // Claims the task in the tracker for Skelcrew, so only one machine starts it, and returns
 // whether this call took it: false when someone, such as Skelcrew on another machine, already
 // had. GitHub reacts with 👀 and says whether the reaction was already there. A plugin that
@@ -315,7 +330,7 @@ export async function setStatus(
 }
 
 // Returns the end of a failed check's log, as the forge keeps it. `timeout`, in milliseconds,
-// is how long the forge may take, which sc pr show keeps short, as you wait on it.
+// is how long the forge may take, which sc show keeps short, as you wait on it.
 export async function failedLog(
   db: Database,
   repository: Repository,

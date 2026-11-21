@@ -74,26 +74,30 @@ function drawTabs(tabs: Tab[], open: string, width: number): { text: string; wid
     tabs.findIndex((tab) => tab.fullName === open),
     0,
   );
-  // An open tab too wide to show whole fits in what the count of the others leaves, as none of
-  // them fits beside it then.
-  const others = tabs.length - 1;
-  const limit = width - (others > 0 ? `  +${others}`.length : 0);
   // Returns how many columns a list of dots takes, each after a space.
   const dotsWidth = (shown: ReturnType<typeof dots>) =>
     Bun.stringWidth(shown.map(([, text]) => ` ${text}`).join(""));
-  // Returns the dots a tab shows: none on an open tab too narrow for them beside a letter of its
-  // name and the four spaces around it.
+  // Returns how wide a tab is whole, with its name, its dots and the four spaces around them.
+  const wholeWidth = (tab: Tab) => 4 + Bun.stringWidth(tab.name) + dotsWidth(dots(tab));
+  // The room the tabs have: all of the width when every tab fits whole, and otherwise what the
+  // count of those left out leaves, kept for the most it can say. The open tab must fit in it,
+  // or the count would push the row past the terminal and clip the box's corner.
+  const others = tabs.length - 1;
+  const allFit = tabs.reduce((sum, tab) => sum + wholeWidth(tab), 0) <= width;
+  const room = allFit || others === 0 ? width : width - `  +${others}`.length;
+  // Whether the open tab fits the room whole.
+  const openWhole = (tab: Tab) => wholeWidth(tab) <= room;
+  // Returns the dots a tab shows: none on an open tab cut so far that they don't fit beside a
+  // letter of its name and the four spaces around it.
   const dotsOf = (tab: Tab, index: number) => {
     const all = dots(tab);
-    const whole = 4 + Bun.stringWidth(tab.name) + dotsWidth(all) <= width;
-    return index === at && !whole && 4 + 1 + dotsWidth(all) > limit ? [] : all;
+    return index === at && !openWhole(tab) && 4 + 1 + dotsWidth(all) > room ? [] : all;
   };
   // Returns the name a tab shows: the open one's cut, when it doesn't fit whole, to what its
-  // spaces and dots leave.
+  // spaces and dots leave of the room.
   const nameOf = (tab: Tab, index: number) => {
-    const wide = dotsWidth(dotsOf(tab, index));
-    if (index !== at || 4 + Bun.stringWidth(tab.name) + wide <= width) return tab.name;
-    return fitted(tab.name, Math.max(limit - 4 - wide, 0));
+    if (index !== at || openWhole(tab)) return tab.name;
+    return fitted(tab.name, Math.max(room - 4 - dotsWidth(dotsOf(tab, index)), 0));
   };
   // Returns a tab's text: its name, with its badge.
   const label = (tab: Tab, index: number) =>
@@ -105,9 +109,6 @@ function drawTabs(tabs: Tab[], open: string, width: number): { text: string; wid
     const tab = tabs[index];
     return tab ? Bun.stringWidth(label(tab, index)) : 0;
   };
-  const all = tabs.reduce((sum, _, index) => sum + tabWidth(index), 0);
-  // The count of those left out goes at the end, and needs its room kept.
-  const room = all <= width ? width : width - `  +${tabs.length}`.length;
   // Takes in tabs out from the open one, one on each side at a time, until neither side fits
   // another. The open tab always shows.
   let [first, last, used] = [at, at, tabWidth(at)];

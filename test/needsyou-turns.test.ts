@@ -126,7 +126,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     addApp();
     await startApp12();
     writeFileSync(join(lead(), "busy"), "");
-    expect((await skel(["rm", "app-12"])).err).toBe("");
+    expect((await skel(["rm", "app-12", "--keep-issue"])).err).toBe("");
     rmSync(join(builder(), "args"));
     expect((await skel(["start", "app-12"])).err).toBe("");
     await until(() => read(join(builder(), "args")) !== "", 30_000);

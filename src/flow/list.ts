@@ -15,7 +15,7 @@ import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
 import { nextRound, reviewCheck } from "./decide.ts";
 import { messagesWaiting } from "./messages.ts";
-import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
+import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { roundRunning } from "./round.ts";
 import { Stage, taskStage } from "./stage.ts";
 import { mergeShown, needsYou, needsYouFor } from "./status.ts";
@@ -461,52 +461,21 @@ async function checkLogs(db: Database, repository: Repository, number: number) {
   );
 }
 
-// What names a task for sc show: its repository, by `repo` or by `from`, the remote of the
-// checkout sc ran in, and the task, or its PR's number for sc pr show.
-type Which = {
-  repo?: string | undefined;
-  from?: string | undefined;
-  task?: string | undefined;
-  pr?: number | undefined;
-};
-
-// Returns the repository a task named for sc show is in. Throws when there is none.
-function repositoryOfTask(db: Database, which: Which): Repository {
-  const repository =
-    which.repo !== undefined
-      ? findRepository(db, which.repo)
-      : which.from !== undefined
-        ? repositoryAt(db, which.from)
-        : undefined;
-  if (!repository)
-    throw new Error(
-      "name the PR's task, such as APP-12, or run sc pr show in a checkout of its repository",
-    );
-  return repository;
-}
+// What names a task for sc show: its repository, by its name or owner/name, and its ID.
+type Which = { repo: string; task: string };
 
 // Returns one task as sc show shows it, but without the logs of failed checks, so it reads
 // Skelcrew's database and copy alone and never asks the forge. The list's details pane shows it
-// so. It is named by its task, or by its PR's number for sc pr show. A task with a thread still
+// so. A task with a thread still
 // at work, or stopped, is shown as its reviewer gets it, with the lead's messages to the builder
 // after the description, so the lead sees what the builder is judged by. A thread that is done or
 // failed starts over fresh, without them, so they aren't shown then. Throws when there is no
 // such task.
 export function readTask(db: Database, which: Which): TaskView {
-  // Find the repository, then the task, from its PR when a number names it.
-  const repository = repositoryOfTask(db, which);
+  const repository = findRepository(db, which.repo);
   const { owner, repo, name } = repository;
   const forge = forgeOf(db, repository) !== null;
-  let task = which.task;
-  if (which.pr !== undefined) {
-    if (!forge) throw new Error(`${name} has no forge, so there are no PRs`);
-    const row = db
-      .query("SELECT task FROM task_threads WHERE owner = ? AND repo = ? AND pr = ?")
-      .get(owner, repo, which.pr);
-    task = z.object({ task: z.coerce.string() }).nullable().parse(row)?.task;
-    if (task === undefined) throw new Error(`Skelcrew has no task with PR #${which.pr} in ${name}`);
-  }
-  if (task === undefined) throw new Error("sc show needs a task, such as APP-12");
+  const { task } = which;
   // The task's description: as its reviewer gets it while its thread is current. A failed thread
   // still holds its task until it starts over, so it shows the words it started with, though
   // without the lead's messages, which starting over leaves behind. A done thread shows its open
@@ -555,7 +524,7 @@ export function readTask(db: Database, which: Which): TaskView {
 export async function showTask(db: Database, which: Which): Promise<TaskView> {
   const view = readTask(db, which);
   if (view.prPage === null || view.pr === null) return view;
-  const logs = await checkLogs(db, repositoryOfTask(db, which), view.pr);
+  const logs = await checkLogs(db, findRepository(db, which.repo), view.pr);
   const checks = view.prPage.checks.map((check, i) => ({ ...check, log: logs[i] ?? null }));
   return { ...view, prPage: { ...view.prPage, checks } };
 }

@@ -199,6 +199,15 @@ test("an open tab cut to fit leaves room for the count of the tabs it hides", ()
   expect(line).toEndWith("┬─");
 });
 
+test("an open tab that fits alone but not beside the count of the tab it hides is cut too", () => {
+  const tabs = [tab("sixteen-letters!"), tab("site")];
+  const narrow = { sidebar: 27, right: 21 };
+  const line = seen(top({ tabs, open: "simon/sixteen-letters!" }, narrow));
+  expect(line).toHaveLength(2 + narrow.sidebar + 1 + narrow.right + 2);
+  expect(line).toContain("  sixteen-let…    +1");
+  expect(line).toEndWith("┬─");
+});
+
 test("a repository's name is shown, never read as a format", () => {
   const tabs = [tab("a#[fg=red]b")];
   expect(top({ tabs, open: "simon/a#[fg=red]b" })).toContain("  a##[fg=red]b  ");

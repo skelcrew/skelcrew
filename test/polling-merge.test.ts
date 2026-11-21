@@ -646,7 +646,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       await arm();
       pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
       await until(() => existsSync(join(plugin, "held-review")));
-      const removing = Bun.spawn([process.execPath, main, "rm", "app-12"], {
+      const removing = Bun.spawn([process.execPath, main, "rm", "app-12", "--keep-issue"], {
         env: { ...env(), SKELCREW_SOCKET: leadSocket() },
         stderr: "pipe",
       });
@@ -682,7 +682,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       await arm();
       await until(() => thread().merge_waits === "its conflict with main to be fixed");
       expect(thread().merge_plan).toBe("armed");
-      const removed = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
+      const removed = Bun.spawnSync([process.execPath, main, "rm", "app-12", "--keep-issue"], {
         env: { ...env(), SKELCREW_SOCKET: leadSocket() },
         stderr: "pipe",
       });

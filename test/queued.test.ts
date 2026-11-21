@@ -280,7 +280,7 @@ test("sc rm takes a task out of the queue, back to its issue, and it never start
   await serveApp();
   await sc("start", "app-12");
   await sc("start", "app-13");
-  expect(await sc("rm", "APP-12")).toContain("Removed APP-12");
+  expect(await sc("rm", "APP-12", "--keep-issue")).toContain("Removed APP-12");
   const tasks = JSON.parse(await sc("ls", "app", "--json"));
   const app12 = tasks.find((row: { task: string }) => row.task === "APP-12");
   expect(app12).toMatchObject({ stage: "issue", thread: { status: "done" } });
