@@ -149,6 +149,13 @@ test("the details take the list's look: bold title, dim labels, verdicts in colo
   expect(line("last change 14:02, 4 minutes ago")).toStartWith(`${esc}[90m`);
 });
 
+test("on a narrow pane, when the task last changed wraps, so all of it can be read", () => {
+  const brief: Details = { ...details, findings: [], view: { ...details.view, body: "" } };
+  const lines = plain(drawPane(row, brief, null, 20, 60).lines);
+  const at = lines.indexOf("last change 14:02, 4");
+  expect(lines.slice(at, at + 2)).toEqual(["last change 14:02, 4", "minutes ago"]);
+});
+
 test("a task with no time for its last change says nothing of it", () => {
   const lines = plain(drawPane({ ...row, when: "", lastChange: "" }, details, null, 50, 30).lines);
   expect(lines.some((line) => line.startsWith("last change"))).toBe(false);

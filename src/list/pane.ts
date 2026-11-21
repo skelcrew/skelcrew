@@ -187,7 +187,10 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   ];
   // The description, whole and dimmer than the rest.
   const described = describedLines(view.body, width).map((line) => paint(lightGrey, line));
-  const changed = row.lastChange ? [paint(grey, cut(`last change ${row.lastChange}`))] : [];
+  // When it last changed is wrapped whole, as on a narrow pane its end says how long ago.
+  const changed = row.lastChange
+    ? folded(`last change ${row.lastChange}`, width).map((line) => paint(grey, line))
+    : [];
   const happened = events.length
     ? folded(events.join(" · "), width, eventLines).map((line) => paint(grey, line))
     : [];
