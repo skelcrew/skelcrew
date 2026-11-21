@@ -41,8 +41,9 @@ export type Status = "working" | "idle" | "needs you" | "ready" | "error";
 // Returns whether the thread needs you, which means you must act to unblock it: the lead, you
 // or the safety net marked it with what to do, its builder asked with its harness's question
 // tool, its harness stopped on an error, or its flag is up, such as for an approval with green
-// checks or the round limit. A merge you armed is a decision about either, and so is the lead or
-// you clearing the round limit, so neither needs you then. A usage limit isn't one, as the
+// checks or the round limit. A merge you armed decides an approval, and arming it, sc start, or
+// the lead or you marking or clearing the thread decides the latest review's round limit, so
+// neither needs you then. A usage limit isn't one, as the
 // builder is woken once it resets. Nor is a review that failed, which the lead can run again,
 // nor a builder that stopped without submitting: the lead hears of both, and marks the thread
 // when only you can unblock it.
@@ -78,9 +79,13 @@ export function limitWaits(thread: Thread): boolean {
   return needsYouFor(without) === "round limit";
 }
 
-// Returns whether the lead or you decided what the thread's flag waits on: a merge is armed, or
-// the round limit was cleared.
-const decided = (thread: Thread) => thread.merge_plan === "armed" || thread.limit_decided;
+// Returns whether the lead or you decided what the thread's flag waits on: the round limit was
+// decided since its latest review, or a merge is armed on a thread ready to merge, which then
+// merges by itself. An armed merge alone never decides the round limit, as its plan outlives the
+// review it was armed after: a later review reaching the limit, such as after sc start, would
+// then need nobody. Changes held are what the limit waits on, as an approval drops them.
+const decided = (thread: Thread) =>
+  thread.limit_decided || (thread.merge_plan === "armed" && thread.held === null);
 
 // Returns whether a builder that just ended its turn did so without sc submit, on any harness.
 // Such a builder may have a question written as plain text, or be stuck, or have only replied,

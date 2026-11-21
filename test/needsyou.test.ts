@@ -36,6 +36,7 @@ function inProcess(body: string): Record<string, unknown> {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { markForgotten, markNeedsYou, needsYou, needsYouFor, questionAnswered, threadWord, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { goOn, submitRound } from ${JSON.stringify(source("flow/round.ts"))};
+import { afterReview } from ${JSON.stringify(source("flow/decide.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { bringBack } from ${JSON.stringify(source("flow/builder.ts"))};
 import { armMerge, cancelMerge } from ${JSON.stringify(source("flow/merging.ts"))};
@@ -62,6 +63,9 @@ process.exit(0);`;
 
 // The thread's log, where every mark and clear says who did it and why.
 const threadLog = () => read(join(data(), "threads", "app-12.log"));
+
+// The note a review asking for changes at the built-in round limit of 3 leaves for the lead.
+const reachedNote = "changes asked for after 3 rounds of changes, so the round limit is reached";
 
 test("the lead's mark needs you with its words and brings no note, and clearing it is logged", () => {
   const seen = inProcess(`
@@ -287,6 +291,63 @@ const decided = thread().limit_decided;
 cancelMerge(db, thread());
 console.log(JSON.stringify({ before, decided, after: needsYou(thread()) }));`);
   expect(seen).toEqual({ before: true, decided: true, after: false });
+});
+
+// Saves a review asking for changes as a finished round does, under the built-in limit of 3
+// rounds, and gives back the note the lead is to get and whether the thread needs you. The note
+// is then taken as typed in, as the daemon does, so the next one is seen afresh.
+const changesAsked = `const changesAsked = () => {
+  const t = thread();
+  const review = { verdict: "changes", body: "Fix it.", findings: ["Fix it."] };
+  const o = afterReview(t.rounds, review, 3, null);
+  const change = { rounds: o.rounds, needs_you: o.needsYou, status: o.status, held: o.held, telling: o.tell, verdict: "changes", review_round: t.rounds + 1, limit_decided: false, submitting: null, reviewing: null };
+  record(db, "app-12", change, o.why);
+  const seen = { needsYou: needsYou(thread()), noting: noting() };
+  record(db, "app-12", { noting: null });
+  return seen;
+};`;
+
+// Each review asking for changes at the round limit needs you and brings the lead a note, while
+// nobody has decided: the first time, after sc start let it go on, and after a mark was cleared.
+test("the round limit needs you and tells the lead, the first time and every time after", () => {
+  const seen = inProcess(`${changesAsked}
+db.run("UPDATE repositories SET forge = 'github'");
+record(db, "app-12", { status: "waiting", rounds: 2, verdict: "changes", pr: 7 });
+const within = changesAsked();
+const first = changesAsked();
+goOn(db, "none", "app-12");
+changesAsked(); changesAsked(); changesAsked();
+const second = changesAsked();
+markNeedsYou(db, "none", thread(), null, "lead");
+const cleared = needsYou(thread());
+const afterClear = changesAsked();
+console.log(JSON.stringify({ within, first, second, cleared, afterClear }));`);
+  expect(seen).toEqual({
+    within: { needsYou: false, noting: null },
+    first: { needsYou: true, noting: reachedNote },
+    second: { needsYou: true, noting: reachedNote },
+    cleared: false,
+    afterClear: { needsYou: true, noting: reachedNote },
+  });
+});
+
+// A merge armed before the limit was reached decided nothing about it, and nor does one armed at
+// an earlier limit: each review that asks for changes at the limit asks anew.
+test("a merge armed before a review reaches the round limit doesn't keep the lead from hearing", () => {
+  const seen = inProcess(`${changesAsked}
+db.run("UPDATE repositories SET forge = 'github'");
+record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", pr: 7 });
+armMerge(db, "none", thread(), { asked: "merge app-12 when it's ready" }, false);
+const armedBefore = changesAsked();
+goOn(db, "none", "app-12");
+changesAsked(); changesAsked(); changesAsked();
+const armedAtLastLimit = changesAsked();
+console.log(JSON.stringify({ armedBefore, armedAtLastLimit, plan: thread().merge_plan }));`);
+  expect(seen).toEqual({
+    armedBefore: { needsYou: true, noting: reachedNote },
+    armedAtLastLimit: { needsYou: true, noting: reachedNote },
+    plan: "armed",
+  });
 });
 
 // A turn that left work it didn't submit shows turn ended, but its last submit is still reviewed,
