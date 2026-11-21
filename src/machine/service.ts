@@ -182,9 +182,6 @@ export function startDaemon(): string {
   return "journalctl --user -u skelcrew";
 }
 
-// Restarts the daemon's service on this machine, so it runs the Skelcrew installed now, and returns
-// where its log is, for when it doesn't come back. Agents keep running, as their sessions live
-// in tmux and only the daemon restarts. Throws when the service manager refuses.
 export function restartService(): string {
   if (process.platform === "darwin") {
     restartLaunchAgent();
@@ -199,9 +196,6 @@ export function restartService(): string {
   return "journalctl --user -u skelcrew";
 }
 
-// What the daemon says it runs: its release, or for a daemon from a checkout, that checkout's
-// folder and the commit it started on, and its process id. A field an older daemon doesn't
-// report comes back empty.
 const DaemonStatus = z
   .object({
     release: z.string().catch(""),
@@ -212,37 +206,24 @@ const DaemonStatus = z
   .catch({ release: "", folder: "", commit: "", pid: 0 });
 type DaemonStatus = z.infer<typeof DaemonStatus>;
 
-// Returns what the daemon runs, or null when no daemon answers.
 async function daemonStatus(): Promise<DaemonStatus | null> {
   const reply = await ask({ command: "status" }, 2000);
   return reply === null ? null : DaemonStatus.parse(reply);
 }
 
-// Returns what the daemon should run instead, in words, or null when a restart isn't needed or
-// wouldn't help. A release wants the daemon on the same release. A checkout wants it on its
-// current commit, but only when the daemon runs from this same checkout. The service always
-// starts one checkout, so restarting your main one's daemon from a worktree would change
-// nothing. Uncommitted changes don't count, so editing doesn't ask for a restart at every sc.
 function daemonShouldRun(running: DaemonStatus): string | null {
   if (release) return running.release === release ? null : `Skelcrew ${release}`;
-  // A single file that isn't a release has no checkout to compare.
   if (singleFile || running.folder !== checkoutFolder) return null;
   const commit = git("rev-parse", "--short", "HEAD");
   return commit === "" || running.commit === commit ? null : `commit ${commit}`;
 }
 
-// How long a restarted daemon may take to answer on what this Skelcrew wants, in milliseconds.
-// Tests set SKELCREW_RESTART_WAIT_MS shorter, so a daemon that never comes back doesn't cost
-// them ten seconds.
 const restartWait = z.coerce
   .number()
   .min(0)
   .catch(10_000)
   .parse(process.env.SKELCREW_RESTART_WAIT_MS ?? 10_000);
 
-// Reports whether the daemon that answered runs outside its service, such as sc serve in a
-// terminal. Told by its process id, which every daemon reports, so it holds for a daemon of an
-// older release too. One that reports none can't be told, and counts as the service's.
 const outsideService = (running: DaemonStatus) => running.pid !== 0 && running.pid !== servicePid();
 
 const stopItFirst = (want: string) =>
@@ -250,9 +231,6 @@ const stopItFirst = (want: string) =>
     `Skelcrew's daemon runs outside its service, such as with sc serve in a terminal, on other code than ${want}. Stop it, such as with Ctrl-C, then run sc again. Your agents keep running.`,
   );
 
-// Restarts the daemon when it runs another release than this Skelcrew, or another commit of this
-// checkout. So a release installed in the background, or a git pull, takes over the next time
-// you run sc. Agents keep running, as only the daemon restarts.
 export async function restartStaleDaemon(): Promise<void> {
   const running = await daemonStatus();
   const want = running && daemonShouldRun(running);
@@ -260,8 +238,6 @@ export async function restartStaleDaemon(): Promise<void> {
   if (outsideService(running)) throw stopItFirst(want);
   console.log(`Restarting the daemon on ${want}. Your agents keep running.`);
   const log = restartService();
-  // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
-  // answer for a moment while it stops.
   const deadline = Date.now() + restartWait;
   while (true) {
     const now = await daemonStatus();
@@ -297,12 +273,6 @@ export async function restartDaemon(): Promise<void> {
   console.log(`Restarted the daemon on ${userInfo().username}@${hostname()}. Agents kept running.`);
 }
 
-// Runs the daemon as the background service on this Skelcrew's code, and returns once it
-// answers. This is sc serve --bg, and plain sc and sc attach do it before attaching. The service is
-// installed first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another
-// release or commit is restarted, and one that doesn't answer is started. A daemon outside the
-// service is left running, and true comes back to say so: a service started beside it would
-// fail on the lock, and fail again on each retry until systemd gave up on it.
 export async function ensureDaemon(): Promise<boolean> {
   const before = await daemonStatus();
   if (before && outsideService(before)) {
@@ -314,7 +284,6 @@ export async function ensureDaemon(): Promise<boolean> {
   await restartStaleDaemon();
   if (await daemonStatus()) return false;
   const log = startDaemon();
-  // The service manager returns before the daemon listens, so wait until it answers.
   const deadline = Date.now() + 10_000;
   while (!(await daemonStatus())) {
     if (Date.now() > deadline)
