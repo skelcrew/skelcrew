@@ -243,7 +243,10 @@ const stuckWaits = [
 // life, which the PR's review and sc ps show. It is one above the highest round a review that
 // gave a verdict took, so a review that failed is run again under the same number. It never goes
 // down: sc start past the round limit sets the count of rounds of changes back, but not this.
-export const nextRound = (thread: Pick<Thread, "top_round">) => (thread.top_round ?? 0) + 1;
+// Every round of changes was a round too, so a thread from an earlier release, whose highest round
+// the daemon hasn't read from its log yet, still counts at least those.
+export const nextRound = (thread: Pick<Thread, "top_round" | "rounds">) =>
+  Math.max(thread.top_round ?? 0, thread.rounds) + 1;
 
 // Returns how a wait that needs someone starts, which names it whatever its details, or null for
 // a wait that is on its way. A forge's own words, after its name, change from poll to poll.
