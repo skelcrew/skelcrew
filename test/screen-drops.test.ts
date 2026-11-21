@@ -167,28 +167,42 @@ async function onAppDetails(): Promise<string> {
 const shown = () => seen().trimEnd().split("\n").slice(0, -1).join("\n");
 
 // A terminal's read can end anywhere, so a paste's start can come cut in two.
-test("a paste whose start comes cut in two presses none of the sidebar's keys", async () => {
+// The two pieces of each cut come over a second apart, as a slow read can bring them.
+test("a paste whose start comes cut in two presses none of the sidebar's keys, however late its rest", async () => {
   const pasted = await onAppDetails();
   const before = shown();
   for (let at = 1; at < "\x1b[200~".length; at++) {
     intoSidebar(pasted.slice(0, at));
+    await Bun.sleep(1200);
     intoSidebar(pasted.slice(at));
-    await Bun.sleep(300);
+    await Bun.sleep(200);
     expect(shown()).toBe(before);
   }
-});
+}, 60_000);
 
-test("a paste whose end comes cut in two still ends, so the key after it acts", async () => {
+test("a paste whose end comes cut in two still ends, however late its rest, so the key after it acts", async () => {
   const pasted = await onAppDetails();
   const end = pasted.length - "\x1b[201~".length;
   for (let at = end + 1; at < pasted.length; at++) {
     const open = seen().includes("APP-12");
     intoSidebar(pasted.slice(0, at));
+    await Bun.sleep(1200);
     intoSidebar(pasted.slice(at));
     // 2 opens or closes Building, so the paste ended and nothing in it acted.
     intoSidebar("2");
     await until(() => seen().includes("APP-12") !== open, "Building to open or close");
   }
+}, 60_000);
+
+test("Esc in the sidebar, then a a while later, are two keys, so a attaches full screen", async () => {
+  daemon();
+  await onAppDetails();
+  intoSidebar("\x1b");
+  await Bun.sleep(300);
+  intoSidebar("a");
+  const zoomed = () =>
+    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
+  await until(() => zoomed().trim() === "1", "app-12 full screen");
 });
 
 test("a right click on the top row does what it did before a drop could ask there", async () => {

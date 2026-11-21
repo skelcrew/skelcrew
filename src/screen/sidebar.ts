@@ -766,23 +766,17 @@ export async function runSidebar(
     }
   };
   // A sequence a read ends inside, such as a paste's start or end cut in two, waits for its rest
-  // in the next read, so it is still seen whole. One whose rest never comes goes on after a
-  // second. That holds a lone Esc too, which the sidebar has no use for.
+  // in the next read, however late, so it is still seen whole. A lone Esc waits too, as the
+  // sidebar has no use for it: when what comes next doesn't go on with [, the Esc was a key of its
+  // own, and is taken apart from it, so Esc then a stays two keys rather than Alt-a.
   let cut = "";
-  let rest: ReturnType<typeof setTimeout> | null = null;
   // Acts on each key and click that came together, then redraws.
   process.stdin.on("data", (bytes) => {
-    if (rest) clearTimeout(rest);
-    rest = null;
-    const text = cut + bytes.toString();
+    let text = bytes.toString();
+    if (cut === esc && !text.startsWith("[")) act(cut);
+    else text = cut + text;
     cut = unfinished("", text);
     act(text.slice(0, text.length - cut.length));
-    if (cut !== "")
-      rest = setTimeout(() => {
-        act(cut);
-        cut = "";
-        refresh();
-      }, 1000);
     refresh();
   });
   // Draws now, on each resize and each second, until the pane goes and its input closes.

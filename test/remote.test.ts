@@ -1458,11 +1458,12 @@ test("an agent can't set up a machine", () => {
 });
 
 // Drops `shot` onto the server's screen through the laptop's sc --remote, with Enter right after,
-// and returns the line the screen there got and the screen's name. The screen there reads one
+// and returns the line the screen there got and the screen's name. With `cut`, the paste comes
+// in two pieces, cut there, 200 ms apart, as over a slow link. The screen there reads one
 // line, as an agent would, once it knows the name the laptop gave it. The server's sidebar
 // answers that the screen shows the agent whose folder is ~/agent, with a mark that changes at
 // each answer.
-async function dropOnServer(shot: string): Promise<{ got: string; screen: string }> {
+async function dropOnServer(shot: string, cut = 0): Promise<{ got: string; screen: string }> {
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
   writeFileSync(
     join(home, "server", ".local", "bin", "sc"),
@@ -1481,7 +1482,10 @@ async function dropOnServer(shot: string): Promise<{ got: string; screen: string
   });
   const named = join(home, "server", "screen-name");
   for (let waited = 0; !existsSync(named) && waited < 100; waited++) await Bun.sleep(50);
-  run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`);
+  const dropped = `\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`;
+  run.terminal?.write(dropped.slice(0, cut));
+  if (cut > 0) await Bun.sleep(200);
+  run.terminal?.write(dropped.slice(cut));
   await run.exited;
   run.terminal?.close();
   const got = readFileSync(join(home, "server", "got"), "utf8").trim();
@@ -1506,6 +1510,15 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
   expect(readFileSync(copy, "utf8")).toBe("pixels");
   // Git never sees the copy, so a builder doesn't commit it.
   expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
+});
+
+test("a file dropped onto the server's screen is sent though its paste's start comes in two pieces", async () => {
+  const shot = join(home, "shot.png");
+  writeFileSync(shot, "pixels");
+  const { got } = await dropOnServer(shot, 3);
+  const agent = join(home, "server", "agent", ".skelcrew-drops");
+  expect(got.startsWith(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${agent}/`)).toBe(true);
+  expect(got.endsWith("/shot.png\x1b[201~")).toBe(true);
 });
 
 test("a drops folder on the server whose .gitignore doesn't ignore everything gets no copies", async () => {

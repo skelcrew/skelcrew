@@ -31,6 +31,10 @@ export const dropAnswerOption = "@drop-answer";
 // start of a paste cut at the end of a read. Any later, tmux would no longer see a paste there.
 export const escapeTime = 10;
 
+// How long, in milliseconds, the layer keeps more than an Esc of a paste's start, cut at the end
+// of a read, for the rest, before it lets it go on as it came.
+const cutStartWait = 500;
+
 // Returns the folder an answer of the sidebar names, or null for none.
 export function answeredFolder(answer: string): string | null {
   const folder = answer.slice(answer.indexOf(" ") + 1);
@@ -358,19 +362,23 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
           continue;
         }
         // A read that ends in what may be the start of a paste keeps it for the next read, so a
-        // start is always seen whole, never half sent. It goes on as it came after escapeTime
-        // anyway, as tmux then takes it apart into keys whatever comes next, so there is no paste.
-        // Waiting longer would hold up every Esc key, and still not make it one.
+        // start is always seen whole, never half sent. A lone Esc goes on as it came after
+        // escapeTime, as it is most often the Esc key, and tmux would take it as one by then. More
+        // than an Esc can only be a sequence on its way, such as over a slow link, so it waits
+        // longer for its rest. tmux never sees it cut, so it reads the paste whole.
         let ending = Math.min(rest.length, pasteStart.length - 1);
         while (ending > 0 && !rest.subarray(-ending).equals(pasteStart.subarray(0, ending)))
           ending--;
         pass(rest.subarray(0, rest.length - ending));
         if (ending === 0) return;
         cut = rest.subarray(rest.length - ending);
-        cutLater = setTimeout(() => {
-          pass(cut);
-          cut = Buffer.alloc(0);
-        }, escapeTime);
+        cutLater = setTimeout(
+          () => {
+            pass(cut);
+            cut = Buffer.alloc(0);
+          },
+          cut.length === 1 ? escapeTime : cutStartWait,
+        );
         return;
       }
       // Inside one, it is held until its end.

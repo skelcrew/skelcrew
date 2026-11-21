@@ -354,18 +354,41 @@ test("a paste of a file split anywhere in its start goes on byte for byte when n
   }
 });
 
-test("a paste of a file whose start's rest comes after tmux stopped waiting goes on as it came", async () => {
-  // tmux by then took the start apart into keys, so there is no paste to copy for.
+test("a paste of a file whose start is cut after more than its Esc is still copied when the rest comes late", async () => {
+  // As over a slow link: the rest of the start comes a while after its first bytes.
   const shot = file("shot.png");
   const whole = pasted(shot);
-  for (let cut = 1; cut < "\x1b[200~".length; cut++) {
+  const copied = `^${dropSignal.replaceAll("[", "\\[")}\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~$`;
+  for (let cut = 2; cut < "\x1b[200~".length; cut++) {
     sent = "";
     const take = filter();
     take(Buffer.from(whole.slice(0, cut)));
-    await Bun.sleep(escapeTime * 3);
+    await Bun.sleep(200);
+    expect(sent).toBe("");
     take(Buffer.from(whole.slice(cut)));
-    expect(await sentOn()).toBe(whole);
+    expect(await sentOn()).toMatch(new RegExp(copied));
   }
+});
+
+test("a paste start whose rest never comes goes on as it came, half a second later", async () => {
+  const take = filter();
+  take(Buffer.from("x\x1b[20"));
+  await Bun.sleep(300);
+  expect(sent).toBe("x");
+  await Bun.sleep(400);
+  expect(sent).toBe("x\x1b[20");
+});
+
+test("a paste of a file whose rest comes after a lone Esc was let go goes on as it came", async () => {
+  // A lone Esc is most often the Esc key, and goes on at once, so tmux takes it as one.
+  const shot = file("shot.png");
+  const whole = pasted(shot);
+  const take = filter();
+  take(Buffer.from(whole.slice(0, 1)));
+  await Bun.sleep(escapeTime * 3);
+  expect(sent).toBe("\x1b");
+  take(Buffer.from(whole.slice(1)));
+  expect(await sentOn()).toBe(whole);
   expect(existsSync(join(agent, dropsFolder))).toBe(false);
 });
 
