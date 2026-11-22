@@ -969,15 +969,10 @@ plugins:
   });
   const role = (name: "lead" | "builder" | "reviewer") =>
     readFileSync(join(checkout, ".agents", "roles", `${name}.md`), "utf8");
-  expect(role("lead")).toBe(
-    `---\nharness: claude\nmodel: opus\n---\n${builtInRole("lead").instructions}`,
-  );
-  expect(role("builder")).toBe(
-    `---\nharness: claude\nmodel: sonnet\n---\n${builtInRole("builder").instructions}`,
-  );
-  expect(role("reviewer")).toBe(
-    `---\nharness: codex\n---\n${builtInRole("reviewer").instructions}`,
-  );
+  // Your harness and model stay out of the roles, so each machine's own settings choose, and
+  // the files are the same on every machine.
+  for (const name of ["lead", "builder", "reviewer"] as const)
+    expect(role(name)).toBe(builtInRole(name).instructions);
   expect(readFileSync(join(checkout, ".agents", "flows", "default.yaml"), "utf8")).toBe(
     builtInFlowText,
   );
@@ -1092,19 +1087,6 @@ test("init pins the forge's plugin at its newest version, and installs nothing",
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "github"))).toBe(false);
 });
 
-// Before sc install picks a harness, there is none to name, and naming the default could name a
-// harness this machine doesn't have. So the roles are the built-in files as they are.
-test("init on a machine with no harness picked writes roles that name none", async () => {
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "");
-  const checkout = onGitHub("simon/app", "WRITE");
-  githubInstalledAsYours();
-  expect((await skel(["init"], "", checkout)).err).toBe("");
-  for (const name of ["lead", "builder", "reviewer"] as const)
-    expect(readFileSync(join(checkout, ".agents", "roles", `${name}.md`), "utf8")).toBe(
-      builtInRole(name).instructions,
-    );
-});
-
 // A repository's skelcrew.lock comes with every sc init, so one whose forge has no plugin to pin
 // still gets one, pinning nothing, to commit with the rest.
 test("init writes a skelcrew.lock that pins nothing for a repository that isn't on GitHub", async () => {
@@ -1120,23 +1102,33 @@ test("init writes a skelcrew.lock that pins nothing for a repository that isn't 
   expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toBeNull();
 });
 
-// The roles sc init wrote on another machine, or before your settings changed, name another
-// harness or model, and are still only the built-in roles, so install approves them too.
-test("install approves built-in roles whose frontmatter names another model", async () => {
+// A teammate pushed what sc init wrote, so a clone's default branch holds only the built-in
+// files, which need no yes as the repository comes in.
+test("install in a clone whose default branch has sc init's files approves them without asking", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   githubInstalledAsYours();
-  writeFileSync(
-    join(home, ".config", "skelcrew", "config.yaml"),
-    "harness: claude\nmodel: haiku\n",
-  );
   expect((await skel(["init"], "", checkout)).err).toBe("");
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\nmodel: opus\n");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "init");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
   const run = await skel(["install"], "", checkout);
   expect(run.err).toBe("");
   expect(run.out).not.toContain("Approve");
-  git(checkout, "add", "-A");
-  git(checkout, "commit", "-q", "-m", "init");
+  expect(await listed()).toEqual([["app", "simon/app", "github"]]);
   expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
+});
+
+// A role with frontmatter added runs on what it names, so it is no longer the built-in file, and
+// is asked about.
+test("install asks about built-in roles once their frontmatter names a harness", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  expect((await skel(["init"], "", checkout)).err).toBe("");
+  const lead = join(checkout, ".agents", "roles", "lead.md");
+  writeFileSync(lead, `---\nharness: codex\n---\n${readFileSync(lead, "utf8")}`);
+  const run = await skel(["install"], "n\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Approve simon/app's .agents/?");
 });
 
 // sc init only reads Skelcrew's state, so the plugin installed here is pinned and the database
@@ -1207,22 +1199,6 @@ console.log(leadInstructions("You lead.\\n", "simon/app", "/c", commands, false)
   expect(told.stdout.toString()).toContain(
     "When this session started, no setup command was configured, and no test command was configured.",
   );
-});
-
-// YAML reads true, null or 123 as something other than text, which a model name must be.
-test("init writes model names that read back as the same text", async () => {
-  writeFileSync(
-    join(home, ".config", "skelcrew", "config.yaml"),
-    'harness: claude\nmodel: "123"\nlead: { model: "true" }\nbuilder: { model: "null" }\n',
-  );
-  const checkout = onGitHub("simon/app", "WRITE");
-  expect((await skel(["init"], "", checkout)).err).toBe("");
-  const model = (name: string) =>
-    parse(
-      readFileSync(join(checkout, ".agents", "roles", `${name}.md`), "utf8").split("---\n")[1] ??
-        "",
-    ).model;
-  expect([model("lead"), model("builder"), model("reviewer")]).toEqual(["true", "null", "123"]);
 });
 
 // Every repository gets its forge's plugin, so one whose skelcrew.yaml names no plugin gains it.

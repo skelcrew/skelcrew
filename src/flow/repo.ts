@@ -6,29 +6,26 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly } from "../agents/sessions.ts";
 import {
   agentsAnswered,
   agentsOnDefaultBranch,
-  approveAgents,
   approvedAgents,
   askAboutAgents,
+  builtInAgentFiles,
   checkoutAgents,
   forgetAgents,
+  holdsBuiltInAgents,
 } from "../approved-agents.ts";
-import { agentRole } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
-import { builtInFlowText } from "../flows.ts";
 import { errorText } from "../format.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir } from "../paths.ts";
@@ -43,9 +40,7 @@ import {
   repositoryPlugins,
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
-import { builtInRole, readRole } from "../roles.ts";
 import { dropsFolder } from "../screen/drops.ts";
-import { readSettings } from "../settings.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 import { closeTabAndEndLead, leadOf } from "./lead.ts";
@@ -575,10 +570,6 @@ export async function addRepo(
   return repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
 }
 
-// Returns a setting's value as YAML that reads back as the same text: plain when it can be,
-// quoted when YAML would read it as something else, such as a model named true or 123.
-const yamlValue = (value: string) => stringify(value).trim();
-
 // The starter skelcrew.yaml: a line saying the file is shared and never holds a secret, and
 // setup and test as commented examples, as Skelcrew never guesses them: the lead proposes them. It
 // names no tracker, so a repository on GitHub keeps its issues as tasks, and shows tracker: none
@@ -612,60 +603,16 @@ function addForgePlugin(root: string, remote: string): "named" | "pinned" | null
   }
 }
 
-// The roles sc init writes, each built in.
-const roleNames = ["lead", "builder", "reviewer"] as const;
-
 // Writes the built-in .agents/ into the checkout at `root`, which has none: the three roles and
-// the default flow. Each role has your harness and model as its frontmatter, so the repository
-// works the same for a teammate. On a machine with no harness picked yet, they have none, so they
-// run on the harness sc install picks. Each file is new, so no write follows a link.
+// the default flow, as Skelcrew ships them. They name no harness or model, so each machine's own
+// settings choose, and they are the same files on every machine. Each file is new, so no write
+// follows a link.
 function writeAgents(root: string): void {
-  const picked = readSettings(["yourHarness"]).yourHarness !== undefined;
-  const write = (path: string, text: string) => {
+  for (const [path, text] of builtInAgentFiles()) {
     const file = join(root, ".agents", path);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, text, { flag: "wx" });
-  };
-  for (const name of roleNames) {
-    const lines = Object.entries(agentRole(name)).map(
-      ([key, value]) => `${key}: ${yamlValue(value)}`,
-    );
-    const front = picked ? `---\n${lines.join("\n")}\n---\n` : "";
-    write(join("roles", `${name}.md`), `${front}${builtInRole(name).instructions}`);
   }
-  write(join("flows", "default.yaml"), builtInFlowText);
-}
-
-// Reports whether the .agents/ folder at `root` holds the built-in files alone, as sc init writes
-// them on any machine: the three roles with the built-in instructions, whatever harness and model
-// their frontmatter names, and the default flow. A link counts as a file that differs.
-function holdsBuiltInAgents(root: string): boolean {
-  const folder = join(root, ".agents");
-  const expected = new Map<string, (text: string) => boolean>([
-    [join("flows", "default.yaml"), (text) => text === builtInFlowText],
-  ]);
-  for (const name of roleNames)
-    expected.set(join("roles", `${name}.md`), (text) => {
-      try {
-        return readRole(text).instructions === builtInRole(name).instructions;
-      } catch {
-        return false;
-      }
-    });
-  const found = readdirSync(folder, { recursive: true, encoding: "utf8" }).filter(
-    (path) => !lstatSync(join(folder, path)).isDirectory(),
-  );
-  return (
-    found.length === expected.size &&
-    found.every((path) => {
-      const matches = expected.get(path);
-      return (
-        matches !== undefined &&
-        lstatSync(join(folder, path)).isFile() &&
-        matches(readFileSync(join(folder, path), "utf8"))
-      );
-    })
-  );
 }
 
 // Returns the top folder of the checkout you are in, or null outside one.
@@ -762,9 +709,7 @@ export async function installRepo(sessions: string): Promise<void> {
   }
   const current = checkoutAgents(added, root);
   if (current === null || current === approvedAgents(added)) return;
-  const builtIn = holdsBuiltInAgents(root);
-  if (builtIn && !agentsAnswered(added)) approveAgents(added, current);
-  else if (builtIn)
+  if (agentsAnswered(added) && holdsBuiltInAgents(added, current))
     console.log(
       `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,
     );
