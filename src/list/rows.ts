@@ -27,6 +27,7 @@ import { type Act, type OwnItem, ownItem } from "../flow/own-items.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { type ListStage, listStage } from "../flow/stage.ts";
+import { stillAsks } from "../flow/status.ts";
 import { counted, ordinal } from "../flow/task-queue.ts";
 import { Thread, taskLabel, taskName, typedTask } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
@@ -63,13 +64,16 @@ export const numbered = sections.filter((section) => section !== "needs you");
 // order. `acts` is what each option of Skelcrew's own item does, and null on the lead's item,
 // whose pick goes to the lead. `merging` is the PR you saw, by its number, when its thread
 // started and its head as Skelcrew's copy had it, on an item that offers a merge without
-// approval, which merges only that PR at that commit.
+// approval, which merges only that PR at that commit. `skipping` is what that merge asks y/n of
+// first, as sc merge --skip-review does: what the review still asks, and whether it changes
+// .agents/.
 export type Ask = {
   title: string;
   text: string;
   options: string[];
   acts: Act[] | null;
   merging?: Seen;
+  skipping?: string;
 };
 
 // A PR as you saw it, for a merge without approval.
@@ -244,14 +248,12 @@ const askOf = (item: Item): Ask => ({
 
 // Returns Skelcrew's own item as a row shows it, with the PR you see when it offers a merge
 // without approval.
-const ownAsk = (own: OwnItem, merging: Seen | null): Ask => ({
+const ownAsk = (own: OwnItem, skip: { merging: Seen; skipping: string } | null): Ask => ({
   title: own.title,
   text: own.text,
   options: own.options.map((option) => option.label),
   acts: own.options.map((option) => option.act),
-  ...(merging !== null && own.options.some((option) => option.act === "skip review")
-    ? { merging }
-    : {}),
+  ...(skip !== null && own.options.some((option) => option.act === "skip review") ? skip : {}),
 });
 
 // What the list reads of a task beyond what Thread has: its PR's link, saved as the forge's copy
@@ -371,7 +373,17 @@ function taskRow(
         ownAsk(
           own,
           thread.pr !== null && copy?.head
-            ? { pr: thread.pr, started: thread.started, head: copy.head }
+            ? {
+                merging: { pr: thread.pr, started: thread.started, head: copy.head },
+                skipping: [
+                  `Merge #${thread.pr} (${name} ${removeControlCodes(thread.title ?? "")}) without Skelcrew's approval? CI must still pass.`,
+                  removeControlCodes(stillAsks(thread)),
+                  agentsSaid(db, open.owner, open.repo, copy, copy.head),
+                  "y/n",
+                ]
+                  .filter(Boolean)
+                  .join(" "),
+              }
             : null,
         ),
   };

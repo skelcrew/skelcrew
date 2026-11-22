@@ -115,7 +115,6 @@ function ownPick(row: Row, pick: Letter, repo: string): Question | null {
   const label = row.ask.options[at];
   const act = row.ask.acts[at];
   if (label === undefined || act === undefined) return null;
-  const pr = row.pr || row.name;
   const merge = act === "merge" && row.merge && "ask" in row.merge ? row.merge : null;
   if (act === "merge" && merge === null) return null;
   const commit = merge?.request.command === "merge" ? { commit: merge.request.commit } : {};
@@ -123,7 +122,8 @@ function ownPick(row: Row, pick: Letter, repo: string): Question | null {
   return {
     ask:
       act === "skip review"
-        ? `Merge ${pr} (${row.name}) without Skelcrew's approval? CI must still pass. y/n`
+        ? (row.ask.skipping ??
+          `Merge ${row.pr || row.name} (${row.name}) without Skelcrew's approval? CI must still pass. y/n`)
         : (merge?.ask ?? ""),
     working: `${label}…`,
     request: {
