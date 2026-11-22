@@ -4,7 +4,6 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   readlinkSync,
   renameSync,
@@ -16,17 +15,15 @@ import { join } from "node:path";
 import { z } from "zod";
 import { errorText } from "../format.ts";
 import { dataDir } from "../paths.ts";
+import * as copies from "./login-copies.ts";
 
-// Skelcrew's own login, which no sandbox sees, the folder an earlier release shared with every
-// agent, writable, and the folders of the agents' copies: one per start of a lead or builder
-// session, named by the session's name, a + and an ID, and one per review.
+// Skelcrew's own login, which no sandbox sees, and the folder an earlier release shared with
+// every agent, writable.
 const ownFolder = (home: string) => join(dataDir(home), "codex-own-login");
 const sharedFolder = (home: string) => join(dataDir(home), "codex-login");
 // Marks Skelcrew's own login as taken from the shared folder, so it is renewed at once: agents
 // from then knew its refresh token.
 const takenMark = (home: string) => join(ownFolder(home), "taken-from-shared");
-const sessionCopies = (home: string) => join(dataDir(home), "codex-logins");
-const reviewCopies = (home: string) => join(dataDir(home), "codex-review-logins");
 
 // What Codex keeps in auth.json: an API key, or ChatGPT's tokens and when it last renewed them.
 // Whatever else it keeps goes into each copy as it is.
@@ -114,34 +111,19 @@ function readOwn(home: string): Auth | null {
   }
 }
 
-// Writes `auth` whole as the auth.json in `folder`, through a new file renamed over the old one,
-// so Codex never reads half of it. An agent can write in its copy's folder, so the new file is
-// made only where nothing is, which never follows a link, and the rename replaces whatever is
-// at auth.json rather than writing into it.
-function writeLogin(folder: string, auth: Auth): void {
-  const aside = join(folder, `.auth-${crypto.randomUUID()}.json`);
-  writeFileSync(aside, `${JSON.stringify(auth, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-  renameSync(aside, join(folder, "auth.json"));
-}
+// Returns a login as Codex writes it in auth.json.
+const loginText = (auth: Auth) => `${JSON.stringify(auth, null, 2)}\n`;
 
 // Returns an agent's copy of a login: all of it but the refresh token.
 const withoutRenewal = (auth: Auth): Auth =>
   auth.tokens ? { ...auth, tokens: { ...auth.tokens, refresh_token: "" } } : auth;
 
-// Returns a new folder for the copy of a lead's or builder's session, by its name. Each start
-// gets its own, so the end of a session before never removes the copy of the one after.
+// Returns a new folder for the copy of a lead's or builder's session, by its name.
 export const sessionLogin = (home: string, name: string) =>
-  join(sessionCopies(home), `${name}+${crypto.randomUUID()}`);
-
-// Returns the name of the session a copy's folder is for.
-const sessionOf = (folder: string) => folder.slice(0, folder.lastIndexOf("+"));
-
-// Returns the folders of the copies of every lead's or builder's session.
-const sessionFolders = (home: string) =>
-  existsSync(sessionCopies(home)) ? readdirSync(sessionCopies(home)) : [];
+  copies.sessionLogin(home, "codex", name);
 
 // Returns a new folder for a review's copy.
-export const reviewLogin = (home: string) => join(reviewCopies(home), crypto.randomUUID());
+export const reviewLogin = (home: string) => copies.reviewLogin(home, "codex");
 
 // Writes the agent's own copy of Skelcrew's login in `folder`, renewing the login first when it
 // is due. Returns false and writes nothing when Skelcrew has no login, as with an API key.
@@ -149,57 +131,17 @@ export async function copyLogin(home: string, folder: string): Promise<boolean> 
   await renewLogin(home);
   const own = readOwn(home);
   if (own === null) return false;
-  if (lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink())
-    throw new Error(`${folder} is a link, so Skelcrew won't write a login through it`);
-  try {
-    mkdirSync(folder, { recursive: true, mode: 0o700 });
-    writeLogin(folder, withoutRenewal(own));
-  } catch (error) {
-    dropLogin(folder);
-    throw error;
-  }
+  copies.writeCopy(folder, loginText(withoutRenewal(own)));
   return true;
 }
 
 // Returns whether Skelcrew has a login of its own to copy, rather than an API key.
 export const hasLogin = (home: string) => existsSync(join(ownFolder(home), "auth.json"));
 
-// Removes an agent's copy, once its session or review ended.
-export function dropLogin(folder: string): void {
-  rmSync(folder, { recursive: true, force: true });
-}
-
 // Returns whether a session may run on the login an earlier release shared: one with no copy of
 // its own while that login is still there.
 export const startedShared = (home: string, name: string) =>
-  sharedLoginLeft(home) && !sessionFolders(home).some((folder) => sessionOf(folder) === name);
-
-// Removes every copy of the session with this name, as one starts with it: only one session runs
-// by a name, so any copy left is a session's before, which ended without removing it.
-export function dropSessionLogins(home: string, name: string): void {
-  for (const folder of sessionFolders(home))
-    if (sessionOf(folder) === name) dropLogin(join(sessionCopies(home), folder));
-}
-
-// Removes the copy of each session `runs` says doesn't run. A session still starting runs, and
-// one `runs` can't answer for keeps its copy. Each is asked about apart, so one slow to answer
-// holds up no other.
-export async function sweepLogins(
-  home: string,
-  runs: (name: string) => Promise<boolean>,
-): Promise<void> {
-  await Promise.all(
-    sessionFolders(home).map(async (folder) => {
-      const running = await runs(sessionOf(folder)).catch(() => true);
-      if (!running) dropLogin(join(sessionCopies(home), folder));
-    }),
-  );
-}
-
-// Removes every review's copy. As the daemon starts, no review runs yet.
-export function sweepReviewLogins(home: string): void {
-  rmSync(reviewCopies(home), { recursive: true, force: true });
-}
+  sharedLoginLeft(home) && !copies.sessionsWithCopies(home, "codex").includes(name);
 
 // Returns when an access token expires, or null when it doesn't say.
 function expiry(token: string): number | null {
@@ -268,15 +210,7 @@ async function renewNow(home: string): Promise<void> {
     },
     last_refresh: new Date().toISOString(),
   };
-  writeLogin(ownFolder(home), auth);
+  copies.writeLogin(ownFolder(home), loginText(auth));
   rmSync(takenMark(home), { force: true });
-  for (const copies of [sessionCopies(home), reviewCopies(home)]) {
-    if (!existsSync(copies)) continue;
-    for (const name of readdirSync(copies)) {
-      // A copy removed meanwhile, or one its agent left unwritable, is skipped.
-      try {
-        writeLogin(join(copies, name), withoutRenewal(auth));
-      } catch {}
-    }
-  }
+  copies.rewriteCopies(home, "codex", loginText(withoutRenewal(auth)));
 }

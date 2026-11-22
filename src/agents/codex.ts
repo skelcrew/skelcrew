@@ -21,14 +21,13 @@ import { dataDir } from "../paths.ts";
 import { copySkills, type SkillsFrom } from "../skills.ts";
 import {
   copyLogin,
-  dropLogin,
-  dropSessionLogins,
   hasLogin,
   ownLogin,
   renewLogin,
   reviewLogin,
   sessionLogin,
 } from "./codex-login.ts";
+import { dropLogin, launching, removingOnEnd } from "./login-copies.ts";
 import { editing, type Progress, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
 import {
@@ -440,37 +439,17 @@ async function startCommand(given: {
     files,
   });
   if (!loggedIn) return { argv, env: kept, launch: <T>(start: () => Promise<T>) => start() };
-  const link = join(sessionHome, "auth.json");
-  const launch = async <T>(start: () => Promise<T>): Promise<T> => {
-    try {
-      dropSessionLogins(home, name);
-      if (!(await copyLogin(home, login)))
-        throw new Error("Skelcrew's Codex login went while the session started");
-      rmSync(link, { force: true });
-      symlinkSync(join(login, "auth.json"), link);
-      return await start();
-    } catch (error) {
-      dropLogin(login);
-      rmSync(link, { force: true });
-      throw error;
-    }
-  };
+  const launch = launching({
+    home,
+    harness: "codex",
+    title: "Codex",
+    name,
+    login,
+    link: join(sessionHome, "auth.json"),
+    copy: (folder) => copyLogin(home, folder),
+  });
   return { argv: removingOnEnd(login, argv), env: kept, launch };
 }
-
-// Returns `argv` run so that `folder` is removed once it ends, outside the sandbox, whether it
-// exits or its session is ended. It runs in the background, on the terminal's input, so a
-// signal that ends the session ends it at once, rather than once the agent exits, which it may
-// never do. A kill that leaves no time for it leaves the folder to the daemon's sweep.
-const removingOnEnd = (folder: string, argv: string[]): string[] => [
-  "/bin/sh",
-  "-c",
-  `trap 'rm -rf "$0"' EXIT; exec 3<&0; "$@" <&3 3<&- & agent=$!; exec 3<&-
-for s in HUP INT TERM; do trap "kill -TERM $agent 2> /dev/null; exit 1" $s; done
-wait $agent`,
-  folder,
-  ...argv,
-];
 
 // Returns Codex's review command, mounts and environment. The command reads the review's prompt
 // on stdin and the answer's shape from the review's folder. Every review shares Skelcrew's Codex
@@ -658,4 +637,5 @@ export const codex = {
   answer: readAnswer,
   failure: reportedError,
   usageLimit,
+  renewLogin,
 } as const;
