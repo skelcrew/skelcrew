@@ -356,6 +356,8 @@ describe("the extension in a review", () => {
       "Pi failed to start, such as on a model it doesn't know: run pi by hand to see why",
     );
     expect(pi.failure("", "Error: key sk-live-Abc123SECRETkeyZ refused\n", home)).toBe(said);
+    // A Pi that printed nothing at all didn't fail to start: it gave no answer.
+    expect(pi.failure("", "\n", home)).toBeNull();
   });
 
   test("takes the mark out of the environment as it loads, before any command runs", () => {

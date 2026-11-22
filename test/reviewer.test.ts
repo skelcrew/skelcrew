@@ -642,7 +642,11 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       verdict: "failed",
       body: "pi exited with 1: auth failed (401)",
     });
-    fakePi(["cat > /dev/null"]);
+    // A Pi that worked and gave no verdict gave no answer.
+    fakePi([
+      "cat > /dev/null",
+      `printf '\\nskelcrew: Pi at work %s\\n' "$SKELCREW_PI_ERROR_MARK" >&2`,
+    ]);
     expect(await start({ harness: "pi" })).toEqual({
       verdict: "failed",
       body: "the reviewer answered outside the shape: it gave no answer",

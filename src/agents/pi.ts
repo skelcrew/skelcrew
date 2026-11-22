@@ -326,7 +326,8 @@ const errorMark = (folder: string) =>
 // Returns the error the reviewer's pi in `folder` ended on, or null when it printed none: the
 // message of Skelcrew's own that the extension puts on stderr with the review's mark, never the
 // words of Pi or its provider, which can hold a key. Pi can fail before its extension says it is
-// at work, such as on a model it doesn't know, and then Skelcrew's own words say so. Once Pi is at
+// at work, such as on a model it doesn't know. It prints why then, so a stderr with something on
+// it, and no line saying Pi is at work, gets Skelcrew's own words for a failed start. Once Pi is at
 // work, a command it runs can print anything, so only the marked line counts.
 function reportedError(_out: string, err: string, folder: string): string | null {
   const lines = err.split("\n").map((line) => line.trim());
@@ -337,6 +338,7 @@ function reportedError(_out: string, err: string, folder: string): string | null
     .trim();
   if (marked) return marked;
   if (lines.includes(`skelcrew: Pi at work ${errorMark(folder)}`)) return null;
+  if (lines.every((line) => line === "")) return null;
   return "Pi failed to start, such as on a model it doesn't know: run pi by hand to see why";
 }
 
