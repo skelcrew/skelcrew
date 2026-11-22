@@ -48,6 +48,7 @@ import {
   roundFailed,
   roundOf,
   submitted,
+  submittedBefore,
   verdictPosted,
   verdictReached,
 } from "./ledger.ts";
@@ -152,22 +153,16 @@ async function push(
     return sha;
   }
   // The forge answers with the PR already open from the branch, such as one opened before the
-  // daemon stopped and could save it.
+  // daemon stopped and could save it. After an earlier submit, it may hold that one's summary.
   const { title, closes } = threadTask(db, thread);
   const body = closes ? `${summary}\n\n${closes}` : summary;
-  const { pr } = thread;
-  if (pr === null) {
-    const opened = await openPr(db, repository, {
-      branch: thread.branch,
-      base: baseOf(thread),
-      title,
-      body,
-    });
-    record(db, folder, { pr: opened }, `pushed ${sha} to ${thread.branch}, for #${opened}`);
-    return sha;
-  }
+  const known = thread.pr;
+  const pr =
+    known ??
+    (await openPr(db, repository, { branch: thread.branch, base: baseOf(thread), title, body }));
   record(db, folder, { pr }, `pushed ${sha} to ${thread.branch}, for #${pr}`);
-  if (!signal.aborted) await describePr(db, sessions, folder, pr, body);
+  if (known !== null || submittedBefore(thread))
+    await describePr(db, sessions, folder, pr, body, signal);
   return sha;
 }
 
@@ -180,10 +175,14 @@ async function describePr(
   folder: string,
   pr: number,
   body: string,
+  signal: AbortSignal,
 ): Promise<void> {
+  if (signal.aborted) return;
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const edited = await editPr(db, repository, { pr, body }).catch(errorText);
+  // A newer submit's push waits for this one, so its own edit comes next and says what holds.
+  if (signal.aborted) return;
   if (edited === true) {
     const copied = prOf(db, thread.owner, thread.repo, pr);
     if (copied) saveItems(db, thread.owner, thread.repo, [{ ...copied, body }], []);
