@@ -896,15 +896,46 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   const fullName = `${found.owner}/${found.repo}`;
   const { folder } = leadOf(db, found.owner, found.repo);
   await closeTabAndEndLead(db, sessions, found, "remove");
-  rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
-  rmSync(join(folder, dropsFolder), { recursive: true, force: true });
-  db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
+  const aside = `.removing-${Date.now()}`;
+  const moved: string[] = [];
+  db.run("BEGIN IMMEDIATE");
+  try {
+    const removed = db.run(
+      "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
+      [found.owner, found.repo],
+    );
+    if (removed.changes === 0)
+      throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
+    for (const place of [cloneDir(found.owner, found.repo), join(folder, dropsFolder)]) {
+      if (!existsSync(place)) continue;
+      renameSync(place, `${place}${aside}`);
+      moved.push(place);
+    }
+    db.run("COMMIT");
+  } catch (error) {
+    try {
+      for (const place of moved) renameSync(`${place}${aside}`, place);
+    } finally {
+      if (db.inTransaction) db.run("ROLLBACK");
+    }
+    throw error;
+  }
   forgetAgents(found);
   nameRepositories(db);
   await renameBuilders();
   const trusted = trustLines().filter((line) => line !== "" && line !== fullName);
   if (existsSync(trustFile()))
     writeFileSync(trustFile(), trusted.map((line) => `${line}\n`).join(""));
+  const left = moved.filter((place) => {
+    try {
+      rmSync(`${place}${aside}`, { recursive: true, force: true });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  if (left.length > 0)
+    return `Removed ${name}, but Skelcrew couldn't delete ${left.map((place) => `${place}${aside}`).join(" and ")}. Delete it yourself.`;
   return `Removed ${name} and Skelcrew's clone of it.`;
 }
 
