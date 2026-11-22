@@ -247,6 +247,13 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
   copy Pi can't renew fails with "OAuth refresh failed for anthropic: ...", which Skelcrew
   reports as an expired sign-in. A session that runs past its token's end stops on that until it
   starts again.
+- **A read-only `auth.json` can't hold a sign-in for Pi.** Pi writes the file in place, with no
+  rename, but it renews inside a lock, and writes only after the provider answered. A write that
+  fails throws away the renewal, so the turn fails, though the provider already rotated the
+  refresh token. A shared read-only login would end your sign-in at the first renewal. Pi also
+  locks the file just to read it, by making a `.lock` folder beside it. In a read-only folder
+  `pi auth check` says "invalid", even for an API key. A read-only file in a writable folder
+  reads fine.
 - **Interactive Pi downloads `fd` and `rg` when they aren't on the PATH.** It saves them in its
   agent folder's `bin/`, so each lead and builder downloads them once, at its first start, and
   keeps them. Reviews run in print mode, whose tools never need them, so they download nothing.
