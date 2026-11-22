@@ -1157,6 +1157,24 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
   });
 
   // A lead acts only in its own repository, so it mustn't act on another's threads or tasks.
+  // Its first review must check them, and the builder can submit as soon as it starts.
+  test("a lead starts new work only with what it must keep true, and you need none", async () => {
+    setUp();
+    addRepository("app");
+    serve();
+    await untilAnswers();
+    await open();
+    const refused = {
+      error:
+        'give what the change must keep true as you start it, so its first review checks it: add --keep "<property>" two to four times, such as --keep "each agent\'s login stays separate" --keep "old exports still open"',
+    };
+    expect(
+      await askAsLead({ command: "start new", repo: "app", title: "Fix", body: "it" }),
+    ).toEqual(refused);
+    expect(await askAsLead({ command: "start", repo: "app", task: "7" })).toEqual(refused);
+    onDb((db) => expect(db.query("SELECT 1 FROM threads").all()).toEqual([]));
+  });
+
   test("a lead's commands reach only its own repository", async () => {
     setUp();
     addRepository("app");

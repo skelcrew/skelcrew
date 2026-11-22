@@ -519,6 +519,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // sc start names its task as typed, and the name is looked up here: once as it comes in, and
   // again once the poll before a new thread brought in the issues the tracker has now, such as
   // issue #12 for APP-12 on a daemon that just started.
+  const mustKeep = (caller: Caller, keep: string[] | undefined) => {
+    if (keep === undefined && leadOfCaller(caller) !== null)
+      throw new Error(
+        'give what the change must keep true as you start it, so its first review checks it: add --keep "<property>" two to four times, such as --keep "each agent\'s login stays separate" --keep "old exports still open"',
+      );
+  };
   const startTask = async (
     given: Extract<DaemonRequest, { command: "start" }>,
   ): Promise<{ started: string }> => {
@@ -532,9 +538,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       return { started: said };
     };
     const before = threadOn(db, request.repo, request.task);
-    const keep = request.keep;
-    if (before && keep && before.status !== "done" && before.status !== "failed")
-      keepTrue(db, request.repo, request.task, keep);
     const atWork = before !== null && ["working", "waiting", "queued"].includes(before.status);
     const switching = before !== null && request.flow !== undefined && request.flow !== before.flow;
     const startNowFromQueue = (queued: Thread) => {
@@ -622,7 +625,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
       if (!before && started)
         return done(`Started ${threadName(db, started)}.`, () => {
-          if (keep) keepTrue(db, request.repo, request.task, keep);
           if (request.flow && request.flow !== started.flow)
             switchFlow(started, request.flow, request.short);
           else if (request.short)
@@ -1078,9 +1080,27 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       // Esc on Codex flags nothing: you are looking at the builder anyway.
       case "turn interrupted":
         return { state };
-      case "start":
-        return startTask(request);
+      case "start": {
+        const before = threadOn(db, request.repo, request.task);
+        const fresh = before === null || before.status === "done" || before.status === "failed";
+        if (fresh) mustKeep(caller, request.keep);
+        const started = await startTask(request);
+        const after = threadOn(db, request.repo, request.task);
+        const { keep } = request;
+        if (
+          keep &&
+          after &&
+          after.status !== "done" &&
+          !Bun.deepEquals(
+            after.stay_true,
+            keep.map((item) => item.trim()),
+          )
+        )
+          keepTrue(db, request.repo, request.task, keep);
+        return started;
+      }
       case "start new": {
+        mustKeep(caller, request.keep);
         const repository = findRepository(db, request.repo);
         if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
         const thread = await startThread(db, request);

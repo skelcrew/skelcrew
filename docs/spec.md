@@ -65,7 +65,7 @@ A task is Skelcrew's own record of a piece of work, from the first words to the 
 - a **stage**;
 - the **lead's updates**: every message the lead typed into one of its threads after it started, in order, with who sent it and when;
 - its **decisions**: what is settled and why, such as "provider text is never saved, as the human decided", in order, each with who decided it and when. The lead adds one with `sc decide` as it is made. A later decision replaces an earlier one it contradicts, so reversing one is recording the new one. When it records your answer, it gives your words with `--asked-file`, and the decision is kept as yours, with those words;
-- what it **must stay true**: two to four properties the change must not make worse, such as "each agent's login stays separate". The lead gives them as it starts the task, with `--keep` on `sc start` or `sc add --start`, so they are set before the builder starts. It may write them again later with `sc keep`, which replaces the list;
+- what it **must stay true**: two to four properties the change must not make worse, such as "each agent's login stays separate". The lead gives them as it starts new work, with `--keep` on `sc start` or `sc add --start`, so they are set before the builder starts: Skelcrew refuses a lead's start of new work without them. A task you start yourself, from the screen or with a label, has none until the lead writes them with `sc keep`. It may write them again later with `sc keep`, which replaces the list;
 - a link to the **issue** it came from, if it came from one, and whether Skelcrew assigned you that issue;
 - a link to the **PR** it produced, once there is one, with its CI state and Skelcrew's review state: the round, the reviewer, the verdict.
 

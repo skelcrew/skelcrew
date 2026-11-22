@@ -939,7 +939,7 @@ c.on("connect", () => c.write('{"command":"lead"}\\n'));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
-      `{ printf 'File an issue for the CSV import.' > asked.txt; sc add app "Add import" "From CSV" --issue --asked-file asked.txt; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+      `{ printf 'File an issue for the CSV import.' > asked.txt; sc add app "Add import" "From CSV" --issue --asked-file asked.txt; sc start app-12 --keep "Imports stay optional." --keep "Old exports still open."; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     // Opened before, so the daemon starts app's lead as it starts.
