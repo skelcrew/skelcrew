@@ -261,13 +261,27 @@ export type Pick = (typeof letters)[number] | "reply";
 
 // Returns the lines under a row that show the lead's item: its text cut at words, then each option
 // by its letter, then the line for a reply, each line with what tapping it answers. They line up
-// under the row's name, and are shaded with it on the row you are on.
-function askLines(row: Row, here: boolean, width: number): { text: string; pick: Pick | null }[] {
+// under the row's name, and are shaded with it on the row you are on. `most` is how many lines
+// they may take: a text too long for them is cut short with …, so the options always show, as
+// the details pane and sc show give the text whole.
+function askLines(
+  row: Row,
+  here: boolean,
+  width: number,
+  most = Number.POSITIVE_INFINITY,
+): { text: string; pick: Pick | null }[] {
   if (row.ask === null) return [];
   const indent = " ".repeat(Bun.stringWidth(`${pointer(here)}${row.mark.sign} `));
   const room = Math.max(width - indent.length, 1);
   const wrapped = (text: string) => Bun.wrapAnsi(text, room, { hard: true }).split("\n");
-  const text = wrapped(row.ask.text).map((line) => ({
+  const whole = wrapped(row.ask.text);
+  const choices = row.ask.options.flatMap((option) => wrapped(option)).length + 1;
+  const fits = Math.max(most - choices, 1);
+  const cut =
+    whole.length <= fits
+      ? whole
+      : [...whole.slice(0, fits - 1), fitted(`${whole[fits - 1] ?? ""}…`, room)];
+  const text = cut.map((line) => ({
     text: `${indent}${tinted(here, bright, line)}`,
     pick: null,
   }));
@@ -591,13 +605,19 @@ export function drawRows(
     if (!row) return [];
     const on = i === here;
     const plain = (lines: string[]) => lines.map((text) => ({ text, pick: null }));
+    // The row you are on fits between the edge lines, so its item's options can be read and
+    // tapped.
+    const left = (above: number) => (on ? Math.max(room - 2 - above, 1) : undefined);
     if (row.part === "ask")
       return [
         ...plain(tallLines(row, on, columns.name, width).slice(0, 1)),
-        ...askLines(row, on, width),
+        ...askLines(row, on, width, left(1)),
       ];
     if (tall(row))
-      return [...plain(tallLines(row, on, columns.name, width)), ...askLines(row, on, width)];
+      return [
+        ...plain(tallLines(row, on, columns.name, width)),
+        ...askLines(row, on, width, left(2)),
+      ];
     return plain(marked([shortLine(row, on, columns, width)], on, width));
   };
   const onHeading = rows[here]?.part === "heading" ? rows[here]?.section : undefined;

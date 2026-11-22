@@ -11,7 +11,7 @@ import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository } from "./repo.ts";
 import { letters } from "./requests.ts";
 import { reportStatus } from "./status.ts";
-import { log, readThread, type Thread, taskName, threadOn } from "./thread.ts";
+import { log, readThread, record, type Thread, taskName, threadOn } from "./thread.ts";
 
 // An item as the database keeps it. `task` is empty for an item about the repository.
 export const Item = z.object({
@@ -57,7 +57,9 @@ function aboutOf(db: Database, owner: string, repo: string, task: string): strin
 
 // Posts the lead's item for a task, or with `task` null for the repository, replacing the one open
 // there. The task must show in the list, with a thread that isn't done, an open issue or a place
-// in the backlog, so its item can be seen and answered.
+// in the backlog, so its item can be seen and answered. A task whose thread is done shows by its
+// open issue, so the lead can ask whether to start it again. A note that the thread needs you,
+// still waiting for the lead, goes, as the lead is asking you about it now.
 // Every item passes through here, so a plugin that pushes Needs you hears of each one here.
 export function postItem(
   db: Database,
@@ -74,22 +76,23 @@ export function postItem(
   if (picks.length > letters.length)
     throw new Error(`an item has at most ${letters.length} options`);
   const thread = task === null ? null : threadOn(db, repository, task);
-  if (thread?.status === "done")
-    throw new Error(`${aboutOf(db, owner, repo, thread.task)} is done already`);
-  const listed =
-    task === null ||
-    thread !== null ||
-    openTasks(db, owner, repo).some((issue) => issue.id === task) ||
-    backlogOf(db, owner, repo).some((filed) => filed.task === task);
-  if (!listed) throw new Error(`there is no task ${aboutOf(db, owner, repo, task ?? "")}`);
+  const waiting =
+    task !== null &&
+    (openTasks(db, owner, repo).some((issue) => issue.id === task) ||
+      backlogOf(db, owner, repo).some((filed) => filed.task === task));
+  const live = thread !== null && thread.status !== "done";
+  if (task !== null && !live && !waiting)
+    throw new Error(
+      thread === null
+        ? `there is no task ${aboutOf(db, owner, repo, task)}`
+        : `${aboutOf(db, owner, repo, task)} is done already`,
+    );
   db.run(
     "INSERT OR REPLACE INTO asks (owner, repo, task, text, options, posted) VALUES (?, ?, ?, ?, ?, ?)",
     [owner, repo, task ?? "", said, JSON.stringify(picks), Date.now()],
   );
-  if (thread !== null) {
-    log(db, thread, `the lead asked you: ${said}`);
-    reportStatus(db, readThread(db, thread.folder));
-  }
+  if (thread !== null && live)
+    record(db, thread.folder, { noting: null }, `the lead asked you: ${said}`);
   return aboutOf(db, owner, repo, task ?? "");
 }
 
@@ -130,7 +133,7 @@ export function answerItem(
   }
   const folder = join(leadOf(db, owner, repo).folder, "answers");
   mkdirSync(folder, { recursive: true });
-  const file = join(folder, `${about.toLowerCase()}-${Date.now()}.txt`);
+  const file = join(folder, `${about.toLowerCase()}-${Date.now()}-${crypto.randomUUID()}.txt`);
   writeFileSync(file, `${words}\n`);
   const note = `${words}\n\nThese words are the human's: give --asked-file ${file} to what you run on this answer.`;
   // The item goes only with its note saved, so an answer that fails on the way keeps the item to

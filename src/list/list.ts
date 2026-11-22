@@ -601,7 +601,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     said = null;
     const row = rows[here];
-    const pick = itemKey(row, key);
+    const pick = itemKey(row, here, targets, key);
     if (pick && row) return pickOn(row, pick);
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if ((key === "earlier" || key === "later") && row)

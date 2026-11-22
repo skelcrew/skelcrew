@@ -931,7 +931,7 @@ export async function runSidebar(
     said = null;
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
-    const pick = itemKey(row, key);
+    const pick = itemKey(row, here, targets, key);
     if (pick && row) return pickOn(row, pick);
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
     if ((name === "earlier" || name === "later") && row)

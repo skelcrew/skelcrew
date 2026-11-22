@@ -367,8 +367,9 @@ export const readThread = (db: Database, folder: string) =>
 // the log, so a failure says what went wrong. When the change makes the thread start needing
 // you, `why` is also saved as the note for the lead, on one line; once it no longer needs you,
 // a note not yet typed is dropped. While the lead's item on the thread is open, the round limit
-// or an approval brings no note unless a new round came, as the lead is already asking you. A thread that ends drops its
-// item. The daemon types saved notes with typeLeadNotes.
+// or an approval brings no note unless a new round came, as the lead is already asking you. A
+// thread that ends drops its item, and an item posted after, such as to start it again, stays.
+// The daemon types saved notes with typeLeadNotes.
 export function record(
   db: Database,
   folder: string,
@@ -430,7 +431,7 @@ export function record(
   // Read the thread back rather than merging the change in memory, so the log and the caller
   // see exactly what the database holds.
   const thread = readThread(db, folder);
-  if (thread.status === "done") dropItem(db, thread);
+  if (thread.status === "done" && before.status !== "done") dropItem(db, thread);
   // A mark that clears says so in the log, whatever cleared it, so the log shows what was cleared,
   // by whom and why. One cleared on purpose already names it.
   const old = before.needs_you_for;

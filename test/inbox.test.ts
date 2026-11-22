@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DaemonRequest } from "../src/flow/requests.ts";
-import { insideSandbox, read, runSkel, source, threadSql } from "./harness.ts";
+import { insideSandbox, itemSql, read, runSkel, source, threadSql } from "./harness.ts";
 import {
   addApp,
   asLead,
@@ -139,7 +139,6 @@ test("each answer keeps its own file, so a later one never changes an earlier on
   const seen = inProcess(`
 postItem(db, "app", "12", "Merge it now?", ["yes", "no"]);
 answerItem(db, "none", "app", "12", asSeen("12"), { pick: "a" });
-await Bun.sleep(5);
 postItem(db, "app", "12", "Drop the old exports?", ["yes", "no"]);
 answerItem(db, "none", "app", "12", asSeen("12"), { pick: "b" });
 console.log(JSON.stringify({ notes: notes() }));`);
@@ -275,6 +274,50 @@ writeFileSync(answers, "not a folder");
 const said = (() => { try { answerItem(db, "none", "app", "12", asSeen("12"), { pick: "a" }); return "answered"; } catch { return "failed"; } })();
 console.log(JSON.stringify({ said, kept: itemOf(db, "simon", "app", "12") !== null, notes: notes() }));`);
   expect(seen).toEqual({ said: "failed", kept: true, notes: [] });
+});
+
+// The lead is asking you now, so the note it was about to get that the thread needs you would only
+// make it ask again.
+test("posting an item drops the needs-you note still waiting for the lead", () => {
+  const seen = inProcess(`
+record(db, "app-12", { asking: true }, "its builder asked a question");
+const before = thread().noting;
+postItem(db, "app", "12", "Should the export include archived rows?", ["yes", "no"]);
+console.log(JSON.stringify({ before, after: thread().noting }));`);
+  expect(seen).toEqual({ before: "its builder asked a question", after: null });
+});
+
+// A task whose thread is done shows again by its open issue, which the lead may propose to start.
+test("an item can ask whether to start again a task whose thread is done", () => {
+  const seen = inProcess(`
+db.run(\`${itemSql("app", "task", 12, "Add export", "2026-11-20T10:00:00Z")}\`);
+record(db, "app-12", { status: "done" });
+postItem(db, "app", "12", "Start APP-12 again?", ["yes", "no"]);
+record(db, "app-12", { changed: Date.now() }, "looked at it again");
+console.log(JSON.stringify({ item: itemOf(db, "simon", "app", "12")?.text, section: row("APP-12").section }));`);
+  expect(seen).toEqual({ item: "Start APP-12 again?", section: "needs you" });
+});
+
+// The row you are on shows its options whole, its text cut short to make room, and a letter
+// answers only an option on screen.
+test("on a short screen, the item's text is cut so its options show, and keys answer only those", () => {
+  const seen = inProcess(`
+const { itemKey } = await import(${JSON.stringify(source("list/actions.ts"))});
+postItem(db, "app", "12", "word ".repeat(200), ${options});
+const rows = shownRows(all(), sections, true);
+const at = rows.findIndex((r) => r.name === "APP-12");
+const short = drawRows(rows, sectionHeadings(all(), sections), at, 0, 40, 13);
+const seenLines = short.lines.map((line) => Bun.stripANSI(line).trim());
+const keys = ["a", "b", "r"].map((key) => itemKey(rows[at], at, short.targets, key));
+const tiny = drawRows(rows, sectionHeadings(all(), sections), at, 0, 40, 4);
+console.log(JSON.stringify({ lines: seenLines, keys, hidden: itemKey(rows[at], at, tiny.targets, "b") }));`);
+  const lines = seen.lines as string[];
+  expect(lines).toContain("a) force merge (recommended)");
+  expect(lines).toContain("b) keep going");
+  expect(lines).toContain("r) reply");
+  expect(lines.some((line) => line.endsWith("…"))).toBe(true);
+  expect(seen.keys).toEqual(["a", "b", "reply"]);
+  expect(seen.hidden).toBe(null);
 });
 
 test("an item goes when its thread ends, and the lead can take one off", () => {

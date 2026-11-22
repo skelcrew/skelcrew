@@ -3,7 +3,7 @@
 // the lead's item in Needs you.
 import type { Database } from "bun:sqlite";
 import { letters } from "../flow/requests.ts";
-import type { Pick } from "./layout.ts";
+import type { Pick, Target } from "./layout.ts";
 import { hasForge, type Open, type Question, type Row } from "./rows.ts";
 
 // The command that opens a link in your browser.
@@ -68,12 +68,22 @@ export function stillOffered(asking: Asking, rows: Row[]): Question | string {
     : `${asking.row} changed while you were asked, so nothing was done`;
 }
 
-// Returns what a key does on a row with the lead's item: a letter picks that option, and r starts
-// a reply in your own words. Any other key, or a row with no item, does nothing here.
-export function itemKey(row: Row | undefined, key: string): Pick | null {
+// Returns what a key does on the row at `here`, when it has the lead's item: a letter picks that
+// option, and r starts a reply in your own words. Only a line drawn on screen answers, by the
+// targets of the last draw, so a key never picks an option you can't see. Any other key, or a
+// row with no item, does nothing here.
+export function itemKey(
+  row: Row | undefined,
+  here: number,
+  targets: Target[],
+  key: string,
+): Pick | null {
   if (!row?.ask) return null;
-  if (key === "r") return "reply";
-  return letters.slice(0, row.ask.options.length).find((letter) => letter === key) ?? null;
+  const pick = key === "r" ? "reply" : letters.find((letter) => letter === key);
+  const shown = targets.some(
+    (target) => target !== null && "row" in target && target.row === here && target.pick === pick,
+  );
+  return pick !== undefined && shown ? pick : null;
 }
 
 // Returns the keys that answer a row's item, for the bottom line, such as `a/b answer  r reply`.
