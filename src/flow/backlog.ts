@@ -110,12 +110,23 @@ async function claimOldNames(db: Database, repository: Repository, folder: strin
 // Skelcrew claimed names, such as t1, whose number another machine gave a task of an old name
 // meanwhile, is another task: it is renumbered too, so no two tasks share a name. Each keeps its
 // old name as its alias, which still reaches it here, and its folder, branch and session, which
-// go by the folder. Every change to a thread goes by its folder, so work under way carries on.
+// go by the folder, and the item the lead posted about it, if any. Every change to a thread goes
+// by its folder, so work under way carries on.
 // Otherwise the oldest goes first. Each refresh runs it, and it asks the remote nothing once every task
 // this machine holds has a number of its own.
 async function renumberTasks(db: Database, repository: Repository, folder: string) {
   const { owner, repo } = repository;
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
+  // An item the lead posted about an issue no task has, by the issue's ID alone, such as 12, is
+  // about #12, as such an issue goes by now.
+  db.run(
+    `UPDATE OR IGNORE asks SET task = '#' || task WHERE owner = ? AND repo = ? AND task != ''
+      AND task NOT GLOB '#*' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner = asks.owner
+        AND t.repo = asks.repo AND CAST(t.task AS TEXT) = asks.task)
+      AND NOT EXISTS (SELECT 1 FROM backlog b WHERE b.owner = asks.owner AND b.repo = asks.repo
+        AND b.task = asks.task)`,
+    [owner, repo],
+  );
   const held = db
     .query("SELECT task, alias FROM tasks WHERE owner = ? AND repo = ? ORDER BY rowid")
     .all(owner, repo)
@@ -150,6 +161,7 @@ async function renumberTasks(db: Database, repository: Repository, folder: strin
         [task, alias, github, owner, repo, alias],
       );
       db.run(`UPDATE threads SET task = ? ${where}`, [task, owner, repo, alias]);
+      db.run(`UPDATE OR REPLACE asks SET task = ? ${where}`, [task, owner, repo, alias]);
     })();
     checked.add(`${owner}/${repo}/${task}`);
     console.log(

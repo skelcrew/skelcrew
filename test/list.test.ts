@@ -1021,9 +1021,9 @@ test("every section has its heading with its count, only open ones show rows, an
     "",
     "   Needs you  2",
     " ▸ ● 12  Rate limit the API",
-    "     question · 2m",
+    "     question · the lead is looking at this · 2m",
     "   ● 14  Fix the export header",
-    "     ready to merge · #41 ✓ r1",
+    "     ready to merge · the lead is looking at this · #41 ✓ r1",
     "",
     " 0 Backlog    1",
     " 1 Task queue 1",
@@ -1491,7 +1491,7 @@ ${threadSql({ task: "17", title: "Failed review", status: "waiting", review_fail
   const lines = drawn(1, 40, 80, ["needs you", "building", "reviewing"]).map((line) =>
     line.trimEnd(),
   );
-  expect(lines).toContain("     ready to merge · #41 ✓ r1");
+  expect(lines).toContain("     ready to merge · the lead is looking at this · #41 ✓ r1");
   expect(lines).toContain("     changes · #46 ✗ r3");
   expect(lines).toContain("     #45 ● r2");
   // On a terminal with colours, each mark is in its own.
@@ -1628,7 +1628,7 @@ test("on the lead, the list starts at Needs you, with what is below at the botto
     "",
     "   Needs you  2",
     "   ● 12  Rate limit the API",
-    "     question · 2m",
+    "     question · the lead is looking at this · 2m",
     "   ● 14  Fix the export header",
     " ↓ +3  Back 1  Queue 1  Build 1  Rev 0  Chk 0  Ready 0  Done 0",
   ]);
@@ -2796,13 +2796,13 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
     `APP-12  Rate limit the API${" ".repeat(62)}Building`,
     "─".repeat(paneWidth(wide)),
     "Needs you: question",
+    "the lead is looking at this",
     "",
     `Now      question · last change 19 Nov 14:58, ${ago(now - 120_000, Date.now())}`,
     "Issue    #12  https://github.com/simon/app/issues/12",
     "",
     "Task",
     "Limit each client.",
-    "",
   ]);
   // Its agent runs, so its screen shows below.
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");

@@ -37,6 +37,7 @@ const row: Row = {
   more: 0,
   place: null,
   waits: "",
+  ask: null,
 };
 
 // Its details, as sc show reads them from Skelcrew's copy, with its review's findings and events.
@@ -69,6 +70,7 @@ const details: Details = {
     },
     merge: null,
     filed: null,
+    item: null,
   },
   findings: [
     "The limit resets per process, not per user",
@@ -98,6 +100,7 @@ test("the pane shows a summary card, then the task, then what happened, and the 
     "app-12  Rate limit the API                Building",
     "─".repeat(50),
     "Needs you: question",
+    "the lead is looking at this",
     "",
     "Now      question · 2m ago",
     "Issue    #42",
@@ -123,7 +126,7 @@ test("the pane shows a summary card, then the task, then what happened, and the 
     "40m ago  submitted",
     "28m ago  review round 2: changes asked",
     "18m ago  submitted",
-    ...Array(8).fill(""),
+    ...Array(7).fill(""),
     "─".repeat(50),
     "I am app-12",
     "›",
@@ -415,7 +418,7 @@ test("with the agent's whole screen, the details take half the pane, and the scr
     view: { ...details.view, body: "", issue: null, pr: null, prPage: null, review: null },
   };
   const short = plain(drawPane(row, brief, { screen }, 50, 22, true).lines);
-  expect(short.slice(4, 8)).toEqual([
+  expect(short.slice(5, 9)).toEqual([
     "Now      question · 2m ago",
     "Started  3h ago · default flow",
     "",
@@ -444,7 +447,7 @@ test("a long title and long links show whole, and every check shows however many
     "API per user, so one client can never",
     "starve all the others",
   ]);
-  expect(lines.slice(7, 17)).toEqual([
+  expect(lines.slice(8, 18)).toEqual([
     "Issue    #42",
     "         https://github.com/acme/app/iss",
     "         ues/42",
@@ -773,7 +776,7 @@ test("a task ready to merge says so in the callout", () => {
     },
   };
   const lines = plain(drawPane(ready, approved, null, 50, 40).lines);
-  expect(lines[2]).toBe("Needs you: ready to merge");
+  expect(lines.slice(2, 4)).toEqual(["Needs you: ready to merge", "the lead is looking at this"]);
   // A task ready and waiting on nothing of yours, such as one whose merge is armed, has none.
   const armed: Row = { ...ready, section: "ready", says: "merges when ready" };
   expect(plain(drawPane(armed, approved, null, 50, 40).lines)).not.toContain(

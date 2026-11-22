@@ -405,6 +405,7 @@ UPDATE tasks SET merged = 1 WHERE task = 't12'`);
         pr: null,
         checks: null,
         review: { state: "none", round: null, at: null },
+        asks: false,
       },
       {
         task: "APP-12",
@@ -416,6 +417,7 @@ UPDATE tasks SET merged = 1 WHERE task = 't12'`);
         pr: null,
         checks: null,
         review: { state: "none", round: null, at: null },
+        asks: false,
       },
       {
         task: "APP#10",
@@ -427,6 +429,7 @@ UPDATE tasks SET merged = 1 WHERE task = 't12'`);
         pr: null,
         checks: null,
         review: null,
+        asks: false,
       },
     ]);
   });
@@ -669,6 +672,7 @@ ${threadSql({ task: "t20", status: "stopped", issue: "a1b2c3", issue_ref: "ENG-7
       prPage: null,
       merge: null,
       filed: null,
+      item: null,
     });
     expect(JSON.parse((await skel(["show", "--json", "APP#10"])).out)).toMatchObject({
       task: "APP#10",
@@ -1059,6 +1063,7 @@ describe("with a forge", () => {
       },
       merge: null,
       filed: null,
+      item: null,
     });
   });
 

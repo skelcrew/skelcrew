@@ -17,7 +17,8 @@ import {
   unknownQuestion,
 } from "../plugins/runtime.ts";
 import { threadTask } from "./copy.ts";
-import { Posting, ReviewPost, RoundEvent, reviewPending } from "./ledger.ts";
+import { dropItem, itemOpen } from "./inbox.ts";
+import { Posting, ReviewPost, RoundEvent, reviewPending, roundMoved } from "./ledger.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -221,17 +222,12 @@ export const Thread = z.object({
   // The issue a merge without approval filed what its review still asked for in, once filed, so
   // a poll after a restart never files a second one.
   merge_followup: z.string().nullable(),
-  // What you must do for the thread, written for you, when the lead, you or the safety net marked
-  // it as needing you, such as "apply the check.yml split in PR #463". Null with no mark.
+  // The instruction to bring back the builder's missing session host plugin, which only you can
+  // follow, as hostMissing gives it. Null otherwise.
   needs_you_for: z.string().nullable(),
-  // Whether the lead or you decided about the round limit, by clearing its needs you, so the
-  // thread no longer needs you for it. The next review asks again.
+  // Whether you decided about the round limit, with sc start or a merge, so the thread no longer
+  // needs you for it. The next review asks again.
   limit_decided: z.coerce.boolean(),
-  // When the builder ended a turn without submitting, while nobody has acted on it since, and
-  // what it said last then. The safety net marks the thread as needing you once it waited long
-  // enough. Null otherwise.
-  ended_at: z.number().nullable(),
-  ended_said: z.string().nullable(),
   // Whether the latest review failed or timed out, or its round failed before the review
   // answered, such as on a push that failed. The lead hears of it and can run the review again,
   // so it doesn't need you. Anything that sets the builder working again, a new submit or
@@ -330,20 +326,8 @@ export async function builderSession(
 }
 
 // Returns the mark of a thread whose builder's session host plugin is missing, which only you can
-// bring back, saying what to do. A mark the thread had already follows it, so it isn't lost.
-export const hostMissing = (host: string, had: string | null = null) => {
-  const install = `run sc install: its session host ${host} is missing`;
-  return had === null ? install : `${install}, then ${had}`;
-};
-
-// Returns the mark a thread had before its host plugin went missing, once the plugin is back,
-// or undefined when its mark isn't the one hostMissing gave.
-export function markBeforeHost(host: string, mark: string | null): string | null | undefined {
-  const install = hostMissing(host);
-  if (mark === install) return null;
-  if (mark?.startsWith(`${install}, then `)) return mark.slice(install.length + ", then ".length);
-  return undefined;
-}
+// bring back, saying what to do.
+export const hostMissing = (host: string) => `run sc install: its session host ${host} is missing`;
 
 // Returns why a thread's builder can't be reached when its host plugin is gone.
 export const hostGone = (thread: Thread) =>
@@ -397,7 +381,10 @@ export const readThread = (db: Database, folder: string) =>
 // Saves a change to the thread, logs the thread as it now is, and returns it. `why` goes in
 // the log, so a failure says what went wrong. When the change makes the thread start needing
 // you, `why` is also saved as the note for the lead, on one line; once it no longer needs you,
-// a note not yet typed is dropped. The daemon types saved notes with typeLeadNotes.
+// a note not yet typed is dropped. While the lead's item on the thread is open, the round limit
+// or an approval brings no note unless a new round came, as the lead is already asking you. A
+// thread that ends drops its item, and an item posted after, such as to start it again, stays.
+// The daemon types saved notes with typeLeadNotes.
 export function record(
   db: Database,
   folder: string,
@@ -409,15 +396,16 @@ export function record(
   >,
   why?: string,
 ): Thread {
-  // Work out the note for the lead. A thread that stops needing you drops its note, and one
-  // that starts needing you keeps why, short enough to type as one line, unless the change says
-  // there is none, as for a mark the lead set itself. A thread that already needed you keeps the
-  // note it had, so a later change doesn't hide the first reason.
   const before = readThread(db, folder);
   let { noting } = change;
   if (!needsYou({ ...before, ...change })) noting = null;
   else if (!needsYou(before) && noting === undefined)
-    noting = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    noting =
+      change.needs_you === true &&
+      itemOpen(db, before) &&
+      !roundMoved(before, { ...before, ...change })
+        ? null
+        : (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   // The column names come from the keys of Thread above, never from outside. The task's fields
   // go on its task, and the rest on the thread. One transaction, so a change is saved whole or
   // not at all.
@@ -458,6 +446,7 @@ export function record(
   // Read the thread back rather than merging the change in memory, so the log and the caller
   // see exactly what the database holds.
   const thread = readThread(db, folder);
+  if (thread.status === "done" && before.status !== "done") dropItem(db, thread);
   // A mark that clears says so in the log, whatever cleared it, so the log shows what was cleared,
   // by whom and why. One cleared on purpose already names it.
   const old = before.needs_you_for;

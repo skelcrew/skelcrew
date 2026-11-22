@@ -81,8 +81,6 @@ const state: Thread = {
   merge_followup: null,
   needs_you_for: null,
   limit_decided: false,
-  ended_at: null,
-  ended_said: null,
   review_failed: false,
   agents: null,
   flow: "default",
@@ -201,10 +199,12 @@ test("a mark on a queued, failed or stopped thread still says what to do", () =>
   expect(threadWord({ ...state, status: "done", needs_you_for: "approve it" }, 3)).toBe("done");
 });
 
-// Its last message went to the lead, who brings a real question to you.
-test("a builder that stopped without submitting idles, and doesn't need you", () => {
-  expect(status({ turn_ended: true, state: "idle" })).toBe("idle");
-  expect(status({ status: "waiting", turn_ended: true, state: "idle" })).toBe("idle");
+// It shows under Needs you while the lead reads its last message, so a host's status says so too.
+test("a builder that stopped without submitting needs you", () => {
+  expect(status({ turn_ended: true, state: "idle" })).toBe("needs you");
+  expect(status({ status: "waiting", turn_ended: true, state: "idle" })).toBe("needs you");
+  // A stopped thread's builder isn't waiting on anyone.
+  expect(status({ status: "stopped", turn_ended: true, state: "idle" })).toBe("idle");
 });
 
 test("a harness that stopped on an error, or a thread that failed, is in error", () => {

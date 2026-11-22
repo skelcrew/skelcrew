@@ -378,7 +378,7 @@ describe.skipIf(insideSandbox)("codex", () => {
     // The message reaches the lead a piece at a time, so the test waits for all of it.
     await until(() => read(join(lead(), "typed")).includes("I can do either."));
     expect(read(join(lead(), "typed"))).toContain("My turn ended without a submit, saying:");
-    expect((await app12())?.needsYou).toBe(false);
+    expect((await app12())?.needsYou).toBe(true);
     expect(notesAbout12()).toBe(0);
     // What you type to it next ends that.
     await act("talk");
@@ -442,7 +442,7 @@ describe.skipIf(insideSandbox)("codex", () => {
     await until(() => read(join(lead(), "typed")).includes("Still waiting."));
     await until(() => notesWaiting() === 0);
     expect(turnEnded()).toBe(true);
-    expect((await app12())?.needsYou).toBe(false);
+    expect((await app12())?.needsYou).toBe(true);
     expect(turnsEndedTold()).toBe(1);
   }, 60_000);
 

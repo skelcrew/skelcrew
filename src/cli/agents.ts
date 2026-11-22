@@ -44,24 +44,27 @@ export async function agentCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-export async function needsYouCommand(args: string[]): Promise<void> {
-  const [command, first, second, ...rest] = args;
-  const { markNeedsYou } = await import("../client.ts");
-  if (first === "--clear" && rest.length === 0) {
-    const thread = splitTaskName(second);
-    if (!thread) usage(command, second);
-    const { thread: name, needsYou } = await markNeedsYou(...thread, null);
-    console.log(
-      needsYou
-        ? `Cleared ${name}'s mark. It still needs you for something Skelcrew sees itself.`
-        : `${name} no longer needs you.`,
-    );
+export async function askCommand(args: string[]): Promise<void> {
+  const [command, first, ...rest] = args;
+  const { postItem } = await import("../client.ts");
+  if (first === "--clear") {
+    if (rest.length !== 1) usage(command);
+    const about = rest[0] ?? "";
+    const [repository, task] = splitTaskName(about) ?? [about, undefined];
+    console.log(`Took the item on ${await postItem(repository, task, "clear")} off.`);
     return;
   }
-  const thread = splitTaskName(first);
-  if (!thread || !second?.trim() || rest.length > 0) usage(command, first);
-  const { thread: name } = await markNeedsYou(...thread, second.trim());
-  console.log(`${name} needs you: ${second.trim()}. sc needs-you --clear ${name} clears it.`);
+  const [text, ...flags] = rest;
+  const options: string[] = [];
+  for (let at = 0; at < flags.length; at += 2) {
+    const value = flags[at + 1];
+    if (flags[at] !== "--option" || value === undefined) usage(command);
+    options.push(value);
+  }
+  if (!first || !text?.trim()) usage(command);
+  const [repository, task] = splitTaskName(first) ?? [first, undefined];
+  const about = await postItem(repository, task, { text, options });
+  console.log(`Asked the human about ${about}. Their answer comes back to you as a note.`);
 }
 
 export async function tellCommand(args: string[]): Promise<void> {

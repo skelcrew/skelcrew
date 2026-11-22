@@ -235,10 +235,11 @@ console.log(JSON.stringify({ kept, third }));`;
 });
 
 // A turn that ended without a submit once needed you, and never sent the lead the builder's
-// last message. After the upgrade it waits on the lead, so the lead must hear of it once. A new
+// last message. After the upgrade the lead must hear of it once. It still shows under Needs you
+// while the lead reads it. A new
 // screen opens the database first, while the earlier release's daemon still runs and changes its
 // threads, so only the new daemon, once it holds its lock, moves them.
-test("a thread whose turn ended before the upgrade has its lead told once, and no longer needs you", () => {
+test("a thread whose turn ended before the upgrade has its lead told once, and shows under Needs you", () => {
   const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
   const old = new Database(join(data, "skelcrew.db"));
@@ -287,9 +288,9 @@ console.log(JSON.stringify({ threads, notes }));`;
   expect(run.stderr.toString()).toBe("");
   const { threads, notes } = JSON.parse(run.stdout.toString());
   expect(threads).toEqual([
-    { folder: "app-12", turn_ended: true, noting: null, needsYou: false },
-    { folder: "app-13", turn_ended: true, noting: null, needsYou: false },
-    { folder: "app-15", turn_ended: true, noting: null, needsYou: false },
+    { folder: "app-12", turn_ended: true, noting: null, needsYou: true },
+    { folder: "app-13", turn_ended: true, noting: null, needsYou: true },
+    { folder: "app-15", turn_ended: true, noting: null, needsYou: true },
     { folder: "app-16", turn_ended: false, noting: null, needsYou: false },
   ]);
   expect(notes).toEqual(
@@ -752,7 +753,9 @@ test("a task with an old name gets a number of its own, and its old name still r
     ('simon', 'app', 'abc123', 'app-abc123', 'skelcrew/abc123-first', 'done')\`);
 db.run(\`INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', '2', 'Old'),
   ('simon', 'app', 'wr4', 'Older'), ('simon', 'app', 'jott-12', 'Oldest'),
-  ('simon', 'app', 'abc123', 'First')\`);`;
+  ('simon', 'app', 'abc123', 'First')\`);
+db.run(\`INSERT INTO asks (owner, repo, task, text, options, posted) VALUES
+  ('simon', 'app', '2', 'Merge it?', '[]', 1), ('simon', 'app', '9', 'Start it?', '[]', 1)\`);`;
   const run = startOn(laptop, remote, ["New"], before);
   const out = await new Response(run.stdout).text();
   expect(await new Response(run.stderr).text()).toBe("");
@@ -779,7 +782,8 @@ const named = (typed) => {
   return { typed, name: threadName(db, readThread(db, folder)), folder, branch, issue, alias };
 };
 const split = (repository, typed) => resolveTask(db, repository, typed);
-console.log(JSON.stringify({ named: ["t1", "2", "#2", "wr4", "abc123", "5"].map(named),
+console.log(JSON.stringify({ asks: db.query("SELECT task, text FROM asks ORDER BY task").all(),
+  named: ["t1", "2", "#2", "wr4", "abc123", "5"].map(named),
   split: [split("APP-JOTT", "12"), split("app", "jott-12")] }));`;
   const shown = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: laptop },
@@ -790,6 +794,12 @@ console.log(JSON.stringify({ named: ["t1", "2", "#2", "wr4", "abc123", "5"].map(
   const old = { folder: "app-2", branch: "skelcrew/2-old", issue: "2", alias: "2" };
   const older = { folder: "app-wr4", branch: "skelcrew/wr4-older", issue: null, alias: "wr4" };
   expect(JSON.parse(shown.stdout.toString())).toEqual({
+    // The lead's item about the task named after issue #2 follows it, and one about issue #9,
+    // which no task has, is about #9.
+    asks: [
+      { task: "#9", text: "Start it?" },
+      { task: "t1", text: "Merge it?" },
+    ],
     named: [
       { typed: "t1", name: "APP-1", ...old },
       { typed: "2", name: "APP-2", ...older },

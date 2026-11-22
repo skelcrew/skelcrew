@@ -196,13 +196,6 @@ export async function needsYouFor(): Promise<string | null> {
 export const asLead = (args: string[]) =>
   skel(args, { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket() });
 
-// Sets how many minutes a builder that stopped without submitting waits before it needs you.
-export const graceMinutes = (minutes: number) =>
-  writeFileSync(
-    join(home, ".config", "skelcrew", "config.yaml"),
-    `harness: claude\nneeds_you: { grace_minutes: ${minutes} }\n`,
-  );
-
 export async function untilNeedsYou(wanted: boolean) {
   const deadline = Date.now() + 15_000;
   while ((await needsYou()) !== wanted) {

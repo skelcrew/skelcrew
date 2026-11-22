@@ -2,6 +2,7 @@
 // task's details at the top and its agent at work, live, below them. It reads nothing, so what
 // it shows can be tested without a terminal.
 import type { TaskView } from "../flow/list.ts";
+import { letters } from "../flow/requests.ts";
 import {
   bright,
   fitted,
@@ -16,7 +17,7 @@ import {
 import type { Details } from "./details.ts";
 import { sectionNames } from "./layout.ts";
 import { markdownLines } from "./markdown.ts";
-import type { Row } from "./rows.ts";
+import { leadLooks, type Row } from "./rows.ts";
 
 // The live view's part of the pane: the agent's screen as its session host gave it, colours
 // included, or a short line saying why there is none, such as `Builder not running`.
@@ -156,7 +157,7 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   const text = Math.min(width, textWidth);
   const value = Math.max(width - labelWidth, 1);
   const stageName =
-    row.part === "lead" || row.part === "heading"
+    row.part === "lead" || row.part === "heading" || row.part === "ask"
       ? ""
       : sectionNames[row.section === "task queue" ? "task queue" : row.part];
   const spun = `${details.spinner ? `${details.spinner} ` : ""}${stageName}`;
@@ -176,9 +177,18 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   const needed =
     view.threads.find((thread) => thread.needsYouFor !== null)?.needsYouFor ??
     (row.section === "needs you" ? row.says : null);
-  const callout = needed
-    ? folded(`Needs you: ${needed}`, width).map((line) => paint(`${bright};${yellow}`, line))
-    : [];
+  const options = (view.item?.options ?? []).map((option, at) => `${letters[at]}) ${option}`);
+  const asked = view.item
+    ? [`Asks you: ${view.item.text}`, ...options]
+    : needed
+      ? [`Needs you: ${needed}`]
+      : [];
+  const callout = [
+    ...asked.flatMap((said) =>
+      folded(said, width).map((line) => paint(`${bright};${yellow}`, line)),
+    ),
+    ...(needed && !view.item ? folded(leadLooks, width).map((line) => paint(grey, line)) : []),
+  ];
   const word = row.waits || row.says;
   const rest = [row.step, details.changed].filter(Boolean).join(" · ");
   const nowPlain = [word, rest].filter(Boolean).join(" · ");

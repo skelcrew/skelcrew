@@ -44,7 +44,6 @@ import {
   hostMissing,
   labelledBuilders,
   log,
-  markBeforeHost,
   readThread,
   record,
   renameOnHost,
@@ -299,14 +298,20 @@ async function recordThread(
       merge_record_id: null,
       merge_followup: null,
       needs_you_for: null,
-      ended_at: null,
-      ended_said: null,
       agents,
       flow,
       queued_since: queued ? joinTime(db) : null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
+    // An item the lead posted about the issue before any task had it is the task's from now on.
+    if (issue !== null)
+      db.run("UPDATE OR REPLACE asks SET task = ? WHERE owner = ? AND repo = ? AND task = ?", [
+        task,
+        owner,
+        repo,
+        `#${issue}`,
+      ]);
     dropEndNotes(db, thread.folder);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, turn_ended, host, host_id)
@@ -635,24 +640,16 @@ function builderHost(db: Database, sessions: string, thread: Thread, restarting:
 }
 
 // Marks a thread whose builder's host plugin is gone as needing you, and returns why nobody can
-// tell whether its builder runs, or null once its host is there. A thread marked already, such
-// as after a restart while the plugin stays gone, keeps the mark it had after the instruction.
+// tell whether its builder runs, or null once its host is there, which takes the mark off.
 function markHostGone(db: Database, sessions: string, thread: Thread): string | null {
   if (thread.host === null) return null;
+  const mark = hostMissing(thread.host);
   if (hostNamed(db, sessions, thread.host) !== null) {
-    const before = markBeforeHost(thread.host, thread.needs_you_for);
-    if (before !== undefined)
-      record(
-        db,
-        thread.folder,
-        { needs_you_for: before },
-        `its session host ${thread.host} is back`,
-      );
+    if (thread.needs_you_for === mark)
+      record(db, thread.folder, { needs_you_for: null }, `its session host ${thread.host} is back`);
     return null;
   }
-  const had = markBeforeHost(thread.host, thread.needs_you_for);
-  const mark = hostMissing(thread.host, had === undefined ? thread.needs_you_for : had);
-  if (needsYou(thread) && had === undefined)
+  if (needsYou(thread) && thread.needs_you_for !== mark)
     noteForLead(db, sessions, thread, `${threadName(db, thread)} needs you: ${mark}`, null, true);
   record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
   typeLeadNotes(db, sessions);
