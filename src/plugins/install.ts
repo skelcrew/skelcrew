@@ -5,12 +5,14 @@ import type { Database } from "bun:sqlite";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readSync,
   realpathSync,
   renameSync,
   rmSync,
   writeSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { openDb } from "../db.ts";
@@ -78,9 +80,9 @@ function cloneTag(
   source: string,
   tag: string,
   commit?: string,
+  staged = join(pluginsDir(), `.cloning-${process.pid}`),
 ): { staged: string; manifest: Manifest; commit: string } {
-  const staged = join(pluginsDir(), `.cloning-${process.pid}`);
-  mkdirSync(pluginsDir(), { recursive: true });
+  mkdirSync(dirname(staged), { recursive: true });
   rmSync(staged, { recursive: true, force: true });
   const url = `https://github.com/${source}`;
   const git = (args: string[]) =>
@@ -143,13 +145,6 @@ function checkSkelcrewVersion(manifest: Manifest): void {
     throw new Error(
       `${manifest.name} ${manifest.version} needs Skelcrew ${manifest.skelcrew} or newer, and this is Skelcrew ${release}`,
     );
-}
-
-// Asks a question at your terminal that Enter, y or yes answers yes. Returns true for yes, false
-// for any other answer, and null when there is no answer: with no terminal, or after Ctrl-D.
-export function askYes(question: string): boolean | null {
-  const line = askLine(question);
-  return line === null ? null : isYes(line);
 }
 
 // Returns whether an answer to a [Y/n] question is yes: Enter, y or yes, in any case.
@@ -483,6 +478,24 @@ export const lockedAs = (manifest: Manifest, commit: string): Locked => ({
   version: manifest.version,
   commit,
 });
+
+// Returns how a lock would pin a plugin from GitHub at its newest version, reading its manifest from
+// a clone in a temporary folder that is then removed, so nothing of the plugin is installed or run,
+// and nothing is left on the machine.
+export function newestLocked(source: string): Locked {
+  const folder = mkdtempSync(join(tmpdir(), "skelcrew-plugin-"));
+  try {
+    const { manifest, commit } = cloneTag(
+      source,
+      newestTag(source),
+      undefined,
+      join(folder, "clone"),
+    );
+    return lockedAs(manifest, commit);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
 
 // Updates one plugin. One from a folder is built again from it, so your edits count. One from
 // GitHub moves to its newest version tag, or to the one `tag` names at the lock's `commit`, after

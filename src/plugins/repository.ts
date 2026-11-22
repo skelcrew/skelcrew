@@ -1,6 +1,7 @@
 // A repository's plugins: plugins: in its skelcrew.yaml, each pinned at its exact version and
 // commit in its skelcrew.lock, which you commit. sc plugin add writes both in your checkout, and
 // sc install installs what they pin.
+import { Database } from "bun:sqlite";
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -10,12 +11,13 @@ import { openDb } from "../db.ts";
 import { checkoutTop, repositories } from "../flow/repo.ts";
 import { errorText } from "../format.ts";
 import { originHere } from "../machine/origin.ts";
-import { cloneDir } from "../paths.ts";
+import { cloneDir, dataDir } from "../paths.ts";
 import {
   eachAsked,
   installPlugin,
   lockedAs,
   matchesLock,
+  newestLocked,
   refuseOtherName,
   refusePersonal,
   removePlugin,
@@ -23,7 +25,7 @@ import {
   updatePlugin,
 } from "./install.ts";
 import { type Lock, type Locked, readLockAt, writeBoth, yourLock, yourPlugins } from "./lock.ts";
-import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
+import { commitOf, installedPlugins, type Plugin, readManifest } from "./plugin.ts";
 
 // The GitHub plugin, the forge of every repository on github.com.
 export const githubPlugin = "skelcrew/skelcrew-github";
@@ -171,13 +173,43 @@ export function namePlugin(folder: string, source: string): void {
   );
 }
 
+// The first line of a repository's skelcrew.lock, which is all one that pins nothing holds.
+export const lockStart = "# Written by sc plugin add and sc plugin update. Commit it.\n";
+
 function nameAndPin(folder: string, source: string, locked: Locked): void {
   namePlugin(folder, source);
-  setKey(
-    join(folder, "skelcrew.lock"),
-    "# Written by sc plugin add and sc plugin update. Commit it.\n",
-    source,
-    locked,
+  setKey(join(folder, "skelcrew.lock"), lockStart, source, locked);
+}
+
+// Returns the installed plugins without changing Skelcrew's state: none on a machine where Skelcrew
+// never ran, and none when its state can't be read as it is, such as before an older Skelcrew
+// made its plugins table.
+function installedReadOnly(): Plugin[] {
+  const file = join(dataDir(), "skelcrew.db");
+  if (!existsSync(file)) return [];
+  try {
+    const db = new Database(file, { readonly: true });
+    try {
+      return installedPlugins(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
+// Names `source` in the skelcrew.yaml in `folder` and pins it in its skelcrew.lock, for sc init,
+// installing nothing: at the version installed here from the same source, or else at its newest.
+// Skelcrew's state is only read, so sc init leaves nothing on the machine.
+export function pinRepositoryPlugin(folder: string, source: string): void {
+  const here = installedReadOnly().find((plugin) => plugin.source === source);
+  const locked = here
+    ? lockedAs(readManifest(here.folder), commitOf(here.folder))
+    : newestLocked(source);
+  writeBoth(
+    () => nameAndPin(folder, source, locked),
+    [join(folder, "skelcrew.yaml"), join(folder, "skelcrew.lock")],
   );
 }
 

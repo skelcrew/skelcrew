@@ -14,7 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
+import { builtInFlowText } from "./flows.ts";
 import { cloneDir, configDir } from "./paths.ts";
+import { builtInRole } from "./roles.ts";
 
 // A repository, by its owner and name.
 type Place = { owner: string; repo: string };
@@ -92,9 +94,9 @@ export function approveAgents(place: Place, tree: string | null): void {
 }
 
 // Returns the git tree of the .agents/ folder that committing in the checkout at `checkout` would
-// bring, for sc init, so it can be approved or asked about before it reaches the default branch,
+// bring, for sc install, so it can be approved or asked about before it reaches the default branch,
 // or null when it holds no file. That is what the checkout has staged, as a commit takes it, and
-// every new file, as sc init asks you to commit the files it wrote, even where a .gitignore rule
+// every new file, as sc init tells you to commit the files it wrote, even where a .gitignore rule
 // matches them. It is read through a copy of the checkout's index, so the index
 // itself never changes, and the tree and its files are then copied into Skelcrew's clone, which
 // approving needs. Throws when git can't read them.
@@ -242,8 +244,31 @@ export function agentsFolder(place: Place, tree: string, folder: string): string
   });
 }
 
+// Returns the built-in .agents/, each file by its path inside .agents/: the three roles and the
+// default flow, as Skelcrew ships them, which sc init writes out.
+export function builtInAgentFiles(): Map<string, string> {
+  const files = new Map<string, string>();
+  for (const name of ["lead", "builder", "reviewer"] as const)
+    files.set(`roles/${name}.md`, builtInRole(name).instructions);
+  files.set("flows/default.yaml", builtInFlowText);
+  return files;
+}
+
+// Reports whether a tree of .agents/ holds the built-in files and nothing else, byte for byte,
+// as sc init writes them. A link counts as a file that differs.
+export function holdsBuiltInAgents(place: Place, tree: string): boolean {
+  const expected = builtInAgentFiles();
+  const listed = gitIn(place, ["ls-tree", "-r", "-z", "--name-only", tree]);
+  const paths = listed === null ? [] : listed.split("\0").filter((path) => path !== "");
+  return (
+    paths.length === expected.size &&
+    paths.every((path) => agentsFile(place, tree, path) === expected.get(path))
+  );
+}
+
 // Shows what the repository's .agents/ on its default branch holds, or what changed in it since
-// the version you approved, and asks whether to approve it. sc init passes `current`, the tree of
+// the version you approved, and asks whether to approve it. One that holds only the built-in files
+// is approved without asking, the first time. sc install passes `current`, the tree of
 // the .agents/ in your checkout, to ask about that one instead. A yes approves it. A no keeps what
 // you approved, or the built-in roles, and is saved, so plain sc doesn't ask again. With no
 // answer, such as Ctrl-D, nothing is saved. Runs only in your own terminal, as a yes from an
@@ -254,6 +279,11 @@ export function askAboutAgents(
   current = agentsOnDefaultBranch(place),
 ): void {
   const fullName = `${place.owner}/${place.repo}`;
+  // The built-in files are Skelcrew's own, which you trust already, so they need no first yes.
+  if (current !== null && !agentsAnswered(place) && holdsBuiltInAgents(place, current)) {
+    approveAgents(place, current);
+    return;
+  }
   const before = approvedAgents(place);
   // Said only when there is something you approved or could approve.
   if (current === before) {

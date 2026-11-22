@@ -31,21 +31,33 @@ It ends with `Skelcrew is set up.` Running it again changes nothing that is done
 
 ### 2. Set up a repository
 
-Go to a checkout of one of your GitHub repositories, switch to its default branch, such as `main`, and run `sc init` there.
+Go to a checkout of one of your GitHub repositories, switch to its default branch, such as `main`, and run `sc init`, then `sc install`, as you would with npm.
 
 ```sh
 cd ~/code/app
 git switch main
 sc init
+sc install
 ```
 
-It writes `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow. Say yes when it offers the GitHub plugin, `skelcrew/skelcrew-github`. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you.
+`sc init` only writes files: `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow.
 
-Skelcrew reads these files only from the default branch. So `sc init` asks whether to commit and push them there. Say yes, and it opens the lead. If it can't do that safely, such as when other changes are staged, it prints the git commands to run yourself, then `sc`.
+`sc install` then reads them. It asks before installing the GitHub plugin, `skelcrew/skelcrew-github`: say yes. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. Then it adds the repository to Skelcrew.
+
+Skelcrew's agents read these files only from the default branch, so commit and push them, then run `sc`:
+
+```sh
+git add skelcrew.yaml skelcrew.lock .agents
+git commit -m "Set up Skelcrew"
+git push
+sc
+```
+
+A clone of a repository that has a `skelcrew.yaml` already, such as a teammate's, needs only `sc install`. For a repository without one, `sc repo add` adds it as it is.
 
 ### 3. Meet the lead
 
-The lead opens beside a sidebar of the repository's tasks. Later, run `sc` in the checkout to open it again.
+The lead opens beside a sidebar of the repository's tasks. Run `sc` in the checkout to open it again.
 
 Its first proposal is a thread that finishes the setup. It reads what your CI runs and fills in `setup:` and `test:` in `skelcrew.yaml`, the commands every builder uses. Say yes. The thread opens a PR, and once it is reviewed, merge it.
 

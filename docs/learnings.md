@@ -634,9 +634,6 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **launchd keeps the definition it loaded.** systemd reads a changed service file at the
   daemon's next start. On a Mac the changed file must be loaded at once, which restarts the
   daemon.
-- **`sc init` never switches to the default branch.** Switching could fail where the branch
-  tracks a file `sc init` just wrote. On another branch it shows the commands that commit
-  there, and says to merge it.
 - **GitHub picks a repository on the app's install page only by its ID.** Nobody can read a
   private repository's ID before the app is on it, so there you pick it yourself.
 - **git maintains a clone in the background, and other git trips over it.** After a fetch,
