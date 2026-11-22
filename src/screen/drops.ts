@@ -42,7 +42,9 @@ export function answeredFolder(answer: string): string | null {
 
 // The largest file copied. A paste waits while its files are copied, and over sc --remote while
 // they go up a link that may be slow, so a bigger file would hold up your typing for long. Agents
-// take far smaller files as images anyway. A bigger file keeps its path.
+// take far smaller files as images anyway. A bigger file keeps its path. It is also the most the
+// screen holds in memory at once, for all the drops on their way, and a file that would pass it
+// keeps its path too.
 export const largestDrop = 100 * 1024 * 1024;
 
 // A paste longer than this is never only dropped files' paths, so it goes on without waiting
@@ -125,22 +127,6 @@ function writtenLike(written: string, path: string): string {
 
 // A dropped file, read when it was dropped: its path as pasted and what it holds.
 export type Dropped = { path: string; bytes: Uint8Array };
-
-// Reads a dropped file at once, as macOS deletes a screenshot's file within seconds of its drop,
-// and a drop onto a server's screen takes a while to learn where the file goes. Only a regular
-// file, or a link to one, that you can read and that isn't over largestDrop is read. A folder, a
-// missing path or one you can't read gives null and keeps its path. It reads without holding up
-// the screen, as a disk can be slow to answer.
-async function readDropped(path: string): Promise<Dropped | null> {
-  try {
-    const found = await stat(path);
-    if (!found.isFile() || found.size > largestDrop) return null;
-    const bytes = await Bun.file(path).bytes();
-    return bytes.length > largestDrop ? null : { path, bytes };
-  } catch {
-    return null;
-  }
-}
 
 // Returns where a dropped file's copy goes in an agent's folder: a folder of its own, so two
 // files of the same name never meet, keeping the file's name, which the agent sees.
@@ -264,6 +250,35 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // Whether a drop's files are on their way, and what you sent meanwhile.
   let dropping = false;
   const waiting: Buffer[] = [];
+  // How many bytes of dropped files are held in memory, read and not yet copied.
+  let heldBytes = 0;
+  // Reads a dropped file at once, as macOS deletes a screenshot's file within seconds of its
+  // drop, and a drop onto a server's screen takes a while to learn where the file goes. Only a
+  // regular file, or a link to one, that you can read and that isn't over largestDrop is read,
+  // and only while all the files held stay within largestDrop too, so several big drops never
+  // fill the screen's memory. Any other gives null and keeps its path. It reads without holding
+  // up the screen, as a disk can be slow to answer.
+  const readDropped = async (path: string): Promise<Dropped | null> => {
+    let size = 0;
+    try {
+      const found = await stat(path);
+      if (!found.isFile() || heldBytes + found.size > largestDrop) return null;
+      size = found.size;
+      heldBytes += size;
+      const bytes = await Bun.file(path).bytes();
+      if (bytes.length > size) throw new Error("the file grew as it was read");
+      heldBytes -= size - bytes.length;
+      return { path, bytes };
+    } catch {
+      heldBytes -= size;
+      return null;
+    }
+  };
+  // Lets go of a file once it is copied or no drop needs it.
+  const letGo = (file: Dropped | null) => {
+    if (file) heldBytes -= file.bytes.length;
+  };
+
   // The files of drops that came while another was on its way, read as they came: by path, one
   // read for each paste that waits, in the order the pastes came.
   const readEarly = new Map<string, Promise<Dropped | null>[]>();
@@ -344,12 +359,16 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       ...new Set(parts.flatMap((part) => (part.path === undefined ? [] : [part.path]))),
     ];
     const reading = paths.map((path) => readEarly.get(path)?.shift() ?? readDropped(path));
-    const read = await Promise.all(reading);
-    const files = read.filter((file) => file !== null);
+    const files = (await Promise.all(reading)).filter((file) => file !== null);
     if (files.length === 0) return null;
-    const folder = await drop.where(() => add(Buffer.from(dropSignal)));
-    if (folder === null) return null;
-    const copies = await drop.put(folder, files);
+    let copies: (string | null)[] = [];
+    try {
+      const folder = await drop.where(() => add(Buffer.from(dropSignal)));
+      if (folder === null) return null;
+      copies = await drop.put(folder, files);
+    } finally {
+      for (const file of files) letGo(file);
+    }
     const copyOf = new Map(files.map((file, at) => [file.path, copies[at] ?? null]));
     if (![...copyOf.values()].some((copy) => copy !== null)) return null;
     return parts
@@ -452,7 +471,8 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
         for (const next of waiting.splice(0)) take(next);
         const named = pathsWaiting();
         for (const [path, reads] of readEarly) {
-          reads.splice(0, reads.length - (named.get(path) ?? 0));
+          for (const unused of reads.splice(0, reads.length - (named.get(path) ?? 0)))
+            unused.then(letGo);
           if (reads.length === 0) readEarly.delete(path);
         }
       };

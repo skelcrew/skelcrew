@@ -257,6 +257,25 @@ test("a missing path, a folder, a file you can't read and one too big keep their
   ).toHaveLength(1);
 });
 
+test("files dropped together that would hold more than the largest drop in memory copy only what fits, and the rest keep their paths", async () => {
+  const halves = ["one.bin", "two.bin"].map((name) => {
+    const path = file(name, "");
+    Bun.spawnSync(["truncate", "-s", String(largestDrop / 2 + 1), path]);
+    return path;
+  });
+  const take = filter();
+  take(Buffer.from(pasted(halves.join(" "))));
+  for (let waited = 0; !sent.includes("\x1b[201~") && waited < 500; waited++) await Bun.sleep(20);
+  const out = sent.replaceAll(dropSignal, "");
+  expect(copies(out)).toHaveLength(1);
+  expect(halves.filter((path) => out.includes(path))).toHaveLength(1);
+  // Once that drop is in, its memory is free for the next.
+  sent = "";
+  take(Buffer.from(pasted(halves.join(" "))));
+  for (let waited = 0; !sent.includes("\x1b[201~") && waited < 500; waited++) await Bun.sleep(20);
+  expect(copies(sent.replaceAll(dropSignal, ""))).toHaveLength(1);
+}, 15000);
+
 test("a paste split over several reads arrives whole, and keys after it follow it", async () => {
   const shot = file("shot.png");
   const take = filter();
