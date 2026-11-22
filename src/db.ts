@@ -203,7 +203,8 @@ const threadColumns = {
 // a restart puts it back in the same order. `short` is the short title the lead gave the task
 // for the sidebar. `assigned` is whether Skelcrew assigned you the task's issue, so it takes you
 // off only then. `updates` holds the lead's messages to the builder, as JSON, since they change
-// the task its reviewer checks against. `review_at` is when the latest review was asked for or
+// the task its reviewer checks against, and so do `decisions` and `stay_true`, the lead's
+// decisions on the task and what the change must not make worse. `review_at` is when the latest review was asked for or
 // ended, for sc ps. `merged` is whether the work ended with its changes merged, which tells a
 // task that is done apart from one that was dropped. `issue_link` is the link to the issue the
 // task came from, saved as it starts, and null for a task with no issue, such as t1. `closes` is
@@ -228,6 +229,8 @@ export const taskColumns = {
   body: "TEXT",
   short: "TEXT",
   updates: "TEXT",
+  decisions: "TEXT",
+  stay_true: "TEXT",
   assigned: "INTEGER NOT NULL DEFAULT 0",
   pr: "INTEGER",
   checks: "TEXT",

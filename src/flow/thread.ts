@@ -31,6 +31,13 @@ export type AgentState = z.infer<typeof AgentState>;
 // milliseconds since 1970, and its text.
 const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
 
+const Decision = z.object({
+  by: z.enum(["lead", "human"]),
+  at: z.number(),
+  text: z.string(),
+  words: z.string().optional(),
+});
+
 // A thread with its task, as Skelcrew's database keeps them, one row per thread from the
 // task_threads view. The task's fields are those openDb's taskColumns name, and they are saved on
 // the task. It is checked on every read, since the row comes back from disk. Its folder names it
@@ -173,6 +180,8 @@ export const Thread = z.object({
   // sc show get them with the task. Only the lead's count: a builder must never change
   // what it is reviewed against. A row from before Skelcrew kept them holds null, read as none.
   updates: savedJson("tasks.updates", TaskUpdate.array(), []),
+  decisions: savedJson("tasks.decisions", Decision.array(), []),
+  stay_true: savedJson("tasks.stay_true", z.array(z.string()), []),
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),

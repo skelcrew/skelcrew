@@ -239,6 +239,8 @@ test("what is left fills the live view from the bottom up", async () => {
       merge: null,
       filed: null,
       item: null,
+      decisions: [],
+      mustStayTrue: [],
     },
     findings: [],
     updates: [],

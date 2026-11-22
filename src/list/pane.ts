@@ -250,8 +250,14 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     updates.length === 0
       ? []
       : section(`Updates from the lead (${updates.length})`, dated(updates, text, markdownLines));
+  const decided = view.decisions.map(({ by, text }) => `- ${text} (${by})`).join("\n");
+  const decisions = decided === "" ? [] : section("Decisions", markdownLines(decided, text));
+  const kept = view.mustStayTrue.map((item, n) => `${n + 1}. ${item}`).join("\n");
+  const stayTrue = kept === "" ? [] : section("Must stay true", markdownLines(kept, text));
   const activity = events.length === 0 ? [] : section("Activity", dated(events, width, folded));
-  const parts = [callout, card, task, told, activity].filter((part) => part.length > 0);
+  const parts = [callout, card, task, decisions, stayTrue, told, activity].filter(
+    (part) => part.length > 0,
+  );
   return [...top, ...parts.flatMap((part, i) => (i === 0 ? part : ["", ...part]))];
 }
 

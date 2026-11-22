@@ -57,6 +57,8 @@ const commands = [
   "hook",
   "check",
   "tell",
+  "decide",
+  "keep",
   "install",
   "plugin",
 ];

@@ -57,6 +57,8 @@ const working: Thread = {
   assigned: false,
   changed: null,
   updates: [],
+  decisions: [],
+  stay_true: [],
   state: null,
   merged: false,
   issue_link: null,

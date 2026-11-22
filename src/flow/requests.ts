@@ -133,6 +133,19 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId,
     text: z.string().min(1),
   }),
+  z.object({
+    command: z.literal("decide"),
+    repo: z.string(),
+    task: TaskId,
+    text: z.string().regex(/\S/),
+    asked: z.string().regex(/\S/).optional(),
+  }),
+  z.object({
+    command: z.literal("keep true"),
+    repo: z.string(),
+    task: TaskId,
+    items: z.array(z.string().regex(/\S/)).min(1).max(4),
+  }),
   // `commit` is the PR's head you saw approved: the forge merges only while it is still the head.
   z.object({
     command: z.literal("merge"),
@@ -234,6 +247,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // is always safe. Builders and reviewers can't. Only the lead posts items in the inbox, and only you
 // answer them: a builder brings what it needs to the lead. Only a lead may brief another
 // repository's lead, as each lead plans its own repository's work.
+// Only a lead records a task's decisions and what its change must keep true, as a builder must
+// never change what it is reviewed against.
 export type Caller =
   | "you"
   | { lead: { owner: string; repo: string } }
@@ -293,6 +308,8 @@ export const allowed = {
     "merge cancel",
     "ask",
     "tell",
+    "decide",
+    "keep true",
     "brief lead",
     "question asked",
     "question answered",

@@ -489,12 +489,21 @@ async function reviewRound(
           // change that was docs alone is asked again, against the base just fetched. One that
           // now changes code runs the tests, as there is then no CI result to read.
           const docsOnly = given.docsOnly === true && changesOnlyDocs(skelcrewClone, bases, sha);
+          const fresh = readThread(db, folder);
+          const summaries = (fresh.round_log ?? []).flatMap((event) =>
+            event.kind === "submitted" ? [event.summary] : [],
+          );
           const started = Date.now();
           const result = await review({
             ...given,
             docsOnly,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
+            bounds: {
+              decisions: fresh.decisions,
+              stayTrue: fresh.stay_true,
+              summary: summaries.at(-1) ?? null,
+            },
             base: from,
             test: repositoryCommands(thread).test,
             socket: reviewSocket(thread.folder),
@@ -591,7 +600,7 @@ async function actOnVerdict(
     kept: kept === null ? null : { base, approved: kept },
     now: Date.now(),
   };
-  const { change, round, tell, why, note, holds } = verdictReached(thread, reached);
+  const { change, round, tell, why, note, holds, choices } = verdictReached(thread, reached);
   // A newer submit, or sc stop, may have cancelled the round, and the thread is then its to
   // change. Nothing is awaited from this check until the verdict is saved, so a cancel either
   // comes first and nothing is saved or posted, or comes after and finds the verdict saved.
@@ -624,6 +633,11 @@ async function actOnVerdict(
       verdict.verdict === "failed" ? `'s review failed: ${verdict.body}` : `: ${verdict.body}`;
     const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
     noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`, null, true);
+  }
+  if (choices !== null) {
+    const name = threadName(db, thread);
+    record(db, folder, {}, "the reviewer left the lead a choice");
+    noteForLead(db, sessions, repository, `${name}${choices}`);
   }
   // The approved commit is kept for the next submit to compare with. It is written at once,
   // with no await since the save, so sc review, which deletes it as it asks for a review, never

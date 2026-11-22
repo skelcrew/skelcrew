@@ -193,6 +193,24 @@ const labelTriage = " Pick its flow as for any thread.";
 const noReviewFlows =
   "A flow with no review: stage skips Skelcrew's reviewer: the builder's submit goes straight to CI, and the PR is ready once CI passes. Pick one only for a change too small to need a review, such as docs, wording or a trivial config change, never for code that can break something. Always tell the human when you pick one, and that nobody will review it. ";
 
+// What the lead's file added with each task's decisions and what it must keep true, and what the
+// builder's file added for the trade-offs a reviewer may let through.
+const boundsAdded = (text: string) =>
+  namesInLowercase(
+    text
+      .split("\n")
+      .filter(
+        (line) =>
+          line.startsWith("- Each time you start a thread, right after") ||
+          line.startsWith("- Record each decision on a thread") ||
+          line.startsWith("- A reviewer that thinks a decision is wrong"),
+      )
+      .map((line) => `${line}\n`)
+      .join(""),
+  );
+const tradeOffs =
+  "When your change makes something worse on purpose, such as a slower start for a simpler setup, name that trade-off in your summary. The reviewer reads it.\n\n";
+
 // What the lead's file added with limits.threads: a start over the limit waits in a queue.
 const queue =
   "- A repository's skelcrew.yaml can limit how many builders run at once in it, with limits.threads. A start over the limit isn't refused: sc start says the thread is queued, and it starts by itself, first come first served, once one of the repository's builders ends. sc ps shows it as queued. sc rm takes it out of the queue.\n";
@@ -274,7 +292,9 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(builtInRole("lead").instructions).not.toMatch(/\bapp-t?\d+\b/);
   expect(builtInRole("builder").instructions).not.toMatch(/\bapp-t?\d+\b/);
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
-  let lead = namesInLowercase(builtInRole("lead").instructions);
+  const bounds = boundsAdded(builtInRole("lead").instructions);
+  expect(bounds.split("\n").length).toBe(4);
+  let lead = namesInLowercase(builtInRole("lead").instructions).replace(bounds, "");
   for (const [before = "", now = ""] of inbox) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
@@ -329,7 +349,9 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(builder).toContain(askingTheLead);
   expect(builder).toContain(otherThreads);
   expect(builder).toContain(herdr);
+  expect(builder).toContain(tradeOffs);
   const before = builder
+    .replace(tradeOffs, "")
     .replace(herdr, "")
     .replace(askingTheLead, askingBefore)
     .replace(otherThreads, otherThreadsBefore)

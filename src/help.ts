@@ -74,6 +74,8 @@ const sections: [string, [string, string][]][] = [
       ['tell lead <repo> "<text>" | -', "Type a brief into another repository's lead, - for stdin"],
       ['ask <task> | <repo> "<text>"', "Ask the human in Needs you, with --option per choice"],
       ["ask --clear <task> | <repo>", "Take that item off Needs you"],
+      ['decide <task> "<decision>"', "Record what is settled, as the lead, for every reviewer"],
+      ['keep <task> "<property>" ...', "Set what the change must keep true, up to 4, as the lead"],
     ],
   ],
   [

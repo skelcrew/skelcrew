@@ -51,6 +51,7 @@ import {
 import { holdCheckSlot, slotHolders } from "./checks.ts";
 import { openTasks, ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
+import { decide, keepTrue } from "./decisions.ts";
 import { beingRemoved, removalEnded, removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import { answerItem, clearItem, postItem } from "./inbox.ts";
@@ -960,6 +961,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const thread = findThread(db, request.repo, request.task);
         return { told: await messageBuilder(db, sessions, caller, thread, request.text) };
       }
+      case "decide":
+        return { said: decide(db, request.repo, request.task, request.text, request.asked) };
+      case "keep true":
+        return { said: keepTrue(db, request.repo, request.task, request.items) };
       // A lead's request names its own repository only, as limitToOwnRepository checked.
       case "ask": {
         const task = request.task ?? null;

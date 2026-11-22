@@ -430,7 +430,12 @@ echo "$CODEX_HOME" > "$CODEX_HOME/sessions/home"
 echo changed > README
 echo evil > "$CODEX_HOME/config.toml"
 echo renewed > "$CODEX_HOME/auth.json"`);
-  expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine.", findings: [] });
+  expect(await reviewOnMac(clone)).toEqual({
+    verdict: "approve",
+    body: "Fine.",
+    findings: [],
+    choices: [],
+  });
   const [where, seen] = readFileSync(join(codexHome(), "sessions", "where"), "utf8").split("\n");
   expect(where).not.toBe(clone);
   expect(seen).toBe("app");
@@ -445,7 +450,12 @@ test("a reviewer gets a plain copy where the disk can't share blocks", async () 
   const clone = reviewable("");
   const cp = Bun.which("cp") ?? "cp";
   fake("cp", `test "$2" = -c && exit 1; exec ${cp} "$@"`);
-  expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine.", findings: [] });
+  expect(await reviewOnMac(clone)).toEqual({
+    verdict: "approve",
+    body: "Fine.",
+    findings: [],
+    choices: [],
+  });
 });
 
 test("nothing a reviewer started outlives it, or keeps the review waiting", async () => {

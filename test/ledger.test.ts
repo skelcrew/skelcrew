@@ -78,6 +78,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     assigned: false,
     changed: null,
     updates: [],
+    decisions: [],
+    stay_true: [],
     state: null,
     host: "tmux",
     host_id: null,
@@ -163,6 +165,23 @@ test("changes asked for type the body and each finding into the builder, and cou
   expect(tell).toContain(
     "Ran the export tests.\n\n1. The export has no test.\n2. The flag is misspelled.",
   );
+});
+
+// A choice goes to the lead, never to the builder, and never counts as changes on its own.
+test("the reviewer's choices go to the lead, not into the builder, and an approval stays one", () => {
+  const choice = "Retry five times, not three? The lead decided three.";
+  const approved = reach(thread(), { ...approval, choices: [choice] });
+  expect(approved.change).toMatchObject({ rounds: 0, verdict: "approve" });
+  expect(approved.tell).toBeNull();
+  expect(approved.choices).toBe(
+    `'s reviewer left you a choice, which doesn't count as changes: 1) ${choice} Decide, or ask the human, then record it with sc decide.`,
+  );
+  const asked = reach(thread(), { ...changes, choices: [choice, "Keep the old flag?"] });
+  expect(asked.tell).not.toContain(choice);
+  expect(asked.choices).toContain("left you 2 choices");
+  expect(asked.choices).toContain(`1) ${choice} 2) Keep the old flag?`);
+  expect(reach(thread(), approval).choices).toBeNull();
+  expect(reach(thread(), failed).choices).toBeNull();
 });
 
 // Past the round limit only a review that asks for changes needs you again. One that failed is

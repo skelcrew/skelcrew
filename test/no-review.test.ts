@@ -74,6 +74,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     assigned: false,
     changed: null,
     updates: [],
+    decisions: [],
+    stay_true: [],
     state: "idle",
     host: "tmux",
     host_id: null,

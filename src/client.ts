@@ -409,6 +409,26 @@ export async function tellOn(repository: string, task: string, text: string): Pr
   return checkReply(z.object({ told: z.string() }), reply).told;
 }
 
+export async function decideOn(
+  repository: string,
+  task: string,
+  text: string,
+  asked: string | undefined,
+): Promise<string> {
+  const given = asked === undefined ? {} : { asked };
+  const reply = await request({ command: "decide", repo: repository, task, text, ...given });
+  return checkReply(z.object({ said: z.string() }), reply).said;
+}
+
+export async function keepTrueOn(
+  repository: string,
+  task: string,
+  items: string[],
+): Promise<string> {
+  const reply = await request({ command: "keep true", repo: repository, task, items });
+  return checkReply(z.object({ said: z.string() }), reply).said;
+}
+
 // Has the daemon type a builder's message into the lead, for sc tell lead. The builder's
 // own socket tells the daemon which thread it comes from. The daemon answers at once.
 export async function tellTheLead(text: string): Promise<void> {

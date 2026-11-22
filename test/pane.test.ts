@@ -71,6 +71,8 @@ const details: Details = {
     merge: null,
     filed: null,
     item: null,
+    decisions: [],
+    mustStayTrue: [],
   },
   findings: [
     "The limit resets per process, not per user",

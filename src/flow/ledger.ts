@@ -547,8 +547,9 @@ type Reached = {
 };
 
 // What a verdict gives back: the change to save, the round's number, Skelcrew's check, what to
-// type into the builder, why, for the log, whether the round limit now holds the changes, and the
-// note for the lead to save with the change, which comes only from its posted event.
+// type into the builder, why, for the log, whether the round limit now holds the changes, the
+// note for the lead to save with the change, which comes only from its posted event, and what the
+// lead hears of the choices the reviewer left it, after the thread's name, or null with none.
 type Reaching = {
   change: Partial<Thread>;
   round: number;
@@ -558,6 +559,7 @@ type Reaching = {
   why: string;
   holds: boolean;
   note: string | null;
+  choices: string | null;
 };
 
 // A review reached its verdict. The builder gets max_rounds rounds of changes. Changes asked for
@@ -607,7 +609,14 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
   const pr = thread.pr;
   const posted =
     (review.verdict === "approve" || review.verdict === "changes") && pr !== null
-      ? { pr, commit: sha, ...review, round }
+      ? {
+          pr,
+          commit: sha,
+          verdict: review.verdict,
+          body: review.body,
+          findings: review.findings,
+          round,
+        }
       : (roundOf(thread).posting?.review ?? null);
   const limitNote = held ? limitWhy : null;
   const posting = forge
@@ -636,5 +645,20 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
     status: asked && !held ? ("working" as const) : ("waiting" as const),
   } satisfies Partial<Thread>;
   const note = forge ? null : noteNow(saved, limitNote);
-  return { change, round, check, description, tell: saved.telling, why, holds: held, note };
+  const left = "choices" in review ? (review.choices ?? []) : [];
+  const choices =
+    left.length === 0
+      ? null
+      : `'s reviewer left you ${left.length === 1 ? "a choice, which doesn't" : `${left.length} choices, which don't`} count as changes: ${left.map((choice, n) => `${n + 1}) ${choice.trim()}`).join(" ")} Decide, or ask the human, then record it with sc decide.`;
+  return {
+    change,
+    round,
+    check,
+    description,
+    tell: saved.telling,
+    why,
+    holds: held,
+    note,
+    choices,
+  };
 }

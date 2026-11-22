@@ -240,6 +240,8 @@ async function recordThread(
       assigned: before?.assigned ?? false,
       changed: null,
       updates: [],
+      decisions: [],
+      stay_true: [],
       state: null,
       host: before?.host ?? null,
       host_id: before?.host_id ?? null,
