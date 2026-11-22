@@ -378,6 +378,7 @@ describe("usage limits", () => {
       "500: internal error at 4291 requests",
       "500: request 429 failed",
       "404: no resource 429: gone",
+      "exceeded retry count: quota project not set",
       "fetch failed",
     ])
       expect(pi.usageLimit(error, now)).toBeNull();
@@ -387,6 +388,12 @@ describe("usage limits", () => {
     // "reset" alone names no time, though a clock follows it.
     const said = "429: connection reset by peer at 3pm";
     expect(pi.usageLimit(said, now)).toEqual({ reset: null });
+    // A clock later in the message isn't the reset's.
+    const later = "429: resets at an unknown time; contact support at 5pm";
+    expect(pi.usageLimit(later, now)).toEqual({ reset: null });
+    expect(pi.usageLimit("Quota exceeded for quota metric 'Generate requests'", now)).toEqual({
+      reset: null,
+    });
   });
 
   // The extension tells a builder's limit, and Skelcrew a reviewer's, by the same rule.
@@ -394,6 +401,8 @@ describe("usage limits", () => {
     for (const error of [
       "429: slow down",
       "500: request 429 failed",
+      "exceeded retry count: quota project not set",
+      "Quota exceeded for quota metric 'Generate requests'",
       "You exceeded your current quota",
       "quota project not set",
       "4291 requests",

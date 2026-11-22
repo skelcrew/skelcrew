@@ -16,11 +16,17 @@ export const busyMark = "◆ Pi is at work";
 export const verdictTool = "skelcrew_verdict";
 
 // Reports whether a Pi error says a usage limit was reached: an HTTP 429, which Pi puts first, as
-// in "429: {...}", or a message that a quota was exceeded. A 429 elsewhere, such as in a request
-// ID, and an error that only mentions a quota, such as Google's "quota project not set", are no
-// limit: waiting never fixes them.
+// in "429: {...}", or a message that the quota itself was exceeded, as in "exceeded your current
+// quota" or "Quota exceeded". A 429 elsewhere, such as in a request ID, and an error that only
+// mentions a quota, such as "exceeded retry count: quota project not set", are no limit: waiting
+// never fixes them.
 export function isUsageLimit(error: string): boolean {
-  return /^429(\D|$)/.test(error.trim()) || /exceeded[^.]*quota/i.test(error);
+  return (
+    /^429(\D|$)/.test(error.trim()) ||
+    /\bexceeded (?:your |the |its )?(?:current |daily |monthly )?quota\b|\bquota exceeded\b/i.test(
+      error,
+    )
+  );
 }
 
 // Returns the credentials Pi may send: the key and headers it resolved for the model it runs, from

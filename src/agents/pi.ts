@@ -30,7 +30,10 @@ const readyMark = "◇ Pi is ready for a message";
 const busyMark = "◆ Pi is at work";
 const verdictTool = "skelcrew_verdict";
 const isUsageLimit = (error: string) =>
-  /^429(\D|$)/.test(error.trim()) || /exceeded[^.]*quota/i.test(error);
+  /^429(\D|$)/.test(error.trim()) ||
+  /\bexceeded (?:your |the |its )?(?:current |daily |monthly )?quota\b|\bquota exceeded\b/i.test(
+    error,
+  );
 
 // Returns Skelcrew's own Pi agent folder, where the first run's pi auth login saves the login, and
 // where you put a models.json for every agent: apart from yours in ~/.pi, so neither side's
@@ -330,12 +333,18 @@ function reportedError(_out: string, err: string, folder: string): string | null
 }
 
 // Returns whether Pi's error says a usage limit is reached, and when it resets, or null when it
-// says something else. Only a 429 Pi puts first, or a quota exceeded, is a limit. The reset comes only from
-// "resets at" or "try again at", as other words with "reset" in them name no time. A limit with
-// no time passes on its own, so it is waited out.
+// says something else. Only a 429 Pi puts first, or a quota itself exceeded, is a limit. The reset
+// is the time right after "resets at" or "try again at", such as "3:15 PM" or "Dec 31st, 2099
+// 11:59 PM": other words with "reset" in them, or a clock later in the message, name no reset. A
+// limit with no time passes on its own, so it is waited out.
 function usageLimit(error: string, now: number): { reset: number | null } | null {
   if (!isUsageLimit(error)) return null;
-  const at = /(?:resets at|try again at) (.*)/i.exec(error)?.[1];
+  const day = "(?:[a-z]{3,9}\\.? \\d{1,2}(?:st|nd|rd|th)?,? (?:\\d{4},? )?)?";
+  const time = new RegExp(
+    `(?:resets at|try again at) (${day}\\d{1,2}(?::\\d{2})? ?[ap]\\.?m\\b)`,
+    "i",
+  );
+  const at = time.exec(error)?.[1];
   return { reset: at === undefined ? null : resetTime(at, now) };
 }
 
