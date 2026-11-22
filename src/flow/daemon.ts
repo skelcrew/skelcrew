@@ -497,7 +497,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Does what an option of Skelcrew's own item on a thread does, as its command would for you,
   // and returns what to say. A builder whose session host is gone starts again on the current
-  // one, by a stop and a start, as only those move it.
+  // one, by a stop and a start, as only those move it, and so does one whose session ended.
   const runPick = async (
     act: Act,
     thread: Thread,
@@ -530,10 +530,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (merging === undefined) throw new Error(`${name} has no PR to merge`);
         return armMerge(db, sessions, thread, { seen: merging }, true);
       }
-      case "restart":
-        if (thread.needs_you_for === null) return restartThread(thread);
+      case "restart": {
+        // A builder whose session ended, such as on its harness's error, has nothing to restart,
+        // so it is stopped and started again, as is one whose host is gone.
+        const runs =
+          thread.needs_you_for === null &&
+          (await builderSession(db, sessions, thread).then(
+            ({ host, id }) => agentRuns(host, id),
+            () => false,
+          ));
+        if (runs) return restartThread(thread);
         await stopThread(db, sessions, thread);
         return (await startTask({ command: "start", repo, task })).started;
+      }
       default:
         throw new Error(`${name}'s item hands ${act} to the lead, so nothing runs`);
     }
