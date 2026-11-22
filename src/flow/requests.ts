@@ -193,7 +193,8 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   // Your pick on Skelcrew's own item on a thread, by its letter. `seen` is the item's title and
   // text as you saw them, so a pick never acts on something else the thread needs you for now.
   // Merging the approved PR carries `commit`, the head you saw approved, as a merge does, and
-  // merging without approval `head`, the PR's head you saw, the only commit it merges.
+  // merging without approval `merging`, the PR you saw: its number, when its thread started and
+  // its head, the only commit it merges.
   z.object({
     command: z.literal("pick"),
     repo: z.string(),
@@ -204,7 +205,9 @@ export const DaemonRequest = z.discriminatedUnion("command", [
       .string()
       .regex(/^[0-9a-f]{40,64}$/)
       .optional(),
-    head: z.string().optional(),
+    merging: z
+      .object({ pr: z.number().int().positive(), started: z.number().nullable(), head: z.string() })
+      .optional(),
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   // A lead's brief for another repository's lead. `to` names that repository. It isn't `repo`,

@@ -505,8 +505,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       repo,
       task,
       commit,
-      head,
-    }: { repo: string; task: string; commit?: string | undefined; head?: string | undefined },
+      merging,
+    }: {
+      repo: string;
+      task: string;
+      commit?: string | undefined;
+      merging?: { pr: number; started: number | null; head: string } | undefined;
+    },
   ) => {
     const name = threadName(db, thread);
     switch (act) {
@@ -522,9 +527,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         await stopThread(db, sessions, thread);
         return `Stopped ${name}.`;
       case "skip review": {
-        if (thread.pr === null || head === undefined) throw new Error(`${name} has no PR to merge`);
-        const seen = { pr: thread.pr, started: thread.started, head };
-        return armMerge(db, sessions, thread, { seen }, true);
+        if (merging === undefined) throw new Error(`${name} has no PR to merge`);
+        return armMerge(db, sessions, thread, { seen: merging }, true);
       }
       case "restart":
         if (thread.needs_you_for === null) return restartThread(thread);

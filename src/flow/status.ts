@@ -524,7 +524,7 @@ export function turnEnded(
   }
   // The lead reads the builder's own words, as a message from it, so a question need not end
   // in a question mark to reach you. A harness that gave none still says the turn ended.
-  const said = ended.message ? `, saying:\n\n${ended.message}` : ".";
+  const said = ended.message ? `, saying:\n\n${shortened(ended.message)}` : ".";
   const forward = endedWithoutSubmit(thread) && !thread.told_lead;
   if (forward) messageLead(db, sessions, thread, `My turn ended without a submit${said}`);
   // The turn is over, so a turn after it with nothing typed in, such as when a background task
@@ -549,6 +549,15 @@ export function turnEnded(
       { turn_ended: true, noting: thread.noting, said: ended.message ?? null, handed: null },
       "its builder stopped without submitting",
     );
+}
+
+// Shortens the builder's last message for the lead, so a long report can't flood it. A question
+// or a decision usually comes last, so the end is kept along with the start, and the lead reads
+// where and how much was cut, to ask the builder for the rest. Needs you keeps the whole message.
+function shortened(message: string): string {
+  if (message.length <= 2000) return message;
+  const cut = message.length - 2000;
+  return `${message.slice(0, 1000)}\n\n[${cut} characters cut]\n\n${message.slice(-1000)}`;
 }
 
 // The builder's turn ended on an error, from Claude Code's StopFailure hook, with the kind of

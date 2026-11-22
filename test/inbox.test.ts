@@ -434,18 +434,29 @@ console.log(JSON.stringify({ atLimit, asking, merging, refused }));`);
   expect(seen.refused).toEqual({ refused: "app#7's checks haven't passed" });
 });
 
-// A merge without approval merges only the PR's head you were shown, so the pick carries the head
-// the item was read with, and the daemon refuses it once the PR has a newer one, as sc merge does.
-test("a merge without approval picked on the screen carries the head you saw", () => {
+// A merge without approval merges only the PR you were shown, so the pick carries its number,
+// when its thread started and its head as the item was read, and the daemon refuses it once any
+// of them changed, as sc merge does.
+test("a merge without approval picked on the screen carries the PR you saw", () => {
   const seen = inProcess(`
 const { picked } = await import(${JSON.stringify(source("list/actions.ts"))});
 db.run(\`${itemSql("app", "pr", 7, "Add export", "2026-11-20T10:00:00Z", { head: "b".repeat(40) })}\`);
 record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", held: "Fix it.", needs_you: true, pr: 7 });
 const limit = row("APP-12");
 const pick = picked(limit, "b", "simon/app");
-console.log(JSON.stringify({ head: limit.ask.head, request: pick.confirm.request }));`);
-  expect(seen.head).toBe("b".repeat(40));
-  expect(seen.request).toMatchObject({ command: "pick", pick: "b", head: "b".repeat(40) });
+console.log(JSON.stringify({ merging: limit.ask.merging, started: thread().started, request: pick.confirm.request }));`);
+  const merging = { pr: 7, started: seen.started, head: "b".repeat(40) };
+  expect(seen.merging).toEqual(merging);
+  expect(seen.request).toMatchObject({ command: "pick", pick: "b", merging });
+});
+
+// The lead gets a long last message shortened, but Needs you shows it whole.
+test("a stopped builder's long last message shows whole in its item", () => {
+  const said = `I went through every file.\n\n${"Checked. ".repeat(500)}\n\nShould the export use JSON or YAML?`;
+  const seen = inProcess(`
+turnEnded(db, "none", "app-12", { message: ${JSON.stringify(said)} });
+console.log(JSON.stringify({ text: row("APP-12").ask.text }));`);
+  expect(seen.text).toBe(said);
 });
 
 // An item handed to the lead stays gone only while the thread still needs you for it: the same
