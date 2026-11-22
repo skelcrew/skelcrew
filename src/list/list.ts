@@ -20,6 +20,7 @@ import { versionLabels } from "../version.ts";
 import {
   type Asking,
   canOpenLinks,
+  itemFooter,
   itemKey,
   openPr,
   type Reply,
@@ -160,8 +161,9 @@ export async function runList(agents: string, repository: string): Promise<void>
   let working = false;
   let attached = false;
   // The reply you are typing to the lead's item on a row, which takes every key until it is sent
-  // or dropped.
+  // or dropped, and how far the item you opened full-size with Enter is scrolled, or null.
   let replying: Reply | null = null;
+  let item: number | null = null;
   // The details of the row you are on, by its name, read again with the rows each second, and
   // the last screen read of its agent, by the name of the row it was read for.
   let details: { name: string; read: Details | null } | null = null;
@@ -242,6 +244,7 @@ export async function runList(agents: string, repository: string): Promise<void>
         said ??
           (replying && replyLine(replying)) ??
           asking?.question.ask ??
+          (item !== null ? itemFooter(rows[here]) : null) ??
           keysFor(rows[here], tabs, paneWidth(process.stdout.columns || 80) > 0),
       );
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
@@ -253,8 +256,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       frameWith(bottom, load),
       size,
       paneFor(size),
+      item,
     );
     top = drawn.top;
+    item = drawn.item;
     targets = drawn.targets;
     const text = `\x1b[H${drawn.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
     if (text === lastFrame) return;
@@ -392,6 +397,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   ) => {
     if (!row.ask) return draw();
     working = true;
+    item = null;
     try {
       said = await answerItem(`${open.owner}/${open.repo}`, row.task, row.ask, given);
     } catch (error) {
@@ -410,6 +416,11 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   const openRow = async (row: Row) => {
     if (row.part === "heading" && row.section !== "lead") return toggleSection(row.section);
+    if (row.ask && item === null) {
+      item = 0;
+      return draw();
+    }
+    item = null;
     if ((row.part === "lead" && row.session) || row.part === "ask") {
       if (!row.running) say("Starting the lead…");
       const failed = await openRepository(`${open.owner}/${open.repo}`, false);
@@ -530,6 +541,10 @@ export async function runList(agents: string, repository: string): Promise<void>
     const overPane = beside > 0 && Number(column) > width - 1 - beside - paneEdge.length;
     if ((button === "64" || button === "65") && overPane)
       return scrollPane(button === "64" ? -3 : 3);
+    if ((button === "64" || button === "65") && item !== null) {
+      item += button === "64" ? -1 : 1;
+      return draw();
+    }
     if (button === "64") return move(-1);
     if (button === "65") return move(1);
     if (button !== "0") return draw();
@@ -589,6 +604,17 @@ export async function runList(agents: string, repository: string): Promise<void>
       const typed = typeReply(reply, key);
       replying = typeof typed === "string" ? null : typed;
       return typed === "send" ? answerRow(reply.row, { reply: reply.text }) : draw();
+    }
+    if (item !== null && !asking) {
+      const by = { up: -1, down: 1, "page up": -10, "page down": 10 }[key];
+      if (by !== undefined) {
+        item += by;
+        return draw();
+      }
+      if (key === "escape") {
+        item = null;
+        return draw();
+      }
     }
     if (key === "q" || (key === "escape" && !asking)) return leave();
     if (asking) {

@@ -86,11 +86,13 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
   const heading = row?.part === "heading";
   const enter = row?.more
     ? "⏎ show all"
-    : heading
-      ? "⏎ open/close"
-      : row && enterAttaches(row)
-        ? `⏎ attach${back}`
-        : "⏎ open";
+    : row?.ask
+      ? "⏎ open item"
+      : heading
+        ? "⏎ open/close"
+        : row && enterAttaches(row)
+          ? `⏎ attach${back}`
+          : "⏎ open";
   const open =
     pane && row?.task
       ? [`${enter} · o output · pgup/pgdn scroll`]
@@ -301,6 +303,37 @@ function askLines(
     ...line,
     text: here ? shaded(line.text, width) : line.text,
   }));
+}
+
+// Returns the lead's item on `row`, the row at `here`, opened full-size in a place `width` columns
+// wide and `height` tall, scrolled `scroll` lines down: what it is about, then its whole text, its
+// options and the reply line, with what tapping each line answers. However long the item and
+// however short the screen, scrolling reaches every line. Gives the scroll as far as it can go,
+// for the next draw.
+export function drawItem(
+  row: Row,
+  here: number,
+  width: number,
+  height: number,
+  scroll: number,
+): { lines: string[]; targets: Target[]; scroll: number } {
+  const about = fitted(`${row.label}  ${row.title}`.trimEnd(), Math.max(width - 3, 1));
+  const all = [
+    { text: `   ${paint(bright, about)}`, pick: null },
+    { text: "", pick: null },
+    ...askLines(row, false, width),
+  ];
+  const at = Math.min(Math.max(scroll, 0), Math.max(all.length - height, 0));
+  const shown = all.slice(at, at + height);
+  const blank = Array.from({ length: height - shown.length }, () => "");
+  return {
+    lines: [...shown.map((line) => line.text), ...blank],
+    targets: [
+      ...shown.map((line): Target => (line.pick === null ? null : { row: here, pick: line.pick })),
+      ...blank.map((): Target => null),
+    ],
+    scroll: at,
+  };
 }
 
 // Returns the row you are on as `lines`, shaded across the width, or as they are on another row.
@@ -733,7 +766,9 @@ export function drawRows(
 // lines, which show on the right, beside every line but the top line and the bottom two, when
 // the terminal is wide enough. The rows then take the columns left of it, and the top and bottom
 // lines the whole width. The pane takes the same room on every row, so the list never moves as
-// you do.
+// you do. With `item`, the scroll of the lead's item you opened on the row at `here`, that item
+// shows full-size in place of the lead and the sections, as drawItem lays it out, and `item` comes
+// back as far as it could scroll.
 export function drawList(
   rows: Row[],
   headings: Heading[],
@@ -742,13 +777,19 @@ export function drawList(
   frame: Frame,
   size: Size,
   pane: string[] | null = null,
-): { lines: string[]; targets: Target[]; top: number } {
+  item: number | null = null,
+): { lines: string[]; targets: Target[]; top: number; item: number | null } {
   const whole = size.width - 1;
   const beside = pane === null ? 0 : paneWidth(size.width);
   const width = beside > 0 ? whole - beside - paneEdge.length : whole;
   const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, width))] : [];
   const head = [topParts(frame, whole).line, ...notice, ""];
-  const drawn = drawRows(rows, headings, here, top, width, size.height - head.length - 2);
+  const room = size.height - head.length - 2;
+  const opened = rows[here];
+  const read = item !== null && opened?.ask ? drawItem(opened, here, width, room, item) : null;
+  const drawn = read
+    ? { lines: read.lines, targets: read.targets, top }
+    : drawRows(rows, headings, here, top, width, room);
   // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
   // way first.
   const bottom = fitted(` ${frame.bottom}`, whole);
@@ -765,5 +806,5 @@ export function drawList(
   const lines = [head[0] ?? "", ...middle, last];
   // The head and the bottom two reach nothing.
   const targets: Target[] = [...head.map(() => null), ...drawn.targets, null, null];
-  return { lines, targets, top: drawn.top };
+  return { lines, targets, top: drawn.top, item: read?.scroll ?? null };
 }

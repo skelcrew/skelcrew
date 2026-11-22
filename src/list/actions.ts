@@ -3,7 +3,7 @@
 // the lead's item in Needs you.
 import type { Database } from "bun:sqlite";
 import { letters } from "../flow/requests.ts";
-import type { Pick, Target } from "./layout.ts";
+import { enterAttaches, type Pick, type Target } from "./layout.ts";
 import { hasForge, type Open, type Question, type Row } from "./rows.ts";
 
 // The command that opens a link in your browser.
@@ -92,6 +92,13 @@ export function itemKeys(row: Row): string {
   const picks = letters.slice(0, row.ask.options.length).join("/");
   return picks ? `${picks} answer  r reply` : "r reply";
 }
+
+// Returns what the bottom line says while the lead's item on `row` is open full-size, or null on
+// a row with no item.
+export const itemFooter = (row: Row | undefined) =>
+  row?.ask
+    ? `${itemKeys(row)}  ↑↓ scroll  ⏎ ${enterAttaches(row) ? "attach" : "open"}  esc back`
+    : null;
 
 // A reply you are typing to an item, with the row it answers.
 export type Reply = { row: Row; text: string };

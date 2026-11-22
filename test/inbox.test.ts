@@ -320,6 +320,38 @@ console.log(JSON.stringify({ lines: seenLines, keys, hidden: itemKey(rows[at], a
   expect(seen.hidden).toBe(null);
 });
 
+// Enter opens the item full-size, where scrolling reaches every line however short the screen,
+// for an item on the repository as for one on a thread.
+test("an item opened full-size scrolls to its every option, on any height", () => {
+  const seen = inProcess(`
+const { drawItem } = await import(${JSON.stringify(source("list/layout.ts"))});
+const { itemKey } = await import(${JSON.stringify(source("list/actions.ts"))});
+postItem(db, "app", null, "word ".repeat(100), ["first choice", "second choice", "third choice", "fourth choice"]);
+const rows = shownRows(all(), sections, true);
+const at = rows.findIndex((r) => r.part === "ask");
+const reached = [];
+const keys = new Set();
+let scroll = 0;
+for (let step = 0; step < 40; step++) {
+  const drawn = drawItem(rows[at], at, 30, 4, scroll);
+  reached.push(...drawn.lines.map((line) => Bun.stripANSI(line).trim()));
+  for (const key of ["a", "b", "c", "d", "r"]) if (itemKey(rows[at], at, drawn.targets, key)) keys.add(key);
+  scroll = drawn.scroll + 1;
+}
+console.log(JSON.stringify({ reached, keys: [...keys], first: Bun.stripANSI(drawItem(rows[at], at, 30, 4, 0).lines[0]).trim() }));`);
+  const reached = seen.reached as string[];
+  for (const line of [
+    "a) first choice",
+    "b) second choice",
+    "c) third choice",
+    "d) fourth choice",
+    "r) reply",
+  ])
+    expect(reached).toContain(line);
+  expect(seen.keys).toEqual(["a", "b", "c", "d", "r"]);
+  expect(seen.first).toBe("app  about the repository");
+});
+
 test("an item goes when its thread ends, and the lead can take one off", () => {
   const seen = inProcess(`
 postItem(db, "app", "12", ${JSON.stringify(asked)}, ${options});

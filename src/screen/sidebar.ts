@@ -25,6 +25,7 @@ import { errorText } from "../format.ts";
 import {
   type Asking,
   canOpenLinks,
+  itemFooter,
   itemKey,
   itemKeys,
   openPr,
@@ -34,6 +35,7 @@ import {
   typeReply,
 } from "../list/actions.ts";
 import {
+  drawItem,
   drawRows,
   enterAttaches,
   listShare,
@@ -135,7 +137,11 @@ function sidebarFooter(row: Row, restarts: boolean): string {
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const answers = row.ask ? `  ${itemKeys(row)}` : "";
   const full = row.ask ? "⇧⏎ full screen" : "⇧⏎/a full screen";
-  const enter = enterAttaches(row) ? `⏎ attach  ${full}` : "⏎ open";
+  const enter = row.ask
+    ? `⏎ open item  ${full}`
+    : enterAttaches(row)
+      ? `⏎ attach  ${full}`
+      : "⏎ open";
   return `${first}${answers}  ${enter}${scroll}  0-6 sections${reorder}${start}${now}${merge}${end}`;
 }
 
@@ -294,8 +300,9 @@ export async function runSidebar(
   let asking: Asking | null = null;
   let working = false;
   // The reply you are typing to the lead's item on a row, which takes every key until it is sent
-  // or dropped.
+  // or dropped, and how far the item you opened full-size with Enter is scrolled, or null.
   let replying: Reply | null = null;
+  let item: number | null = null;
   let lastFrame = "";
   // The spinners on the marks of agents at work, where the last frame drew them, and the frame
   // they show. They turn only on this machine, as over sc --remote each turn would cost a write.
@@ -450,6 +457,7 @@ export async function runSidebar(
   const footerText = () => {
     if (closing) return closingText(closing).footer;
     if (replying) return replyLine(replying);
+    if (item !== null && !said && !asking) return itemFooter(rows[here]) ?? "";
     if (empty) return "q/⌥Q quit";
     if (said ?? asking) return said ?? asking?.question.ask ?? "";
     const row = rows[here];
@@ -466,9 +474,14 @@ export async function runSidebar(
     const room = Math.max(width - 1, 1);
     const keys = narrow && !typingRight ? keyLines(lastFooter, room) : [];
     const rowsHeight = Math.max(height - 1 - keys.length, 1);
+    const onRow = rows[here];
+    const read = item !== null && onRow?.ask ? drawItem(onRow, here, room, rowsHeight, item) : null;
+    item = read?.scroll ?? null;
     const drawn = closing
       ? { lines: questionLines(closingText(closing).lines, room), targets: [], top, spins: [] }
-      : drawRows(rows, headings, here, top, room, rowsHeight, spinning);
+      : read
+        ? { lines: read.lines, targets: read.targets, top, spins: [] }
+        : drawRows(rows, headings, here, top, room, rowsHeight, spinning);
     top = drawn.top;
     spins = drawn.spins.map((spin) => ({ ...spin, line: notice.length + 1 + spin.line }));
     targets = [...notice.map((): Target => null), null, ...drawn.targets];
@@ -782,6 +795,7 @@ export async function runSidebar(
   ) => {
     if (!row.ask) return;
     working = true;
+    item = null;
     try {
       said = await answerItem(`${open.owner}/${open.repo}`, row.task, row.ask, given);
     } catch (error) {
@@ -842,6 +856,11 @@ export async function runSidebar(
     const row = rows[here];
     if (!row) return;
     if (zoom && !enterAttaches(row)) return;
+    if (row.ask && item === null && !zoom) {
+      item = 0;
+      return;
+    }
+    item = null;
     if (row.part === "lead" || row.part === "ask") return toRight(zoom);
     if (row.part === "heading" && row.section !== "lead") return toggle(row.section);
     if (row.more > 0) {
@@ -875,6 +894,10 @@ export async function runSidebar(
   // moves to it, and a second click on it opens it as Enter does. A click on a stage's heading, or
   // its name pinned at an edge, opens or closes it. The wheel moves one row up or down.
   const click = (button: string, column: number, line: number) => {
+    if ((button === "64" || button === "65") && item !== null) {
+      item += button === "64" ? -1 : 1;
+      return;
+    }
     if (button === "64") return moveTo(here - 1);
     if (button === "65") return moveTo(here + 1);
     if (button !== "0") return;
@@ -907,6 +930,17 @@ export async function runSidebar(
     if (working) return;
     if (closing) return answerClosing(closing, name);
     if (replying) return typeInReply(replying, name === "enter" || name === "esc" ? name : key);
+    if (item !== null && !asking) {
+      const by = { up: -1, down: 1, "page up": -10, "page down": 10 }[name];
+      if (by !== undefined) {
+        item += by;
+        return;
+      }
+      if (name === "esc") {
+        item = null;
+        return;
+      }
+    }
     if (name === "close") return askToClose();
     if (shown === refused) {
       shown = null;
