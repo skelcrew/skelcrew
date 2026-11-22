@@ -134,6 +134,10 @@ async function deliver(db: Database, id: number): Promise<string | null> {
     );
     return end("dropped", `at most ${perHour[type]} such messages go each hour: try again later`);
   }
+  if (!pluginsWithJob(db, "notifier").includes(via)) {
+    console.log(`dropped a ${type} message, as ${via} isn't an installed notifier`);
+    return end("failed", `${via} isn't an installed notifier`);
+  }
   db.run("UPDATE notifications SET state = 'delivering', sent = ? WHERE id = ?", [Date.now(), id]);
   try {
     await callPlugin(db, via, { ask: "notify", type, ...message }, z.null());
@@ -258,7 +262,7 @@ export function digestOf(db: Database, since: number): Message {
     });
     const underWay = live.filter((t) => needsYouFor(t) === null).map((t) => named(t, t.status));
     const issues = open
-      .filter((item) => !threads.some((t) => t.task === item.id))
+      .filter((item) => !live.some((t) => t.task === item.id))
       .map((item) => {
         const name = taskName(r.name, item.id);
         links.push({ name, url: item.link });

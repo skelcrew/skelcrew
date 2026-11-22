@@ -230,6 +230,33 @@ await notify.sendNotifications(db);`);
   expect(message?.body).toBe(`${"x".repeat(4000)}\n… cut short: sc ls shows the rest`);
 });
 
+test("nothing goes to a plugin that isn't a notifier, though your config routes it there", () => {
+  const github = fakePlugin(home, "github");
+  config("notify:\n  needs-you: github\n");
+  const out = run(`record(db, "app-12", { needs_you_for: "approve the design" }, "marked");
+await notify.sendNotifications(db);`);
+  expect(messages(github)).toEqual([]);
+  expect(out).toContain("dropped a needs-you message, as github isn't an installed notifier");
+});
+
+test("an issue opened again after its thread ended is back in the digest's backlog", () => {
+  const email = fakePlugin(home, "email", ["notifier"]);
+  config("notify:\n  digest: email\n  digest_at: '00:00'\n");
+  const sql = [
+    threadSql({
+      task: "13",
+      status: "done",
+      merged: 1,
+      changed: Date.now() - 5 * 24 * 3600 * 1000,
+    }),
+    itemSql("app", "task", 13, "t", "2026-11-20T10:00:00Z"),
+  ].join("\n");
+  run(`db.run(\`${sql}\`);
+notify.queueDigest(db);
+await notify.sendNotifications(db);`);
+  expect(messages(email)[0]?.body).toContain("Backlog:\n  APP-13");
+});
+
 test("a route to a plugin that isn't a notifier, or isn't installed, shows in sc repo ls", async () => {
   fakePlugin(home, "github");
   config("notify:\n  needs-you: push\n  digest: github\n");

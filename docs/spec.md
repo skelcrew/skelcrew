@@ -574,7 +574,7 @@ A notifier reaches you while you are away, such as by email or a push to your ph
 
 `type` is `needs-you`, `digest` or `asked`. `title` is one line, `body` plain text over lines, and `links` may be empty. It prints `null` once it delivered the message, or exits with an error, as **I/O plugins** says. Its recipient and credentials live only in its own settings, which its `setup` asks for, so neither Skelcrew nor any agent can change where a message goes. Its manifest can say how it reaches you, such as `channel: email` or `channel: push`.
 
-Your `notify:` names the notifier for needs-you messages and for the digest, and one with no notifier isn't sent. `sc repo ls` says when it names a plugin that isn't installed or isn't a notifier. There are three types:
+Your `notify:` names the notifier for needs-you messages and for the digest, and one with no notifier isn't sent. `sc repo ls` says when it names a plugin that isn't installed or isn't a notifier, and nothing is sent to such a plugin. There are three types:
 
 - **needs-you**, when a thread starts needing you, from the same events as the lead's note, and each time the lead or you mark it, the same words again included. A change in why it needs you, such as a question becoming an error, sends nothing more.
 - **digest**, once a day at `digest_at`, 08:00 local time by default, or once the daemon is back if it was off then, even before that day's time. For each repository it lists, in full, what merged since the last one delivered, what waits on you, what is under way and the backlog, each with its PR's or issue's link where it has one.
