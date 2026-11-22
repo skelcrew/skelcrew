@@ -247,6 +247,36 @@ test("a host that can't answer for one session holds up neither the sweep nor th
   );
 });
 
+test("a host slow to answer for one session holds up neither the sweep nor the renewal", async () => {
+  saveLogin(0);
+  const slow = sessionLogin(home, "app-12");
+  const ended = sessionLogin(home, "app-13");
+  await copyLogin(home, slow);
+  await copyLogin(home, ended);
+  saveLogin(2 * day);
+  const answer = Promise.withResolvers<boolean>();
+  const kept = keepLogins(home, (name) =>
+    name === "app-12" ? answer.promise : Promise.resolve(false),
+  );
+  for (let i = 0; i < 100 && (existsSync(ended) || sent.length === 0); i++) await Bun.sleep(20);
+  expect(existsSync(ended)).toBe(false);
+  expect(sent).toEqual(["refresh-1"]);
+  expect(read(join(slow, "auth.json")).tokens.access_token).toBe(read(own()).tokens.access_token);
+  answer.resolve(true);
+  await kept;
+  expect(existsSync(slow)).toBe(true);
+});
+
+test("a copy that can't be written whole is removed", async () => {
+  saveLogin(0);
+  const copy = sessionLogin(home, "app-12");
+  // Something in the way of its auth.json, so the new file can't be renamed into place.
+  mkdirSync(join(copy, "auth.json"), { recursive: true });
+  writeFileSync(join(copy, "auth.json", "x"), "");
+  await expect(copyLogin(home, copy)).rejects.toThrow();
+  expect(existsSync(copy)).toBe(false);
+});
+
 test("a Codex session that fails to start leaves no copy of the login behind", async () => {
   saveLogin(0);
   const folder = join(home, "lead");

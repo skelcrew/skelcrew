@@ -25,11 +25,12 @@ export function harnessNamed<Name extends HarnessName>(name: Name): (typeof harn
 }
 
 // Keeps the copies of Skelcrew's logins its agents get: removes the copy of each session `runs`
-// says ended, and renews the login when due. Only Codex agents get copies. The sweep comes first,
-// so a login that can't be renewed leaves no ended session's copy behind.
+// says ended, and renews the login when due. Only Codex agents get copies. The two run side by
+// side, so a host slow to answer never holds up a renewal, nor a login that can't be renewed
+// the sweep.
 export async function keepLogins(home: string, runs: (name: string) => Promise<boolean>) {
-  await sweepLogins(home, runs);
-  await renewLogin(home);
+  const [swept, renewed] = await Promise.allSettled([sweepLogins(home, runs), renewLogin(home)]);
+  for (const outcome of [swept, renewed]) if (outcome.status === "rejected") throw outcome.reason;
 }
 
 // Removes every review's copy of a login, as the daemon starts, before any review runs.

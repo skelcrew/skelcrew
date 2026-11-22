@@ -19,8 +19,13 @@ const allRepositories = (db: Database) =>
 
 // Returns whether the lead or builder whose session has the given name may still run. One that
 // is starting runs, as does one whose host doesn't answer for now or whose host plugin is gone,
-// as it may still run there.
-async function agentNamedRuns(db: Database, sessions: string, name: string): Promise<boolean> {
+// as it may still run there. `unsure` hears why when its host can't say.
+async function agentNamedRuns(
+  db: Database,
+  sessions: string,
+  name: string,
+  unsure: (why: string) => void = () => {},
+): Promise<boolean> {
   try {
     const thread = db.query("SELECT folder FROM task_threads WHERE folder = ?").get(name);
     if (thread) {
@@ -32,13 +37,18 @@ async function agentNamedRuns(db: Database, sessions: string, name: string): Pro
       if (leadOf(db, owner, repo).name !== name) continue;
       if (leadAgent(owner, repo).state().busy) return true;
       const lead = await leadSession(db, sessions, owner, repo);
+      if (lead === null) unsure("its session host isn't installed");
       return lead === null || (await agentRuns(lead.host, lead.id));
     }
     return false;
-  } catch {
+  } catch (error) {
+    unsure(errorText(error));
     return true;
   }
 }
+
+// The agents on the shared login whose host couldn't say whether they run, logged once each.
+const unsureLogged = new Set<string>();
 
 // Returns the Codex leads and builders that may still run on the login an earlier release
 // shared, but for `starting`, the one whose start asks, each with its repository.
@@ -53,9 +63,17 @@ async function onSharedLogin(db: Database, sessions: string, starting: string | 
       candidates.push({ name: lead.name, owner, repo });
   }
   const running = [];
-  for (const agent of candidates)
-    if (agent.name !== starting && (await agentNamedRuns(db, sessions, agent.name)))
-      running.push(agent);
+  for (const agent of candidates) {
+    if (agent.name === starting) continue;
+    const unsure = (why: string) => {
+      if (unsureLogged.has(agent.name)) return;
+      unsureLogged.add(agent.name);
+      console.log(
+        `Skelcrew can't tell whether ${agent.name} still runs on the login Codex agents shared, so it leaves that login as it is and asks again: ${why}`,
+      );
+    };
+    if (await agentNamedRuns(db, sessions, agent.name, unsure)) running.push(agent);
+  }
   return running;
 }
 

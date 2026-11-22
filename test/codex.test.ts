@@ -634,4 +634,26 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(copiesOf("app-12").length).toBe(1);
     expect(existsSync(join(data(), "codex-login"))).toBe(false);
   }, 60_000);
+
+  test("a builder whose host can't say whether it runs keeps the shared login as it is", async () => {
+    saveLogin();
+    await startApp12();
+    const daemon = running.shift();
+    daemon?.kill();
+    await daemon?.exited;
+    const own = join(data(), "codex-own-login");
+    mkdirSync(join(data(), "codex-login"));
+    renameSync(join(own, "auth.json"), join(data(), "codex-login", "auth.json"));
+    for (const copy of copiesOf("app-12")) rmSync(copy, { recursive: true });
+    // Its builder ended, but on a host plugin that is gone, which can't say so.
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    setThread("UPDATE threads SET host = 'gone', host_id = 'x' WHERE folder = 'app-12'");
+    const renewals = { CODEX_REFRESH_TOKEN_URL_OVERRIDE: "http://127.0.0.1:9/oauth/token" };
+    startDaemon(socket, { ...env(), ...renewals }, running);
+    await until(() => read(join(lead(), "typed")).includes("still run: app-12."));
+    // Several looks later, the shared login is still as it was.
+    await Bun.sleep(12_000);
+    expect(existsSync(join(data(), "codex-login", "auth.json"))).toBe(true);
+    expect(existsSync(join(own, "auth.json"))).toBe(false);
+  }, 60_000);
 });

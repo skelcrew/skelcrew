@@ -175,15 +175,18 @@ export const startedShared = (home: string, name: string) =>
   sharedLoginLeft(home) && !sessionFolders(home).some((folder) => sessionOf(folder) === name);
 
 // Removes the copy of each session `runs` says doesn't run. A session still starting runs, and
-// one `runs` can't answer for keeps its copy, while the rest are still looked at.
+// one `runs` can't answer for keeps its copy. Each is asked about apart, so one slow to answer
+// holds up no other.
 export async function sweepLogins(
   home: string,
   runs: (name: string) => Promise<boolean>,
 ): Promise<void> {
-  for (const folder of sessionFolders(home)) {
-    const running = await runs(sessionOf(folder)).catch(() => true);
-    if (!running) dropLogin(join(sessionCopies(home), folder));
-  }
+  await Promise.all(
+    sessionFolders(home).map(async (folder) => {
+      const running = await runs(sessionOf(folder)).catch(() => true);
+      if (!running) dropLogin(join(sessionCopies(home), folder));
+    }),
+  );
 }
 
 // Removes every review's copy. As the daemon starts, no review runs yet.
