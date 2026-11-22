@@ -385,6 +385,7 @@ export type PrPage = z.infer<typeof PrPage>;
 // `filed` is who filed a task of the backlog and when, as an ISO time, or null for any other.
 // `item` is its item in Needs you, the lead's or else Skelcrew's own, with its short title and its
 // options, or null with none.
+// `decisions` and `mustStayTrue` are what bounds its reviews, kept once its thread is done.
 export const TaskView = z.object({
   task: z.string(),
   stage: Stage,
@@ -409,6 +410,8 @@ export const TaskView = z.object({
     .object({ title: z.string().default(""), text: z.string(), options: z.array(z.string()) })
     .nullable()
     .default(null),
+  decisions: z.array(z.object({ by: z.enum(["lead", "human"]), text: z.string() })).default([]),
+  mustStayTrue: z.array(z.string()).default([]),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -547,6 +550,8 @@ export function readTask(db: Database, which: Which): TaskView {
       text: item.text.split("\n").map(removeControlCodes).join("\n"),
       options: item.options.map(removeControlCodes),
     },
+    decisions: (thread?.decisions ?? []).map(({ by, text }) => ({ by, text: safeText(text) })),
+    mustStayTrue: (thread?.stay_true ?? []).map(safeText),
   };
 }
 
@@ -818,6 +823,8 @@ export function printTask(task: TaskView, json: boolean): void {
       task.item ? [task.item.title, task.item.text, ...options].join("\n") : "",
     ],
     ["Description", task.body],
+    ["Decisions", task.decisions.map(({ by, text }) => `- ${text} (${by})`).join("\n")],
+    ["Must stay true", task.mustStayTrue.map((item, n) => `${n + 1}. ${item}`).join("\n")],
     [
       "Not blocking, from the latest review",
       task.notBlocking.map((finding, n) => `${n + 1}. ${finding}`).join("\n"),

@@ -81,6 +81,29 @@ export async function askCommand(args: string[]): Promise<void> {
   console.log(`Asked the human about ${about}. Their answer comes back to you as a note.`);
 }
 
+export async function decideCommand(args: string[]): Promise<void> {
+  const [command, named, ...rest] = args;
+  const { decideOn } = await import("../client.ts");
+  const flag = rest.indexOf("--asked-file");
+  const askedFile = flag < 0 ? undefined : rest[flag + 1];
+  const words = flag < 0 ? rest : rest.toSpliced(flag, 2);
+  const task = splitTaskName(named);
+  const [text] = words;
+  if (!task || words.length !== 1 || !text?.trim() || (flag >= 0 && askedFile === undefined))
+    usage(command, named);
+  const asked = askedFile === undefined ? undefined : await readAsked(askedFile);
+  console.log(await decideOn(...task, text, asked));
+}
+
+export async function keepCommand(args: string[]): Promise<void> {
+  const [command, named, ...items] = args;
+  const { keepTrueOn } = await import("../client.ts");
+  const task = splitTaskName(named);
+  if (!task || items.length < 2 || items.length > 4 || items.some((item) => !item.trim()))
+    usage(command, named);
+  console.log(await keepTrueOn(...task, items));
+}
+
 export async function tellCommand(args: string[]): Promise<void> {
   const command = args[0];
   const { briefOtherLead, tellOn, tellTheLead } = await import("../client.ts");

@@ -1,7 +1,16 @@
 // Skelcrew's command line: reads the command and hands it to the file that does it.
 
 import { runByAgent } from "./agents/sandbox.ts";
-import { agentCommand, askCommand, notifyCommand, tellCommand } from "./cli/agents.ts";
+
+import {
+  agentCommand,
+  askCommand,
+  decideCommand,
+  keepCommand,
+  notifyCommand,
+  tellCommand,
+} from "./cli/agents.ts";
+
 import { usage } from "./cli/input.ts";
 import { machineCommand } from "./cli/machine.ts";
 import { installCommand, pluginCommand } from "./cli/plugins.ts";
@@ -126,6 +135,10 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
       return askCommand(words);
     case "tell":
       return tellCommand(words);
+    case "decide":
+      return decideCommand(words);
+    case "keep":
+      return keepCommand(words);
     case "notify":
       return notifyCommand(words);
     case "check":

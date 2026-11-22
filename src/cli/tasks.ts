@@ -51,13 +51,28 @@ export async function addCommand(args: string[]): Promise<void> {
   const [repository, ...rest] = args;
   const { createTask, fileTask, startNew } = await import("../client.ts");
   if (!repository) usage("add");
-  const named = ["--issue", "--start", "--asked-file", "--short", "--flow", "--from", "--now"];
+  const named = [
+    "--issue",
+    "--start",
+    "--asked-file",
+    "--short",
+    "--flow",
+    "--keep",
+    "--from",
+    "--now",
+  ];
   const onStdin = named.includes(rest[0] ?? "");
   const words = onStdin ? [] : rest.slice(0, 2);
   const options = onStdin ? rest : rest.slice(2);
   const flags = new Map<string, string>();
+  const keep: string[] = [];
   for (let at = 0; at < options.length; at++) {
     const [flag = "", value] = [options[at], options[at + 1]];
+    if (flag === "--keep" && value?.trim()) {
+      keep.push(value);
+      at++;
+      continue;
+    }
     if (flag === "--from")
       throw new Error("sc add takes no --from. Only sc start <issue> starts from another branch.");
     if (flag === "--now")
@@ -78,7 +93,8 @@ export async function addCommand(args: string[]): Promise<void> {
   const short = flags.get("--short");
   const flow = flags.get("--flow");
   if (askedFile !== undefined && !issue) usage("add");
-  if ((short !== undefined || flow !== undefined) && !start) usage("add");
+  if ((short !== undefined || flow !== undefined || keep.length > 0) && !start) usage("add");
+  if (keep.length === 1 || keep.length > 4) usage("add");
   if (issue && start)
     throw new Error(
       "sc add takes --issue or --start, not both. Open the issue with --issue, then run sc start on the task it names.",
@@ -94,7 +110,7 @@ export async function addCommand(args: string[]): Promise<void> {
   }
   if (!given) usage("add");
   if (start) {
-    console.log(await startNew(repository, given.title, given.body, short, flow));
+    console.log(await startNew(repository, given.title, given.body, short, flow, keep));
     return;
   }
   if (issue) {

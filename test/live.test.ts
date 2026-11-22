@@ -240,6 +240,8 @@ test("what is left fills the live view from the bottom up", async () => {
       filed: null,
       notBlocking: [],
       item: null,
+      decisions: [],
+      mustStayTrue: [],
     },
     findings: [],
     updates: [],

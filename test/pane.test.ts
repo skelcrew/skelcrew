@@ -89,6 +89,8 @@ const details: Details = {
     filed: null,
     notBlocking: [],
     item: null,
+    decisions: [],
+    mustStayTrue: [],
   },
   findings: [
     "The limit resets per process, not per user",

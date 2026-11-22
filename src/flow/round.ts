@@ -536,6 +536,17 @@ async function reviewRound(
             last,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
+            bounds: async () => {
+              const fresh = readThread(db, folder);
+              const shown =
+                fresh.pr === null
+                  ? null
+                  : await refreshPr(db, repository, fresh.pr).then(
+                      (pr) => pr?.body ?? null,
+                      () => null,
+                    );
+              return { decisions: fresh.decisions, stayTrue: fresh.stay_true, description: shown };
+            },
             base: from,
             test: repositoryCommands(thread).test,
             socket: reviewSocket(thread.folder),
@@ -633,7 +644,7 @@ async function actOnVerdict(
     kept: kept === null ? null : { base, approved: kept },
     now: Date.now(),
   };
-  const { change, round, tell, why, note, holds } = verdictReached(thread, reached);
+  const { change, round, tell, why, note, holds, choices } = verdictReached(thread, reached);
   // A newer submit, or sc stop, may have cancelled the round, and the thread is then its to
   // change. Nothing is awaited from this check until the verdict is saved, so a cancel either
   // comes first and nothing is saved or posted, or comes after and finds the verdict saved.
@@ -654,14 +665,15 @@ async function actOnVerdict(
   const quiet = !neededYou(thread) && holds ? { noting: null } : {};
   // Without a forge the verdict is posted at once, with nothing to put on a PR, and its note is
   // saved with it.
+  const name = threadName(db, thread);
   db.transaction(() => {
     record(db, folder, { ...change, ...quiet }, why);
     noteLimit(db, sessions, folder, note);
+    if (choices !== null) noteForLead(db, sessions, repository, `${name}${choices}`);
   })();
   // A review that failed doesn't need you: the lead hears of it, with the error the harness
   // gave, and can run it again, or mark the thread if only you can fix what stops it.
   if (failed) {
-    const name = threadName(db, thread);
     const said =
       verdict.verdict === "failed" ? `'s review failed: ${verdict.body}` : `: ${verdict.body}`;
     const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
@@ -1256,12 +1268,10 @@ function prBase(db: Database, thread: Thread): string {
 }
 
 // Returns what the reviewer gets of the last round the thread's reviewer finished: its findings,
-// the PR's description, and the diff from the commit it reviewed to this one, read in Skelcrew's
-// clone, which the builder can't change. The description is what the forge answers now, never
-// Skelcrew's copy, which can be a poll behind an edit or hold a PR the forge no longer shows. It
-// is null when there is no PR or the forge doesn't give it, so no trade-off counts as stated. A
-// commit no longer in this one's history, such as after a force push, gives no diff. Null on the
-// first round.
+// and the diff from the commit it reviewed to this one, read in Skelcrew's clone, which the
+// builder can't change. On a new commit it asks the forge for the PR first, so the review's base
+// comes from what the forge shows now, as a PR can be retargeted. A commit no longer in this one's
+// history, such as after a force push, gives no diff. Null on the first round.
 async function lastRound(
   db: Database,
   thread: Thread,
@@ -1270,17 +1280,15 @@ async function lastRound(
 ): Promise<LastRound | null> {
   const last = lastReviewed(thread);
   if (last === null) return null;
-  if (last.commit === sha) return { ...last, description: null, since: "same commit" };
+  if (last.commit === sha) return { ...last, since: "same commit" };
   const { pr } = thread;
-  const shown =
-    pr === null ? null : await refreshPr(db, repositoryOf(db, thread), pr).catch(() => null);
+  if (pr !== null) await refreshPr(db, repositoryOf(db, thread), pr).catch(() => null);
   const git = (...args: string[]) =>
     Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
   const kept = git("merge-base", "--is-ancestor", last.commit, sha).success;
   const diff = kept ? git("diff", last.commit, sha) : null;
   return {
     ...last,
-    description: shown?.body ?? null,
     since: diff?.success ? { diff: diff.stdout.toString() } : "dropped",
   };
 }

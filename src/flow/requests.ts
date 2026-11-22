@@ -16,6 +16,9 @@ const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 // blanks is refused. A body that passes keeps its spaces as they were.
 const TaskBody = z.string().regex(/\S/);
 
+// What a task's change must keep true: two to four properties, none blank.
+const KeepTrue = z.array(z.string().regex(/\S/)).min(2).max(4);
+
 // A thread's short title for the sidebar, which says nothing when blank, so one is refused.
 const ShortTitle = z.string().trim().min(1);
 
@@ -72,6 +75,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     from: Branch.optional(),
     short: ShortTitle.optional(),
     flow: FlowName.optional(),
+    keep: KeepTrue.optional(),
     // Starts it at once, over the repository's limits.threads, for sc start --now.
     now: z.literal(true).optional(),
   }),
@@ -82,6 +86,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     body: TaskBody,
     short: ShortTitle.optional(),
     flow: FlowName.optional(),
+    keep: KeepTrue.optional(),
   }),
   z.object({
     command: z.literal("review"),
@@ -139,6 +144,19 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     repo: z.string(),
     task: TaskId,
     text: z.string().min(1),
+  }),
+  z.object({
+    command: z.literal("decide"),
+    repo: z.string(),
+    task: TaskId,
+    text: z.string().regex(/\S/),
+    asked: z.string().regex(/\S/).optional(),
+  }),
+  z.object({
+    command: z.literal("keep true"),
+    repo: z.string(),
+    task: TaskId,
+    items: KeepTrue,
   }),
   // `commit` is the PR's head you saw approved: the forge merges only while it is still the head.
   z.object({
@@ -271,6 +289,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // is always safe. Builders and reviewers can't. Only the lead posts items in the inbox, and only you
 // answer them: a builder brings what it needs to the lead. Only a lead may brief another
 // repository's lead, as each lead plans its own repository's work.
+// Only a lead records a task's decisions and what its change must keep true, as a builder must
+// never change what it is reviewed against.
 export type Caller =
   | "you"
   | { lead: { owner: string; repo: string } }
@@ -331,6 +351,8 @@ export const allowed = {
     "merge cancel",
     "ask",
     "tell",
+    "decide",
+    "keep true",
     "brief lead",
     "notify",
     "question asked",

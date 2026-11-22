@@ -61,6 +61,8 @@ const state: Thread = {
   assigned: false,
   changed: null,
   updates: [],
+  decisions: [],
+  stay_true: [],
   state: null,
   host: "tmux",
   host_id: null,

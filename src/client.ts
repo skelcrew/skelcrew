@@ -142,6 +142,7 @@ export async function startOn(
   short?: string,
   flow?: string,
   now?: true,
+  keep: string[] = [],
 ): Promise<string> {
   const reply = await request({
     command: "start",
@@ -151,6 +152,7 @@ export async function startOn(
     ...(short ? { short } : {}),
     ...(flow ? { flow } : {}),
     ...(now ? { now } : {}),
+    ...(keep.length > 0 ? { keep } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
@@ -164,6 +166,7 @@ export async function startNew(
   body: string,
   short?: string,
   flow?: string,
+  keep: string[] = [],
 ): Promise<string> {
   const reply = await request({
     command: "start new",
@@ -172,6 +175,7 @@ export async function startNew(
     body,
     ...(short ? { short } : {}),
     ...(flow ? { flow } : {}),
+    ...(keep.length > 0 ? { keep } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
@@ -402,6 +406,26 @@ export function takeCheckSlot(given: {
 export async function tellOn(repository: string, task: string, text: string): Promise<string> {
   const reply = await request({ command: "tell", repo: repository, task, text });
   return checkReply(z.object({ told: z.string() }), reply).told;
+}
+
+export async function decideOn(
+  repository: string,
+  task: string,
+  text: string,
+  asked: string | undefined,
+): Promise<string> {
+  const given = asked === undefined ? {} : { asked };
+  const reply = await request({ command: "decide", repo: repository, task, text, ...given });
+  return checkReply(z.object({ said: z.string() }), reply).said;
+}
+
+export async function keepTrueOn(
+  repository: string,
+  task: string,
+  items: string[],
+): Promise<string> {
+  const reply = await request({ command: "keep true", repo: repository, task, items });
+  return checkReply(z.object({ said: z.string() }), reply).said;
 }
 
 export async function notifyTheHuman(

@@ -88,8 +88,8 @@ export const RoundEvent = z.discriminatedUnion("kind", [
   // The commit was pushed, and its review is on its way.
   z.object({ kind: z.literal("review started"), at: z.number(), commit: z.string() }),
   // A review's verdict, with the round it took and the limit it was judged by, its reviewer, the
-  // first line of what it said, its findings, those that don't block, the changes it asked for,
-  // and what to post.
+  // first line of what it said, its findings, those that don't block, the choices it left the
+  // lead, none in an event from before them, the changes it asked for, and what to post.
   z.object({
     kind: z.literal("verdict"),
     at: z.number(),
@@ -101,6 +101,7 @@ export const RoundEvent = z.discriminatedUnion("kind", [
     line: z.string(),
     findings: z.array(z.string()),
     notBlocking: z.array(z.string()).optional(),
+    choices: z.array(z.string()).default([]),
     changes: z.string().nullable(),
     posting: Posting.nullable(),
   }),
@@ -612,8 +613,9 @@ type Reached = {
 };
 
 // What a verdict gives back: the change to save, the round's number, Skelcrew's check, what to
-// type into the builder, why, for the log, whether the round limit now holds the changes, and the
-// note for the lead to save with the change, which comes only from its posted event.
+// type into the builder, why, for the log, whether the round limit now holds the changes, the
+// note for the lead to save with the change, which comes only from its posted event, and what the
+// lead hears of the choices the reviewer left it, after the thread's name, or null with none.
 type Reaching = {
   change: Partial<Thread>;
   round: number;
@@ -623,6 +625,7 @@ type Reaching = {
   why: string;
   holds: boolean;
   note: string | null;
+  choices: string | null;
 };
 
 // A review reached its verdict. The builder gets max_rounds rounds of changes. Changes asked for
@@ -672,7 +675,15 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
   const pr = thread.pr;
   const posted =
     (review.verdict === "approve" || review.verdict === "changes") && pr !== null
-      ? { pr, commit: sha, ...review, round }
+      ? {
+          pr,
+          commit: sha,
+          verdict: review.verdict,
+          body: review.body,
+          findings: review.findings,
+          ...(review.notBlocking ? { notBlocking: review.notBlocking } : {}),
+          round,
+        }
       : (roundOf(thread).posting?.review ?? null);
   const limitNote = held ? limitWhy : null;
   const posting = forge
@@ -689,6 +700,7 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
     line: review.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
     findings: "findings" in review ? review.findings : [],
     notBlocking: "findings" in review ? (review.notBlocking ?? []) : [],
+    choices: "choices" in review ? (review.choices ?? []) : [],
     changes,
     posting,
   };
@@ -702,5 +714,20 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
     status: asked && !held ? ("working" as const) : ("waiting" as const),
   } satisfies Partial<Thread>;
   const note = forge ? null : noteNow(saved, limitNote);
-  return { change, round, check, description, tell: saved.telling, why, holds: held, note };
+  const left = verdict.choices;
+  const choices =
+    left.length === 0
+      ? null
+      : `'s reviewer left you ${left.length === 1 ? "a choice, which doesn't" : `${left.length} choices, which don't`} count as changes: ${left.map((choice, n) => `${n + 1}) ${choice.trim()}`).join(" ")} Decide, or ask the human, then record it with sc decide.`;
+  return {
+    change,
+    round,
+    check,
+    description,
+    tell: saved.telling,
+    why,
+    holds: held,
+    note,
+    choices,
+  };
 }
