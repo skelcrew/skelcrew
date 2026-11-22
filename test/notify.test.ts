@@ -77,6 +77,16 @@ await notify.sendNotifications(db);`);
   ]);
 });
 
+test("a question while a mark stands sends nothing more, as the mark stays", () => {
+  const push = fakePlugin(home, "push", ["notifier"]);
+  config("notify:\n  needs-you: push\n");
+  run(`record(db, "app-12", { needs_you_for: "approve the design" }, "marked");
+record(db, "app-12", { asking: true }, "asked a question");
+record(db, "app-12", { asking: false }, "question answered");
+await notify.sendNotifications(db);`);
+  expect(messages(push).map((m) => m.body)).toEqual(["approve the design"]);
+});
+
 test("each type has a limit an hour of what it delivers, and the log says when a message is dropped", () => {
   const push = fakePlugin(home, "push", ["notifier"]);
   config("notify:\n  needs-you: push\n");
@@ -121,6 +131,16 @@ await notify.sendNotifications(db);`);
   const bare = await runSkel(["notify", "--via", "email", "Status", "All green."], env);
   expect(bare.code).toBe(1);
   expect(bare.err).toContain("sc notify was given arguments it doesn't take");
+});
+
+test("messages sent at once still keep to the limit", () => {
+  const push = fakePlugin(home, "push", ["notifier"]);
+  const out = run(`const sends = Array.from({ length: 8 }, (_, i) =>
+  notify.sendAsked(db, { subject: "s" + i, text: "t", words: "text me", via: "push" }).catch((error) => console.log("refused: " + error.message)),
+);
+await Promise.all(sends);`);
+  expect(messages(push)).toHaveLength(5);
+  expect(out.split("refused: ").length - 1).toBe(3);
 });
 
 test("the lead hears when its message wasn't sent, or is too long to send whole", () => {
@@ -216,6 +236,20 @@ notify.queueDigest(db);
 await notify.sendNotifications(db);`);
   const digest = messages(email).find((m) => m.type === "digest");
   expect(digest?.body).toContain("APP-13 · merged");
+});
+
+test("a digest that failed doesn't hide what merged before it from the next one", () => {
+  const email = fakePlugin(home, "email", ["notifier"]);
+  config("notify:\n  digest: email\n  digest_at: '00:00'\n");
+  const day = 24 * 3600 * 1000;
+  const sql = threadSql({ task: "13", status: "done", merged: 1, changed: Date.now() - 3 * day });
+  run(`db.run(\`${sql}\`);
+const insert = "INSERT INTO notifications (type, message, queued, state, via) VALUES ('digest', '{}', ?, ?, 'email')";
+db.run(insert, [Date.now() - 5 * ${day}, "sent"]);
+db.run(insert, [Date.now() - ${day}, "failed"]);
+notify.queueDigest(db);
+await notify.sendNotifications(db);`);
+  expect(messages(email)[0]?.body).toContain("APP-13 · merged");
 });
 
 test("the digest goes once a day, at the time your config sets or else at 08:00", () => {

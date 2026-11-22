@@ -64,7 +64,8 @@ function save(
 ): number {
   db.run(
     `DELETE FROM notifications WHERE queued < ? AND state NOT IN ('waiting', 'sending')
-      AND id IS NOT (SELECT MAX(id) FROM notifications WHERE type = 'digest')`,
+      AND id NOT IN (SELECT MAX(id) FROM notifications WHERE type = 'digest'
+        UNION SELECT MAX(id) FROM notifications WHERE type = 'digest' AND state = 'sent')`,
     [now - kept],
   );
   const clean = {
@@ -106,12 +107,12 @@ async function deliver(db: Database, id: number): Promise<string | null> {
     .parse(db.query("SELECT type, message, via FROM notifications WHERE id = ?").get(id));
   const { type, via } = row;
   const message = Message.parse(JSON.parse(row.message));
-  const sent = z
+  const taken = z
     .object({ n: z.number() })
     .parse(
       db
         .query(
-          "SELECT COUNT(*) AS n FROM notifications WHERE type = ? AND state = 'sent' AND sent >= ?",
+          "SELECT COUNT(*) AS n FROM notifications WHERE type = ? AND state IN ('sent', 'delivering') AND sent >= ?",
         )
         .get(type, Date.now() - hour),
     ).n;
@@ -123,12 +124,13 @@ async function deliver(db: Database, id: number): Promise<string | null> {
     ]);
     return error;
   };
-  if (sent >= perHour[type]) {
+  if (taken >= perHour[type]) {
     console.log(
       `dropped a ${type} message, as at most ${perHour[type]} go each hour: ${message.title}`,
     );
     return end("dropped", `at most ${perHour[type]} such messages go each hour: try again later`);
   }
+  db.run("UPDATE notifications SET state = 'delivering', sent = ? WHERE id = ?", [Date.now(), id]);
   try {
     await callPlugin(db, via, { ask: "notify", type, ...message }, z.null());
     return end("sent", null);
@@ -141,7 +143,7 @@ async function deliver(db: Database, id: number): Promise<string | null> {
 export function noticeNeedsYou(db: Database, thread: Thread): void {
   let mark: string | null;
   try {
-    mark = needsYouFor(thread);
+    mark = needsYouFor(thread) === null ? null : (thread.needs_you_for ?? needsYouFor(thread));
   } catch {
     return;
   }
@@ -255,13 +257,17 @@ export function digestOf(db: Database, since: number): Message {
 export function queueDigest(db: Database, now = new Date()): void {
   if (routeOf("digest") === null) return;
   const { digestAt } = notifySettings();
-  const last = z
-    .object({ last: z.number().nullable() })
-    .parse(
-      db.query("SELECT MAX(queued) AS last FROM notifications WHERE type = 'digest'").get(),
-    ).last;
-  if (!digestDue(now, digestAt, last)) return;
-  queueNotification(db, "digest", digestOf(db, last ?? now.getTime() - 24 * hour), now.getTime());
+  const lastOf = (where: string) =>
+    z
+      .object({ last: z.number().nullable() })
+      .parse(
+        db
+          .query(`SELECT MAX(queued) AS last FROM notifications WHERE type = 'digest'${where}`)
+          .get(),
+      ).last;
+  if (!digestDue(now, digestAt, lastOf(""))) return;
+  const since = lastOf(" AND state = 'sent'") ?? now.getTime() - 24 * hour;
+  queueNotification(db, "digest", digestOf(db, since), now.getTime());
 }
 
 export function notifyProblems(db: Database): string[] {
