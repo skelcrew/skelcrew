@@ -1,0 +1,116 @@
+# Getting started
+
+This guide takes you from nothing to a first merged pull request.
+
+You need macOS or Linux, a GitHub repository of yours, and Claude Code or Codex.
+
+## 1. Install Skelcrew
+
+```sh
+curl -fsSL https://skelcrew.dev/install.sh | sh
+```
+
+This puts `sc` in `~/.local/bin`. It needs no sudo.
+
+If that folder isn't on your PATH, the script says so and gives you the line to add. Add it, then open a new terminal.
+
+## 2. Set up your machine
+
+```sh
+sc install
+```
+
+It first checks for `tmux`, `git`, a sandbox and a coding agent. If one is missing, it tells you what to install, and stops. Install it and run `sc install` again.
+
+Then it asks a few questions:
+
+- Which coding agent your agents run on.
+- Which one runs the reviews, if you have both. A second model catches what the first one misses.
+- A sign-in for your agents. For Claude Code, it asks you to run `claude setup-token` in another terminal and paste the token.
+
+It ends with:
+
+```
+Skelcrew is set up.
+```
+
+You can run it again at any time. It skips what is already done.
+
+## 3. Set up a repository
+
+Go to a checkout of your repository, on its default branch, and run `sc init`:
+
+```sh
+cd ~/code/app
+git switch main
+sc init
+```
+
+It writes `skelcrew.yaml`, `skelcrew.lock` and an `.agents/` folder. These tell Skelcrew how agents work on this repository.
+
+It offers the GitHub plugin. Say yes. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository. From then on, Skelcrew acts on GitHub as `skelcrew[bot]`, never as you.
+
+Skelcrew reads these files only from the default branch. So `sc init` asks:
+
+```
+Commit and push these files to main now? [Y/n]
+```
+
+Say yes. If it can't do that safely, it shows the git commands to run instead.
+
+## 4. Talk to the lead
+
+```sh
+sc
+```
+
+The screen opens. The lead is on the right, and your typing goes to it. The sidebar on the left lists the repository's tasks.
+
+The lead is an agent that knows your repository. You tell it what you want, and it plans the work with you. It never starts anything without your yes.
+
+Its first proposal finishes your setup. It reads your CI and fills in the commands builders use to set up and test the code. Say yes, and it starts that as your first task.
+
+## 5. Your first task
+
+Ask the lead in plain words:
+
+> Add a CSV export to the reports page.
+
+It proposes a task, with a title and a one-line summary. Say yes, and it starts it.
+
+The task gets a name, such as `APP-12`. A builder agent starts work on it, in its own clone and sandbox. Your own checkout is never touched.
+
+You can also start a task from GitHub. Add the `skelcrew` label to an issue, and Skelcrew starts it within a minute or so.
+
+## 6. Merge it
+
+The builder opens a pull request. A reviewer agent reviews it, and the builder fixes what the review asks. This goes on until the review approves it.
+
+Once it is approved and CI passes, the task shows under Ready. Merge it on GitHub as you always do.
+
+Or, in the sidebar, go to the task's row and press `m`. It asks before it merges:
+
+```
+Merge app#7 into main? y/n
+```
+
+Or tell Skelcrew to merge it once it is ready, and walk away:
+
+```sh
+sc merge --when-ready APP-12
+```
+
+## Leaving
+
+Press Alt+Q to leave the screen. You see:
+
+```
+Your agents keep running. Run sc to come back.
+```
+
+They do. Run `sc` again to come back.
+
+## Next
+
+- [The screen](the-screen.md): how to move around.
+- [How a task goes](how-a-task-goes.md): what happens between your yes and the merge.
