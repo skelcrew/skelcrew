@@ -337,7 +337,7 @@ function dropOnServer(machine: Machine, screen: string): Drop {
         const copy = dropPath(folder, file.path);
         const line = dropCommand(copy).map(quoted).join(" ");
         const sent = Bun.spawn(quiet(line), {
-          stdin: file.bytes,
+          stdin: Bun.file(file.snapshot),
           stdout: "ignore",
           stderr: "ignore",
         });

@@ -3,7 +3,9 @@
 // is on your laptop. So a layer between your terminal and the screen copies each dropped file into
 // the agent's own folder and passes the paste on with the copies' paths. Everything else passes
 // through untouched.
-import { realpath, stat } from "node:fs/promises";
+import { constants, lstatSync, readdirSync, rmSync } from "node:fs";
+import { copyFile, mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 // The folder inside an agent's folder that holds its dropped files. It ignores itself in git, so
@@ -42,9 +44,7 @@ export function answeredFolder(answer: string): string | null {
 
 // The largest file copied. A paste waits while its files are copied, and over sc --remote while
 // they go up a link that may be slow, so a bigger file would hold up your typing for long. Agents
-// take far smaller files as images anyway. A bigger file keeps its path. It is also the most the
-// screen holds in memory at once, for all the drops on their way, and a file that would pass it
-// keeps its path too.
+// take far smaller files as images anyway. A bigger file keeps its path.
 export const largestDrop = 100 * 1024 * 1024;
 
 // A paste longer than this is never only dropped files' paths, so it goes on without waiting
@@ -125,8 +125,39 @@ function writtenLike(written: string, path: string): string {
   return path.replace(/[\s\\'"$`!&*()|;<>?[\]{}#~^]/g, "\\$&");
 }
 
-// A dropped file, read when it was dropped: its path as pasted and what it holds.
-export type Dropped = { path: string; bytes: Uint8Array };
+// A dropped file, as it was when it was dropped: its path as pasted, and a copy of it made then,
+// in a folder of the screen's own that only you can read.
+export type Dropped = { path: string; snapshot: string };
+
+// How the folder of each dropped file's snapshot is named in your temporary folder, before the
+// screen's process ID and a random part. Only you can read it.
+const snapshotsStart = "skelcrew-drop-";
+
+// Deletes the snapshots a screen left in your temporary folder, such as one that was killed
+// before it could. `ended` says whether a screen with that process ID has ended, so a screen
+// running in another terminal keeps the drops it is sending.
+function clearSnapshots(ended: (pid: number) => boolean): void {
+  for (const name of readdirSync(tmpdir())) {
+    const pid = Number(name.match(/^skelcrew-drop-(\d+)-/)?.[1]);
+    if (!pid || !ended(pid)) continue;
+    const folder = join(tmpdir(), name);
+    try {
+      const found = lstatSync(folder);
+      if (found.isDirectory() && found.uid === userInfo().uid)
+        rmSync(folder, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+// Says whether the process with this ID has ended. One of another user's is still running.
+function hasEnded(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "EPERM");
+  }
+}
 
 // Returns where a dropped file's copy goes in an agent's folder: a folder of its own, so two
 // files of the same name never meet, keeping the file's name, which the agent sees.
@@ -179,7 +210,7 @@ export function copyDrops(folder: string, files: Dropped[]): Promise<(string | n
       if (await readableBy(folder, file.path)) return null;
       const copy = dropPath(folder, file.path);
       const copying = Bun.spawn(dropCommand(copy), {
-        stdin: file.bytes,
+        stdin: Bun.file(file.snapshot),
         stdout: "ignore",
         stderr: "ignore",
       });
@@ -250,33 +281,31 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // Whether a drop's files are on their way, and what you sent meanwhile.
   let dropping = false;
   const waiting: Buffer[] = [];
-  // How many bytes of dropped files are held in memory, read and not yet copied.
-  let heldBytes = 0;
-  // Reads a dropped file at once, as macOS deletes a screenshot's file within seconds of its
-  // drop, and a drop onto a server's screen takes a while to learn where the file goes. Only a
-  // regular file, or a link to one, that you can read and that isn't over largestDrop is read,
-  // and only while all the files held stay within largestDrop too, so several big drops never
-  // fill the screen's memory. Any other gives null and keeps its path. It reads without holding
-  // up the screen, as a disk can be slow to answer.
+  // Copies a dropped file at once, as macOS deletes a screenshot's file within seconds of its
+  // drop, and a drop onto a server's screen takes a while to learn where the file goes. The copy
+  // is on disk, a clone where the disk can make one, so drops never fill the screen's memory.
+  // Only a regular file, or a link to one, that you can read and that isn't over largestDrop is
+  // copied. Any other gives null and keeps its path. It copies without holding up the screen, as
+  // a disk can be slow to answer.
   const readDropped = async (path: string): Promise<Dropped | null> => {
-    let size = 0;
+    let folder = "";
     try {
       const found = await stat(path);
-      if (!found.isFile() || heldBytes + found.size > largestDrop) return null;
-      size = found.size;
-      heldBytes += size;
-      const bytes = await Bun.file(path).bytes();
-      if (bytes.length > size) throw new Error("the file grew as it was read");
-      heldBytes -= size - bytes.length;
-      return { path, bytes };
+      if (!found.isFile() || found.size > largestDrop) return null;
+      folder = await mkdtemp(join(tmpdir(), `${snapshotsStart}${process.pid}-`));
+      const snapshot = join(folder, "file");
+      await copyFile(path, snapshot, constants.COPYFILE_FICLONE);
+      if ((await stat(snapshot)).size > largestDrop)
+        throw new Error("the file grew as it was copied");
+      return { path, snapshot };
     } catch {
-      heldBytes -= size;
+      if (folder) await rm(folder, { recursive: true, force: true });
       return null;
     }
   };
-  // Lets go of a file once it is copied or no drop needs it.
+  // Deletes a dropped file's snapshot once it is copied or no drop needs it.
   const letGo = (file: Dropped | null) => {
-    if (file) heldBytes -= file.bytes.length;
+    if (file) rm(dirname(file.snapshot), { recursive: true, force: true }).catch(() => {});
   };
 
   // The files of drops that came while another was on its way, read as they came: by path, one
@@ -497,6 +526,7 @@ export async function runWithDrops(
   drop: Drop,
   env: Record<string, string | undefined> = process.env,
 ): Promise<number> {
+  clearSnapshots(hasEnded);
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     return Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
   // Your terminal is set raw, with nothing done to what goes out either, so the command's own
@@ -534,5 +564,6 @@ export async function runWithDrops(
     process.off("SIGWINCH", resized);
     terminal.close();
     if (saved) stty(saved);
+    clearSnapshots((pid) => pid === process.pid);
   }
 }
