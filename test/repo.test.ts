@@ -35,7 +35,7 @@ const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 
 // What the fake daemon answers when asked for a lead.
 let daemonReply = "";
-// How the fake daemon takes a request to end a lead: it ends it, never answers as a busy one
+// How the fake daemon takes a request to end a lead: it closes the tab and ends it, never answers as a busy one
 // would, drops the connection, answers in a way sc can't read, or fails while another close has
 // closed the tab meanwhile.
 let endLead: "ends" | "busy" | "drops" | "garbled" | "fails" = "ends";
@@ -81,7 +81,12 @@ beforeEach(async () => {
       if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
       if (JSON.parse(data.toString()).command === "end lead") {
         appendFileSync(join(home, "calls"), "daemon end lead\n");
-        if (endLead === "ends") return connection.end('{"ended":true}\n');
+        if (endLead === "ends") {
+          const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+          db.run("UPDATE repositories SET tab_closed = 1");
+          db.close();
+          return connection.end('{"ended":true}\n');
+        }
         if (endLead === "drops") return connection.destroy();
         if (endLead === "garbled") return connection.end('{"over":"there"}\n');
         if (endLead === "fails") {

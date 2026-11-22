@@ -1,9 +1,9 @@
 // The sidebar: the live left pane of the screen, which is the list of the open repository. Its
 // lead is on top, then Needs you and the six stages, as sc --list shows them. The right side
 // follows the row you are on: the lead's session on the lead's row, a task's details on a task's.
-// The sidebar also keeps the top rows up to date, the header with its tabs and the top of the
-// boxes, tells the footer what to say, switches tabs, and closes or removes the open repository
-// when you ask.
+// The spinners on the marks of agents at work turn here. The sidebar also keeps the top rows up
+// to date, the header with its tabs and the top of the boxes, tells the footer what to say,
+// switches tabs, and closes or removes the open repository when you ask.
 import {
   attachCommand,
   attachThen,
@@ -23,7 +23,14 @@ import { doing, watchForStalls } from "../flow/stall.ts";
 import { cloneOf, liveThreads } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
-import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
+import {
+  drawRows,
+  enterAttaches,
+  listShare,
+  type Spin,
+  spinner,
+  type Target,
+} from "../list/layout.ts";
 import {
   buildersNote,
   listRows,
@@ -187,6 +194,7 @@ const refused = "refused";
 // its lead's host with, empty for tmux.
 // tmux brings it the Alt keys and clicks, and your typing while a task's details show. It looks
 // again each second, and writes only when something changed, as over a slow link each write costs.
+// Only the spinners turn in between, and only on this machine, each by its own cell.
 export async function runSidebar(
   agents: string,
   session: string,
@@ -273,6 +281,11 @@ export async function runSidebar(
   let asking: Asking | null = null;
   let working = false;
   let lastFrame = "";
+  // The spinners on the marks of agents at work, where the last frame drew them, and the frame
+  // they show. They turn only on this machine, as over sc --remote each turn would cost a write.
+  let spins: Spin[] = [];
+  let turn = 0;
+  const spinning = where === "";
   let lastTop = "";
   let lastFooter = "";
   // The notice's lines, above the rest, which has the height that is left.
@@ -436,9 +449,10 @@ export async function runSidebar(
     const keys = narrow && !typingRight ? keyLines(lastFooter, room) : [];
     const rowsHeight = Math.max(height - 1 - keys.length, 1);
     const drawn = closing
-      ? { lines: questionLines(closingText(closing).lines, room), targets: [], top }
-      : drawRows(rows, headings, here, top, room, rowsHeight);
+      ? { lines: questionLines(closingText(closing).lines, room), targets: [], top, spins: [] }
+      : drawRows(rows, headings, here, top, room, rowsHeight, spinning);
     top = drawn.top;
+    spins = drawn.spins.map((spin) => ({ ...spin, line: notice.length + 1 + spin.line }));
     targets = [...notice.map((): Target => null), null, ...drawn.targets];
     const below = Math.max(rowsHeight - drawn.lines.length, 0);
     const padded = closing || keys.length > 0;
@@ -450,6 +464,16 @@ export async function runSidebar(
     doing("drawing the sidebar", () =>
       process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`),
     );
+    drawSpinners();
+  };
+  // Draws each spinner's cell alone, at the frame it is on, so turning one rewrites nothing else.
+  const drawSpinners = () => {
+    const shown = spinner.charAt(turn % spinner.length);
+    const cells = spins.map(
+      ({ line, column, cell }) =>
+        `\x1b[${line + 1};${column + 1}H${cell.replace(spinner.charAt(0), shown)}`,
+    );
+    if (cells.length > 0) doing("turning the spinners", () => process.stdout.write(cells.join("")));
   };
 
   // Shows the rows of the open sections again, keeping you on the same row by its name, or at
@@ -942,6 +966,11 @@ export async function runSidebar(
   process.on("SIGWINCH", refresh);
   refresh();
   setInterval(refresh, 1000);
+  if (spinning)
+    setInterval(() => {
+      turn++;
+      drawSpinners();
+    }, 250);
   await new Promise((gone) => process.stdin.on("close", gone));
   process.exit(0);
 }

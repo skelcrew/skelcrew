@@ -136,8 +136,6 @@ test("a file dropped while your typing goes to the sidebar presses none of its k
   await ready("lead");
   press("M-S-Down");
   await until(onDetails, "APP-12's details");
-  // Everything but the last line, whose load changes on its own.
-  const shown = () => seen().trimEnd().split("\n").slice(0, -1).join("\n");
   const before = shown();
   type(`\x1b[200~${notes}\x1b[201~`);
   await Bun.sleep(500);
@@ -164,8 +162,15 @@ async function onAppDetails(): Promise<string> {
   return `\x1b[200~${join(dir, "notes.txt")}\x1b[201~`;
 }
 
-// Everything on the screen but the last line, whose load changes on its own.
-const shown = () => seen().trimEnd().split("\n").slice(0, -1).join("\n");
+// Everything on the screen but the last line, whose load changes on its own, with each spinner
+// on one frame, as they turn on their own too.
+const shown = () =>
+  seen()
+    .trimEnd()
+    .split("\n")
+    .slice(0, -1)
+    .join("\n")
+    .replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠋");
 
 // A terminal's read can end anywhere, so a paste's start can come cut in two.
 // The two pieces of each cut come over a second apart, as a slow read can bring them.
@@ -185,13 +190,13 @@ test("a paste whose end comes cut in two still ends, however late its rest, so t
   const pasted = await onAppDetails();
   const end = pasted.length - "\x1b[201~".length;
   for (let at = end + 1; at < pasted.length; at++) {
-    const open = /[○●] 12\b/.test(seen());
+    const open = /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/.test(seen());
     intoSidebar(pasted.slice(0, at));
     await Bun.sleep(1200);
     intoSidebar(pasted.slice(at));
     // 2 opens or closes Building, so the paste ended and nothing in it acted.
     intoSidebar("2");
-    await until(() => /[○●] 12\b/.test(seen()) !== open, "Building to open or close");
+    await until(() => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/.test(seen()) !== open, "Building to open or close");
   }
 }, 60_000);
 

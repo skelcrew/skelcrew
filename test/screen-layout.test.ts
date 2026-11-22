@@ -119,7 +119,7 @@ test("the boxes stay whole however the terminal is resized", async () => {
     // Right after a resize you can see the old frame, cut to the new size.
     const whole = () =>
       boxesWhole(height ?? 0, width) &&
-      seen().split("○ lead").length === 2 &&
+      seen().split("◆ Lead").length === 2 &&
       seen().includes("⌥Q quit");
     await until(whole, "the boxes to be whole");
   }
@@ -136,7 +136,7 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
   // lines at once, before the sidebar has drawn its rows at the new width, so the wait is for both,
   // with you still on the lead's row.
   await until(
-    () => boxesWhole(30) && seen().split("○ lead").length === 2 && onLead(),
+    () => boxesWhole(30) && seen().split("◆ Lead").length === 2 && onLead(),
     "the sidebar to be whole, on the lead's row",
   );
 });

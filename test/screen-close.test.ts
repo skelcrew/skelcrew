@@ -198,11 +198,14 @@ test("closing the last tab leaves the screen on how to open a repository, until 
   );
   expect(footer()).toBe("  q/⌥Q quit");
   expect(screenSessions()).toHaveLength(1);
-  expect(seen()).not.toMatch(/[○●] 12\b/);
+  expect(seen()).not.toMatch(/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
   // Opening app again, such as with sc in another terminal, brings its tab back here.
   sql("UPDATE repositories SET tab_closed = 0 WHERE repo = 'app'");
   agent("lead");
-  await until(() => seen().includes("I am lead") && /[○●] 12\b/.test(seen()), "app again");
+  await until(
+    () => seen().includes("I am lead") && /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/.test(seen()),
+    "app again",
+  );
 });
 
 // Adding or removing a repository can rename others while the question is open, and a name
