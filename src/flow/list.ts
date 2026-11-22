@@ -704,16 +704,18 @@ function happening(task: TaskRow): string {
 // out of sight.
 const titleRoom = 40;
 
-// Prints tasks for sc ls: as JSON for tools, or else as a table with each task's name, its stage,
-// its short title or its title, and what is happening on it.
+// Prints tasks for sc ls: as JSON for tools, or else as a table with each task's name, its issue
+// as its tracker writes it, such as #483, its stage, its short title or its title, and what is
+// happening on it. sc show gives the issue's link.
 export function printTasks(tasks: TaskRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(tasks));
   else if (tasks.length === 0) console.log("There are no tasks.");
   else
     table(
-      ["TASK", "STAGE", "TITLE", "STATUS"],
+      ["TASK", "ISSUE", "STAGE", "TITLE", "STATUS"],
       tasks.map((task) => [
         task.task,
+        task.issue ?? "",
         task.stage,
         fitted(task.short ?? task.title, titleRoom),
         happening(task),

@@ -340,12 +340,12 @@ describe("sc ls", () => {
     const listed = await skel(["ls"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "TASK    STAGE    TITLE                                     STATUS\n" +
-        "APP-9   working  Send people back to the page they came …  failed\n" +
-        "APP-12  working  JSON export                               working\n" +
-        "SITE-7  working  New landing page                          waiting · needs you\n" +
-        "SITE#8  issue    Fix the footer\n" +
-        "APP#10  issue    Fix login\n",
+      "TASK    ISSUE  STAGE    TITLE                                     STATUS\n" +
+        "APP-9   #9     working  Send people back to the page they came …  failed\n" +
+        "APP-12  #12    working  JSON export                               working\n" +
+        "SITE-7  #7     working  New landing page                          waiting · needs you\n" +
+        "SITE#8  #8     issue    Fix the footer\n" +
+        "APP#10  #10    issue    Fix login\n",
     );
     // They come from Skelcrew's copy, with no call to GitHub.
     expect(read(join(home, "calls"))).not.toContain("issue");
@@ -360,10 +360,10 @@ describe("sc ls", () => {
     const listed = await skel(["ls", "app"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "TASK    STAGE    TITLE                                     STATUS\n" +
-        "APP-10  issue    Fix login                                 done\n" +
-        "APP-9   working  Send people back to the page they came …  failed\n" +
-        "APP-12  working  JSON export                               working\n",
+      "TASK    ISSUE  STAGE    TITLE                                     STATUS\n" +
+        "APP-10  #10    issue    Fix login                                 done\n" +
+        "APP-9   #9     working  Send people back to the page they came …  failed\n" +
+        "APP-12  #12    working  JSON export                               working\n",
     );
     const all = JSON.parse((await skel(["ls", "app", "--all", "--json"])).out);
     expect(all.map((row: { task: string }) => row.task)).toEqual([
@@ -437,7 +437,7 @@ UPDATE tasks SET merged = 1 WHERE task = 't12'`);
     serve();
     await untilAnswers();
     expect((await skel(["ls", "site"])).out).toBe(
-      "TASK    STAGE    TITLE             STATUS\nSITE-7  working  New landing page  waiting · needs you\n",
+      "TASK    ISSUE  STAGE    TITLE             STATUS\nSITE-7  #7     working  New landing page  waiting · needs you\n",
     );
     sql("DELETE FROM threads WHERE repo = 'site'");
     expect((await skel(["ls", "site"])).out).toBe("There are no tasks.\n");
@@ -1069,10 +1069,10 @@ describe("with a forge", () => {
     const listed = await skel(["ls", "app"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "TASK    STAGE    TITLE        STATUS\n" +
-        "APP-14  working  Fix login    waiting · #33 · CI running · reviewing r2\n" +
-        "APP-12  working  JSON export  waiting · #31 · CI failed · changes r3\n" +
-        "APP-9   working  Old          failed\n",
+      "TASK    ISSUE  STAGE    TITLE        STATUS\n" +
+        "APP-14  #14    working  Fix login    waiting · #33 · CI running · reviewing r2\n" +
+        "APP-12  #12    working  JSON export  waiting · #31 · CI failed · changes r3\n" +
+        "APP-9   #9     working  Old          failed\n",
     );
   });
 
@@ -1110,7 +1110,7 @@ describe("with a forge", () => {
       at: "2025-11-16T11:00:00.000Z",
     });
     expect((await skel(["ls", "site"])).out).toContain(
-      "SITE-7  working  Add docs  waiting · approved r1\n",
+      "SITE-7  #7     working  Add docs  waiting · approved r1\n",
     );
     expect((await skel(["show", "app-9"])).out).toContain("\nPR      none\n");
     const gone = await skel(["show", "app-99"]);
