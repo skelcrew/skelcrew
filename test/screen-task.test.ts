@@ -80,8 +80,8 @@ async function onRowLater(action: "show" | "attach", name: string): Promise<stri
 
 // Opens the screen on the lead, then moves the right side to app-7's details.
 async function onApp7(): Promise<void> {
-  sql("UPDATE tasks SET title = 'Login redirect' WHERE task = '7'");
-  sql("UPDATE tasks SET title = 'Signup form' WHERE task = '12'");
+  sql("UPDATE tasks SET title = 'Login redirect' WHERE task = 't7'");
+  sql("UPDATE tasks SET title = 'Signup form' WHERE task = 't12'");
   open("lead");
   await ready("lead");
   onRow("show", "APP-7");
@@ -105,7 +105,7 @@ test("a task's row shows only its details, never its builder's screen, and typin
 
 test("a long description scrolls on the right by Page Down, Page Up and the wheel", async () => {
   const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}.`).join("\n\n");
-  sql(`UPDATE tasks SET title = 'Login redirect', body = '${paragraphs}' WHERE task = '7'`);
+  sql(`UPDATE tasks SET title = 'Login redirect', body = '${paragraphs}' WHERE task = 't7'`);
   open("lead");
   await ready("lead");
   press("M-S-Down");

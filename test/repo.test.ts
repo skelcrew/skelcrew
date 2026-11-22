@@ -530,9 +530,9 @@ ${threadSql({ task: "9", status: "done" })}`);
     "Skelcrew: app has live threads: APP-12, APP-15, APP-16. Stop them first.\n",
   );
   expect(existsSync(clone("simon/app"))).toBe(true);
-  db.run("UPDATE threads SET status = 'done' WHERE task = 12");
-  db.run("UPDATE threads SET status = 'failed' WHERE task = 15");
-  db.run("UPDATE threads SET status = 'done' WHERE task = 16");
+  db.run("UPDATE threads SET status = 'done' WHERE task = 't12'");
+  db.run("UPDATE threads SET status = 'failed' WHERE task = 't15'");
+  db.run("UPDATE threads SET status = 'done' WHERE task = 't16'");
   db.close();
   const removed = await skel(["repo", "rm", "app"]);
   expect(removed.err).toBe("");

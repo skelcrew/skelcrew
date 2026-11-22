@@ -223,6 +223,11 @@ const threadColumns = {
 // saved. `top_round` is the highest round a review that gave a verdict took on the task's thread,
 // so the next round's number goes on above it. `round_log` is the record of the round's events,
 // as JSON, which the round ledger counts the rounds from, and writes `rounds` and `top_round` with.
+// `issue` is the tracker's ID of the task's issue, such as 12, or null for a task with no issue.
+// `issue_ref` is that issue as its tracker wrote it as the task started, such as #12, so it shows
+// so once the issue has left Skelcrew's copy, or null from a plugin that didn't say.
+// `alias` is the name a task had before every task took a number of Skelcrew's, such as 12 or
+// wr4, which still reaches it.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -266,7 +271,28 @@ export const taskColumns = {
   queued_since: "INTEGER",
   top_round: "INTEGER",
   round_log: "TEXT",
+  issue: "TEXT",
+  alias: "TEXT",
+  issue_ref: "TEXT",
 };
+
+// Saves its issue on each task named after it, from before tasks kept their issue apart: one
+// whose ID isn't shaped like Skelcrew's own, a letter or two and a number, such as t1 or wr4, as
+// the copy of the tracker left out every issue of that shape. Any sc run does it as the column
+// is added, and the daemon again as it starts, for a task an earlier release's daemon started
+// meanwhile. A database whose threads haven't moved onto tasks yet keeps the task's columns on
+// its threads.
+export function fillIssues(db: Database, table: "tasks" | "threads" = "tasks"): void {
+  const rows = db
+    .query(
+      `SELECT rowid, CAST(task AS TEXT) AS task FROM ${table} WHERE issue IS NULL AND alias IS NULL`,
+    )
+    .all()
+    .map((row) => z.object({ rowid: z.number(), task: z.string() }).parse(row));
+  for (const { rowid, task } of rows)
+    if (!/^[a-z]{1,2}\d+$/i.test(task))
+      db.run(`UPDATE ${table} SET issue = ? WHERE rowid = ?`, [task, rowid]);
+}
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
 // that ended before Skelcrew kept it. The log's last line that ended the thread says why: its PR
@@ -454,6 +480,7 @@ export function moveToTasks(db: Database): void {
     db.run(`INSERT INTO tasks (${columns}) SELECT ${columns} FROM threads`);
     linkIssues(db);
     recoverMerges(db);
+    fillIssues(db);
     viewThreads(db);
   }).immediate();
 }
@@ -464,6 +491,7 @@ export function moveToTasks(db: Database): void {
 // ran, a task it started or merged afterwards would miss its link or its merge for good.
 export function finishUpgrade(db: Database): void {
   db.transaction(() => {
+    fillIssues(db);
     if (db.query("SELECT 1 FROM upgrades WHERE step = 'fill ci shown'").get()) {
       markCiShown(db);
       db.run("DELETE FROM upgrades WHERE step = 'fill ci shown'");
@@ -675,6 +703,7 @@ function prepareTables(db: Database): void {
   // finishUpgrade says.
   let gainsCiShown = false;
   let gainsTopRound = false;
+  let threadsGainIssue = false;
   const reviewsFlagged = !hasColumn(db, "threads", "review_failed");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
     if (!hasColumn(db, "threads", column)) {
@@ -682,7 +711,9 @@ function prepareTables(db: Database): void {
       gainsCiShown ||= column === "ci_shown";
       gainsTopRound ||= column === "top_round";
       if (column === "merge_noted_for" && !fresh) fillMergeNoted(db);
+      threadsGainIssue ||= column === "issue";
     }
+  if (threadsGainIssue) fillIssues(db, "threads");
   if (!fresh && reviewsFlagged) flagFailedReviews(db);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
@@ -692,6 +723,7 @@ function prepareTables(db: Database): void {
   // A tasks table made by an earlier release lacks the task's newer columns. Filling them in
   // waits for the new daemon, as finishUpgrade says.
   if (hasTasks(db)) {
+    let tasksGainIssue = false;
     for (const [column, type] of Object.entries(taskColumns))
       if (!hasColumn(db, "tasks", column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
@@ -699,7 +731,9 @@ function prepareTables(db: Database): void {
           db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill tasks')");
         gainsCiShown ||= column === "ci_shown";
         gainsTopRound ||= column === "top_round";
+        tasksGainIssue ||= column === "issue";
       }
+    if (tasksGainIssue) fillIssues(db);
   }
   if (gainsCiShown && !fresh)
     db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill ci shown')");

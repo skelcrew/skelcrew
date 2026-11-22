@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { harnessNamed, startHoldingLogin } from "../agents/harness.ts";
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
@@ -26,7 +27,7 @@ import { repositoryRole } from "../roles.ts";
 import { capture } from "../run.ts";
 import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
-import { ownTask, taskOf, threadTask } from "./copy.ts";
+import { openTasks, threadTask } from "./copy.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
 import { sweepLoginCopies } from "./lead.ts";
 import { freshRounds, pastRoundLimit, roundOf } from "./ledger.ts";
@@ -123,60 +124,95 @@ async function recordThread(
       );
   };
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
-  let task: string;
-  let title: string;
-  let body: string;
-  let issueLink: string | null = null;
-  let closes: string | null = null;
-  let fromBacklog: Filed | null = null;
-  if ("title" in given) {
+  const claimNumber = async () => {
     const clone = cloneDir(owner, repo);
     if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
-    const current = findRepository(db, given.repo);
     refuseMissingPlugins();
-    task = await claimOwnName(db, current, clone);
-    ({ title, body } = given);
-    closes = "";
+    return claimOwnName(db, findRepository(db, given.repo), clone);
+  };
+  // A start of an issue that a task has already, such as one sc start began meanwhile, starts
+  // that task.
+  const onIssue = (id: string) =>
+    z
+      .object({ task: z.coerce.string() })
+      .nullable()
+      .parse(
+        db
+          .query("SELECT task FROM tasks WHERE owner = ? AND repo = ? AND issue = ?")
+          .get(owner, repo, id),
+      )?.task ?? null;
+  const named = !("task" in given)
+    ? null
+    : given.task.startsWith("#")
+      ? onIssue(given.task.slice(1))
+      : given.task;
+  // An issue starts from its title and body as the tracker has them now.
+  const fromIssue = (id: string) => {
+    const found = tracked ? openTasks(db, owner, repo).find((item) => item.id === id) : undefined;
+    if (!found) throw new Error(`there is no open issue ${taskName(name, `#${id}`)}`);
+    const { title, body, link, closes, ref = null } = found;
+    return { issue: found.id, title, body, issueLink: link, closes, issueRef: ref };
+  };
+  const noIssue = { issue: null, issueLink: null, closes: "", issueRef: null };
+  let task: string;
+  let from: {
+    issue: string | null;
+    title: string;
+    body: string;
+    issueLink: string | null;
+    closes: string | null;
+    issueRef: string | null;
+  };
+  let fromBacklog: Filed | null = null;
+  if ("title" in given) {
+    task = await claimNumber();
+    from = { ...noIssue, title: given.title, body: given.body };
+  } else if (named === null) {
+    from = fromIssue(given.task.slice(1));
+    task = await claimNumber();
   } else {
     refuseMissingPlugins();
-    task = given.task;
+    task = named;
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
     const filed = filedTask(db, owner, repo, task);
-    if (tracked && !ownTask(task)) {
-      const found = taskOf(db, owner, repo, task);
-      if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
-      ({ title, body } = found);
-      issueLink = found.link;
-      closes = found.closes;
-    } else if (filed && !had) {
+    if (had?.issue && tracked) from = fromIssue(had.issue);
+    else if (filed && !had) {
       fromBacklog = filed;
-      ({ title, body } = filed);
-      closes = "";
-    } else if (had?.title) {
-      title = had.title;
-      body = had.body ?? "";
-      issueLink = had.issue_link;
-      closes = had.closes;
-    } else
+      from = { ...noIssue, title: filed.title, body: filed.body };
+    } else if (had?.title)
+      from = {
+        issue: had.issue,
+        title: had.title,
+        body: had.body ?? "",
+        issueLink: had.issue_link,
+        closes: had.closes,
+        issueRef: had.issue_ref,
+      };
+    else
       throw new Error(
         tracked
-          ? `there is no open issue ${task} in ${name}`
+          ? `there is no task ${taskName(name, task)}`
           : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc add ${name} "<title>" "<body>" --start`,
       );
   }
+  const { issue, title, body, issueLink, closes, issueRef } = from;
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .slice(0, 40)
     .replace(/^-|-$/g, "");
-  const freeFolder = (folder: string) => {
-    const taken = (f: string) => db.query("SELECT 1 FROM threads WHERE folder = ?").get(f);
-    let free = folder;
-    for (let n = 2; taken(free); n++) free = `${folder}-${n}`;
-    return free;
+  // A new thread's folder and branch go by the task's number, such as 158 for t158. One an older
+  // thread holds, such as a branch named after an issue of that number, is never taken over.
+  const free = (column: "folder" | "branch", wanted: string) => {
+    const taken = (f: string) => db.query(`SELECT 1 FROM threads WHERE ${column} = ?`).get(f);
+    let name = wanted;
+    for (let n = 2; taken(name); n++) name = `${wanted}-${n}`;
+    return name;
   };
+  const number = task.replace(/^t(?=\d+$)/, "");
+  const branch = slug ? `skelcrew/${number}-${slug}` : `skelcrew/${number}`;
   const ended = Thread.nullable().parse(
     db
       .query(`SELECT * FROM task_threads ${where} AND status IN ('failed', 'done')`)
@@ -205,8 +241,8 @@ async function recordThread(
       owner,
       repo,
       task,
-      folder: before?.folder ?? freeFolder(`${folderName(name)}-${task}`),
-      branch: slug ? `skelcrew/${task}-${slug}` : `skelcrew/${task}`,
+      folder: before?.folder ?? free("folder", `${folderName(name)}-${number}`),
+      branch: before?.branch === branch ? branch : free("branch", branch),
       base: "from" in given ? (given.from ?? null) : null,
       status: queued ? "queued" : "working",
       session: null,
@@ -247,6 +283,9 @@ async function recordThread(
       merged: false,
       issue_link: issueLink,
       closes,
+      issue,
+      alias: before?.alias ?? null,
+      issue_ref: issueRef,
       merge_plan: null,
       merge_id: null,
       merge_by: null,
@@ -266,6 +305,14 @@ async function recordThread(
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
+    // An item the lead posted about the issue before any task had it is the task's from now on.
+    if (issue !== null)
+      db.run("UPDATE OR REPLACE asks SET task = ? WHERE owner = ? AND repo = ? AND task = ?", [
+        task,
+        owner,
+        repo,
+        `#${issue}`,
+      ]);
     dropEndNotes(db, thread.folder);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, turn_ended, host, host_id)
@@ -287,8 +334,8 @@ async function recordThread(
     db.run(
       `INSERT OR REPLACE INTO tasks
         (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow,
-          queued_since)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)`,
+          queued_since, issue, alias, issue_ref)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -302,11 +349,15 @@ async function recordThread(
         thread.agents,
         thread.flow,
         thread.queued_since,
+        issue,
+        thread.alias,
+        issueRef,
       ],
     );
-    const claims = [owner, repo, task];
-    if (claimed) db.run("DELETE FROM claims WHERE owner = ? AND repo = ? AND task = ?", claims);
-    else if (queued && tracked && !ownTask(task))
+    const claims = [owner, repo, issue ?? ""];
+    if (issue !== null && claimed)
+      db.run("DELETE FROM claims WHERE owner = ? AND repo = ? AND task = ?", claims);
+    else if (issue !== null && queued && tracked)
       db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", claims);
     log(db, thread);
     return thread;

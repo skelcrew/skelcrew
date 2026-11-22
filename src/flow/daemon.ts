@@ -49,7 +49,7 @@ import {
   statusOnceBack,
 } from "./builder.ts";
 import { holdCheckSlot, slotHolders } from "./checks.ts";
-import { openTasks, ownTask, prOf, saveItems } from "./copy.ts";
+import { issueRef, openTasks, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
 import { beingRemoved, removalEnded, removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
@@ -142,6 +142,7 @@ import {
   readThread,
   record,
   renameBuilders,
+  resolveTask,
   type Thread,
   taskName,
   threadName,
@@ -178,28 +179,31 @@ function listen(server: Server, path: string): Promise<void> {
 
 // Returns what sc rm would remove of a task: its name, its task in the backlog if it never
 // started, its thread if it has one, its issue while it may be open, and the issue sc rm closes,
-// which is that one unless `keepIssue`. A task in stage issue that never started has only its
+// which is that one unless `keepIssue`, each by the tracker's ID. `shown` is the open issue as
+// the tracker writes it, such as #12. An issue no task has yet, such as app#12, has only its
 // issue. Throws when there is nothing to remove.
 function removalOf(db: Database, repository: string, task: string, keepIssue: boolean) {
   const { owner, repo, name: repositoryName } = findRepository(db, repository);
   const name = taskName(repositoryName, task);
   const filed = filedOn(db, repository, task);
   const thread = threadOn(db, repository, task);
+  const id = task.startsWith("#") ? task.slice(1) : (thread?.issue ?? null);
   // A task with a thread always closes its issue, unless its work merged, which closed it. The
   // copy is only as fresh as the last poll, and an issue reopened since would otherwise stay
   // open while sc rm says it closed. So does a retry after the tracker failed, once the work is
   // removed and its thread done. Closing an issue already closed changes nothing. A task with no
   // thread has only the copy to tell whether its issue is open.
-  const inCopy = openTasks(db, owner, repo).some((item) => item.id === task);
+  const inCopy = openTasks(db, owner, repo).find((item) => item.id === id);
   const worked = thread !== null && !thread.merged;
-  const open = !ownTask(task) && (worked || inCopy) ? task : null;
+  const open = id !== null && (worked || inCopy) ? id : null;
   const issue = keepIssue ? null : open;
   if (!filed && !thread && open === null) throw new Error(`there is no task ${name}`);
   if (!filed && !thread && issue === null)
     throw new Error(
       `${name} never started, and --keep-issue keeps its issue open, so there is nothing to remove`,
     );
-  return { name, filed, thread, open, issue };
+  const shown = open === null ? null : issueRef(open, inCopy, thread?.issue_ref);
+  return { name, filed, thread, open, issue, shown };
 }
 
 // Returns the thread whose builder is calling, or null when you, a lead or a reviewer call.
@@ -211,7 +215,7 @@ const builderOf = (caller: Caller): Thread | null =>
 const leadOfCaller = (caller: Caller) =>
   caller !== "you" && "lead" in caller ? caller.lead : null;
 
-// Returns a task of the repository's backlog, with its name, such as APP-T104, or null when the
+// Returns a task of the repository's backlog, with its name, such as APP-104, or null when the
 // backlog has no task of that ID or a thread works on it, for sc rm.
 function filedOn(db: Database, repository: string, task: string) {
   const { owner, repo, name } = findRepository(db, repository);
@@ -445,6 +449,20 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       `you are the lead of ${own} only, so ${request.repo} isn't yours. Ask the human to open it with sc in a checkout of it: its own lead works on it.`,
     );
   };
+  // Returns the request with the task it names as Skelcrew stores it, such as t158 for APP-158
+  // or for its old name APP-T158, or #12 for an issue no task has yet, as resolveTask says.
+  const resolveName = (request: DaemonRequest): DaemonRequest => {
+    if (
+      request.command === "start" ||
+      !("task" in request) ||
+      request.task === undefined ||
+      !("repo" in request) ||
+      !request.repo
+    )
+      return request;
+    const { repository, task } = resolveTask(db, request.repo, request.task);
+    return { ...request, repo: repository, task };
+  };
   const setUpAndStart = async (thread: Thread) => {
     try {
       await endEarlierBuilder(db, sessions, thread);
@@ -500,9 +518,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       failThread(db, sessions, thread, error);
     }
   };
+  // sc start names its task as typed, and the name is looked up here: once as it comes in, and
+  // again once the poll before a new thread brought in the issues the tracker has now, such as
+  // issue #12 for APP-12 on a daemon that just started.
   const startTask = async (
-    request: Extract<DaemonRequest, { command: "start" }>,
+    given: Extract<DaemonRequest, { command: "start" }>,
   ): Promise<{ started: string }> => {
+    const named = () => {
+      const { repository, task } = resolveTask(db, given.repo, given.task);
+      return { ...given, repo: repository, task };
+    };
+    let request = named();
     const done = (said: string, change: () => void = () => {}) => {
       db.transaction(change)();
       return { started: said };
@@ -513,14 +539,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const startNowFromQueue = (queued: Thread) => {
       const name = threadName(db, queued);
       if (beingRemoved(queued.folder)) throw new Error(`${name} is being removed`);
-      const { owner, repo, task } = queued;
+      const { owner, repo, issue } = queued;
       const where = "WHERE owner = ? AND repo = ? AND task = ?";
-      const owed = db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) !== null;
+      const owed = db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, issue) !== null;
       const status = queued.session === null ? "working" : statusOnceBack(queued);
       const short = request.short ? { short: request.short } : {};
       let started = queued;
       const answer = done(`Started ${name} now, out of the queue, over limits.threads.`, () => {
-        db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+        db.run(`DELETE FROM claims ${where}`, [owner, repo, issue]);
         const change = { status, queued_since: null, ...short };
         started = record(db, queued.folder, change, "started now, over limits.threads");
         if (started.session === null) setUpAndStart(started);
@@ -576,12 +602,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       throw new Error(`${threadName(db, before)} has a thread already`);
     const repository = findRepository(db, request.repo);
     const { owner, repo } = repository;
-    const key = `${owner}/${repo}#${request.task}`;
-    startingTasks.add(key);
+    // The issue being started, which no poll starts by its label meanwhile. Before the poll, a
+    // number typed may yet name an issue the copy doesn't have, such as 12 for #12.
+    const issue = request.task.startsWith("#") ? request.task.slice(1) : before?.issue;
+    const keys = [issue ?? request.task, given.task.replace(/^#/, "")].map(
+      (id) => `${owner}/${repo}#${id}`,
+    );
+    for (const key of keys) startingTasks.add(key);
     let thread: Thread;
     try {
       if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
       await (await polling.promise)(`${owner}/${repo}`);
+      if (!before) request = named();
       const started = threadOn(db, request.repo, request.task);
       if (!before && started?.status === "queued" && request.now) {
         if (request.flow && request.flow !== started.flow) switchFlow(started, request.flow);
@@ -597,7 +629,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
       thread = await startThread(db, request);
     } finally {
-      startingTasks.delete(key);
+      for (const key of keys) startingTasks.delete(key);
     }
     if (thread.status === "queued") {
       const owed = await claimQueued(db, sessions, thread, false).then(
@@ -739,7 +771,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         }
         const task = await createTask(db, repository, request.title, request.body);
         saveItems(db, repository.owner, repository.repo, [task], []);
-        return { task: taskName(repository.name, task.id) };
+        return { task: taskName(repository.name, `#${task.id}`) };
       }
       case "task add": {
         const repository = findRepository(db, request.repo);
@@ -839,20 +871,20 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
       // What sc rm asks you about at your terminal before it removes anything.
       case "rm preview": {
-        const { name, thread, issue } = removalOf(
+        const { name, thread, issue, shown } = removalOf(
           db,
           request.repo,
           request.task,
           request.keepIssue,
         );
         const status = thread?.status ?? "not started";
-        return { thread: name, status, pr: thread?.pr ?? null, issue };
+        return { thread: name, status, pr: thread?.pr ?? null, issue: issue && shown };
       }
       // A task in the backlog never started, so removing it deletes only the task itself. On a
       // task with an open issue, the work ends first, then the issue closes. An issue that fails
       // to close leaves the work removed, and sc rm run again closes it.
       case "rm": {
-        const { name, filed, thread, open, issue } = removalOf(
+        const { name, filed, thread, issue, shown } = removalOf(
           db,
           request.repo,
           request.task,
@@ -893,7 +925,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             console.log(errorText(error)),
           );
         }
-        return { removed: name, issue: open, unfiled: false, closed: issue !== null };
+        return { removed: name, issue: shown, unfiled: false, closed: issue !== null };
       }
       case "merge": {
         const repository = findRepository(db, request.repo);
@@ -1115,7 +1147,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       else if (asked.data.command === "check") checkFor(connection, caller, asked.data);
       else
         Promise.resolve()
-          .then(() => handle(limitToOwnRepository(asked.data, caller), caller))
+          .then(() => handle(limitToOwnRepository(resolveName(asked.data), caller), caller))
           .then(reply, (error) => reply({ error: errorText(error) }));
     };
     connection.on("data", read);

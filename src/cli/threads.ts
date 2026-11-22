@@ -137,21 +137,20 @@ async function removeCommand(task: [string, string], rest: string[]): Promise<vo
     usage("rm");
   const keepIssue = keepAt !== -1;
   const reason = reasons[0] || undefined;
-  const issueId = (issue: string) => (/^\d+$/.test(issue) ? `#${issue}` : issue);
   if (process.stdin.isTTY) {
     const { thread: name, status, pr, issue } = await previewRemoval(...task, keepIssue);
     const goes =
       status === "not started"
         ? issue === null
           ? "It never started, and this deletes it from the backlog on every machine."
-          : `It never started, and this closes issue ${issueId(issue)}.`
+          : `It never started, and this closes issue ${issue}.`
         : status === "done"
-          ? `Its work ended already, and this closes issue ${issueId(issue ?? "")}.`
+          ? `Its work ended already, and this closes issue ${issue ?? ""}.`
           : pr === null
-            ? `This deletes its branch and clone${issue === null ? "" : `, and closes issue ${issueId(issue)}`}.`
+            ? `This deletes its branch and clone${issue === null ? "" : `, and closes issue ${issue}`}.`
             : issue === null
               ? `This closes PR #${pr} and deletes its branch and clone.`
-              : `This closes PR #${pr} and issue ${issueId(issue)}, and deletes its branch and clone.`;
+              : `This closes PR #${pr} and issue ${issue}, and deletes its branch and clone.`;
     const answer =
       status === "done" && issue === null ? "y" : prompt(`Remove ${name}? ${goes} [y/N]`);
     if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
@@ -172,11 +171,9 @@ async function removeCommand(task: [string, string], rest: string[]): Promise<vo
   });
   if (unfiled) console.log(`Removed ${name} from the backlog.`);
   else if (issue === null) console.log(`Removed ${name}. sc start ${name} starts it over.`);
-  else if (closed) console.log(`Removed ${name} and closed issue ${issueId(issue)}.`);
+  else if (closed) console.log(`Removed ${name} and closed issue ${issue}.`);
   else
-    console.log(
-      `Removed ${name}. Issue ${issueId(issue)} stays open, and sc start ${name} starts it over.`,
-    );
+    console.log(`Removed ${name}. Issue ${issue} stays open, and sc start ${name} starts it over.`);
 }
 
 export async function threadCommand(args: string[]): Promise<void> {

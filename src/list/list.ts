@@ -10,7 +10,7 @@ import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { answerItem, moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadSession } from "../flow/lead.ts";
-import { builderSession, readThread } from "../flow/thread.ts";
+import { builderSession, readThread, typedTask } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
 import { updateNotice } from "../machine/update.ts";
 import { attachOnHost, type Host } from "../plugins/runtime.ts";
@@ -505,7 +505,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       return say(`${row.name} is paused: sc start ${row.name} brings it back`);
     working = true;
     try {
-      said = await moveQueued(`${open.owner}/${open.repo}`, row.task, by);
+      said = await moveQueued(`${open.owner}/${open.repo}`, typedTask(row.task), by);
     } catch (error) {
       said = errorText(error);
     }

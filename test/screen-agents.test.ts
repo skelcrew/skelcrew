@@ -312,7 +312,7 @@ test("a lead on a plugin's host whose host fails from the start isn't brought ba
 });
 
 test("the screen starts on the lead's row, even while a task needs you", async () => {
-  sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 't12'");
   open("lead");
   await ready("lead");
   // Its builder still works, so its mark may spin, in the yellow of needs you.
@@ -324,7 +324,7 @@ test("the screen starts on the lead's row, even while a task needs you", async (
 test("updates on its own, with needs you in the sidebar", async () => {
   open("lead");
   await ready("lead");
-  sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 't12'");
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   const yellow = () =>
     [..."●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"].some((mark) => colours().includes(`\x1b[38;5;136m${mark}`));
@@ -333,7 +333,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("Needs you  1");
   // Its tab says so too, as other repositories' tabs would.
   expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {4}Skelcrew .* {2}app •1$/);
-  sql("UPDATE threads SET status = 'done' WHERE task = 7");
+  sql("UPDATE threads SET status = 'done' WHERE task = 't7'");
   await until(() => !/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(seen()), "the done thread to go");
 });
 
@@ -820,14 +820,14 @@ test("a task that ends while you are on it stays yours, under Done, which opens"
   open("lead");
   await ready("lead");
   await toSecondThread();
-  sql("UPDATE threads SET status = 'done' WHERE task = 7");
+  sql("UPDATE threads SET status = 'done' WHERE task = 't7'");
   await until(() => seen().includes("6 Done       2"), "app-7 to end");
   await until(() => / 7\b/.test(selected()), "the sidebar to stay on APP-7");
   expect(seen()).toMatch(/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
 });
 
 test("Enter on a task whose builder isn't running says so on the right, until the next key", async () => {
-  sql("UPDATE threads SET status = 'failed' WHERE task = 12");
+  sql("UPDATE threads SET status = 'failed' WHERE task = 't12'");
   tmux(agents, "kill-session", "-t", "=app-12");
   open("lead");
   await ready("lead");

@@ -200,6 +200,17 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     const main = git(join(github(), "simon", "app.git"), "rev-parse", "main");
     expect(prompt).toContain(`git diff ${main}...HEAD`);
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/main");
+    expect(prompt).not.toContain("Since the last round");
+    // Round 2 is told what round 1 asked for, and gets the diff since the commit it reviewed.
+    // The forge shows no PR 7 here, so no trade-off counts as stated.
+    const again = read(join(codexHome(), "sessions", "prompt-2"));
+    expect(again).toContain(`git diff ${main}...HEAD`);
+    expect(again).toContain(
+      `Round 1 reviewed ${first.slice(0, 7)}. It asked for these changes:\n\n1. The export has no test.`,
+    );
+    expect(again).toContain("The PR has no description Skelcrew could read");
+    const since = read(join(codexHome(), "sessions", "since-2"));
+    expect(since).toContain("-1\n+2");
 
     // Approved, it waits on CI: polling GitHub marks it needs you once every check is green.
     // Each turn ended with a submit, so the builder never waited on you.

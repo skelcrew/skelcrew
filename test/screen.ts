@@ -402,13 +402,15 @@ export function daemon(): void {
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
       if (command === "restart") {
         acted.push(`restart ${repo} ${task}`.trimEnd());
-        const who = task ? `APP-${task}'s builder` : "app's lead";
+        const who = task ? `APP-${task.replace(/^t/, "")}'s builder` : "app's lead";
         connection.end(`${JSON.stringify({ said: `Restarted ${who}.` })}\n`);
         return;
       }
       if (command === "queue move") {
         acted.push(`queue move ${repo} ${task} ${by}`);
-        connection.end(`${JSON.stringify({ said: `APP-${task} starts next` })}\n`);
+        connection.end(
+          `${JSON.stringify({ said: `APP-${task.replace(/^t/, "")} starts next` })}\n`,
+        );
         return;
       }
       if (command !== "start" && command !== "merge") {
