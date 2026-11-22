@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { spinner } from "../src/list/layout.ts";
 import { itemSql } from "./harness.ts";
 import {
   endTest,
@@ -66,11 +67,12 @@ const isOpen = (heading: string) => {
   return at >= 0 && /^ [▸ ] \S/.test(lines[at + 1] ?? "");
 };
 // Presses a key and waits until the row you are on is another one, as the next key moves from
-// there.
+// there. A spinner's turn on the row leaves it the same row.
 async function step(key: string): Promise<void> {
-  const before = selected();
+  const still = () => [...selected()].map((cell) => (spinner.includes(cell) ? "⠋" : cell)).join("");
+  const before = still();
   press(key);
-  await until(() => selected() !== before, `${key} to move`);
+  await until(() => still() !== before, `${key} to move`);
 }
 
 test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sidebar, and the screen shows it", async () => {
