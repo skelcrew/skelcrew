@@ -403,8 +403,15 @@ Check that it does what this asks and nothing else, and look for bugs, edge case
 
 List each problem in the findings, one per entry: what it is, where it is and why it matters, so the builder can fix it. In the body, say in a few lines what you checked and how, such as which tests ran.
 
-Answer "changes" with at least one finding. When you found no problem, answer "approve" with no findings, whatever CI's state: Skelcrew waits for every check to pass before the PR is ready.`;
+${strictBlocking}`;
 }
+
+// What the reviewer is told of which findings block, in the flow's strict rounds.
+const strictBlocking = `Give each finding a severity, P1, P2, P3 and so on, and say whether it blocks. P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done. A failing check is a P1, and so is a change that breaks something the task says must stay true. Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below: P2, P3 and so on.
+
+Only a P1 can block. A P1 blocks whether the change brings it or the base branch already has it. Every other finding doesn't block: the PR can merge with it, and Skelcrew files it for later.
+
+Answer "changes" when at least one finding blocks. Otherwise answer "approve", with the findings that don't block, whatever CI's state: Skelcrew waits for every check to pass before the PR is ready.`;
 
 // Without CI on the commit, the reviewer runs the tests, as it always did.
 const runs =
@@ -414,7 +421,14 @@ const testedBy = ["bun test"];
 test("the reviewer is told exactly what its code told it, and who runs the tests", () => {
   const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
   expect(
-    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/main", "run", testedBy),
+    reviewerPrompt(
+      builtInRole("reviewer").instructions,
+      issue,
+      "origin/main",
+      "run",
+      testedBy,
+      true,
+    ),
   ).toBe(before(issue, "origin/main", runs));
 });
 
@@ -423,7 +437,7 @@ test("a task's own text reaches the reviewer as written, even when it looks like
   // must not be filled in again.
   const issue = { title: "Rename {{base}} to $& and $1", body: "Mention {{title}} and {{body}}." };
   expect(
-    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/$&", "run", testedBy),
+    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/$&", "run", testedBy, true),
   ).toBe(before(issue, "origin/$&", runs));
 });
 
@@ -450,15 +464,18 @@ test("a reviewer role that leaves out the blanks still gets the task, the base a
     "origin/main",
     "run",
     testedBy,
+    true,
   );
   expect(prompt).toStartWith("Check it the team's way.\n\n");
   expect(prompt).toContain("# Fix the flaky test\n\nIt fails one run in ten.");
   expect(prompt).toContain("git diff origin/main...HEAD");
   expect(prompt).toContain(runs);
+  // Which findings block is Skelcrew's rule, as it checks the answer by it.
+  expect(prompt).toEndWith(strictBlocking);
   // A role that places every blank gets nothing added.
-  const placed = "Task {{title}}: {{body}}. Since {{base}}. {{tests}}\n";
-  expect(reviewerPrompt(placed, issue, "origin/main", "run", testedBy)).toBe(
-    `Task Fix the flaky test: It fails one run in ten.. Since origin/main. ${runs}`,
+  const placed = "Task {{title}}: {{body}}. Since {{base}}. {{tests}} {{blocking}}\n";
+  expect(reviewerPrompt(placed, issue, "origin/main", "run", testedBy, true)).toBe(
+    `Task Fix the flaky test: It fails one run in ten.. Since origin/main. ${runs} ${strictBlocking}`,
   );
 });
 

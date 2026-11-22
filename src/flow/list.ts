@@ -15,7 +15,7 @@ import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, issueRef, openTasks, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { itemOf } from "./inbox.ts";
-import { nextRound, roundOf } from "./ledger.ts";
+import { lastReviewed, nextRound, roundOf } from "./ledger.ts";
 import { messagesWaiting } from "./messages.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { letters } from "./requests.ts";
@@ -402,6 +402,7 @@ export const TaskView = z.object({
   prPage: PrPage.nullable(),
   merge: z.string().nullable(),
   filed: z.object({ by: z.string(), at: z.string() }).nullable().default(null),
+  notBlocking: z.array(z.string()).default([]),
   item: z
     .object({ text: z.string(), options: z.array(z.string()) })
     .nullable()
@@ -536,6 +537,7 @@ export function readTask(db: Database, which: Which): TaskView {
     prPage: pr === null ? null : prPageOf(db, repository, pr),
     merge: thread ? mergeShown(thread) : null,
     filed: filed && { by: removeControlCodes(filed.by), at: filed.created },
+    notBlocking: (thread ? (lastReviewed(thread)?.notBlocking ?? []) : []).map(safeText),
     item: item && {
       text: removeControlCodes(item.text),
       options: item.options.map(removeControlCodes),
@@ -808,6 +810,10 @@ export function printTask(task: TaskView, json: boolean): void {
   const texts: [string, string][] = [
     ["Asks you, in Needs you", [task.item?.text ?? "", ...options].join("\n")],
     ["Description", task.body],
+    [
+      "Not blocking, from the latest review",
+      task.notBlocking.map((finding, n) => `${n + 1}. ${finding}`).join("\n"),
+    ],
     [
       latest ? `Latest review on the PR: ${latest.verdict} · ${latest.author}` : "",
       latest?.body ?? "",

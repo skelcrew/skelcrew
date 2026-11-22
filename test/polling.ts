@@ -512,7 +512,7 @@ export const changesApp12 = async (checks: object[] = [check(5, "running")], ciW
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
 cat > /dev/null
-echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file","Test the error"]}' > "$out"`,
+echo '{"verdict":"changes","body":"Not yet.","findings":[{"finding":"Handle an empty file","severity":"P1","blocking":true},{"finding":"Test the error","severity":"P1","blocking":true}]}' > "$out"`,
   );
   addApp();
   changes([issue12()]);
