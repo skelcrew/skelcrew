@@ -52,10 +52,6 @@ const renewUrl = () =>
 const hour = 3_600_000;
 const day = 24 * hour;
 
-// The copies this daemon wrote, by folder, and when. A session's copy is written before its
-// session starts, so a sweep meanwhile must not take it for one whose session ended.
-const written = new Map<string, number>();
-
 // Moves a login the first run's codex login saved in `codexHome`, Skelcrew's own CODEX_HOME,
 // into Skelcrew's own login folder, and links it from there, for codex run outside the sandbox.
 // Returns that folder.
@@ -114,7 +110,6 @@ export async function copyLogin(home: string, folder: string): Promise<boolean> 
   if (lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink())
     throw new Error(`${folder} is a link, so Skelcrew won't write a login through it`);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
-  written.set(folder, Date.now());
   writeLogin(folder, withoutRenewal(own));
   return true;
 }
@@ -122,12 +117,14 @@ export async function copyLogin(home: string, folder: string): Promise<boolean> 
 // Removes an agent's copy, once its session or review ended.
 export function dropLogin(folder: string): void {
   rmSync(folder, { recursive: true, force: true });
-  written.delete(folder);
 }
 
-// Removes the copy of each session `runs` says doesn't run, unless this daemon wrote it in the
-// last five minutes, as its session may still be starting. A copy's files say nothing of its
-// age, as its agent can change them.
+// Returns whether a session was started without a copy of its own while Skelcrew has a login,
+// as a release before gave every agent one shared, writable login.
+export const startedShared = (home: string, name: string) =>
+  existsSync(join(ownFolder(home), "auth.json")) && !existsSync(sessionLogin(home, name));
+
+// Removes the copy of each session `runs` says doesn't run. A session still starting runs.
 export async function sweepLogins(
   home: string,
   runs: (name: string) => Promise<boolean>,
@@ -135,9 +132,7 @@ export async function sweepLogins(
   const folder = sessionCopies(home);
   if (!existsSync(folder)) return;
   for (const name of readdirSync(folder)) {
-    const copy = join(folder, name);
-    if ((written.get(copy) ?? 0) > Date.now() - 5 * 60_000) continue;
-    if (!(await runs(name))) dropLogin(copy);
+    if (!(await runs(name))) dropLogin(join(folder, name));
   }
 }
 

@@ -21,6 +21,7 @@ import {
   renewLogin,
   reviewLogin,
   sessionLogin,
+  startedShared,
 } from "../src/agents/codex-login.ts";
 import { dropReviewLogins, keepLogins } from "../src/agents/harness.ts";
 
@@ -147,23 +148,37 @@ test("Skelcrew renews a login a day old and writes the renewal into every agent'
   expect(sent).toEqual(["refresh-1", "refresh-2"]);
 });
 
-test("the copies of sessions that ended go, and those of sessions that run stay", async () => {
+test("the copies of sessions that ended go at once, and those of sessions that run stay", async () => {
   saveLogin(0);
-  // Copies an earlier daemon wrote.
-  for (const name of ["app-12", "app-13"]) {
-    mkdirSync(sessionLogin(home, name), { recursive: true });
-    writeFileSync(join(sessionLogin(home, name), "auth.json"), "{}");
-  }
-  // One this daemon just wrote, whose session may still be starting.
+  // One an earlier daemon wrote, and two this one just wrote.
+  mkdirSync(sessionLogin(home, "app-12"), { recursive: true });
+  writeFileSync(join(sessionLogin(home, "app-12"), "auth.json"), "{}");
+  await copyLogin(home, sessionLogin(home, "app-13"));
   await copyLogin(home, sessionLogin(home, "app-14"));
   const review = reviewLogin(home);
   await copyLogin(home, review);
   await keepLogins(home, async (name) => name === "app-13");
   expect(existsSync(sessionLogin(home, "app-12"))).toBe(false);
   expect(existsSync(sessionLogin(home, "app-13"))).toBe(true);
-  expect(existsSync(sessionLogin(home, "app-14"))).toBe(true);
+  expect(existsSync(sessionLogin(home, "app-14"))).toBe(false);
   // A review's copy goes only as the daemon starts, when no review runs.
   expect(existsSync(review)).toBe(true);
   dropReviewLogins(home);
   expect(existsSync(review)).toBe(false);
+});
+
+test("a login Skelcrew can't read still lets the copies of ended sessions go", async () => {
+  saveLogin(0);
+  await copyLogin(home, sessionLogin(home, "app-12"));
+  writeFileSync(own(), "not a login");
+  await expect(keepLogins(home, async () => false)).rejects.toThrow("isn't a Codex login");
+  expect(existsSync(sessionLogin(home, "app-12"))).toBe(false);
+});
+
+test("a session with no copy of its own started on the one shared login", async () => {
+  expect(startedShared(home, "app-12")).toBe(false);
+  saveLogin(0);
+  expect(startedShared(home, "app-12")).toBe(true);
+  await copyLogin(home, sessionLogin(home, "app-12"));
+  expect(startedShared(home, "app-12")).toBe(false);
 });

@@ -10,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createConnection } from "node:net";
@@ -587,5 +588,24 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect((await skel(["start", "app-12"])).err).toBe("");
     await until(() => read(join(builder(), "args")) !== "", 30_000);
     expect(read(join(builder(), "auth.json"))).toBe(leadCopy);
+  }, 60_000);
+
+  test("a builder still running on the one shared login starts again with its own", async () => {
+    saveLogin();
+    await startApp12();
+    // As a release before left it: no copy of its own, and a link to the shared login.
+    const daemon = running.shift();
+    daemon?.kill();
+    await daemon?.exited;
+    rmSync(join(data(), "codex-logins", "app-12"), { recursive: true });
+    rmSync(join(builder(), "auth.json"));
+    symlinkSync(join(data(), "codex-login", "auth.json"), join(builder(), "auth.json"));
+    rmSync(join(builder(), "args"));
+    startDaemon(socket, env(), running);
+    await until(() => read(join(builder(), "args")) !== "");
+    expect(args()[0]).toBe("resume");
+    expect(
+      JSON.parse(read(join(data(), "codex-logins", "app-12", "auth.json"))).tokens.refresh_token,
+    ).toBe("");
   }, 60_000);
 });
