@@ -242,8 +242,8 @@ function logInCodex(env: Env, line: string): void {
 
 // Logs Skelcrew in to Pi in its own folder, for the provider you name, such as anthropic or
 // openrouter: with your account, through a link and a code you paste, as the machine may have no
-// browser, or with an API key Pi asks for. Pi saves it once, in the login every Pi agent and review
-// shares. Pi names the providers it has when you name one it doesn't. While Pi runs, Ctrl-C stops
+// browser, or with an API key Pi asks for. Pi saves it once, in Skelcrew's login, which each Pi
+// agent and review gets a copy of. Pi names the providers it has when you name one it doesn't. While Pi runs, Ctrl-C stops
 // only Pi.
 function logInPi(env: Env, line: string): void {
   console.log(line);

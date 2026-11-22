@@ -1041,9 +1041,8 @@ test("on a machine with only Pi, it signs in to the provider you name, once, in 
   expect(calls()).toContain(
     `pi auth login openrouter --no-browser\nPI_CODING_AGENT_DIR=${folder}\n`,
   );
-  // The login lands in the folder every Pi agent and review links to.
-  const shared = join(home, ".local", "share", "skelcrew", "pi-login", "auth.json");
-  expect(readFileSync(shared, "utf8")).toBe('{"openrouter":{"type":"oauth"}}');
+  // The login lands in Skelcrew's own Pi folder, which each Pi agent and review gets a copy of.
+  expect(readFileSync(join(folder, "auth.json"), "utf8")).toBe('{"openrouter":{"type":"oauth"}}');
   expect(readFileSync(config(), "utf8")).toContain("harness: pi");
 
   writeFileSync(join(home, "calls"), "");

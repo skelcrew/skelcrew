@@ -16,22 +16,40 @@ export const busyMark = "◆ Pi is at work";
 export const verdictTool = "skelcrew_verdict";
 
 // The words a usage limit's message starts with, which Skelcrew reads.
-export const limitWords = "rate limited (429)";
+export const limitWords = "rate limited";
 
-// Returns the HTTP status a Pi error names, or null when it names none. Pi gives no status of its
-// own, only text, and each of its provider APIs puts the status in one place: first, as in
-// "429: ..." or Anthropic's "429 {...}", after the provider's name, as in "openrouter API error
-// (429): ...", or in Google's body, which comes alone, as in {"error":{"code":429,...}}.
+// The status a Pi error starts with, and the body after it. Pi gives no status of its own, only
+// text, and each of its provider APIs puts the status in one place: first, as in "429: ..." or
+// Anthropic's "429 {...}", or after the provider's name, as in "openrouter API error (429): ...".
+const statusFirst = /^(?:(\d{3})(?:: | (?=\{))|[\w.-]+ API error \((\d{3})\): )/;
+
+// Returns the HTTP status a Pi error names, or null when it names none. Google's body comes
+// alone, with its code in it, as in {"error":{"code":429,...}}.
 function httpStatus(error: string): number | null {
-  const said = error.trim();
-  const first = /^(\d{3})(?:: | \{)/.exec(said) ?? /^[\w.-]+ API error \((\d{3})\): /.exec(said);
-  if (first) return Number(first[1]);
+  const first = statusFirst.exec(error.trim());
+  if (first) return Number(first[1] ?? first[2]);
+  const code = field(field(bodyOf(error), "error"), "code");
+  return typeof code === "number" ? code : null;
+}
+
+// Returns the provider's answer a Pi error holds, read as JSON, or undefined when it holds none.
+function bodyOf(error: string): unknown {
   try {
-    const code = field(field(JSON.parse(said), "error"), "code");
-    return typeof code === "number" ? code : null;
+    return JSON.parse(error.trim().replace(statusFirst, ""));
   } catch {
-    return null;
+    return undefined;
   }
+}
+
+// Reports whether a 429 is OpenAI's insufficient_quota, which says your credit ran out: it lasts
+// until you pay, so it is no usage limit to wait out. OpenAI names it in the answer's code.
+function outOfCredit(error: string): boolean {
+  const body = bodyOf(error);
+  return [body, field(body, "error")].some(
+    (answer) =>
+      field(answer, "code") === "insufficient_quota" ||
+      field(answer, "type") === "insufficient_quota",
+  );
 }
 
 // A clock right after "resets at" or "try again at", such as "3:15 PM", "14:00" or "Dec 31st,
@@ -43,15 +61,38 @@ const resetClock = new RegExp(
   "i",
 );
 
+// Pi's own words for a ChatGPT sign-in's usage limit, which comes with no status, and the
+// minutes until it resets, as in "You have hit your ChatGPT usage limit (plus plan). Try again
+// in ~42 min."
+const chatGptLimit = /^You have hit your ChatGPT usage limit\b/;
+const chatGptReset = /Try again in ~(\d+) min\.$/;
+
 // Returns what Skelcrew keeps of an error Pi stopped on: its kind, which turn-failed's hook names,
 // and a message of Skelcrew's own, with the HTTP status when Pi names one. Never the error's own
 // words, as a provider can echo a key in them, and nothing can tell every key apart. A usage
-// limit's message keeps only the clock its reset is at.
+// limit's message keeps only when it resets.
 export function failureOf(error: string): { kind: string; message: string } {
-  const status = httpStatus(error);
+  const said = error.trim();
+  if (chatGptLimit.test(said)) {
+    const minutes = chatGptReset.exec(said)?.[1];
+    const limit = `${limitWords} by ChatGPT's usage limit`;
+    return { kind: "rate_limit", message: minutes ? `${limit}, resets in ~${minutes} min` : limit };
+  }
+  if (said.startsWith("OAuth refresh failed for "))
+    return {
+      kind: "auth",
+      message: "the sign-in expired: Skelcrew renews it as the session starts again",
+    };
+  const status = httpStatus(said);
+  if (status === 429 && outOfCredit(said))
+    return {
+      kind: "billing",
+      message: "out of credit (429): check the provider's plan and billing",
+    };
   if (status === 429) {
-    const at = resetClock.exec(error)?.[1];
-    return { kind: "rate_limit", message: at ? `${limitWords}, resets at ${at}` : limitWords };
+    const at = resetClock.exec(said)?.[1];
+    const limit = `${limitWords} (429)`;
+    return { kind: "rate_limit", message: at ? `${limit}, resets at ${at}` : limit };
   }
   if (status === 401 || status === 403)
     return { kind: "auth", message: `auth failed (${status}): check Pi's login or key` };

@@ -203,8 +203,13 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
   completions API, `429 {...}` on Anthropic's, `openrouter API error (429): {...}` on OpenAI's
   responses API, and Google's body alone, `{"error":{"code":429,...}}`, on Google's. A limit is
   a 429 read from those places. Providers' words for limits vary too much to go by: a rule built
-  on them kept counting errors such as "exceeded retry count for quota requests". The errors Pi
-  wrote are kept in `test/pi-errors.json`.
+  on them kept counting errors such as "exceeded retry count for quota requests". OpenAI's 429
+  for credit run out names `insufficient_quota` as the body's code, so it is told apart: it lasts
+  until you pay. The errors Pi wrote are kept in `test/pi-errors.json`.
+- **A ChatGPT sign-in's limit comes in Pi's own words, with no status.** On `openai-codex` Pi
+  turns any 429 into "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.",
+  the minutes taken from the body's `resets_at`. A body with `insufficient_quota` gets the same
+  words, so there the two can't be told apart.
 - **Never keep a provider's error text: it can echo a key, and no rule can find every key.**
   Decided by Simon, after rounds of taking keys out kept missing some. A key may be in no
   variable: `pi auth login` saves it in `auth.json`, and a command in `models.json` gives a new
@@ -225,22 +230,23 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
 - **Pi can fail before any event of the extension's.** For a model it doesn't know it prints
   `Error: Model "nosuch/m" not found. ...` and exits with 1. Until the extension's `agent_start`
   line, a review has failed to start, which Skelcrew says in words of its own.
-- **Pi's list of provider keys is in pi-ai's `env-api-keys.js`, not in its docs.** The docs'
-  table leaves some out, such as `CLOUDFLARE_API_KEY`, `TYPESAFE_API_KEY` and the Qwen token-plan
-  keys. Cloudflare and Azure need more than a key, such as an account ID or a base URL. Vertex
-  and Bedrock can sign in from files in your home folder, which the sandbox hides.
 - **A key in the shell you run setup in never reaches the agents.** The daemon's service, under
-  systemd or launchd, gets only PATH. So setup asks for Pi's sign-in, which saves a key too,
-  whatever your shell holds.
+  systemd or launchd, gets only PATH. So Skelcrew passes Pi no provider's key variable, and setup
+  asks for Pi's sign-in, which saves a key too, whatever your shell holds.
 - **`pi -p` reads its prompt from stdin, whole.** Run with stdin open and nothing written, it
   waits forever.
 - **Pi has no setting that holds an answer to a shape.** The reviewer gets a tool from
   Skelcrew's extension, whose parameters are the shape, and Pi checks its arguments against it.
 - **`auth.json` can hold a command Pi runs for a key.** A key written as `!command` runs when Pi
-  needs it. Every session can write the shared login, so Skelcrew never runs pi on it with your
-  rights, except for the first run's login, when it holds no provider.
-- **Pi writes `auth.json` in place, through a link.** It locks the file a link leads to, with
-  a `.lock` folder beside it, so sessions linked to one login renew it in turn.
+  needs it. So no agent may write a login another reads: each gets its own copy, which Skelcrew
+  writes anew from its own login as the agent starts. No sandbox sees Skelcrew's login.
+- **Renewing a sign-in rotates its refresh token.** Pi's own code says so, and the old token may
+  stop working. Copies that each renewed would end the sign-in for the rest. So a copy holds no
+  refresh token, and Skelcrew renews a sign-in that ends within a day, outside the sandbox, with
+  `pi auth print-bearer-token --min-expiry 24h`, which saves the renewal in Skelcrew's login. A
+  copy Pi can't renew fails with "OAuth refresh failed for anthropic: ...", which Skelcrew
+  reports as an expired sign-in. A session that runs past its token's end stops on that until it
+  starts again.
 - **Interactive Pi downloads `fd` and `rg` when they aren't on the PATH.** It saves them in its
   agent folder's `bin/`, so each lead and builder downloads them once, at its first start, and
   keeps them. Reviews run in print mode, whose tools never need them, so they download nothing.

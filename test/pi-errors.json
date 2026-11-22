@@ -3,7 +3,7 @@
     "api": "openai-completions",
     "body": "openai-quota",
     "error": "429: {\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.\",\"type\":\"insufficient_quota\",\"param\":null,\"code\":\"insufficient_quota\"}",
-    "limit": true
+    "limit": false
   },
   {
     "api": "openai-completions",
@@ -45,7 +45,7 @@
     "api": "openai-responses",
     "body": "openai-quota",
     "error": "openrouter API error (429): {\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.\",\"type\":\"insufficient_quota\",\"param\":null,\"code\":\"insufficient_quota\"}",
-    "limit": true
+    "limit": false
   },
   {
     "api": "openai-responses",
@@ -87,7 +87,7 @@
     "api": "anthropic-messages",
     "body": "openai-quota",
     "error": "429 {\"error\":{\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.\",\"type\":\"insufficient_quota\",\"param\":null,\"code\":\"insufficient_quota\"}}",
-    "limit": true
+    "limit": false
   },
   {
     "api": "anthropic-messages",
@@ -136,5 +136,23 @@
     "body": "google-project",
     "error": "{\"error\":{\"code\":403,\"message\":\"Your application is authenticating by using local Application Default Credentials. The generativelanguage.googleapis.com API requires a quota project, which is not set by default.\",\"status\":\"PERMISSION_DENIED\"}}",
     "limit": false
+  },
+  {
+    "api": "openai-codex-responses",
+    "body": "chatgpt-limit",
+    "error": "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.",
+    "limit": true
+  },
+  {
+    "api": "openai-codex-responses",
+    "body": "chatgpt-limit-no-reset",
+    "error": "You have hit your ChatGPT usage limit (pro plan).",
+    "limit": true
+  },
+  {
+    "api": "openai-codex-responses",
+    "body": "openai-quota",
+    "error": "You have hit your ChatGPT usage limit.",
+    "limit": true
   }
 ]

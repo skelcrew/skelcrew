@@ -1,17 +1,7 @@
 // How Pi runs inside the sandbox: as the lead or a builder, in a tmux session with an agent folder
-// of its own, and as the reviewer, once per review. All of them share Skelcrew's own Pi login, and
-// load Skelcrew's extension, which runs the hooks and draws the marks Skelcrew reads.
-import {
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  readlinkSync,
-  renameSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+// of its own, and as the reviewer, once per review. Each gets its own copy of Skelcrew's Pi login,
+// and loads Skelcrew's extension, which runs the hooks and draws the marks Skelcrew reads.
+import { lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -30,68 +20,100 @@ const extensionSource = String(extension);
 const readyMark = "◇ Pi is ready for a message";
 const busyMark = "◆ Pi is at work";
 const verdictTool = "skelcrew_verdict";
-const limitWords = "rate limited (429)";
+const limitWords = "rate limited";
 
-// Returns Skelcrew's own Pi agent folder, where the first run's pi auth login saves the login, and
+// Returns Skelcrew's own Pi agent folder, where your pi auth login saves Skelcrew's login, and
 // where you put a models.json for every agent: apart from yours in ~/.pi, so neither side's
-// renewal or logout touches the other. No agent ever sees it. A caller that was handed an
-// environment passes its HOME, as for dataDir.
+// renewal or logout touches the other. No sandbox ever sees it, so no agent can change what
+// another reads. A caller that was handed an environment passes its HOME, as for dataDir.
 export const piHome = (home = homedir()) => join(dataDir(home), "pi");
 
-// The folder that holds Skelcrew's Pi login, auth.json alone, which every Pi sandbox gets writable.
-const loginFolder = (home: string) => join(dataDir(home), "pi-login");
+// Skelcrew's Pi login, as auth.json holds it: a sign-in or a key for each provider.
+const Logins = z.record(z.string(), z.record(z.string(), z.unknown()));
+// A sign-in, which Pi renews with its refresh token before its access token expires.
+const SignIn = z.looseObject({ type: z.literal("oauth"), expires: z.number() });
 
-// Links auth.json in `folder`, an agent folder, to Skelcrew's shared login: Skelcrew's own folder
-// unless another is named. Returns the login folder. Pi writes auth.json in place, through the
-// link, and locks it with a folder beside the file the link leads to, so sessions renew it in
-// turn, and no session keeps a copy of your key.
-function shareLogin(home: string, folder = piHome(home)): string {
-  const login = loginFolder(home);
-  const shared = join(login, "auth.json");
-  mkdirSync(folder, { recursive: true, mode: 0o700 });
-  mkdirSync(login, { recursive: true, mode: 0o700 });
-  // An agent can write in the login folder. A link it left there would send pi auth login's
-  // write, run with your rights, to any file of yours.
-  if (lstatSync(shared, { throwIfNoEntry: false })?.isSymbolicLink()) rmSync(shared);
-  const at = join(folder, "auth.json");
-  const found = lstatSync(at, { throwIfNoEntry: false });
-  if (found?.isSymbolicLink() && readlinkSync(at) === shared) return login;
-  // The first run's login writes a plain auth.json in Skelcrew's own folder. Anywhere else the
-  // agent can write what is there, so it is never taken for Skelcrew's login.
-  if (found?.isFile() && folder === piHome(home)) renameSync(at, shared);
-  else rmSync(at, { recursive: true, force: true });
-  symlinkSync(shared, at);
-  return login;
+// Returns Skelcrew's Pi login, or none when there is none or it can't be read. Only a file
+// counts, never a link or a pipe.
+function savedLogins(home: string): Record<string, Record<string, unknown>> {
+  const file = join(piHome(home), "auth.json");
+  if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) return {};
+  try {
+    return Logins.parse(JSON.parse(readFileSync(file, "utf8")));
+  } catch {
+    return {};
+  }
 }
 
 // Reports whether Pi's agents have a login: a provider saved in Skelcrew's Pi login, or a
 // provider of your own in Skelcrew's models.json, such as a model you run yourself. A key in your
 // shell doesn't count: the daemon's service gets only PATH, so its agents would never see it.
-// Only the files are read, never a link or a pipe an agent left, and no pi runs: an agent could
-// put a command in auth.json for Pi to run as a key.
+// No pi runs, as one would run a key that is a command.
 export function piLoggedIn(home: string): boolean {
-  const saved = (file: string, shape: z.ZodType<Record<string, unknown>>) => {
-    if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) return false;
-    try {
-      return Object.keys(shape.parse(JSON.parse(readFileSync(file, "utf8")))).length > 0;
-    } catch {
-      return false;
-    }
-  };
-  const logins = z.record(z.string(), z.unknown());
-  const models = z.object({ providers: logins }).transform((read) => read.providers);
-  return (
-    saved(join(loginFolder(home), "auth.json"), logins) ||
-    saved(join(piHome(home), "auth.json"), logins) ||
-    saved(join(piHome(home), "models.json"), models)
-  );
+  if (Object.keys(savedLogins(home)).length > 0) return true;
+  const models = join(piHome(home), "models.json");
+  if (!lstatSync(models, { throwIfNoEntry: false })?.isFile()) return false;
+  try {
+    const read = z.object({ providers: z.record(z.string(), z.unknown()) });
+    return Object.keys(read.parse(JSON.parse(readFileSync(models, "utf8"))).providers).length > 0;
+  } catch {
+    return false;
+  }
 }
 
-// Readies Skelcrew's own Pi folder for pi auth login, outside the sandbox, so the login lands in
-// the shared login folder. Returns the folder.
+// Readies Skelcrew's own Pi folder for pi auth login, outside the sandbox, and returns it.
 export function readyLogin(home = homedir()): string {
-  shareLogin(home);
+  mkdirSync(piHome(home), { recursive: true, mode: 0o700 });
   return piHome(home);
+}
+
+// How long a sign-in must still last as an agent starts, or Skelcrew renews it first.
+const signInLasts = "24h";
+
+// Renews each sign-in of Skelcrew's login that expires within a day, outside the sandbox, with
+// pi on `path`, which saves the renewal in Skelcrew's login. A renewal that fails leaves the
+// sign-in as it was, and the agent says it expired. What pi prints is never read, as it holds
+// the token.
+async function renewLogin(home: string, path: string): Promise<void> {
+  const soon = Date.now() + 24 * 60 * 60 * 1000;
+  for (const [provider, login] of Object.entries(savedLogins(home))) {
+    const signIn = SignIn.safeParse(login);
+    if (!signIn.success || signIn.data.expires > soon) continue;
+    try {
+      const command = ["pi", "auth", "print-bearer-token", "--provider", provider];
+      const renewal = Bun.spawn([...command, "--min-expiry", signInLasts], {
+        env: {
+          HOME: home,
+          PATH: path,
+          PI_CODING_AGENT_DIR: piHome(home),
+          PI_SKIP_VERSION_CHECK: "1",
+        },
+        cwd: piHome(home),
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: 30_000,
+      });
+      await renewal.exited;
+    } catch {}
+  }
+}
+
+// Gives an agent folder its own copy of Skelcrew's login, written anew each start, so an agent
+// that changed its copy never changes another's, nor keeps its change. A sign-in goes without
+// its refresh token: a renewal rotates that token, which would end the sign-in for Skelcrew's
+// login and every other copy. Skelcrew renews it instead, as the agent starts. Whatever the agent
+// left there goes first, a link too, so the write never goes through one.
+function copyLogin(home: string, agentFolder: string): void {
+  const copy = join(agentFolder, "auth.json");
+  rmSync(copy, { recursive: true, force: true });
+  const logins = savedLogins(home);
+  if (Object.keys(logins).length === 0) return;
+  const copied = Object.fromEntries(
+    Object.entries(logins).map(([provider, login]) => [
+      provider,
+      SignIn.safeParse(login).success ? { ...login, refresh: "" } : login,
+    ]),
+  );
+  writeFileSync(copy, JSON.stringify(copied), { mode: 0o600, flag: "wx" });
 }
 
 // Gives an agent folder Skelcrew's own models.json, where you add providers Pi doesn't have, such
@@ -176,7 +198,7 @@ function readProgress(lines: string[], before: Progress): Progress {
 // lead or a builder. It starts afresh with the first message in `prompt` under `sessionId`, or
 // brings back the conversation saved under `resume`. A builder, given its thread's clone, works
 // there; a lead works in its own `folder`. Each sees nothing else but `origin`, Skelcrew's clone
-// of its repository, read-only, the login every Pi session shares, and for a lead `repositories`,
+// of its repository, read-only, and for a lead `repositories`,
 // the folder of every repository's clone, read-only. `files` is the placeholder of its dropped
 // files, on a host that hands it some.
 //
@@ -231,14 +253,12 @@ async function startCommand(given: {
   // about 16 KB, and the lead's instructions came close.
   if (system) writeFileSync(instructions, system);
   if (skills) copySkills(skills, join(agentFolder, "skills"), home);
-  // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
-  // folder before this session links to it.
-  shareLogin(home);
-  const login = shareLogin(home, agentFolder);
+  await renewLogin(home, env.PATH ?? "");
+  copyLogin(home, agentFolder);
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...rw(agentFolder), ...rw(login)];
+  const mounts = [...rw(cwd), ...rw(agentFolder)];
   if (origin) {
     refuseCredentials(origin);
     mounts.push(...ro(origin));
@@ -256,7 +276,7 @@ async function startCommand(given: {
 
   // Only the environment the agent needs, plus its own agent folder. Pi's update check only fails
   // in the sandbox, as its install folder is read-only there.
-  const kept = filterEnv(env, pi.keys);
+  const kept = filterEnv(env);
   kept.PI_CODING_AGENT_DIR = agentFolder;
   kept.PI_SKIP_VERSION_CHECK = "1";
   const argv = sandboxArgs({
@@ -277,10 +297,10 @@ const verdictNote = `Give your verdict by calling the ${verdictTool} tool once, 
 
 // Returns Pi's review command, mounts and environment. The command reads the review's prompt on
 // stdin, runs once in print mode and saves no conversation. Pi gets an agent folder in the
-// review's own folder, which goes with it, linked to the shared login, with the repository's
+// review's own folder, which goes with it, with its own copy of the login and the repository's
 // skills in its skills/, so none are left for the prompt to list. Skelcrew's extension gives the
 // reviewer its verdict tool, which writes the answer, held to the shape in the review's folder.
-function reviewCommand(given: {
+async function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
@@ -289,8 +309,9 @@ function reviewCommand(given: {
   const { home, folder, model } = given;
   const agentFolder = join(folder, "pi");
   const loaded = join(agentFolder, "skelcrew.ts");
-  shareLogin(home);
-  const login = shareLogin(home, agentFolder);
+  mkdirSync(agentFolder, { recursive: true, mode: 0o700 });
+  await renewLogin(home, process.env.PATH ?? "");
+  copyLogin(home, agentFolder);
   writeFileSync(loaded, extensionSource);
   copyModels(home, agentFolder);
   if (given.skills) copySkills(given.skills, join(agentFolder, "skills"), home);
@@ -303,7 +324,8 @@ function reviewCommand(given: {
     SKELCREW_PI_REVIEW: folder,
     SKELCREW_PI_ERROR_MARK: errorMark(folder),
   };
-  return { command, mounts: rw(login), env, skills: [] };
+  const mounts: string[] = [];
+  return { command, mounts, env, skills: [] };
 }
 
 // Returns the reviewer's answer from the file its verdict tool wrote, for the reviewer to check
@@ -344,9 +366,12 @@ function reportedError(_out: string, err: string, folder: string): string | null
 
 // Returns whether the extension's message says a usage limit is reached, and when it resets, or
 // null when it says something else. The message is Skelcrew's own, such as "rate limited (429),
-// resets at 3:15 PM", and a limit with no time passes on its own, so it is waited out.
+// resets at 3:15 PM" or "rate limited by ChatGPT's usage limit, resets in ~42 min", read as it
+// comes. A limit with no time passes on its own, so it is waited out.
 function usageLimit(error: string, now: number): { reset: number | null } | null {
   if (!error.startsWith(limitWords)) return null;
+  const minutes = /, resets in ~(\d+) min$/.exec(error)?.[1];
+  if (minutes !== undefined) return { reset: now + Number(minutes) * 60_000 };
   const at = /, resets at (.+)$/.exec(error)?.[1];
   return { reset: at === undefined ? null : resetTime(at, now) };
 }
@@ -371,76 +396,18 @@ function inputStart(screen: string[]): number | null {
 
 // Pi as Skelcrew knows it, with the marks its extension draws: one line while a turn runs, which
 // counts seconds, and another while Pi waits with nothing typed. A failed review says only the
-// error reportedError finds, never a line that may be a command's. `keys` are the variables of
-// the providers Pi reads from the environment, let into the sandbox for those who use a key
-// rather than a login: every key and token pi-ai's env-api-keys.js reads, and what some of those
-// providers need beside it, none of it secret. Copilot's is a GitHub token, which no agent may
-// see, so it stays out.
-// Bedrock gets only its own bearer token: AWS's own keys would open the whole account to agents,
-// and Vertex's and AWS's login files live in your home folder, which the sandbox hides. The
-// first run looks for `program` and, when it is missing, prints the line that installs it: the
-// version Skelcrew was tested with, which needs Node 22.19 or newer.
+// error reportedError finds, never a line that may be a command's. `keys` is empty: the daemon's
+// service gets only PATH, so a provider's key in your shell would never reach an agent, and
+// Pi's agents use Skelcrew's Pi login instead. The first run looks for `program` and, when it is
+// missing, prints the line that installs it: the version Skelcrew was tested with, which needs
+// Node 22.19 or newer.
 export const pi = {
   name: "pi",
   title: "Pi",
   program: "pi",
   install: "npm install -g @earendil-works/pi-coding-agent@1.6.0",
   marks: { busy: busyMark, prompt: readyMark },
-  keys: [
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_OAUTH_TOKEN",
-    "ANTHROPIC_API_KEY",
-    "ANT_LING_API_KEY",
-    "QWEN_TOKEN_PLAN_TEAM_API_KEY",
-    "QWEN_TOKEN_PLAN_API_KEY",
-    "QWEN_TOKEN_PLAN_TEAM_CN_API_KEY",
-    "QWEN_TOKEN_PLAN_CN_API_KEY",
-    "QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY",
-    "QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY",
-    "OPENAI_API_KEY",
-    "AZURE_OPENAI_API_KEY",
-    "NVIDIA_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_CLOUD_API_KEY",
-    "GROQ_API_KEY",
-    "CEREBRAS_API_KEY",
-    "XAI_API_KEY",
-    "TYPESAFE_API_KEY",
-    "RADIUS_API_KEY",
-    "OPENROUTER_API_KEY",
-    "AI_GATEWAY_API_KEY",
-    "ZAI_API_KEY",
-    "ZAI_CODING_CN_API_KEY",
-    "MISTRAL_API_KEY",
-    "MINIMAX_API_KEY",
-    "MINIMAX_CN_API_KEY",
-    "MOONSHOT_API_KEY",
-    "HF_TOKEN",
-    "FIREWORKS_API_KEY",
-    "TOGETHER_API_KEY",
-    "BASETEN_API_KEY",
-    "OPENCODE_API_KEY",
-    "KIMI_API_KEY",
-    "META_API_KEY",
-    "CLOUDFLARE_API_KEY",
-    "XIAOMI_API_KEY",
-    "XIAOMI_TOKEN_PLAN_CN_API_KEY",
-    "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
-    "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
-    "AWS_BEARER_TOKEN_BEDROCK",
-    "CLOUDFLARE_ACCOUNT_ID",
-    "CLOUDFLARE_GATEWAY_ID",
-    "AZURE_OPENAI_BASE_URL",
-    "AZURE_OPENAI_RESOURCE_NAME",
-    "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
-    "AZURE_OPENAI_API_VERSION",
-    "GOOGLE_CLOUD_PROJECT",
-    "GCLOUD_PROJECT",
-    "GOOGLE_CLOUD_LOCATION",
-    "AWS_REGION",
-    "AWS_DEFAULT_REGION",
-  ],
+  keys: [],
   start: startCommand,
   saved: savedConversation,
   conversation: conversationFile,

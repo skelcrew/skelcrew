@@ -583,14 +583,17 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   // was given in its answer's body, which Skelcrew's extension would have written with its tool.
   function fakePi(lines: string[]): void {
     script("pi", [
-      'seen=$( (printf \'%s\\n\' "$@"; env | sort | grep -E \'^(PI_|SKELCREW_PI|GH_|OPENROUTER)\'; readlink "$PI_CODING_AGENT_DIR/auth.json"; test -f "$PI_CODING_AGENT_DIR/skelcrew.ts" && echo extension; pwd; cat) | base64 -w0)',
+      'seen=$( (printf \'%s\\n\' "$@"; env | sort | grep -E \'^(PI_|SKELCREW_PI|GH_|OPENROUTER)\'; cat "$PI_CODING_AGENT_DIR/auth.json"; echo; test -f "$PI_CODING_AGENT_DIR/skelcrew.ts" && echo extension; pwd; cat) | base64 -w0)',
       ...lines,
     ]);
   }
   const piAnswer =
     'printf \'{"verdict":"approve","body":"%s","findings":[]}\' "$seen" > "$SKELCREW_PI_REVIEW/answer.json"';
 
-  test("reviews on Pi with the model it is given, its verdict from its tool, on the shared login", async () => {
+  test("reviews on Pi with the model it is given, its verdict from its tool, on its own copy of the login", async () => {
+    const piHome = join(home, ".local", "share", "skelcrew", "pi");
+    mkdirSync(piHome, { recursive: true });
+    writeFileSync(join(piHome, "auth.json"), '{"openrouter":{"type":"api_key","key":"k"}}');
     fakePi([piAnswer]);
     const done = await review({
       ...given(),
@@ -603,10 +606,11 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(seen.slice(0, 2)).toEqual(["--no-extensions", "--extension"]);
     for (const flag of ["--no-approve", "--no-session", "--print"]) expect(seen).toContain(flag);
     expect(seen[seen.indexOf("--model") + 1]).toBe("openrouter/some-model");
-    expect(seen).toContain("OPENROUTER_API_KEY=sk-or-test");
+    // The daemon's service has no key of yours to pass on.
+    expect(seen).not.toContain("OPENROUTER_API_KEY=sk-or-test");
     expect(seen.some((line) => line.startsWith("SKELCREW_PI_REVIEW=/"))).toBe(true);
     expect(seen.some((line) => line.startsWith("GH_"))).toBe(false);
-    expect(seen).toContain(join(home, ".local", "share", "skelcrew", "pi-login", "auth.json"));
+    expect(seen).toContain('{"openrouter":{"type":"api_key","key":"k"}}');
     expect(seen).toContain("extension");
     expect(seen).toContain(clone);
     expect(seen.join("\n")).toContain(issue.title);

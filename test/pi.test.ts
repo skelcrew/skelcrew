@@ -8,7 +8,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readlinkSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -28,7 +27,11 @@ import { quietSince } from "../src/agents/transport.ts";
 
 let home = "";
 const data = () => join(home, ".local", "share", "skelcrew");
-const login = () => join(data(), "pi-login", "auth.json");
+// Saves Skelcrew's Pi login, as pi auth login does.
+function saveLogin(logins: object): void {
+  mkdirSync(join(data(), "pi"), { recursive: true });
+  writeFileSync(join(data(), "pi", "auth.json"), JSON.stringify(logins));
+}
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-pi-test-")));
@@ -244,6 +247,34 @@ describe("the extension in a lead or a builder", () => {
       expect(await failedTurn(error)).toBe(sent("rate_limit", "rate limited (429)"));
   });
 
+  test("a ChatGPT sign-in's usage limit, which has no status, is a rate limit, with its minutes to the reset", async () => {
+    const limit = "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.";
+    expect(await failedTurn(limit)).toBe(
+      sent("rate_limit", "rate limited by ChatGPT's usage limit, resets in ~42 min"),
+    );
+    expect(await failedTurn("You have hit your ChatGPT usage limit (pro plan).")).toBe(
+      sent("rate_limit", "rate limited by ChatGPT's usage limit"),
+    );
+  });
+
+  test("OpenAI's insufficient_quota is no limit to wait out, as your credit ran out", async () => {
+    const outOfCredit = "out of credit (429): check the provider's plan and billing";
+    for (const error of [
+      '429: {"message":"You exceeded your current quota.","type":"insufficient_quota","code":"insufficient_quota"}',
+      '429 {"error":{"message":"You exceeded your current quota.","code":"insufficient_quota"}}',
+      'openai API error (429): {"message":"over","type":"insufficient_quota"}',
+    ])
+      expect(await failedTurn(error)).toBe(sent("billing", outOfCredit));
+  });
+
+  test("a sign-in Pi couldn't renew is a failed login, in Skelcrew's words", async () => {
+    const error =
+      'OAuth refresh failed for anthropic: Anthropic token refresh request failed. body={"error":{"message":"Invalid request format"}}';
+    expect(await failedTurn(error)).toBe(
+      sent("auth", "the sign-in expired: Skelcrew renews it as the session starts again"),
+    );
+  });
+
   test("an event Pi sends in another shape still ends the turn", async () => {
     const { emit } = fakePi();
     await emit("agent_end", { messages: "none" });
@@ -295,14 +326,15 @@ describe("the extension in a lead or a builder", () => {
 describe("the extension in a review", () => {
   const schema = { type: "object", properties: { verdict: { type: "string" } } };
   // The review's mark, as Skelcrew hands it to the extension for the review in this folder.
-  const mark = () => z.string().parse(pi.review({ home, folder: home }).env.SKELCREW_PI_ERROR_MARK);
-  const review = () => {
+  const mark = async () =>
+    z.string().parse((await pi.review({ home, folder: home })).env.SKELCREW_PI_ERROR_MARK);
+  const review = async () => {
     writeFileSync(join(home, "schema.json"), JSON.stringify(schema));
-    return fakePi({ SKELCREW_PI_REVIEW: home, SKELCREW_PI_ERROR_MARK: mark() });
+    return fakePi({ SKELCREW_PI_REVIEW: home, SKELCREW_PI_ERROR_MARK: await mark() });
   };
 
   test("gives the reviewer a verdict tool held to the shape, whose answer Skelcrew reads", async () => {
-    const { tools } = review();
+    const { tools } = await review();
     const tool = tools.find((t) => t.name === verdictTool);
     expect(tool?.parameters).toEqual(schema);
     const given = { verdict: "approve", body: "Looks right.", findings: [] };
@@ -310,14 +342,14 @@ describe("the extension in a review", () => {
     expect(pi.answer(home)).toEqual(given);
   });
 
-  test("an answer it never gave is no answer", () => {
-    review();
+  test("an answer it never gave is no answer", async () => {
+    await review();
     expect(() => pi.answer(home)).toThrow("it gave no answer");
   });
 
   test("runs no hooks, and prints Skelcrew's words for Pi's error on a line with the review's mark", async () => {
     fakeSc();
-    const { emit } = review();
+    const { emit } = await review();
     const printed: string[] = [];
     const write = process.stderr.write;
     process.stderr.write = (chunk: string | Uint8Array) => printed.push(String(chunk)) > 0;
@@ -360,8 +392,8 @@ describe("the extension in a review", () => {
     expect(pi.failure("", "\n", home)).toBeNull();
   });
 
-  test("takes the mark out of the environment as it loads, before any command runs", () => {
-    review();
+  test("takes the mark out of the environment as it loads, before any command runs", async () => {
+    await review();
     expect(process.env.SKELCREW_PI_ERROR_MARK).toBeUndefined();
   });
 });
@@ -390,25 +422,32 @@ describe("usage limits", () => {
   const now = new Date(2026, 10, 22, 9, 0).getTime();
 
   test("Skelcrew reads a limit, and when it resets, from the extension's words alone", () => {
-    expect(pi.usageLimit(`${limitWords}, resets at 3:15 PM`, now)).toEqual({
+    expect(pi.usageLimit(`${limitWords} by ChatGPT's usage limit, resets in ~42 min`, now)).toEqual(
+      {
+        reset: now + 42 * 60_000,
+      },
+    );
+    expect(pi.usageLimit(`${limitWords} (429), resets at 3:15 PM`, now)).toEqual({
       reset: new Date(2026, 10, 22, 15, 15).getTime(),
     });
-    expect(pi.usageLimit(`${limitWords}, resets at Dec 31st, 2099 11:59 PM`, now)).toEqual({
+    expect(pi.usageLimit(`${limitWords} (429), resets at Dec 31st, 2099 11:59 PM`, now)).toEqual({
       reset: new Date(2099, 11, 31, 23, 59).getTime(),
     });
     // A 24-hour time has no AM or PM.
-    expect(pi.usageLimit(`${limitWords}, resets at 14:00`, now)).toEqual({
+    expect(pi.usageLimit(`${limitWords} (429), resets at 14:00`, now)).toEqual({
       reset: new Date(2026, 10, 22, 14, 0).getTime(),
     });
-    expect(pi.usageLimit(`${limitWords}, resets at Dec 31st, 2099 23:59`, now)).toEqual({
+    expect(pi.usageLimit(`${limitWords} (429), resets at Dec 31st, 2099 23:59`, now)).toEqual({
       reset: new Date(2099, 11, 31, 23, 59).getTime(),
     });
-    expect(pi.usageLimit(`${limitWords}, resets at 25:00`, now)).toEqual({ reset: null });
+    expect(pi.usageLimit(`${limitWords} (429), resets at 25:00`, now)).toEqual({ reset: null });
     expect(pi.usageLimit(limitWords, now)).toEqual({ reset: null });
     for (const error of [
       "auth failed (401): check Pi's login or key",
       "the provider failed (500)",
       "the request failed with no HTTP status, such as offline",
+      "out of credit (429): check the provider's plan and billing",
+      "the sign-in expired: Skelcrew renews it as the session starts again",
       "Pi failed to start, such as on a model it doesn't know: run pi by hand to see why",
       '429: {"message":"raw text from a provider"}',
     ])
@@ -497,49 +536,99 @@ describe("starting a lead or a builder", () => {
     expect(argv).not.toContain("--from: fix it");
   });
 
-  test("lets the providers' API keys in, but never a GitHub token, and never on the command line", async () => {
+  test("lets no key or token of your environment in, and none on the command line", async () => {
     const { argv, env: given } = await start();
-    expect(given.GEMINI_API_KEY).toBe("gemini-secret");
-    expect(given.OPENROUTER_API_KEY).toBe("openrouter-secret");
-    expect(given.CLOUDFLARE_API_KEY).toBe("cf-secret");
-    expect(given.CLOUDFLARE_ACCOUNT_ID).toBe("cf-account");
-    expect(given.AWS_BEARER_TOKEN_BEDROCK).toBe("bedrock-secret");
-    expect(given.GH_TOKEN).toBeUndefined();
-    expect(given.COPILOT_GITHUB_TOKEN).toBeUndefined();
-    // AWS's own keys would open the whole account to agents.
-    expect(given.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    for (const key of Object.keys(env()))
+      if (key !== "HOME" && key !== "PATH") expect(given[key]).toBeUndefined();
     for (const secret of ["gemini-secret", "openrouter-secret", "github-secret", "copilot-secret"])
       expect(argv.join(" ")).not.toContain(secret);
   });
 
-  test("every session links to one shared login, which the first run's login moves into", async () => {
-    mkdirSync(join(data(), "pi"), { recursive: true });
-    writeFileSync(join(data(), "pi", "auth.json"), '{"google":{"type":"api_key","key":"k"}}');
+  test("gives each session its own copy of Skelcrew's login, which no sandbox sees", async () => {
+    saveLogin({ google: { type: "api_key", key: "k" } });
     const { argv } = await start();
-    expect(readFileSync(login(), "utf8")).toContain('"google"');
-    for (const folder of [join(data(), "pi"), agentFolder()])
-      expect(readlinkSync(join(folder, "auth.json"))).toBe(login());
-    // The login folder is the only one of Skelcrew's that the session can write besides its own.
-    expect(argv.join(" ")).toContain(
-      `--bind ${join(data(), "pi-login")} ${join(data(), "pi-login")}`,
-    );
-    // A copy the agent made in its own folder is never taken for the login.
-    rmSync(join(agentFolder(), "auth.json"));
-    writeFileSync(join(agentFolder(), "auth.json"), '{"mine":{}}');
-    await start();
-    expect(readlinkSync(join(agentFolder(), "auth.json"))).toBe(login());
-    expect(readFileSync(login(), "utf8")).not.toContain("mine");
+    expect(JSON.parse(readFileSync(join(agentFolder(), "auth.json"), "utf8"))).toEqual({
+      google: { type: "api_key", key: "k" },
+    });
+    expect(lstatSync(join(agentFolder(), "auth.json")).isFile()).toBe(true);
+    expect(argv).not.toContain(join(data(), "pi"));
+    expect(argv).not.toContain(join(data(), "pi", "auth.json"));
   });
 
-  test("a link an agent left for the shared login is removed, never written through", async () => {
+  test("one agent's write to its login reaches no other agent, nor Skelcrew's login", async () => {
+    saveLogin({ google: { type: "api_key", key: "k" } });
+    await start();
+    const other = await pi.start({
+      name: "app-13",
+      socket: join(home, "run", "app-13.sock"),
+      thread: join(data(), "threads", "app-13"),
+      sessionId: "4b7d6f0e-0000-4000-8000-000000000002",
+      env: env(),
+    });
+    const planted = '{"google":{"type":"api_key","key":"!touch /tmp/planted"}}';
+    writeFileSync(join(agentFolder(), "auth.json"), planted);
+    const otherLogin = join(data(), "pi-sessions", "app-13", "auth.json");
+    expect(readFileSync(otherLogin, "utf8")).not.toContain("planted");
+    expect(readFileSync(join(data(), "pi", "auth.json"), "utf8")).not.toContain("planted");
+    // Neither sandbox can write where the other's login is.
+    expect(other.argv.join(" ")).not.toContain(agentFolder());
+    // The agent's change lasts only until its session starts again.
+    await start();
+    expect(readFileSync(join(agentFolder(), "auth.json"), "utf8")).not.toContain("planted");
+  });
+
+  test("a link an agent left for its login is removed, never written through", async () => {
+    saveLogin({ google: { type: "api_key", key: "k" } });
     await start();
     const yours = join(home, "yours");
     writeFileSync(yours, "keep\n");
-    rmSync(login(), { force: true });
-    Bun.spawnSync(["ln", "-s", yours, login()]);
+    rmSync(join(agentFolder(), "auth.json"));
+    Bun.spawnSync(["ln", "-s", yours, join(agentFolder(), "auth.json")]);
     await start();
-    expect(lstatSync(login(), { throwIfNoEntry: false })).toBeUndefined();
+    expect(lstatSync(join(agentFolder(), "auth.json")).isFile()).toBe(true);
     expect(readFileSync(yours, "utf8")).toBe("keep\n");
+  });
+
+  test("a copied sign-in has no refresh token, and Skelcrew renews one that expires within a day first", async () => {
+    const later = Date.now() + 3 * 24 * 60 * 60 * 1000;
+    saveLogin({
+      anthropic: {
+        type: "oauth",
+        access: "old",
+        refresh: "keep-out",
+        expires: Date.now() + 60_000,
+      },
+      "openai-codex": { type: "oauth", access: "fine", refresh: "keep-out-too", expires: later },
+    });
+    // A fake pi renews the sign-in in Skelcrew's login, as pi auth print-bearer-token does.
+    const renewed = { type: "oauth", access: "new", refresh: "rotated", expires: later };
+    writeFileSync(
+      join(home, "bin", "pi"),
+      `#!/bin/sh\necho "$*" >> "${join(home, "renewals")}"\n` +
+        `printf '%s' '${JSON.stringify({ anthropic: renewed, "openai-codex": { type: "oauth", access: "fine", refresh: "keep-out-too", expires: later } })}' > "$PI_CODING_AGENT_DIR/auth.json"\n` +
+        "echo the-token\n",
+      { mode: 0o755 },
+    );
+    await pi.start({
+      name: "app-12",
+      socket: join(home, "run", "app-12.sock"),
+      thread: folder(),
+      sessionId: "4b7d6f0e-0000-4000-8000-000000000001",
+      env: { ...env(), PATH: `${join(home, "bin")}:/usr/bin:/bin` },
+    });
+    // Only the sign-in that expires soon is renewed, outside the sandbox, in Skelcrew's login.
+    expect(readFileSync(join(home, "renewals"), "utf8")).toBe(
+      "auth print-bearer-token --provider anthropic --min-expiry 24h\n",
+    );
+    expect(JSON.parse(readFileSync(join(agentFolder(), "auth.json"), "utf8"))).toEqual({
+      anthropic: { ...renewed, refresh: "" },
+      "openai-codex": { type: "oauth", access: "fine", refresh: "", expires: later },
+    });
+  });
+
+  test("a session gets no login when Skelcrew has none", async () => {
+    await start();
+    expect(existsSync(join(agentFolder(), "auth.json"))).toBe(false);
   });
 
   test("refuses a session that is both new and brought back", async () => {
@@ -557,10 +646,11 @@ describe("starting a lead or a builder", () => {
 });
 
 describe("a review", () => {
-  test("runs Pi once in print mode on the shared login, its agent folder in the review's", () => {
+  test("runs Pi once in print mode on its own copy of the login, its agent folder in the review's", async () => {
+    saveLogin({ openrouter: { type: "api_key", key: "k" } });
     const folder = join(home, "review");
     mkdirSync(folder);
-    const launch = pi.review({ home, folder, model: "openrouter/some-model" });
+    const launch = await pi.review({ home, folder, model: "openrouter/some-model" });
     expect(launch.command).toEqual([
       "pi",
       "--no-extensions",
@@ -583,11 +673,13 @@ describe("a review", () => {
     // Each review gets a mark of its own.
     const other = join(home, "other");
     mkdirSync(other);
-    expect(pi.review({ home, folder: other }).env.SKELCREW_PI_ERROR_MARK).not.toBe(
+    expect((await pi.review({ home, folder: other })).env.SKELCREW_PI_ERROR_MARK).not.toBe(
       launch.env.SKELCREW_PI_ERROR_MARK,
     );
-    expect(launch.mounts).toEqual(["--bind", join(data(), "pi-login"), join(data(), "pi-login")]);
-    expect(readlinkSync(join(folder, "pi", "auth.json"))).toBe(login());
+    expect(launch.mounts).toEqual([]);
+    expect(JSON.parse(readFileSync(join(folder, "pi", "auth.json"), "utf8"))).toEqual({
+      openrouter: { type: "api_key", key: "k" },
+    });
   });
 });
 
@@ -605,10 +697,9 @@ test("a provider of your own in Skelcrew's models.json is a login, as Pi needs n
 
 test("Pi has a login once a provider is saved, never for a key in the shell alone", () => {
   expect(piLoggedIn(home)).toBe(false);
-  mkdirSync(join(data(), "pi-login"), { recursive: true });
-  writeFileSync(login(), "{}");
+  saveLogin({});
   expect(piLoggedIn(home)).toBe(false);
-  writeFileSync(login(), '{"anthropic":{"type":"oauth"}}');
+  saveLogin({ anthropic: { type: "oauth" } });
   expect(piLoggedIn(home)).toBe(true);
 });
 
