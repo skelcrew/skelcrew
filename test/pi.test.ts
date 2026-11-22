@@ -91,6 +91,16 @@ test("Pi's input, rules and footer are cut, idle, typed into or at work", async 
 
 test("a lead or builder starts with Skelcrew's extension, its own folder and no provider's key", () => {
   const clone = join(home, "clone");
+  const without = {
+    name: "app-12",
+    socket: join(home, "run", "app-12.sock"),
+    thread: clone,
+    sessionId: "11111111-2222-3333-4444-555555555555",
+    env: { HOME: home, PATH: path, ANTHROPIC_API_KEY: "sk-ant-1" },
+  };
+  // With no login of Skelcrew's, Pi would have nothing to run on, as no key reaches it.
+  expect(() => pi.start(without)).toThrow("run sc install to sign in to Pi");
+  saveLogin(3_600_000);
   const started = pi.start({
     name: "app-12",
     socket: join(home, "run", "app-12.sock"),

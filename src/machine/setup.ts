@@ -3,10 +3,12 @@
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { hasPiLogin, piHome } from "../agents/pi-login.ts";
-import { configFile, yourConfigDocument } from "../config.ts";
+import { approvedAgents } from "../approved-agents.ts";
+import { agentRole, configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { errorText, toRun } from "../format.ts";
 import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from "../paths.ts";
@@ -58,8 +60,36 @@ function missingHarness(env: Env): string[] {
   const saved = readSettings(["yourHarness"]).yourHarness;
   // Before you pick one, any installed harness will do.
   const wanted = saved === undefined ? harnesses : [harnessNamed(saved)];
-  if (wanted.some((h) => Bun.which(h.program, { PATH }))) return [];
-  return wanted.map((h) => h.install);
+  const missing = wanted.some((h) => Bun.which(h.program, { PATH })) ? [] : wanted;
+  // A role that names Pi needs it, whichever harness is yours.
+  if (piInUse() && !Bun.which(harnessNamed("pi").program, { PATH }))
+    missing.push(harnessNamed("pi"));
+  return [...new Set(missing.map((h) => h.install))];
+}
+
+// Returns whether a role runs on Pi: yours, your reviewer's, or a role of a repository Skelcrew
+// has, as you approved its .agents/. Pi is experimental, so only a role that names it uses it.
+// A repository whose settings can't be read counts for none, as its agents stop on that anyway.
+function piInUse(): boolean {
+  const { yourHarness, yourReviewer } = readSettings(["yourHarness", "yourReviewer"]);
+  if (yourHarness === "pi" || yourReviewer === "pi") return true;
+  const db = openDb();
+  try {
+    const repositories = z
+      .array(z.object({ owner: z.string(), repo: z.string() }))
+      .parse(db.query("SELECT owner, repo FROM repositories").all());
+    return repositories.some((place) => {
+      const repository = { ...place, agents: approvedAgents(place) };
+      const roles = ["lead", "builder", "reviewer"] as const;
+      try {
+        return roles.some((role) => agentRole(role, repository).harness === "pi");
+      } catch {
+        return false;
+      }
+    });
+  } finally {
+    db.close();
+  }
 }
 
 // Stops the first run, before it asks anything, when a program agents need is missing, saying
@@ -370,7 +400,10 @@ function agentsLoggedIn(harness: HarnessName): boolean {
 export function setupDone(): boolean {
   const harness = readSettings(["yourHarness"]).yourHarness;
   if (harness === undefined) return false;
-  return agentsLoggedIn(harness) && (existsSync(setUpFile()) || existsSync(serviceFile()));
+  const piReady = !piInUse() || agentsLoggedIn("pi");
+  return (
+    agentsLoggedIn(harness) && piReady && (existsSync(setUpFile()) || existsSync(serviceFile()))
+  );
 }
 
 // Completes unfinished machine setup before plain sc starts the daemon and attaches to the
@@ -524,10 +557,10 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
       title: "Codex's sign-in",
       take: () => logInCodex(env, `Sign in to Codex${forReviews}. Press Enter to start.`),
     });
-  if (uses("pi") && !hasPiLogin(homedir()))
+  if (piInUse() && !hasPiLogin(homedir()))
     steps.push({
       title: "Pi's sign-in",
-      take: () => logInPi(env, `Sign in to Pi${harness === "pi" ? "" : " for reviews"}.`),
+      take: () => logInPi(env, "Sign in to Pi for the roles that run on it."),
     });
   return steps;
 }

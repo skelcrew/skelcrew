@@ -1119,6 +1119,34 @@ test("skips the reviewer's login when Skelcrew's Codex login works already", asy
   expect(calls()).not.toContain("codex login --device-auth");
 });
 
+// Pi is experimental, so it is never offered, but a role that names it, here a repository's, needs
+// it installed and signed in.
+test("signs Pi in when a repository's role runs on it, though agents run on Claude Code", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(
+    config(),
+    "harness: claude\nrepos:\n  simon/app:\n    roles: { builder: { harness: pi } }\n",
+  );
+  const missing = await skel("sk-ant-oat01-good\n");
+  expect(missing.code).toBe(1);
+  expect(missing.out).toContain("npm install -g @earendil-works/pi-coding-agent@1.6.0");
+  fake(
+    "pi",
+    `[ "$1 $2" = "auth login" ] && echo '{"anthropic":{"type":"api_key","key":"k"}}' > "$PI_CODING_AGENT_DIR/auth.json"
+[ "$1 $2" = "auth check" ] && [ ! -e "$PI_CODING_AGENT_DIR/auth.json" ] && exit 1
+exit 0`,
+  );
+  const run = await skel("sk-ant-oat01-good\nanthropic\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Sign in to Pi for the roles that run on it.");
+  expect(run.out).toContain("Signed in to Pi.");
+  expect(calls()).toContain("pi auth login anthropic --no-browser");
+  writeFileSync(join(home, "calls"), "");
+  const again = await skel();
+  expect(again.out).not.toContain("Sign in to Pi");
+  expect(calls()).not.toContain("pi auth login");
+});
+
 test("with only Claude Code installed, asks nothing about harnesses and says agents run on it", async () => {
   const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);

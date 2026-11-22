@@ -34,6 +34,9 @@ const startedWord = "started";
 const answerWith =
   "Give your answer with the skelcrew_answer tool, once, as your last step. Skelcrew reads only that.";
 
+// Why a Pi agent can't start: no provider's key reaches it, so it runs only on Skelcrew's login.
+const noLogin = "Skelcrew has no Pi login for agents yet: run sc install to sign in to Pi";
+
 // The folder of each session's own: Pi's agent folder, with its conversations in sessions/.
 const sessionHome = (name: string, home = homedir()) => join(dataDir(home), "pi-sessions", name);
 
@@ -196,9 +199,9 @@ function startCommand(given: {
   kept.PI_SKIP_VERSION_CHECK = "1";
   const link = join(agentFolder, "auth.json");
   rmSync(link, { recursive: true, force: true });
+  if (!hasPiLogin(home)) throw new Error(noLogin);
   const login = sessionLogin(home, "pi", name);
-  const loggedIn = hasPiLogin(home);
-  if (loggedIn) mounts.push(...rw(login));
+  mounts.push(...rw(login));
   const argv = sandboxArgs({
     home,
     path: env.PATH ?? "",
@@ -210,7 +213,6 @@ function startCommand(given: {
     normalPriority: !thread,
     files,
   });
-  if (!loggedIn) return { argv, env: kept, launch: <T>(start: () => Promise<T>) => start() };
   const launch = launching({
     home,
     harness: "pi",
@@ -255,10 +257,9 @@ async function reviewCommand(given: {
   const login = reviewLogin(home, "pi");
   const mounts: string[] = [];
   try {
-    if (await copyPiLogin(home, login)) {
-      symlinkSync(join(login, "auth.json"), join(agentFolder, "auth.json"));
-      mounts.push(...rw(login));
-    }
+    if (!(await copyPiLogin(home, login))) throw new Error(noLogin);
+    symlinkSync(join(login, "auth.json"), join(agentFolder, "auth.json"));
+    mounts.push(...rw(login));
   } catch (error) {
     dropLogin(login);
     throw error;
@@ -301,8 +302,10 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
 // Pi as Skelcrew knows it, through the line its extension draws above Pi's input: a busy line
 // counting seconds while Pi works, and a ready line once it is idle with nothing typed. Pi gets
 // no provider's key variable: the daemon's service never has one, so agents run on the login sc
-// install saves. The first run looks for `program` and, when it is missing, prints the line that
-// installs it. Pi needs Node 22.19 or newer.
+// install saves, and none starts without it. What Pi prints can hold a provider's error text,
+// which can echo a key, so a review's failure is read only from the extension's words. The first
+// run looks for `program` and, when it is missing, prints the line that installs it. Pi needs
+// Node 22.19 or newer.
 export const pi = {
   name: "pi",
   title: "Pi",
@@ -320,4 +323,5 @@ export const pi = {
   failure: reportedError,
   usageLimit,
   renewLogin: renewPiLogin,
+  outputMayHoldKeys: true,
 } as const;
