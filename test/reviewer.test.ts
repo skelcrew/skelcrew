@@ -431,7 +431,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       type: "object",
       properties: {
         finding: { type: "string" },
-        severity: { type: "string", enum: ["P1", "P2", "P3", "P4"] },
+        severity: { type: "string", enum: ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"] },
         blocking: { type: "boolean" },
       },
       required: ["finding", "severity", "blocking"],
@@ -978,7 +978,7 @@ describe("what the reviewer is told of which findings block", () => {
       "P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done.",
     );
     expect(prompt).toContain(
-      "Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below, down to P4.",
+      "Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below, down to P9.",
     );
     expect(prompt).toContain(
       "Only a P1 can block. A P1 blocks whether the change brings it or the base branch already has it.",
