@@ -481,7 +481,8 @@ console.log(back, fs.existsSync(${JSON.stringify(join(piSessions(), "app-12", "s
 
 // A daemon can stop between writing a session's copy of your login and starting the session, so
 // its thread still reads working on a host with no such session. The sweep asks the host, and
-// keeps only the copies of sessions that run there, or whose start runs in this daemon now.
+// keeps only the copies of sessions that run there, or whose start runs in this daemon now,
+// whatever time an agent gave its copy.
 test("the sweep keeps only the copies of sessions the host runs, or starts now", () => {
   const said = runWithFakeHost(
     "sessions",
@@ -492,7 +493,9 @@ const sessions = ${JSON.stringify(piSessions())};
 const copy = (name) => {
   fs.mkdirSync(sessions + "/" + name, { recursive: true });
   fs.writeFileSync(sessions + "/" + name + "/auth.json", "{}");
-  fs.utimesSync(sessions + "/" + name + "/auth.json", new Date(0), new Date(0));
+  // An agent can set its copy's time to the future, which never keeps an orphan.
+  const later = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(sessions + "/" + name + "/auth.json", later, later);
 };
 const has = (name) => fs.existsSync(sessions + "/" + name + "/auth.json");
 db.exec(${JSON.stringify(threadSql({ task: "13", session: "s", host: "fake", host_id: "fake-app-13" }))});

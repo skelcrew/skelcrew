@@ -123,16 +123,14 @@ export function removeLoginCopy(name: string, home = homedir()): void {
   rmSync(join(dataDir(home), "pi-sessions", name, "auth.json"), { recursive: true, force: true });
 }
 
-// Returns each session that has a copy of Skelcrew's login, with when the copy was written.
-export function loginCopies(home = homedir()): { name: string; written: number }[] {
+// Returns each session that has a copy of Skelcrew's login.
+export function loginCopies(home = homedir()): string[] {
   const sessions = join(dataDir(home), "pi-sessions");
   if (!lstatSync(sessions, { throwIfNoEntry: false })?.isDirectory()) return [];
-  return readdirSync(sessions, { withFileTypes: true }).flatMap((entry) => {
-    const copy = entry.isDirectory()
-      ? lstatSync(join(sessions, entry.name, "auth.json"), { throwIfNoEntry: false })
-      : undefined;
-    return copy ? [{ name: entry.name, written: copy.mtimeMs }] : [];
-  });
+  return readdirSync(sessions, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => lstatSync(join(sessions, name, "auth.json"), { throwIfNoEntry: false }));
 }
 
 // Gives an agent folder Skelcrew's own models.json, where you add providers Pi doesn't have, such

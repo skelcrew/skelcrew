@@ -24,14 +24,17 @@ export function forgetLogin(name: string): void {
   removeLoginCopy(name);
 }
 
-// The sessions whose start runs in this daemon now, whose copy of your login no sweep removes.
+// The sessions whose start runs in this daemon now, whose copy of your login no sweep removes,
+// and how many starts each session has had, both kept in the daemon's memory, never on disk.
 const starting = new Set<string>();
+const starts = new Map<string, number>();
 
 // Starts the session `name` with `start`, which writes the harness's copy of your login before
 // the session starts. Any failure removes the copy before it goes on, so a session that never
 // ran keeps none.
 export async function startHoldingLogin<T>(name: string, start: () => Promise<T>): Promise<T> {
   starting.add(name);
+  starts.set(name, (starts.get(name) ?? 0) + 1);
   try {
     return await start();
   } catch (error) {
@@ -42,14 +45,14 @@ export async function startHoldingLogin<T>(name: string, start: () => Promise<T>
   }
 }
 
-// Removes each session's copy of your login unless `runs` says its session runs, or its start
-// runs in this daemon. A copy written once the sweep began is a start's that just finished, so
-// it stays. A session whose host can't say keeps its copy, for the next sweep.
+// Removes each session's copy of your login unless `runs` says its session runs, or a start of
+// it ran in this daemon while the sweep looked. A session whose host can't say keeps its copy,
+// for the next sweep.
 export async function sweepLogins(runs: (name: string) => Promise<boolean>): Promise<void> {
-  const began = Date.now();
-  for (const { name, written } of loginCopies()) {
-    if (starting.has(name) || written >= began) continue;
+  for (const name of loginCopies()) {
+    const before = starts.get(name);
+    if (starting.has(name)) continue;
     const live = await runs(name).catch(() => true);
-    if (!live && !starting.has(name)) forgetLogin(name);
+    if (!live && !starting.has(name) && starts.get(name) === before) forgetLogin(name);
   }
 }
