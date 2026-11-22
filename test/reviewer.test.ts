@@ -613,7 +613,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       commit,
       findings: ["Add a test."],
       description: null,
-      diff: "+test\n",
+      since: { diff: "+test\n" },
     };
     fakeCodex(approve, [
       'prompt="$CODEX_HOME/sessions/prompt"',
@@ -625,7 +625,13 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   });
 
   test("a review after a force push dropped the last round's commit says it reviewed the whole diff only", async () => {
-    const last = { round: 2, commit, findings: [], description: null, diff: null };
+    const last = {
+      round: 2,
+      commit,
+      findings: [],
+      description: null,
+      since: "dropped" as const,
+    };
     fakeCodex(approve);
     const done = await start({ last });
     expect(done).toMatchObject({ verdict: "approve" });
@@ -891,7 +897,7 @@ describe("what the reviewer is told of the last round", () => {
     commit: "4f9c2e1aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5",
     findings: ["Each agent needs its own login."],
     description: "Moved the logins into one shared file, as each agent asked separately.",
-    diff: "diff --git a/login.ts b/login.ts\n",
+    since: { diff: "diff --git a/login.ts b/login.ts\n" },
   };
   const file = "/tmp/review/since-last-round.diff";
 
@@ -944,8 +950,21 @@ describe("what the reviewer is told of the last round", () => {
     );
   });
 
+  // A review run again on the same commit has no new diff, but still checks what was asked.
+  test("a review of the same commit again gets the last round's findings, and no diff", () => {
+    const round = { ...last, since: "same commit" as const };
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+      round,
+      file,
+    });
+    expect(prompt).toContain(
+      "Round 1 reviewed this same commit. It asked for these changes:\n\n1. Each agent needs its own login.\n\nCheck whether each is fixed.",
+    );
+    expect(prompt).not.toContain(file);
+  });
+
   test("after a force push dropped the commit it reviewed, it reviews the whole diff only", () => {
-    const round = { ...last, diff: null };
+    const round = { ...last, since: "dropped" as const };
     const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
       round,
       file,
@@ -954,6 +973,7 @@ describe("what the reviewer is told of the last round", () => {
       `Round 1 reviewed ${last.commit}, which is no longer in the branch's history`,
     );
     expect(prompt).toContain("So review the whole diff only.");
+    expect(prompt).toContain("1. Each agent needs its own login.\n\nCheck whether each is fixed.");
     expect(prompt).not.toContain(file);
     expect(prompt).not.toContain(last.description);
   });

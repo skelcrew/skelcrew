@@ -84,14 +84,14 @@ function testsTold(tests: Tests, test: string[] | undefined): string {
 
 // What the reviewer gets of the last round, from round 2 on: the round, the commit it reviewed,
 // its findings and the PR's description as the forge has it, or null when it couldn't be read.
-// `diff` is what changed since that commit, or null when the commit is no longer in the branch's
-// history, such as after a force push.
+// `since` is the diff from that commit to this one, the same commit reviewed again, or a commit
+// no longer in the branch's history, such as after a force push.
 export type LastRound = {
   round: number;
   commit: string;
   findings: string[];
   description: string | null;
-  diff: string | null;
+  since: { diff: string } | "same commit" | "dropped";
 };
 
 // Returns what the reviewer is told of the last round, with what changed since in the file
@@ -99,13 +99,15 @@ export type LastRound = {
 // stated, never as the task.
 function lastRoundTold(last: LastRound, file: string): string {
   const short = last.commit.slice(0, 7);
-  if (last.diff === null)
-    return `Round ${last.round} reviewed ${last.commit}, which is no longer in the branch's history, such as after a force push. So review the whole diff only. Skelcrew says so at the top of the review.`;
   const findings = last.findings.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
   const asked =
     findings === ""
       ? "It approved, with no findings."
-      : `It asked for these changes:\n\n${findings}`;
+      : `It asked for these changes:\n\n${findings}\n\nCheck whether each is fixed.`;
+  if (last.since === "same commit")
+    return `## The last round\n\nRound ${last.round} reviewed this same commit. ${asked}`;
+  if (last.since === "dropped")
+    return `## The last round\n\nRound ${last.round} reviewed ${last.commit}, which is no longer in the branch's history, such as after a force push. So review the whole diff only. Skelcrew says so at the top of the review. ${asked}`;
   const description = last.description?.trim() ?? "";
   const stated =
     description === ""
@@ -404,7 +406,8 @@ async function reviewNow(given: {
     const last = given.last
       ? { round: given.last, file: join(folder, "since-last-round.diff") }
       : undefined;
-    if (last && last.round.diff !== null) await Bun.write(last.file, last.round.diff);
+    const since = given.last?.since;
+    if (last && typeof since === "object") await Bun.write(last.file, since.diff);
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
     const { mounts, at } = await throwawayMounts({ source: clone, copy, signal });
@@ -486,7 +489,7 @@ async function reviewNow(given: {
     const after = whyStopped();
     if (after) return after;
     const verdict = readVerdict(harness, folder, finished, input);
-    if (last?.round.diff !== null || !("findings" in verdict)) return verdict;
+    if (last?.round.since !== "dropped" || !("findings" in verdict)) return verdict;
     const dropped = `Round ${last.round.round}'s commit ${last.round.commit.slice(0, 7)} is no longer in the branch's history, so this round reviewed the whole diff only, not what changed since.`;
     return { ...verdict, body: `${dropped}\n\n${verdict.body}` };
   } finally {
