@@ -24,22 +24,13 @@ import { everyRepository, filterEnv, refuseCredentials, ro, rw, sandboxArgs } fr
 
 // The extension's own source, which Bun reads as text, to write where Pi loads it from. Bun can't
 // also load it as a module, so what Skelcrew reads of it is repeated here, as its tests pin down:
-// the marks it draws, the name of the reviewer's tool, and what counts as a usage limit.
+// the marks it draws, the name of the reviewer's tool, and the words a usage limit's message
+// starts with.
 const extensionSource = String(extension);
 const readyMark = "◇ Pi is ready for a message";
 const busyMark = "◆ Pi is at work";
 const verdictTool = "skelcrew_verdict";
-const UsageBody = z.object({ error: z.object({ code: z.literal(429) }) });
-const isUsageLimit = (error: string) => {
-  const said = error.trim();
-  if (/^429(?:: | \{)|^[\w.-]+ API error \(429\): /.test(said)) return true;
-  if (/^\d{3}(?:: | \{)|^[\w.-]+ API error \(\d{3}\): /.test(said)) return false;
-  try {
-    return UsageBody.safeParse(JSON.parse(said)).success;
-  } catch {
-    return false;
-  }
-};
+const limitWords = "rate limited (429)";
 
 // Returns Skelcrew's own Pi agent folder, where the first run's pi auth login saves the login, and
 // where you put a models.json for every agent: apart from yours in ~/.pi, so neither side's
@@ -332,11 +323,11 @@ const markSecret = crypto.randomUUID();
 const errorMark = (folder: string) =>
   new Bun.CryptoHasher("sha256").update(`${markSecret}:${folder}`).digest("hex");
 
-// Returns the error the reviewer's pi in `folder` ended on, or null when it printed none. Once
-// Pi is at work, which Skelcrew's extension says on stderr with the review's mark, a command it
-// runs can print anything there, so only the extension's own error line, with the mark, counts.
-// Before that, as when Pi fails to start or to read its prompt, every line is Pi's own, and its
-// last is the error. Anything shaped like a key is taken out of it, as the extension does.
+// Returns the error the reviewer's pi in `folder` ended on, or null when it printed none: the
+// message of Skelcrew's own that the extension puts on stderr with the review's mark, never the
+// words of Pi or its provider, which can hold a key. Pi can fail before its extension says it is
+// at work, such as on a model it doesn't know, and then Skelcrew's own words say so. Once Pi is at
+// work, a command it runs can print anything, so only the marked line counts.
 function reportedError(_out: string, err: string, folder: string): string | null {
   const lines = err.split("\n").map((line) => line.trim());
   const failed = `skelcrew: Pi failed ${errorMark(folder)}: `;
@@ -346,31 +337,15 @@ function reportedError(_out: string, err: string, folder: string): string | null
     .trim();
   if (marked) return marked;
   if (lines.includes(`skelcrew: Pi at work ${errorMark(folder)}`)) return null;
-  const own = lines.findLast((line) => line !== "");
-  return own ? withoutKeyShapes(own) : null;
+  return "Pi failed to start, such as on a model it doesn't know: run pi by hand to see why";
 }
 
-// Returns text with whatever is shaped like a key or token taken out, as the extension's function
-// of that name does.
-const withoutKeyShapes = (text: string) =>
-  text
-    .replace(/\b(sk|rk|pk)-[\w-]{8,}/g, "[key]")
-    .replace(/\b(Bearer|Basic) [\w.~+/=-]{8,}/gi, "$1 [key]")
-    .replace(/[\w-]{20,}/g, (run) => (/[a-z]/i.test(run) && /\d/.test(run) ? "[key]" : run));
-
-// Returns whether Pi's error says a usage limit is reached, and when it resets, or null when it
-// says something else. Only a 429, where Pi's provider APIs put the status, is a limit. The reset
-// is the time right after "resets at" or "try again at", such as "3:15 PM" or "Dec 31st, 2099
-// 11:59 PM": other words with "reset" in them, or a clock later in the message, name no reset. A
-// limit with no time passes on its own, so it is waited out.
+// Returns whether the extension's message says a usage limit is reached, and when it resets, or
+// null when it says something else. The message is Skelcrew's own, such as "rate limited (429),
+// resets at 3:15 PM", and a limit with no time passes on its own, so it is waited out.
 function usageLimit(error: string, now: number): { reset: number | null } | null {
-  if (!isUsageLimit(error)) return null;
-  const day = "(?:[a-z]{3,9}\\.? \\d{1,2}(?:st|nd|rd|th)?,? (?:\\d{4},? )?)?";
-  const time = new RegExp(
-    `(?:resets at|try again at) (${day}\\d{1,2}(?::\\d{2})? ?[ap]\\.?m\\b)`,
-    "i",
-  );
-  const at = time.exec(error)?.[1];
+  if (!error.startsWith(limitWords)) return null;
+  const at = /, resets at (.+)$/.exec(error)?.[1];
   return { reset: at === undefined ? null : resetTime(at, now) };
 }
 

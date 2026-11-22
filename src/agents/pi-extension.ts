@@ -15,10 +15,13 @@ export const busyMark = "◆ Pi is at work";
 // The tool a reviewer gives its verdict with, as Pi has no setting that holds an answer to a shape.
 export const verdictTool = "skelcrew_verdict";
 
+// The words a usage limit's message starts with, which Skelcrew reads.
+export const limitWords = "rate limited (429)";
+
 // Returns the HTTP status a Pi error names, or null when it names none. Pi gives no status of its
 // own, only text, and each of its provider APIs puts the status in one place: first, as in
-// "429: ..." or Anthropic's "429 {...}", after the provider's name, as in "openrouter API error (429): ...",
-// or in Google's body, which comes alone, as in {"error":{"code":429,...}}.
+// "429: ..." or Anthropic's "429 {...}", after the provider's name, as in "openrouter API error
+// (429): ...", or in Google's body, which comes alone, as in {"error":{"code":429,...}}.
 function httpStatus(error: string): number | null {
   const said = error.trim();
   const first = /^(\d{3})(?:: | \{)/.exec(said) ?? /^[\w.-]+ API error \((\d{3})\): /.exec(said);
@@ -31,65 +34,34 @@ function httpStatus(error: string): number | null {
   }
 }
 
-// Reports whether a Pi error says a usage limit was reached: the provider answered 429, as it does
-// for a rate limit and for a quota used up. Its words never decide, so an error that only mentions
-// a quota, or a 429 elsewhere, such as in a request ID, is no limit.
-export const isUsageLimit = (error: string): boolean => httpStatus(error) === 429;
+// A clock right after "resets at" or "try again at", such as "3:15 PM" or "Dec 31st, 2099
+// 11:59 PM", made only of a month's name, digits and am or pm.
+const months = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
+const day = `(?:(?:${months})[a-z]{0,6}\\.? \\d{1,2}(?:st|nd|rd|th)?,? (?:\\d{4},? )?)?`;
+const resetClock = new RegExp(
+  `(?:resets at|try again at) (${day}\\d{1,2}(?::\\d{2})? ?[ap]\\.?m)\\b`,
+  "i",
+);
 
-// Returns the credentials Pi may send: the key and headers it resolves for the model it runs, from
-// its login, a key it runs a command for or the environment, and every key or token in the
-// environment. Whatever can't be read is left out. A command can give a new key each time, and no
-// event shows the one a request sent, as the provider's SDK adds it after before_provider_headers,
-// so withoutKeys also takes out whatever is shaped like one.
-async function credentials(ctx: Context): Promise<string[]> {
-  const found = Object.entries(process.env).flatMap(([name, value]) =>
-    value && /KEY|TOKEN|SECRET/.test(name) ? [value] : [],
-  );
-  try {
-    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
-    found.push(text(auth, "apiKey"));
-    for (const part of ["headers", "env"]) {
-      const values = field(auth, part);
-      if (typeof values !== "object" || values === null) continue;
-      for (const value of Object.values(values))
-        if (typeof value === "string") found.push(value, value.split(" ").at(-1) ?? "");
-    }
-  } catch {}
-  return found.filter((value) => value.trim() !== "");
-}
-
-// Returns Pi's error with every key taken out, as Skelcrew keeps it in the task's log: each of
-// the credentials Pi may send, wherever it stands, even inside a longer word, and anything shaped
-// like a key, which a provider can echo back. Only one of three characters or fewer, which can be
-// no real key, such as a local model's "x", is taken out just where it stands as a word of its
-// own, so it never cuts into every other word.
-async function withoutKeys(error: string, ctx: Context): Promise<string> {
-  let said = error;
-  const longest = (await credentials(ctx)).sort((a, b) => b.length - a.length);
-  for (const value of longest) {
-    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const word = value.length < 4 ? `(?<![\\w-])${escaped}(?![\\w-])` : escaped;
-    said = said.replace(new RegExp(word, "g"), "[key]");
+// Returns what Skelcrew keeps of an error Pi stopped on: its kind, which turn-failed's hook names,
+// and a message of Skelcrew's own, with the HTTP status when Pi names one. Never the error's own
+// words, as a provider can echo a key in them, and nothing can tell every key apart. A usage
+// limit's message keeps only the clock its reset is at.
+export function failureOf(error: string): { kind: string; message: string } {
+  const status = httpStatus(error);
+  if (status === 429) {
+    const at = resetClock.exec(error)?.[1];
+    return { kind: "rate_limit", message: at ? `${limitWords}, resets at ${at}` : limitWords };
   }
-  return withoutKeyShapes(said);
-}
-
-// Returns text with whatever is shaped like a key or token taken out: a known kind, such as sk-...
-// or a Google key, a credential after Bearer or Basic, and any run of 20 letters, digits, dashes
-// or underscores that mixes letters and digits, as keys and tokens are random. Words, numbers and
-// a URL's parts are shorter, or have no digits.
-export function withoutKeyShapes(text: string): string {
-  return text
-    .replace(/\b(sk|rk|pk)-[\w-]{8,}/g, "[key]")
-    .replace(/\b(Bearer|Basic) [\w.~+/=-]{8,}/gi, "$1 [key]")
-    .replace(/[\w-]{20,}/g, (run) => (/[a-z]/i.test(run) && /\d/.test(run) ? "[key]" : run));
+  if (status === 401 || status === 403)
+    return { kind: "auth", message: `auth failed (${status}): check Pi's login or key` };
+  if (status !== null) return { kind: "provider", message: `the provider failed (${status})` };
+  return { kind: "network", message: "the request failed with no HTTP status, such as offline" };
 }
 
 // What Pi gives a handler besides its event, as far as this extension uses it.
 type Context = {
   hasUI: boolean;
-  model: unknown;
-  modelRegistry: { getApiKeyAndHeaders: (model: unknown) => Promise<unknown> };
   isIdle: () => boolean;
   ui: {
     setWidget: (key: string, lines: string[] | undefined) => void;
@@ -178,10 +150,10 @@ export default function skelcrew(pi: Pi): void {
       atWork = true;
     });
     // Pi's error goes on a line of its own, with the mark.
-    pi.on("agent_settled", async (event, ctx) => {
+    pi.on("agent_settled", (event) => {
       if (field(event, "aborted") === true || !failed()) return;
-      const said = (await withoutKeys(text(last, "errorMessage"), ctx)).replace(/\s+/g, " ").trim();
-      process.stderr.write(`\nskelcrew: Pi failed ${mark}: ${said || "an unknown error"}\n`);
+      const { message } = failureOf(text(last, "errorMessage"));
+      process.stderr.write(`\nskelcrew: Pi failed ${mark}: ${message}\n`);
     });
     return;
   }
@@ -189,12 +161,11 @@ export default function skelcrew(pi: Pi): void {
     if (field(event, "source") !== "extension")
       await hook("prompt", { prompt: text(event, "text") });
   });
-  pi.on("agent_settled", async (event, ctx) => {
+  pi.on("agent_settled", async (event) => {
     if (field(event, "aborted") === true) return hook("turn-interrupted");
     if (failed()) {
-      const said = await withoutKeys(text(last, "errorMessage"), ctx);
-      const error = isUsageLimit(said) ? "rate_limit" : "error";
-      return hook("turn-failed", { error, error_details: said });
+      const { kind, message } = failureOf(text(last, "errorMessage"));
+      return hook("turn-failed", { error: kind, error_details: message });
     }
     return hook("turn-ended", { last_assistant_message: textOf(last) });
   });

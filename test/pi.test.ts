@@ -19,10 +19,10 @@ import { z } from "zod";
 import { pi, piLoggedIn } from "../src/agents/pi.ts";
 import skelcrew, {
   busyMark,
-  isUsageLimit,
+  failureOf,
+  limitWords,
   readyMark,
   verdictTool,
-  withoutKeyShapes,
 } from "../src/agents/pi-extension.ts";
 import { quietSince } from "../src/agents/transport.ts";
 
@@ -38,21 +38,13 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// What Pi gives a handler besides its event: whether it has a screen, whether it is idle, what is
-// typed at its input, and the credentials it resolves for its model. Each widget set is kept.
-function fakeContext(
-  given: { idle?: boolean; typed?: string; hasUI?: boolean; auth?: unknown } = {},
-) {
+// What Pi gives a handler besides its event: whether it has a screen, whether it is idle, and
+// what is typed at its input. Each widget set is kept.
+function fakeContext(given: { idle?: boolean; typed?: string; hasUI?: boolean } = {}) {
   const state = { idle: given.idle ?? true, typed: given.typed ?? "" };
   const widgets: (string[] | undefined)[] = [];
-  const model = { provider: "openrouter", id: "some-model" };
   const ctx = {
     hasUI: given.hasUI ?? true,
-    model,
-    modelRegistry: {
-      getApiKeyAndHeaders: async (asked: unknown) =>
-        asked === model ? (given.auth ?? { ok: true }) : { ok: false, error: "no such model" },
-    },
     isIdle: () => state.idle,
     ui: {
       setWidget: (_key: string, lines: string[] | undefined) => void widgets.push(lines),
@@ -109,6 +101,19 @@ const answer = (message: object) => ({
   ],
 });
 
+// The errors Pi 1.6.0 reported for providers' own answers, as their docs give them, on each of
+// Pi's provider APIs: a fake server answered with each body, and Pi's errorMessage was kept. On
+// Google's API Pi passes the body on alone, so only Google's own bodies, which always name their
+// code, are there.
+const ProviderError = z.object({
+  api: z.string(),
+  body: z.string(),
+  error: z.string(),
+  limit: z.boolean(),
+});
+const providerErrors = z
+  .array(ProviderError)
+  .parse(JSON.parse(readFileSync(join(import.meta.dir, "pi-errors.json"), "utf8")));
 describe("the extension in a lead or a builder", () => {
   const path = process.env.PATH;
   beforeEach(() => {
@@ -152,94 +157,88 @@ describe("the extension in a lead or a builder", () => {
     expect(hooks()).toBe("hook turn-interrupted | {}");
   });
 
-  test("a usage limit ends the turn as a rate limit, after Pi's retries, with Pi's words", async () => {
+  // What a turn that ended on `error` sends Skelcrew, as the hook's input.
+  const failedTurn = async (error: string) => {
+    rmSync(hooksFile(), { force: true });
+    const { emit } = fakePi();
+    await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
+    await emit("agent_settled", { aborted: false });
+    return hooks();
+  };
+  const sent = (kind: string, message: string) =>
+    `hook turn-failed | ${JSON.stringify({ error: kind, error_details: message })}`;
+
+  test("a usage limit ends the turn as a rate limit, after Pi's retries, in Skelcrew's words", async () => {
     const { emit } = fakePi();
     const limit = '429: {"message":"You exceeded your current quota. Try again at 3:15 PM."}';
     // Pi tries three times, and each try ends a run.
     for (let i = 0; i < 3; i++)
       await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: limit }));
     await emit("agent_settled", { aborted: false });
-    const said = JSON.stringify({ error: "rate_limit", error_details: limit });
-    expect(hooks()).toBe(`hook turn-failed | ${said}`);
+    expect(hooks()).toBe(sent("rate_limit", "rate limited (429), resets at 3:15 PM"));
   });
 
-  test("a key in Pi's error never reaches Skelcrew, whether in the environment or shaped like one", async () => {
-    const { emit } = fakePi();
-    const before = process.env.OPENROUTER_API_KEY;
-    process.env.OPENROUTER_API_KEY = "or-secret-1234567890";
-    try {
-      const error =
-        "401: key or-secret-1234567890 refused, also sk-ant-api03-abcdefghij, AIzaSyA1234567890abcdefghijk, Bearer eyJhbGciOi.xyz";
-      await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
-      await emit("agent_settled", { aborted: false });
-    } finally {
-      process.env.OPENROUTER_API_KEY = before;
+  test("a provider error with a key in it never reaches Skelcrew: only its kind, its status and Skelcrew's words", async () => {
+    const key = "sk-live-Abc123SECRETkeyZ";
+    const shortKey = "qwerty";
+    const cases: [string, string, string][] = [
+      [
+        `429: {"message":"Key ${key} is over its quota. Try again at 3:15 PM."}`,
+        "rate_limit",
+        "rate limited (429), resets at 3:15 PM",
+      ],
+      [
+        `401 {"error":{"message":"Invalid key: ${shortKey}"}}`,
+        "auth",
+        "auth failed (401): check Pi's login or key",
+      ],
+      [
+        `{"error":{"code":403,"message":"key ${key} has no quota project"}}`,
+        "auth",
+        "auth failed (403): check Pi's login or key",
+      ],
+      [
+        `openrouter API error (500): {"message":"failed for ${key}"}`,
+        "provider",
+        "the provider failed (500)",
+      ],
+      [
+        `request to https://example.com/?key=${key} failed`,
+        "network",
+        "the request failed with no HTTP status, such as offline",
+      ],
+    ];
+    for (const [error, kind, message] of cases) {
+      const said = await failedTurn(error);
+      expect(said).toBe(sent(kind, message));
+      expect(said).not.toContain(key);
+      expect(said).not.toContain(shortKey);
     }
-    const said = "401: key [key] refused, also [key], [key], Bearer [key]";
-    expect(hooks()).toBe(
-      `hook turn-failed | ${JSON.stringify({ error: "error", error_details: said })}`,
-    );
   });
 
-  // A key pi auth login saved, or one Pi ran a command for, is in no variable, and can be short.
-  test("the key and headers Pi sends for its model are taken out of its error, however short", async () => {
-    const { emit } = fakePi();
-    const auth = { ok: true, apiKey: "k3y", headers: { Authorization: "Token zq9-short" } };
-    const { ctx } = fakeContext({ auth });
-    const error = "401: k3y and zq9-short refused, k3yboard and Token stay";
-    await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }), ctx);
-    await emit("agent_settled", { aborted: false }, ctx);
-    const said = "401: [key] and [key] refused, k3yboard and Token stay";
-    expect(hooks()).toBe(
-      `hook turn-failed | ${JSON.stringify({ error: "error", error_details: said })}`,
-    );
-  });
-
-  test("a key inside a longer value is taken out too", async () => {
-    const { emit } = fakePi();
-    const auth = { ok: true, apiKey: "mysecret", headers: { "x-api-key": "hdr0" } };
-    const { ctx } = fakeContext({ auth });
-    const before = process.env.GEMINI_API_KEY;
-    process.env.GEMINI_API_KEY = "gem1";
-    try {
-      const error = "400: credential=prefix-mysecret-suffix, h=hdr0hdr0, g=xgem1y";
-      await emit(
-        "agent_end",
-        answer({ content: [], stopReason: "error", errorMessage: error }),
-        ctx,
-      );
-      await emit("agent_settled", { aborted: false }, ctx);
-    } finally {
-      if (before === undefined) delete process.env.GEMINI_API_KEY;
-      else process.env.GEMINI_API_KEY = before;
+  test("every error Pi reported for a provider reaches Skelcrew as its kind and status alone", async () => {
+    for (const { api, body, error, limit } of providerErrors) {
+      const said = await failedTurn(error);
+      const kind = limit ? "rate_limit" : "auth or provider";
+      const seen = said.includes('"error":"rate_limit"') ? "rate_limit" : "auth or provider";
+      expect({ api, body, kind: seen }).toEqual({ api, body, kind });
+      // No word of the provider's own reaches Skelcrew.
+      expect(said).not.toContain("message");
+      expect(said).not.toContain("quota");
     }
-    const said = "400: credential=prefix-[key]-suffix, h=[key][key], g=x[key]y";
-    expect(hooks()).toBe(
-      `hook turn-failed | ${JSON.stringify({ error: "error", error_details: said })}`,
-    );
   });
 
-  // The extension and Skelcrew both take out what is shaped like a key, by the same rule.
-  test("a key no variable or login names is taken out by its shape", async () => {
-    const { emit } = fakePi();
-    const made = "Zx81qWm3Lp0vRt7Yb2Nc5Kd";
-    const error = `401: {"message":"token ${made} expired, request req_011CQ9 at https://example.com/v1/messages"}`;
-    await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
-    await emit("agent_settled", { aborted: false });
-    const said = error.replace(made, "[key]");
-    expect(hooks()).toContain(JSON.stringify({ error: "error", error_details: said }));
-    for (const text of [error, "sk-ant-api03-abcdefghij", "Bearer abc.def.ghijk", "plain words"])
-      expect(pi.failure("", text, home)).toBe(withoutKeyShapes(text));
-  });
-
-  test("an error that only mentions a quota is an error, not a usage limit", async () => {
-    const { emit } = fakePi();
-    const error = '403: {"message":"quota project not set"}';
-    await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
-    await emit("agent_settled", { aborted: false });
-    expect(hooks()).toBe(
-      `hook turn-failed | ${JSON.stringify({ error: "error", error_details: error })}`,
+  test("a reset comes only from the clock right after resets at or try again at", async () => {
+    const at = '429 {"error":{"message":"Try again at Dec 31st, 2099 11:59 PM."}}';
+    expect(await failedTurn(at)).toBe(
+      sent("rate_limit", "rate limited (429), resets at Dec 31st, 2099 11:59 PM"),
     );
+    for (const error of [
+      "429: connection reset by peer at 3pm",
+      "429: resets at an unknown time; contact support at 5pm",
+      "429: try again at sk-live-abc 12 3pm",
+    ])
+      expect(await failedTurn(error)).toBe(sent("rate_limit", "rate limited (429)"));
   });
 
   test("an event Pi sends in another shape still ends the turn", async () => {
@@ -313,7 +312,7 @@ describe("the extension in a review", () => {
     expect(() => pi.answer(home)).toThrow("it gave no answer");
   });
 
-  test("runs no hooks, and prints Pi's error on a line Skelcrew takes as the only error", async () => {
+  test("runs no hooks, and prints Skelcrew's words for Pi's error on a line with the review's mark", async () => {
     fakeSc();
     const { emit } = review();
     const printed: string[] = [];
@@ -322,43 +321,38 @@ describe("the extension in a review", () => {
     try {
       await emit("input", { text: "review this", source: "interactive" });
       await emit("agent_start");
-      const error = '429: {"message":"Rate limited.\\nSlow down."}';
+      await emit("agent_start");
+      const error = '429: {"message":"Key sk-live-Abc123SECRETkeyZ is rate limited."}';
       await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
-      await emit("agent_settled", { aborted: false });
-      await emit(
-        "agent_end",
-        answer({ content: [], stopReason: "error", errorMessage: "401: sk-proj-abcdefghijkl" }),
-      );
       await emit("agent_settled", { aborted: false });
     } finally {
       process.stderr.write = write;
     }
-    const atWork = printed[0] ?? "";
-    expect(atWork).toContain("skelcrew: Pi at work ");
-    expect(pi.failure("", `${atWork}${printed.at(-1)}`, home)).toBe("401: [key]");
-    printed.pop();
     expect(hooks()).toBe("");
-    // Pi prints a warning and the commands' own lines around it, and an error a test logged.
-    const err = `Warning: tmux extended-keys is off\n${printed.join("")}ERROR: rate limit in a test\n429: {"message":"Rate limited."}\nSlow down.\n`;
-    expect(pi.failure("", err, home)).toBe('429: {"message":"Rate limited.\\nSlow down."}');
+    expect(printed.join("")).not.toContain("sk-live");
+    // Pi says it is at work once, however many runs it starts.
+    expect(printed.filter((line) => line.includes("Pi at work"))).toHaveLength(1);
+    const [atWork = "", line = ""] = printed;
+    expect(pi.failure("", `Warning: tmux extended-keys is off\n${atWork}${line}`, home)).toBe(
+      "rate limited (429)",
+    );
     // Once Pi is at work, a line its commands print is never taken for its error.
     expect(pi.failure("", `${atWork}ERROR: rate limit in a test\n`, home)).toBeNull();
     // Nor is the line without the review's mark, as a command could print it.
-    const forged = "skelcrew: Pi failed: 429: slow down\nskelcrew: Pi failed abc: 429: slow down\n";
+    const forged =
+      "skelcrew: Pi failed: rate limited (429)\nskelcrew: Pi failed abc: rate limited (429)\n";
     expect(pi.failure("", `${atWork}${forged}`, home)).toBeNull();
-    // Another review's line of being at work isn't this one's.
-    const other = pi.failure("", `${atWork}429: a test's line\n`, join(home, "other"));
-    expect(other).toBe("429: a test's line");
   });
 
   // Pi 1.6.0 prints this and exits with 1 for a model it doesn't know, before the extension's
   // events.
-  test("before Pi is at work, its own last line is the error, without what looks like a key", () => {
+  test("before Pi is at work, Skelcrew's own words say Pi failed to start, never Pi's", () => {
     const unknown = 'Error: Model "nosuch/m" not found. Use --list-models to see available models.';
-    expect(pi.failure("", `Warning: tmux extended-keys is off\n${unknown}\n`, home)).toBe(unknown);
-    const keyed = "Error: key AbCdEf0123456789xyzQWE refused";
-    expect(pi.failure("", keyed, home)).toBe("Error: key [key] refused");
-    expect(pi.failure("", "\n", home)).toBeNull();
+    const said = pi.failure("", `Warning: tmux extended-keys is off\n${unknown}\n`, home);
+    expect(said).toBe(
+      "Pi failed to start, such as on a model it doesn't know: run pi by hand to see why",
+    );
+    expect(pi.failure("", "Error: key sk-live-Abc123SECRETkeyZ refused\n", home)).toBe(said);
   });
 
   test("takes the mark out of the environment as it loads, before any command runs", () => {
@@ -387,63 +381,30 @@ test("Skelcrew sees Pi at work while its line counts, and ready only at its mark
     expect(lines(screen(name))).not.toContain(pi.marks.prompt);
 });
 
-// The errors Pi 1.6.0 reported for providers' own answers, as their docs give them, on each of
-// Pi's provider APIs: a fake server answered with each body, and Pi's errorMessage was kept. On
-// Google's API Pi passes the body on alone, so only Google's own bodies, which always name their
-// code, are there.
-const ProviderError = z.object({
-  api: z.string(),
-  body: z.string(),
-  error: z.string(),
-  limit: z.boolean(),
-});
-const providerErrors = z
-  .array(ProviderError)
-  .parse(JSON.parse(readFileSync(join(import.meta.dir, "pi-errors.json"), "utf8")));
-// Errors no provider answered with, each with a word or a number that once fooled a rule.
-const madeUp = [
-  "500: request 429 failed",
-  "404: no resource 429: gone",
-  "exceeded retry count for quota requests",
-  "exceeded retry count: quota project not set",
-  "You exceeded your allocated quota",
-  "429 requests in the queue",
-  "fetch failed",
-  '{"error":{"code":"429"}}',
-  "not json {",
-];
-
 describe("usage limits", () => {
   const now = new Date(2026, 10, 22, 9, 0).getTime();
 
-  test("a provider's 429 is a limit, on every API Pi has, and nothing else is", () => {
-    expect(providerErrors.length).toBe(23);
-    for (const { api, body, error, limit } of providerErrors) {
-      const seen = { api, body, limit: pi.usageLimit(error, now) !== null };
-      expect(seen).toEqual({ api, body, limit });
-    }
-    for (const error of madeUp) expect(pi.usageLimit(error, now)).toBeNull();
+  test("Skelcrew reads a limit, and when it resets, from the extension's words alone", () => {
+    expect(pi.usageLimit(`${limitWords}, resets at 3:15 PM`, now)).toEqual({
+      reset: new Date(2026, 10, 22, 15, 15).getTime(),
+    });
+    expect(pi.usageLimit(`${limitWords}, resets at Dec 31st, 2099 11:59 PM`, now)).toEqual({
+      reset: new Date(2099, 11, 31, 23, 59).getTime(),
+    });
+    expect(pi.usageLimit(limitWords, now)).toEqual({ reset: null });
+    for (const error of [
+      "auth failed (401): check Pi's login or key",
+      "the provider failed (500)",
+      "the request failed with no HTTP status, such as offline",
+      "Pi failed to start, such as on a model it doesn't know: run pi by hand to see why",
+      '429: {"message":"raw text from a provider"}',
+    ])
+      expect(pi.usageLimit(error, now)).toBeNull();
   });
 
-  test("the reset is the clock right after resets at or try again at", () => {
-    const at = pi.usageLimit('429: {"message":"Too many requests. Try again at 3:15 PM."}', now);
-    expect(at).toEqual({ reset: new Date(2026, 10, 22, 15, 15).getTime() });
-    const resets = pi.usageLimit('429 {"message":"Your quota resets at 5pm"}', now);
-    expect(resets).toEqual({ reset: new Date(2026, 10, 22, 17, 0).getTime() });
-    // OpenAI's "try again in 2s" names no clock, so the limit is waited out.
-    const openai = providerErrors.find((e) => e.body === "openai-rate")?.error ?? "";
-    expect(pi.usageLimit(openai, now)).toEqual({ reset: null });
-    // "reset" alone names no time, though a clock follows it.
-    expect(pi.usageLimit("429: connection reset by peer at 3pm", now)).toEqual({ reset: null });
-    // A clock later in the message isn't the reset's.
-    const later = "429: resets at an unknown time; contact support at 5pm";
-    expect(pi.usageLimit(later, now)).toEqual({ reset: null });
-  });
-
-  // The extension tells a builder's limit, and Skelcrew a reviewer's, by the same rule.
-  test("the extension and Skelcrew count the same errors as limits", () => {
-    for (const error of [...providerErrors.map((e) => e.error), ...madeUp])
-      expect(pi.usageLimit(error, now) !== null).toBe(isUsageLimit(error));
+  test("each provider error the extension counts as a limit, Skelcrew does too", () => {
+    for (const { error, limit } of providerErrors)
+      expect(pi.usageLimit(failureOf(error).message, now) !== null).toBe(limit);
   });
 });
 

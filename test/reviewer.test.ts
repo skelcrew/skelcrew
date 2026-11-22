@@ -613,12 +613,11 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   });
 
   test("a Pi review that meets its usage limit is limited, with when it resets", async () => {
-    const error =
-      '429: {"message":"You exceeded your current quota. Try again at Dec 31st, 2099 11:59 PM."}';
+    const error = "rate limited (429), resets at Dec 31st, 2099 11:59 PM";
     fakePi([
       "cat > /dev/null",
       "echo 'Warning: tmux extended-keys is off' >&2",
-      `printf '\\nskelcrew: Pi failed %s: %s\\n%s\\n' "$SKELCREW_PI_ERROR_MARK" '${error}' '${error}' >&2`,
+      `printf '\\nskelcrew: Pi failed %s: %s\\n429: raw text\\n' "$SKELCREW_PI_ERROR_MARK" '${error}' >&2`,
       "exit 1",
     ]);
     expect(await start({ harness: "pi" })).toEqual({
@@ -634,14 +633,14 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       "cat > /dev/null",
       "echo 'ERROR: rate limit exceeded' >&2",
       "echo '429 Too Many Requests in a test' >&2",
-      `printf '\\nskelcrew: Pi failed %s: 401: invalid key\\n401: invalid key\\n' "$SKELCREW_PI_ERROR_MARK" >&2`,
+      `printf '\\nskelcrew: Pi failed %s: auth failed (401)\\n401: invalid key sk-x\\n' "$SKELCREW_PI_ERROR_MARK" >&2`,
       // A command can print the line too, but never with the review's mark.
       "echo 'skelcrew: Pi failed: 429: forged' >&2",
       "exit 1",
     ]);
     expect(await start({ harness: "pi" })).toEqual({
       verdict: "failed",
-      body: "pi exited with 1: 401: invalid key",
+      body: "pi exited with 1: auth failed (401)",
     });
     fakePi(["cat > /dev/null"]);
     expect(await start({ harness: "pi" })).toEqual({
@@ -656,12 +655,12 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       "exit 1",
     ]);
     expect(await start({ harness: "pi" })).toEqual({ verdict: "failed", body: "pi exited with 1" });
-    // Before it, as for a model Pi doesn't know, Pi's own last line says why.
+    // Before it, as for a model Pi doesn't know, Skelcrew's own words say Pi failed to start.
     const unknown = 'Error: Model "nosuch/m" not found. Use --list-models to see available models.';
     fakePi(["cat > /dev/null", `echo '${unknown}' >&2`, "exit 1"]);
     expect(await start({ harness: "pi" })).toEqual({
       verdict: "failed",
-      body: `pi exited with 1: ${unknown}`,
+      body: "pi exited with 1: Pi failed to start, such as on a model it doesn't know: run pi by hand to see why",
     });
   });
 

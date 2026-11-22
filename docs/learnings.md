@@ -205,13 +205,14 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
   a 429 read from those places. Providers' words for limits vary too much to go by: a rule built
   on them kept counting errors such as "exceeded retry count for quota requests". The errors Pi
   wrote are kept in `test/pi-errors.json`.
-- **A provider can echo a key in its error, and Skelcrew logs it.** So the extension takes keys
-  out first. The key may be in no variable, as `pi auth login` saves it in `auth.json`, or a
-  command gives it. `ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)` returns the key and
-  headers Pi resolves for its model, but a command in `models.json` runs again for each request
-  and can give another key. No event shows the key a request sent: `before_provider_headers`
-  holds no auth header, as the provider's SDK adds it after. So whatever is shaped like a key
-  goes too.
+- **Never keep a provider's error text: it can echo a key, and no rule can find every key.**
+  Decided by Simon, after rounds of taking keys out kept missing some. A key may be in no
+  variable: `pi auth login` saves it in `auth.json`, and a command in `models.json` gives a new
+  one for each request. No event shows the key a request sent: `before_provider_headers` holds no
+  auth header, as the provider's SDK adds it after. So the extension sends Skelcrew only the kind
+  of failure, the HTTP status and words of its own, such as "rate limited (429), resets at 3:15
+  PM". The clock is the only part taken from the provider's text. Attach to the agent to read the
+  rest.
 - **`input` fires for the first message too.** The message on the command line comes as typed,
   with `source: "interactive"`. A long paste shows as "[paste #1 +40 lines]", but `input` gets
   its whole text.
@@ -222,8 +223,8 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
   it loads, and Pi's `bash` tool starts commands with `process.env` as it is then, so they never
   see it. Checked by running `env` from the tool.
 - **Pi can fail before any event of the extension's.** For a model it doesn't know it prints
-  `Error: Model "nosuch/m" not found. ...` and exits with 1. No command has run then, so until
-  the extension's `agent_start` line, everything on stderr is Pi's own.
+  `Error: Model "nosuch/m" not found. ...` and exits with 1. Until the extension's `agent_start`
+  line, a review has failed to start, which Skelcrew says in words of its own.
 - **Pi's list of provider keys is in pi-ai's `env-api-keys.js`, not in its docs.** The docs'
   table leaves some out, such as `CLOUDFLARE_API_KEY`, `TYPESAFE_API_KEY` and the Qwen token-plan
   keys. Cloudflare and Azure need more than a key, such as an account ID or a base URL. Vertex
