@@ -196,11 +196,8 @@ export function answerItem(
   return `Told the lead your answer on ${about}.`;
 }
 
-// Takes your pick on Skelcrew's own item on a thread: `run` does what the option does, as its
-// command would for you, then the lead hears what you picked, as your words. Letting the lead
-// handle it, or not merging yet, hands the item to the lead, so it no longer shows. `seen` is the
-// item as you saw it, as the thread may need you for something else by now. Returns what the
-// footer says.
+const deciding: Act[] = ["go on", "skip review", "stop", "merge"];
+
 export async function pickOwnItem(
   db: Database,
   sessions: string,
@@ -219,13 +216,47 @@ export async function pickOwnItem(
   const option = item.options[letters.indexOf(pick)];
   if (option === undefined) throw new Error(`${name}'s item has no option ${pick}`);
   const handing = option.act === "lead";
-  const said = handing ? `Handed ${name} to the lead.` : await run(option.act, thread);
   const words = `You picked ${pick} (${option.label}) on ${name}: ${item.title}`;
+  const told = `${words}\n\n${item.text}`;
+  const decides = deciding.includes(option.act);
+  const decision = {
+    by: "human" as const,
+    at: Date.now(),
+    text: `${option.label}, as the human picked on "${item.title}"`,
+    words: told,
+  };
+  const recorded = decides
+    ? "\n\nSkelcrew recorded this pick as the human's decision on the task."
+    : "";
   db.transaction(() => {
-    noteForLead(db, sessions, thread, `${words}\n\n${item.text}`, null, true);
+    noteForLead(db, sessions, thread, `${told}${recorded}`, null, true);
     if (handing) record(db, thread.folder, { handed: handedKey(item) }, words);
+    else if (decides)
+      record(db, thread.folder, { decisions: [...thread.decisions, decision] }, words);
     else log(db, thread, words);
   })();
+  let said: string;
+  try {
+    said = handing ? `Handed ${name} to the lead.` : await run(option.act, thread);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    db.transaction(() => {
+      noteForLead(
+        db,
+        sessions,
+        thread,
+        `The human's pick on ${name} didn't run: ${why}`,
+        null,
+        true,
+      );
+      if (!decides) return;
+      const { decisions } = readThread(db, thread.folder);
+      const kept = decisions.filter(({ at, words }) => at !== decision.at || words !== told);
+      record(db, thread.folder, { decisions: kept }, `the pick didn't run: ${words}`);
+    })();
+    typeLeadNotes(db, sessions);
+    throw error;
+  }
   typeLeadNotes(db, sessions);
   return said;
 }

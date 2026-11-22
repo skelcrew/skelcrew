@@ -338,6 +338,66 @@ console.log(JSON.stringify(out));`);
   expect(limit[2]?.shows).toBe("needs you");
 });
 
+// A pick that runs a command is your decision on the task, kept in your words as sc decide
+// --asked-file keeps one, so later reviewers see it. Restarting, opening the builder and handing
+// the item to the lead decide nothing.
+test("a pick on Skelcrew's own item that runs a command is recorded as your decision", () => {
+  const seen = inProcess(`
+const limit = { status: "waiting", rounds: 8, verdict: "changes", held: "Fix it.", needs_you: true, review_findings: ["Handle an empty file"] };
+const decided = [];
+const before = [];
+for (const pick of ["a", "b", "c"]) {
+  record(db, "app-12", { ...limit, handed: null });
+  await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, pick, async () => { before.push([thread().decisions.length, notes().length]); return "ran"; });
+  decided.push(thread().decisions.length);
+}
+record(db, "app-12", { ...limit, handed: null });
+const refused = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", async () => { throw new Error("CI failed"); }).catch((error) => error.message);
+const afterRefused = thread().decisions.length;
+record(db, "app-12", { rounds: 0, verdict: "approve", held: null, review_findings: null, reviewed_commit: "abcdef1234567890" });
+await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "a", async () => "ran");
+decided.push(thread().decisions.length);
+record(db, "app-12", { needs_you: false, verdict: null, erred: true, said: "OAuth token has expired" });
+for (const pick of ["a", "b"]) await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, pick, async () => "ran");
+record(db, "app-12", { erred: false, asking: true, said: "CSV or JSON?" });
+await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", async () => "ran");
+console.log(JSON.stringify({ decided, before, refused, afterRefused, decisions: thread().decisions, notes: notes() }));`);
+  expect(seen.decided).toEqual([1, 2, 3, 4]);
+  // The decision and the lead's note are saved before the command runs, so a daemon that stops
+  // in between still has both. A command that is refused takes the decision back and tells the lead.
+  expect(seen.before).toEqual([
+    [1, 1],
+    [2, 2],
+    [3, 3],
+  ]);
+  expect(seen.refused).toBe("CI failed");
+  expect(seen.afterRefused).toBe(3);
+  expect((seen.notes as string[])[4]).toBe("The human's pick on APP-12 didn't run: CI failed");
+  const told = (seen.notes as string[]).map((note) =>
+    note.endsWith("as the human's decision on the task."),
+  );
+  expect(told).toEqual([true, true, true, true, false, true, false, false, false]);
+  const decisions = seen.decisions as { by: string; text: string; words: string }[];
+  expect(decisions.map(({ by, text }) => ({ by, text }))).toEqual([
+    {
+      by: "human",
+      text: 'Go on: fix the findings, as the human picked on "Review still wants changes after 8 rounds"',
+    },
+    {
+      by: "human",
+      text: 'Merge without approval, as the human picked on "Review still wants changes after 8 rounds"',
+    },
+    {
+      by: "human",
+      text: 'Stop the builder, as the human picked on "Review still wants changes after 8 rounds"',
+    },
+    { by: "human", text: 'Merge it, as the human picked on "Ready to merge"' },
+  ]);
+  expect(decisions[1]?.words).toBe(
+    "You picked b (Merge without approval) on APP-12: Review still wants changes after 8 rounds\n\nThe latest review asks:\n1. Handle an empty file",
+  );
+});
+
 // Each option makes of the daemon exactly the requests its command makes, which the daemon handles
 // as yours: sc start, sc stop, sc merge --skip-review with the PR you saw, the merge m makes, and
 // the screen's restart, or a stop and a start for a builder that isn't running or whose host is

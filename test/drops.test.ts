@@ -30,6 +30,7 @@ import {
 let home = "";
 let agent = "";
 let sent = "";
+let copying = new Set<Promise<unknown>>();
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-drops-test-")));
@@ -37,13 +38,14 @@ beforeEach(() => {
   mkdirSync(agent);
   mkdirSync(join(home, "Screen Shots"));
   sent = "";
+  copying = new Set();
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
 // A filter that copies into the folder `where` names, asking as the screen does, and keeps what
-// it sends on.
+// it sends on, and each copy it makes until it is done.
 const filter = (where: () => string = () => agent) =>
   pasteFilter(
     (bytes) => {
@@ -54,7 +56,12 @@ const filter = (where: () => string = () => agent) =>
         ask();
         return where();
       },
-      put: async (folder, files) => copyDrops(folder, files),
+      put: (folder, files) => {
+        const copies = copyDrops(folder, files);
+        copying.add(copies);
+        copies.finally(() => copying.delete(copies));
+        return copies;
+      },
     },
   );
 
@@ -65,12 +72,16 @@ function file(name: string, text = `the text of ${name}`): string {
   return path;
 }
 
-// Returns what reached the screen once the filter has had time to copy, with each drop's
-// question, which the screen keeps from the agent.
+// Returns what reached the screen once the filter has had time to copy, and every copy it began
+// is done, with each drop's question, which the screen keeps from the agent. A slow machine can
+// take longer to copy than the wait.
 async function sentOn(): Promise<string> {
-  // Longer than the filter's wait after a lone Esc.
-  await Bun.sleep(150);
-  return sent;
+  while (true) {
+    // Longer than the filter's wait after a lone Esc.
+    await Bun.sleep(150);
+    if (copying.size === 0) return sent;
+    await Promise.allSettled(copying);
+  }
 }
 // Returns what reached the agent once the filter has had time to copy.
 async function afterCopies(): Promise<string> {
