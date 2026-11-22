@@ -458,9 +458,8 @@ test("the last round reviewed is the last that approved or asked for changes, ne
     round: 1,
     commit: "a1",
     findings: ["fix a1"],
-    summary: "Second",
   });
   // A row from before Skelcrew kept a record says the same from its own fields.
   const old = thread({ verdict: "approve", review_round: 4, reviewed_commit: "c3" });
-  expect(lastReviewed(old)).toEqual({ round: 4, commit: "c3", findings: [], summary: "" });
+  expect(lastReviewed(old)).toEqual({ round: 4, commit: "c3", findings: [] });
 });

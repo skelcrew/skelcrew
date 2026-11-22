@@ -202,13 +202,13 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/main");
     expect(prompt).not.toContain("Since the last round");
     // Round 2 is told what round 1 asked for, and gets the diff since the commit it reviewed.
-    // The forge's copy has no PR here, so the description is the latest submit's summary.
+    // The forge shows no PR 7 here, so no trade-off counts as stated.
     const again = read(join(codexHome(), "sessions", "prompt-2"));
     expect(again).toContain(`git diff ${main}...HEAD`);
     expect(again).toContain(
       `Round 1 reviewed ${first.slice(0, 7)}. It asked for these changes:\n\n1. The export has no test.`,
     );
-    expect(again).toContain("the builder stated:\n\nRound 2");
+    expect(again).toContain("The PR has no description Skelcrew could read");
     const since = read(join(codexHome(), "sessions", "since-2"));
     expect(since).toContain("-1\n+2");
 

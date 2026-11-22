@@ -286,6 +286,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
           branch: "skelcrew/12-add-export",
           head: pushed(),
           base: "next",
+          body: "Retargeted to next.",
         }),
       ],
       next: null,
@@ -298,6 +299,10 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     );
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), longWait);
     expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${next}...HEAD`);
+    // The PR's description is asked of the forge as round 2 starts.
+    expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(
+      "It only says which trade-offs the builder stated:\n\nRetargeted to next.",
+    );
   }, 180_000);
 
   // Against next, which lacks main's new commit, the merge brings in more than its base.

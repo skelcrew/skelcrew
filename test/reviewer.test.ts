@@ -608,7 +608,13 @@ describe.skipIf(insideSandbox)("reviewer", () => {
 
   // From round 2 on, the diff since the last round's commit is in a file the prompt names.
   test("a reviewer reads what changed since the last round from the file its prompt names", async () => {
-    const last = { round: 1, commit, findings: ["Add a test."], description: "", diff: "+test\n" };
+    const last = {
+      round: 1,
+      commit,
+      findings: ["Add a test."],
+      description: null,
+      diff: "+test\n",
+    };
     fakeCodex(approve, [
       'prompt="$CODEX_HOME/sessions/prompt"',
       `f=$(grep -o '/[^ ]*/since-last-round\\.diff' "$prompt" | head -1)`,
@@ -619,7 +625,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   });
 
   test("a review after a force push dropped the last round's commit says it reviewed the whole diff only", async () => {
-    const last = { round: 2, commit, findings: [], description: "", diff: null };
+    const last = { round: 2, commit, findings: [], description: null, diff: null };
     fakeCodex(approve);
     const done = await start({ last });
     expect(done).toMatchObject({ verdict: "approve" });
@@ -924,6 +930,18 @@ describe("what the reviewer is told of the last round", () => {
     });
     expect(prompt).toContain("It approved, with no findings.");
     expect(prompt).toEndWith("Says {{title}} and $&");
+  });
+
+  // A description the forge couldn't give never excuses a trade-off.
+  test("with no description to read, no trade-off counts as stated", () => {
+    const round = { ...last, description: null };
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+      round,
+      file,
+    });
+    expect(prompt).toEndWith(
+      "The PR has no description Skelcrew could read, so no trade-off is stated: anything it gave up is a finding.",
+    );
   });
 
   test("after a force push dropped the commit it reviewed, it reviews the whole diff only", () => {
