@@ -102,18 +102,20 @@ test("Alt-Down and Alt-Up move the sidebar, and Enter on a task types to its bui
   await until(() => existsSync(join(home, "app-12.typed")), "the typing");
 });
 
-test("a click on a task shows its details, and a second click types to its builder", async () => {
+test("a click on a task types to its builder, and a click on the lead types to the lead", async () => {
   open("lead");
   await ready("lead");
-  const y = seen()
-    .split("\n")
-    .findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(line));
+  const lines = seen().split("\n");
+  const y = lines.findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(line));
+  const lead = lines.findIndex((line) => line.includes("◆ Lead"));
   click(5, y + 1);
-  await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
-  click(5, y + 1);
-  await until(() => !onDetails() && seen().includes("I am app-7"), "app-7");
+  await until(() => / 7\b/.test(selected()) && seen().includes("I am app-7"), "app-7");
   type("hello\r");
-  await until(() => existsSync(join(home, "app-7.typed")), "the typing");
+  await until(() => read("app-7.typed").endsWith("\n"), "the typing");
+  click(5, lead + 1);
+  await until(() => onLead() && seen().includes("I am lead"), "the lead");
+  type("back\r");
+  await until(() => read("lead.typed").endsWith("\n"), "the typing to the lead");
 });
 
 // A builder on a plugin's host is reached from the sidebar too: Enter on its row runs the host's

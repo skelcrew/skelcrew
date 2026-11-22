@@ -891,9 +891,8 @@ export async function runSidebar(
     said = openPr(db, open, row, canOpen, (text) => process.stdout.write(text));
   };
 
-  // Acts on a press of the mouse at a column and line, counted from 1. A click on the lead moves
-  // to it, so the right side shows the lead, and gives the lead your typing. A click on a task
-  // moves to it, and a second click on it opens it as Enter does. A click on a stage's heading, or
+  // Acts on a press of the mouse at a column and line, counted from 1. A click on a row, the
+  // lead's or a task's, moves to it and opens it as Enter does. A click on a stage's heading, or
   // its name pinned at an edge, opens or closes it. The wheel moves one row up or down. On an item
   // open full-size, the wheel scrolls it a line, and a tap on its ↑ more or ↓ more a page.
   const click = (button: string, column: number, line: number) => {
@@ -918,16 +917,8 @@ export async function runSidebar(
     const tapped = rows[target.row];
     if (target.pick && tapped)
       return target.row === here ? pickOn(tapped, target.pick) : moveTo(target.row);
-    if (rows[target.row]?.part === "lead") {
-      moveTo(target.row);
-      return toRight();
-    }
-    if (target.row === here) return enter();
-    if (narrow) {
-      moveTo(target.row);
-      return enter();
-    }
     moveTo(target.row);
+    enter();
   };
 
   const press = (key: string) => {
