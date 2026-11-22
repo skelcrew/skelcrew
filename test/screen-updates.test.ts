@@ -96,7 +96,8 @@ function printed(sent: string): string {
 
 // A spinner on the mark of an agent at work turns about four times a second. Each turn is a
 // frame of its own that rewrites its cell alone, the same codes every time, so the rest of the
-// screen stays as it was, however many turns fall in the time watched. Over
+// screen stays as it was, however many turns fall in the time watched. The copy of what the
+// screen sends can start or stop inside a turn, so only whole turns count. Over
 // sc --remote it stays still, as each turn would cost a write over a slow link, and the screen
 // then sends nothing.
 test("the lead at work has a spinner that turns by its cell alone, and stays still over sc --remote", async () => {
@@ -115,10 +116,15 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(1500);
-  const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
+  let sent = "";
+  await until(() => {
+    sent = existsSync(written) ? readFileSync(written, "utf8") : "";
+    return sent.endsWith("\x1b[?2026l");
+  }, "a whole turn");
   expect(stillScreen()).toBe(before);
   const [beforeFirst, ...turns] = sent.split("\x1b[?2026h");
-  expect(beforeFirst).toBe("");
+  if (beforeFirst) expect(beforeFirst).toEndWith("\x1b[?2026l");
+  expect(beforeFirst?.length ?? 0).toBeLessThan(250);
   expect(turns.length).toBeGreaterThan(0);
   for (const turn of turns) {
     expect(printed(turn)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
