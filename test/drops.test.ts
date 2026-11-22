@@ -317,6 +317,52 @@ test("everything sent after a drop waits for its paste, then follows in order", 
   );
 });
 
+test("files dropped while an earlier drop is still on its way are read at once, and the pastes keep their order", async () => {
+  const first = file("first.png");
+  const second = file("second.png");
+  const third = file("third.png");
+  let finish: () => void = () => {};
+  let held = true;
+  const take = pasteFilter(
+    (bytes) => {
+      sent += Buffer.from(bytes).toString();
+    },
+    {
+      where: async (ask) => {
+        ask();
+        return agent;
+      },
+      put: (folder, files) =>
+        held
+          ? new Promise((done) => {
+              held = false;
+              finish = () => done(copyDrops(folder, files));
+            })
+          : copyDrops(folder, files),
+    },
+  );
+  take(Buffer.from(pasted(first)));
+  await Bun.sleep(20);
+  take(Buffer.from(pasted(second)));
+  take(Buffer.from(pasted(third)));
+  await Bun.sleep(20);
+  rmSync(second);
+  rmSync(third);
+  finish();
+  const out = await afterCopies();
+  const found = copies(out);
+  expect(found.map((copy) => copy.slice(copy.lastIndexOf("/") + 1))).toEqual([
+    "first.png",
+    "second.png",
+    "third.png",
+  ]);
+  expect(found.map((copy) => readFileSync(copy, "utf8"))).toEqual([
+    "the text of first.png",
+    "the text of second.png",
+    "the text of third.png",
+  ]);
+});
+
 test("a copy runs off the screen's way, so nothing waits on it", async () => {
   const shot = file("shot.png");
   const copying = copyDrops(agent, [{ path: shot, bytes: readFileSync(shot) }]);
