@@ -26,7 +26,8 @@ const held = new Map<Socket, Holder & { since: number }>();
 // Once a slot is free it sends the commands, and the caller runs them in its own folder. The
 // caller holds the slot while its connection stays open, and closing it, however it ends, frees
 // the slot. So a check that was killed never keeps its place. A builder or reviewer that has
-// ended, as `runs` tells, gives back its place or slot too, though its connection stays open.
+// ended, as `runs` tells, is told to end its check, and gives back its place or slot once it
+// does, or a few seconds later, though its connection stays open.
 // A caller over the limit is first sent its place in line. A repository configured with no
 // tests runs none, so it takes no slot.
 export function holdCheckSlot(
@@ -55,7 +56,9 @@ export function holdCheckSlot(
     asking = false;
     if (runs) return;
     why = `${holder.holder.endsWith("/reviewer") ? "its review" : "its builder"} has ended`;
-    connection.destroy();
+    clearInterval(looking);
+    send({ ended: why });
+    setTimeout(() => connection.destroy(), holderLooked);
   }, holderLooked);
   connection.on("close", () => {
     clearInterval(looking);

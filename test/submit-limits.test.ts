@@ -393,7 +393,7 @@ done`,
     expect(await holds("APP-12/reviewer")).toBe(true);
     expect((await skel(["stop", "app-12"])).err).toBe("");
     await waitFor(async () => !(await holds("APP-12/reviewer")), { timeout: 30_000 });
-    expect(check.exitCode).toBeNull();
+    expect(await check.exited).toBe(1);
     expect(read(join(home, "daemon.log"))).toContain(
       "APP-12/reviewer gave back a check slot in simon/app: its review has ended",
     );
@@ -410,7 +410,7 @@ done`,
     await waitFor(() => holds("APP-12/builder"), { timeout: 30_000 });
     expect((await skel(["stop", "app-12"])).err).toBe("");
     await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
-    expect(check.exitCode).toBeNull();
+    expect(await check.exited).toBe(1);
     expect(read(join(home, "daemon.log"))).toContain(
       "APP-12/builder gave back a check slot in simon/app: its builder has ended",
     );
@@ -429,7 +429,7 @@ done`,
     await waitFor(() => holds("APP-12/reviewer"), { timeout: 30_000 });
     writeFileSync(join(codexHome(), "sessions", "go-1"), "");
     await waitFor(async () => !(await holds("APP-12/reviewer")), { timeout: 30_000 });
-    expect(check.exitCode).toBeNull();
+    expect(await check.exited).toBe(1);
     expect(read(join(home, "daemon.log"))).toContain(
       "APP-12/reviewer gave back a check slot in simon/app: its review has ended",
     );
@@ -447,7 +447,7 @@ done`,
     // Its session ends with no word to Skelcrew, and the thread still waits.
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
-    expect(check.exitCode).toBeNull();
+    expect(await check.exited).toBe(1);
     expect(read(join(home, "daemon.log"))).toContain(
       "APP-12/builder gave back a check slot in simon/app: its builder has ended",
     );
@@ -464,7 +464,7 @@ done`,
     await waitFor(() => holds("APP-12/builder"), { timeout: 30_000 });
     expect((await skel(["rm", "app-12", "--keep-issue"])).err).toBe("");
     await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
-    expect(check.exitCode).toBeNull();
+    expect(await check.exited).toBe(1);
     expect(read(join(home, "daemon.log"))).toContain(
       "APP-12/builder gave back a check slot in simon/app: its builder has ended",
     );
@@ -496,7 +496,7 @@ done`,
     });
     expect(restarted).toContain("Restarted APP-12's builder.");
     await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
-    expect(check.exitCode).toBeNull();
+    expect(await check.exited).toBe(1);
     expect(read(join(home, "daemon.log"))).toContain(
       "APP-12/builder gave back a check slot in simon/app: its builder has ended",
     );
@@ -575,7 +575,8 @@ test.skipIf(insideSandbox || process.platform === "darwin")(
   async () => {
     script("bwrap", fakeBwrap);
     addApp();
-    config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
+    const suite = 'echo $$ > "$HOME/suite"; sleep 600';
+    config(`repos: { simon/app: { test: [${JSON.stringify(suite)}] } }\n`);
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "held-1"), "");
     writeFileSync(join(codexHome(), "linger-1"), "");
@@ -591,7 +592,7 @@ test.skipIf(insideSandbox || process.platform === "darwin")(
         SKELCREW_SOCKET: join(home, "run", "skelcrew", "reviews", short, "skelcrew.sock"),
       },
       stdout: "ignore",
-      stderr: "ignore",
+      stderr: "pipe",
     });
     running.push(check);
     const holds = async () =>
@@ -602,7 +603,16 @@ test.skipIf(insideSandbox || process.platform === "darwin")(
       // The reviewer has ended, and the review waits on its output, which the process left holds.
       await until(() => read(join(sessions, "linger-1")).trim() !== "");
       await waitFor(async () => !(await holds()), { timeout: 30_000 });
-      expect(check.exitCode).toBeNull();
+      // sc check ends with its whole suite, so the next check never runs beside it.
+      expect(await check.exited).toBe(1);
+      expect(await new Response(check.stderr).text()).toContain(
+        "The check ended, as its review has ended.",
+      );
+      const suitePid = read(join(home, "suite")).trim();
+      await until(() => {
+        const stat = Bun.spawnSync(["ps", "-o", "stat=", "-p", suitePid]).stdout.toString().trim();
+        return stat === "" || stat.startsWith("Z");
+      });
       expect(thread().reviewing).not.toBeNull();
       expect(read(join(home, "daemon.log"))).toContain(
         "APP-12/reviewer gave back a check slot in simon/app: its review has ended",
