@@ -94,8 +94,9 @@ function printed(sent: string): string {
   return [...sent.replaceAll(codes, "")].filter((character) => character >= " ").join("");
 }
 
-// A spinner on the mark of an agent at work turns about four times a second, and each turn
-// rewrites its cell alone, so the screen shows nothing else, however busy the machine. Over
+// A spinner on the mark of an agent at work turns about four times a second. Each turn is a
+// frame of its own that rewrites its cell alone, the same codes every time, so the rest of the
+// screen stays as it was, however many turns fall in the time watched. Over
 // sc --remote it stays still, as each turn would cost a write over a slow link, and the screen
 // then sends nothing.
 test("the lead at work has a spinner that turns by its cell alone, and stays still over sc --remote", async () => {
@@ -109,13 +110,23 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
     for (const [frame] of seen().matchAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?= working)/g)) frames.add(frame);
     return frames.size >= 3;
   }, "the spinner to turn");
+  const stillScreen = () => seen().replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠿");
+  const before = stillScreen();
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(1500);
   const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
-  const turns = sent.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g)?.length ?? 0;
-  expect(turns).toBeGreaterThan(0);
-  expect(printed(sent).replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "")).toBe("");
+  expect(stillScreen()).toBe(before);
+  const [beforeFirst, ...turns] = sent.split("\x1b[?2026h");
+  expect(beforeFirst).toBe("");
+  expect(turns.length).toBeGreaterThan(0);
+  for (const turn of turns) {
+    expect(printed(turn)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
+    expect(turn.replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠿")).toBe(
+      (turns[0] ?? "").replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠿"),
+    );
+    expect(turn.length).toBeLessThan(250);
+  }
 });
 
 test("over sc --remote the lead at work shows a still mark, and the screen sends nothing", async () => {
