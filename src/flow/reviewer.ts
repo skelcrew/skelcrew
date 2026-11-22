@@ -383,6 +383,13 @@ async function spawnReviewer(given: {
   return { out, err, code };
 }
 
+// Returns the programs a harness needs to see in the sandbox: its own, and those it runs on, such
+// as Pi's Node, which can be installed apart from it under the home folder.
+function programsOf(name: HarnessName): string[] {
+  const harness = harnessNamed(name);
+  return "programs" in harness ? [...harness.programs] : [harness.program];
+}
+
 // Returns the error a reviewer that failed ended on, never a line of the prompt it was given:
 // the error its harness reports, else, when `guess`, the last line it printed on stderr, or
 // else stdout. A harness whose output may hold a provider's error text, which can echo a key,
@@ -623,7 +630,7 @@ async function reviewNow(given: {
       mounts: [...mounts, ...launch.mounts],
       cwd: at,
       command: ["sh", "-c", checkout, given.commit, index, ...launch.command],
-      programs: [harnessNamed(harness).program],
+      programs: programsOf(harness),
     });
     // CI's result is there before the reviewer starts, and kept current while it runs. The
     // first answer is waited for, but never past a cancellation or the time limit.

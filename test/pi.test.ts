@@ -137,6 +137,35 @@ test("a lead or builder starts with Skelcrew's extension, its own folder and no 
   expect(started.env.OPENAI_API_KEY).toBeUndefined();
 });
 
+// Pi from npm runs on node, which can be installed under the home folder apart from Pi's own
+// npm prefix, such as by a version manager. The sandbox hides the home folder, so it shows both.
+test.skipIf(process.platform === "darwin")(
+  "a lead or builder sees Node in its own folder, apart from Pi's",
+  () => {
+    const piBin = join(home, "npm", "bin");
+    const nodeBin = join(home, "node", "bin");
+    for (const [folder, name] of [
+      [piBin, "pi"],
+      [nodeBin, "node"],
+    ] as const) {
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, name), "#!/bin/sh\n", { mode: 0o755 });
+    }
+    saveLogin(3_600_000);
+    const started = pi.start({
+      name: "app-12",
+      socket: join(home, "run", "app-12.sock"),
+      thread: join(home, "clone"),
+      sessionId: "11111111-2222-3333-4444-555555555555",
+      env: { HOME: home, PATH: `${piBin}:${nodeBin}:/usr/bin:/bin` },
+    });
+    const shown = (folder: string) =>
+      started.argv.some((word, at) => word === "--ro-bind" && started.argv[at + 1] === folder);
+    expect(shown(piBin)).toBe(true);
+    expect(shown(nodeBin)).toBe(true);
+  },
+);
+
 test("a session gets its own copy of the login as it starts, without refresh tokens", async () => {
   saveLogin(3_600_000);
   const started = pi.start({

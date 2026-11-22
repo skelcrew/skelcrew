@@ -209,7 +209,7 @@ function startCommand(given: {
     socket,
     cwd,
     command,
-    programs: ["pi", "node"],
+    programs: [...pi.programs],
     normalPriority: !thread,
     files,
   });
@@ -305,11 +305,12 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
 // install saves, and none starts without it. What Pi prints can hold a provider's error text,
 // which can echo a key, so a review's failure is read only from the extension's words. The first
 // run looks for `program` and, when it is missing, prints the line that installs it. Pi needs
-// Node 22.19 or newer.
+// Node 22.19 or newer, which the sandbox shows it with `programs`, wherever it is installed.
 export const pi = {
   name: "pi",
   title: "Pi",
   program: "pi",
+  programs: ["pi", "node"],
   install: "npm install -g @earendil-works/pi-coding-agent@1.6.0",
   marks,
   keys: [],
