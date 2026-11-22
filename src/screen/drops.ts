@@ -3,8 +3,7 @@
 // is on your laptop. So a layer between your terminal and the screen copies each dropped file into
 // the agent's own folder and passes the paste on with the copies' paths. Everything else passes
 // through untouched.
-import { constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 // The folder inside an agent's folder that holds its dropped files. It ignores itself in git, so
@@ -124,17 +123,22 @@ function writtenLike(written: string, path: string): string {
   return path.replace(/[\s\\'"$`!&*()|;<>?[\]{}#~^]/g, "\\$&");
 }
 
-// Says whether a dropped file can be copied: a regular file, or a link to one, that you can read
-// and that isn't over largestDrop. A folder, a missing path or one you can't read keeps its path.
-// It looks without holding up the screen, as a disk can be slow to answer.
-async function droppable(path: string): Promise<boolean> {
+// A dropped file, read when it was dropped: its path as pasted and what it holds.
+export type Dropped = { path: string; bytes: Uint8Array };
+
+// Reads a dropped file at once, as macOS deletes a screenshot's file within seconds of its drop,
+// and a drop onto a server's screen takes a while to learn where the file goes. Only a regular
+// file, or a link to one, that you can read and that isn't over largestDrop is read. A folder, a
+// missing path or one you can't read gives null and keeps its path. It reads without holding up
+// the screen, as a disk can be slow to answer.
+async function readDropped(path: string): Promise<Dropped | null> {
   try {
     const found = await stat(path);
-    if (!found.isFile() || found.size > largestDrop) return false;
-    await access(path, constants.R_OK);
-    return true;
+    if (!found.isFile() || found.size > largestDrop) return null;
+    const bytes = await Bun.file(path).bytes();
+    return bytes.length > largestDrop ? null : { path, bytes };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -183,13 +187,13 @@ async function readableBy(folder: string, file: string): Promise<boolean> {
 // Copies dropped files into an agent's folder on this machine, and returns each copy's path, in
 // order, or null for a file left as it was. A file the agent can read where it is is left.
 // It runs without holding up the screen, so a big file or a slow disk never stops it.
-export function copyDrops(folder: string, files: string[]): Promise<(string | null)[]> {
+export function copyDrops(folder: string, files: Dropped[]): Promise<(string | null)[]> {
   return Promise.all(
     files.map(async (file) => {
-      if (await readableBy(folder, file)) return null;
-      const copy = dropPath(folder, file);
+      if (await readableBy(folder, file.path)) return null;
+      const copy = dropPath(folder, file.path);
       const copying = Bun.spawn(dropCommand(copy), {
-        stdin: Bun.file(file),
+        stdin: file.bytes,
         stdout: "ignore",
         stderr: "ignore",
       });
@@ -200,11 +204,11 @@ export function copyDrops(folder: string, files: string[]): Promise<(string | nu
 
 // Where dropped files go: `where` asks the screen which agent's folder your typing goes to, and
 // gives it back, or null for none. It calls `ask` to send dropSignal on once it is ready to see
-// the sidebar's answer change. `put` puts the files in that folder, and returns each one's new
-// path, in order, or null for one left as it was.
+// the sidebar's answer change. `put` puts the files, read as they were dropped, in that folder,
+// and returns each one's new path, in order, or null for one left as it was.
 export type Drop = {
   where: (ask: () => void) => Promise<string | null>;
-  put: (folder: string, files: string[]) => Promise<(string | null)[]>;
+  put: (folder: string, files: Dropped[]) => Promise<(string | null)[]>;
 };
 
 // A whole control sequence, such as an arrow key or a mouse event: Esc, [, its parameters and
@@ -304,20 +308,21 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   };
 
   // Returns the paste's text with each droppable path replaced by its copy's, or null when
-  // nothing was copied, so the paste goes on as it came.
-  // where the files go, which happens only when one of them can be copied.
+  // nothing was copied, so the paste goes on as it came. Each file is read once, before asking
+  // where it goes, and only when one can be copied is that asked.
   const rewritten = async (text: string): Promise<string | null> => {
     const parts = pastedPaths(text);
     if (!parts) return null;
-    // Only the files that can be copied go to `drop`, each once, in the order pasted.
-    const paths = parts.flatMap((part) => (part.path === undefined ? [] : [part.path]));
-    const can = await Promise.all(paths.map(droppable));
-    const files = paths.filter((_, at) => can[at]);
+    const paths = [
+      ...new Set(parts.flatMap((part) => (part.path === undefined ? [] : [part.path]))),
+    ];
+    const read = await Promise.all(paths.map(readDropped));
+    const files = read.filter((file) => file !== null);
     if (files.length === 0) return null;
     const folder = await drop.where(() => add(Buffer.from(dropSignal)));
     if (folder === null) return null;
     const copies = await drop.put(folder, files);
-    const copyOf = new Map(files.map((file, at) => [file, copies[at] ?? null]));
+    const copyOf = new Map(files.map((file, at) => [file.path, copies[at] ?? null]));
     if (![...copyOf.values()].some((copy) => copy !== null)) return null;
     return parts
       .map((part) => {

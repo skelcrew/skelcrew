@@ -272,6 +272,17 @@ test("a paste split over several reads arrives whole, and keys after it follow i
   );
 });
 
+test("a dropped file is read at once, so one deleted while the drop asks where it goes still arrives", async () => {
+  const shot = file("shot.png");
+  const take = filter(() => {
+    rmSync(shot);
+    return agent;
+  });
+  take(Buffer.from(pasted(shot)));
+  const [copy = ""] = copies(await afterCopies());
+  expect(readFileSync(copy, "utf8")).toBe("the text of shot.png");
+});
+
 test("everything sent after a drop waits for its paste, then follows in order", async () => {
   const shot = file("shot.png");
   let finish: () => void = () => {};
@@ -308,7 +319,7 @@ test("everything sent after a drop waits for its paste, then follows in order", 
 
 test("a copy runs off the screen's way, so nothing waits on it", async () => {
   const shot = file("shot.png");
-  const copying = copyDrops(agent, [shot]);
+  const copying = copyDrops(agent, [{ path: shot, bytes: readFileSync(shot) }]);
   // Nothing was copied while the call ran: the copy happens while keys, the mouse and resizes
   // go on.
   expect(existsSync(join(agent, dropsFolder))).toBe(false);
