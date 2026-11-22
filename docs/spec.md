@@ -238,6 +238,7 @@ What belongs to you or your machine stays in `~/.config/skelcrew/`:
 - the reviewer's `fallback`, and a review's time limit;
 - per-repository overrides, under `repos:`;
 - what you declined, such as `github_declined`;
+- where needs-you messages and the digest go, under `notify:`, as **Notifiers** says;
 - whether the lead may arm a merge when ready, or skipping Skelcrew's review, when you ask it to, `lead: { can_merge: true }`, on by default, and turned off with `lead: { can_merge: false }`;
 - your personal plugins, which no repository names, such as every runtime plugin, pinned in `~/.config/skelcrew/skelcrew.lock`.
 
@@ -249,6 +250,7 @@ session: tmux
 rounds: 3
 limits: { reviews: 2, checks: 2 }
 review: { timeout_minutes: 30 }
+notify: { needs-you: push, digest: email, digest_at: "08:00" }
 plugins: [skelcrew/skelcrew-herdr]   # named afterwards by its short name, as in session: herdr
 roles:
   builder:  { harness: codex, model: gpt-6.1-sol }
@@ -283,7 +285,7 @@ Each setting comes from the first of these that sets it:
 
 So the repository decides how its agents work, your general settings fill in what it leaves out, and an override is how you differ from your team on purpose. Settings merge key by key. A role's instructions are one value: a repository's `builder.md` replaces the built-in instructions whole.
 
-Some settings exist only in your files: logins, tokens, the session host, `limits.reviews`, `limits.checks`, the reviewer's fallback, the review time limit, whether the lead may merge, and personal plugins. A repository's files can't set them. Whether the lead may merge is in your general settings only: not under `repos:`, and never from a repository's `skelcrew.yaml` or `.agents/`, so no repository can turn it on.
+Some settings exist only in your files: logins, tokens, the session host, `limits.reviews`, `limits.checks`, the reviewer's fallback, the review time limit, whether the lead may merge, where messages to you go, and personal plugins. A repository's files can't set them. Whether the lead may merge is in your general settings only: not under `repos:`, and never from a repository's `skelcrew.yaml` or `.agents/`, so no repository can turn it on.
 
 Settings in their old shape are still read: `lead:`, `builder:` and `reviewer:` at the top level as the roles' harness and model, and `max_rounds` as `rounds`. Where both shapes say something, the new one wins. `sc` says once which old key it read and what replaces it, and changes no file itself.
 
@@ -336,7 +338,7 @@ Every command that lists or shows something takes `--json`. Commands that do som
 
 - **Yours only:** opening a repository, setting up the machine, its plugins and repositories, and running the daemon, such as `sc`, `sc init`, `sc install`, `sc plugin add`, `sc serve` and `sc repo trust`.
 - **Yours, and the lead's in its own repository:** seeing and steering tasks and threads, such as `sc ls`, `sc show`, `sc ps`, `sc start`, `sc add`, `sc stop`, `sc rm` and `sc merge`. Some are the lead's alone, such as `sc tell`, as you type to an agent by attaching, and `sc ask`, as you answer in Needs you. Some need your words or your terminal, such as `sc merge`, and from the lead, `sc add --issue` and an `sc rm` that closes an issue. Builders and reviewers can't run them, but for a builder asking its own task's review again. `sc show` is how the lead reads issues and PRs, as it has no login for the tracker or forge, and text from either has its control characters removed. An issue is only where some tasks come from and what they mirror to, and a PR is part of a task, so neither has commands of its own. Tasks are the only names: `sc show APP-12` shows the task with its PR.
-- **The agents':** `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc review` for a builder's own task and never another's, and `sc check`, which reviewers and you can run too.
+- **The agents':** `sc notify` for the lead, to send you a message you asked for, `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc review` for a builder's own task and never another's, and `sc check`, which reviewers and you can run too.
 
 **Plugins.** `sc plugin add` refuses a second plugin of the same name, and a plugin of yours from a folder, which has no version to pin. `sc plugin rm` refuses the tracker or forge of a repository Skelcrew has, and removes a plugin's settings and tokens from the machine once nothing else uses it.
 
@@ -357,9 +359,8 @@ Every command an agent can run answers quickly, as Claude Code moves a shell com
 3. It logs in each harness that has no login yet. For Claude Code it asks you to run `claude setup-token` yourself in another terminal, which gives a long-lived token for agents, and to paste it. Over SSH you run that on your laptop, where the browser is. Skelcrew checks that what you paste looks like a token and saves it in `~/.config/skelcrew/`, readable only by you. Nothing renews it, so your own login is never touched. For Codex it runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skelcrew/codex/`, on the terminal's alternate screen, and waits for Enter before switching back if Codex fails. That is a login of Skelcrew's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. Every Codex agent and review shares it, which is safe, as Codex locks it while it renews.
 4. It installs each plugin the files name at its locked version, asking as **Trust** says, into `~/.local/share/skelcrew/plugins/<name>/<version>/`, and runs its `build`. It refuses a plugin that needs a newer Skelcrew, and one named `none`.
 5. It runs each plugin's `setup` that hasn't run on this machine, in your terminal.
-6. It starts the daemon as the background service, as `sc serve --bg` does.
 
-Each step is skipped when it is already done. A tool or login that goes missing later shows up where it is used. A command Skelcrew shows you to run, here and elsewhere, sits on a line of its own, bold, with a blank line above and below, so it reads as a step to take. Only a real error is printed as one.
+It never starts the daemon or anything else of Skelcrew's that keeps running. Running Skelcrew is `sc`'s job: the first `sc` on a machine starts the daemon as the background service, as **The daemon** says, and on a server the first `sc --remote <host>` starts it there. Each step is skipped when it is already done. A tool or login that goes missing later shows up where it is used. A command Skelcrew shows you to run, here and elsewhere, sits on a line of its own, bold, with a blank line above and below, so it reads as a step to take. Only a real error is printed as one.
 
 A plugin you are writing can be added from a folder, such as `sc plugin add -g ./skelcrew-linear`. It is used where it is, with no tag, and asks as any install does. `sc plugin update` then runs its `build` again, so your edits count, and `sc plugin rm` never deletes your folder.
 
@@ -504,12 +505,12 @@ A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at 
 
 | Kind | What it is for | Provides | Examples |
 | --- | --- | --- | --- |
-| I/O | Work in and results out. In: issues become tasks, labels start them, comments and reviews reach builders. Out: PRs, reviews, checks, merges, closed issues and notifications | `tracker`, `forge`, `chat` | GitHub (tracker and forge), Linear, GitLab, Slack |
+| I/O | Work in and results out. In: issues become tasks, labels start them, comments and reviews reach builders. Out: PRs, reviews, checks, merges, closed issues and notifications | `tracker`, `forge`, `chat`, `notifier` | GitHub (tracker and forge), Linear, GitLab, Slack, email and push notifiers |
 | Runtime | Where and how agents run | `sessions`, `transport`, `status`, `files`, `machine` | herdr. tmux and SSH are built in |
 
 Messages and the sandbox stay in core, between the two. Work comes in through an I/O plugin, becomes a message, and reaches an agent through the runtime. No plugin can provide messages or the sandbox, so the rules about who may reach whom, and what an agent can touch, are Skelcrew's on every setup. Harnesses are never plugins: each is built into Skelcrew, one module per harness, because that module draws the sandbox boundary.
 
-A runtime plugin is always personal, added with `sc plugin add -g`, since how you run and watch your agents is yours. An I/O plugin is usually the repository's, in `plugins:`.
+A runtime plugin is always personal, added with `sc plugin add -g`, since how you run and watch your agents is yours. So is a notifier, as it reaches you, and a repository's files can't name one. Any other I/O plugin is usually the repository's, in `plugins:`.
 
 ### The manifest
 
@@ -560,6 +561,24 @@ Skelcrew runs git itself, for clones, fetches and pushes. `git_credentials` is a
 **The copy.** Skelcrew keeps a copy of each repository's open issues, from its tracker, and open PRs, from its forge. At each poll `changed` brings what changed since its last `next`. Each daemon start begins with no `next`, so everything open comes again, and anything no longer there leaves the copy. A closed item leaves once no live task points to it. The list, `sc ls`, `sc show` and `sc ps` read the copy, so none of them waits on the tracker or forge. Only `sc show` asks the forge, for the logs of failed checks. `sc start` polls its repository first, so a builder never starts from an old body.
 
 A chat plugin, such as Slack, would be where you hear that a task needs you and talk to a lead. None exists yet, so chat has no commands: they come with the first chat plugin.
+
+### Notifiers
+
+A notifier reaches you while you are away, such as by email or a push to your phone. It is asked through its `call` like a tracker, with one JSON line on stdin:
+
+```json
+{ "ask": "notify", "type": "needs-you", "title": "APP-12 needs you", "body": "approve the design", "links": [{ "name": "APP-12 #7", "url": "https://github.com/simon/app/pull/7" }] }
+```
+
+`type` is `needs-you`, `digest` or `asked`. `title` is one line, `body` plain text over lines, and `links` may be empty. It prints `null` once it delivered the message, or exits with an error, as **I/O plugins** says. Its recipient and credentials live only in its own settings, which its `setup` asks for, so neither Skelcrew nor any agent can change where a message goes. Its manifest can say how it reaches you, such as `channel: email` or `channel: push`.
+
+Your `notify:` names the notifier for needs-you messages and for the digest, and one with no notifier isn't sent. `sc repo ls` says when it names a plugin that isn't installed or isn't a notifier, and nothing is sent to such a plugin. There are three types:
+
+- **needs-you**, when Skelcrew puts a thread under Needs you, from the same events as the lead's note, and each time the lead posts an item, the same words again included. A change in why it needs you, such as a question becoming an error, sends nothing more.
+- **digest**, once a day at `digest_at`, 08:00 local time by default, or once the daemon is back if it was off then, even before that day's time. For each repository it lists, in full, what merged since the last one delivered, what waits on you, what is under way and the backlog, each with its PR's or issue's link where it has one.
+- **asked**, which the lead sends with `sc notify --via <channel or notifier> "<subject>" "<text>"`, only when you ask it to, with your exact words in `--asked-file`, by the channel you asked for, such as email or push. `--via` takes a notifier's name or the channel of exactly one installed notifier. Without your words, or with no such notifier, it is refused. `sc notify` answers once the notifier delivered it, or with why it couldn't.
+
+At most 10 needs-you, 5 asked and 2 digest messages are delivered each hour, each counted from when its call to the notifier starts, a call that failed included, as it may have delivered. A call has 60 seconds, so a slow notifier can't send a backlog at once, and `sc notify` waits longer than that for its answer. One past its limit is dropped, and the daemon's log says so. A needs-you or asked body holds at most 4000 characters: a longer needs-you message says it was cut short, and a longer asked message is refused. A digest is never cut. A message the daemon's stop cut short is sent again once it is back, but for an asked one, which `sc notify` already said failed. Text from a tracker or forge goes in only as names, states and links, never a title or body, so nothing written there can ride along. Control characters are removed from all of it.
 
 ### GitHub
 
@@ -741,8 +760,8 @@ A runtime plugin's host shows the same agents in its own apps, and its sessions 
 
 The daemon runs on the same machine as its agents. So `--remote` is only "run `sc` on that machine", over plain `ssh -t`. Everything must work over it: no local display, no browser on the same machine, no clipboard. Logins that need a browser use a code and a link you open on your laptop.
 
-- `sc --remote <host> install` sets the server up. Your personal setup is one setup for all your machines, so a server feels like your laptop. It sends your personal files first: `config.yaml`, your lock file and the agents' Claude Code token. `session:` goes with them, so herdr on the laptop means herdr on the server. A runtime plugin that provides only `machine` is skipped there, as it is used where you run `--remote`. Then it runs `sc install` there. Each plugin's setup and `codex login` run there once, in your terminal, since a sign-in that renews itself cancels the one before, and two machines sharing it would break each other. On a server with no Skelcrew, it asks, then puts Skelcrew there first: the laptop's release, built for that machine and checked against its checksums, or one built from your checkout when you run Skelcrew from one.
-- `sc --remote <host> serve --bg` runs the daemon there as its background service.
+- `sc --remote <host> install` sets the server up. Your personal setup is one setup for all your machines, so a server feels like your laptop. It sends your personal files first: `config.yaml`, your lock file and the agents' Claude Code token. `session:` goes with them, so herdr on the laptop means herdr on the server. A runtime plugin that provides only `machine` is skipped there, as it is used where you run `--remote`. Then it runs `sc install` there, which doesn't start the daemon. Each plugin's setup and `codex login` run there once, in your terminal, since a sign-in that renews itself cancels the one before, and two machines sharing it would break each other. On a server with no Skelcrew, it asks, then puts Skelcrew there first: the laptop's release, built for that machine and checked against its checksums, or one built from your checkout when you run Skelcrew from one.
+- `sc --remote <host>` runs plain `sc` there, so the first one starts the daemon there as its background service. `sc --remote <host> serve --bg` does only that.
 - `sc --remote <host> <command>` runs `ssh -t <host> sc --from <owner/repo> <command>`, passing the repository you are in on the laptop, so it acts on that repository there. With no command, it opens the server's screen, and with `--list` its list, where Enter attaches through tmux there.
 - A file dropped onto the server's screen is on your laptop. So the laptop's `sc` copies it into the agent's folder there, over the shared SSH connection, and the server's screen leaves the laptop's pastes alone.
 

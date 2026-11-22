@@ -74,6 +74,10 @@ const sections: [string, [string, string][]][] = [
       ['tell lead <repo> "<text>" | -', "Type a brief into another repository's lead, - for stdin"],
       ['ask <task> | <repo> "<text>"', "Ask the human in Needs you, with --option per choice"],
       ["ask --clear <task> | <repo>", "Take that item off Needs you"],
+      [
+        'notify --via <channel> "<subject>" "<text>"',
+        "Send the human what they asked for, with --asked-file",
+      ],
     ],
   ],
   [
