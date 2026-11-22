@@ -88,6 +88,7 @@ import {
   noteForLead,
   typeLeadNotes,
 } from "./messages.ts";
+import { queueDigest, resumeNotifications, sendAsked, sendNotifications } from "./notify.ts";
 import type { Act } from "./own-items.ts";
 import { pollRepositories } from "./poll.ts";
 import {
@@ -321,6 +322,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   marksToItems(db);
   finishUpgrade(db);
   saveApprovedCommits(db);
+  resumeNotifications(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile
@@ -1040,6 +1042,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "tell lead":
         messageLead(db, sessions, caller, request.text);
         return { told: "lead" };
+      case "notify": {
+        const { subject, text, asked: words, via } = request;
+        return { said: await sendAsked(db, { subject, text, words, via }) };
+      }
       case "brief lead": {
         // Only you bring a repository in, in your own terminal, so the lead is told how to ask.
         const to = repositories(db).find((r) => r.name === request.to || fullNameIs(r, request.to));
@@ -1236,6 +1242,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
   }, 2000);
+  setInterval(() => {
+    try {
+      doing("queueing the daily digest", () => queueDigest(db));
+    } catch (error) {
+      console.log(`couldn't queue the daily digest: ${errorText(error)}`);
+    }
+    sendNotifications(db).catch((error) =>
+      console.log(`couldn't send messages: ${errorText(error)}`),
+    );
+  }, look);
   // A host that shows status hears each builder's as it is now, and each change from here on.
   reportStatuses(db);
   // A host's own apps show each builder by its title as it is now, such as after an upgrade.

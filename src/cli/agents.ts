@@ -1,5 +1,6 @@
 // The commands agents run: a builder submitting its work, the hooks that tell the daemon what an
-// agent is doing, and what the lead and builders use to tell each other and mark a thread as needing you.
+// agent is doing, what the lead and builders use to tell each other and mark a thread as needing
+// you, and the lead's message to you when you ask for one.
 import { runByAgent } from "../agents/sandbox.ts";
 import { readAsked, splitTaskName, usage } from "./input.ts";
 
@@ -116,4 +117,29 @@ export async function tellCommand(args: string[]): Promise<void> {
     return;
   }
   usage(command, to);
+}
+
+export async function notifyCommand(args: string[]): Promise<void> {
+  const [command, ...rest] = args;
+  const flags = new Map<string, string>();
+  const words: string[] = [];
+  for (let at = 0; at < rest.length; at++) {
+    const word = rest[at] ?? "";
+    const value = rest[at + 1];
+    if (word !== "--via" && word !== "--asked-file") words.push(word);
+    else if (value === undefined || flags.has(word)) usage(command);
+    else flags.set(word, rest[++at] ?? "");
+  }
+  const [subject, text, ...more] = words;
+  const via = flags.get("--via");
+  const askedFile = flags.get("--asked-file");
+  if (!via || !askedFile || !subject?.trim() || text === undefined || more.length > 0)
+    usage(command);
+  if (!runByAgent())
+    throw new Error("sc notify is the lead's, to send you a message you asked it for");
+  const message = text === "-" ? await Bun.stdin.text() : text;
+  if (!message.trim()) throw new Error("sc notify needs the message, as words or on stdin");
+  const { notifyTheHuman } = await import("../client.ts");
+  const asked = await readAsked(askedFile);
+  console.log(await notifyTheHuman({ via, subject, text: message }, asked));
 }
