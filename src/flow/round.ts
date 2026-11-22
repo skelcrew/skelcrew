@@ -38,6 +38,7 @@ import { fetchInto, noMaintenance, pushCommit } from "./git.ts";
 import {
   approvalFound,
   checkSet,
+  lastReviewed,
   letGoOn,
   notReviewed,
   reviewAsked,
@@ -52,7 +53,7 @@ import {
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
-import { type Limited, type Review, review } from "./reviewer.ts";
+import { type LastRound, type Limited, type Review, review } from "./reviewer.ts";
 import { needsYou as neededYou } from "./status.ts";
 import { supervisor } from "./supervisor.ts";
 import { cloneOf, readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
@@ -493,6 +494,7 @@ async function reviewRound(
           const result = await review({
             ...given,
             docsOnly,
+            last: lastRound(db, thread, skelcrewClone, sha),
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
             base: from,
@@ -1195,6 +1197,28 @@ function lastApproved(thread: Thread): string | null {
 function prBase(db: Database, thread: Thread): string {
   const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
   return pr?.base ?? baseOf(thread);
+}
+
+// Returns what the reviewer gets of the last round the thread's reviewer finished: its findings,
+// the PR's description, and the diff from the commit it reviewed to this one, read in Skelcrew's
+// clone, which the builder can't change. A commit no longer in this one's history, such as after
+// a force push, gives no diff. Null on the first round, and for a review of the same commit again.
+function lastRound(db: Database, thread: Thread, clone: string, sha: string): LastRound | null {
+  const last = lastReviewed(thread);
+  if (last === null || last.commit === sha) return null;
+  const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
+  const description = pr?.body ?? last.summary;
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
+  const kept = git("merge-base", "--is-ancestor", last.commit, sha).success;
+  const diff = kept ? git("diff", last.commit, sha) : null;
+  return {
+    round: last.round,
+    commit: last.commit,
+    findings: last.findings,
+    description,
+    diff: diff?.success ? diff.stdout.toString() : null,
+  };
 }
 
 // Returns whether the commit, in the clone, changes only docs and Markdown since it met the

@@ -108,10 +108,10 @@ exec sleep 300`,
 // and fails without one. With check-n there, it first runs sc check, as a reviewer runs the
 // tests, and notes in the sessions folder that it did. It sleeps first when slow-n is there, and while held-n is there it
 // waits for the test to put go-n in the sessions folder. With error-n there, it echoes its
-// prompt and then that error, as codex exec does, and fails. What it was given, and the
-// branches it saw, go in the sessions folder, the one place a review writes that lasts. Each
-// file is written aside and renamed in, since tests read a file as soon as it shows, and the
-// prompt comes last, so a test that sees it can read all three.
+// prompt and then that error, as codex exec does, and fails. What it was given, the branches it
+// saw, and in since-n the diff since the last round, go in the sessions folder, the one place a
+// review writes that lasts. Each file is written aside and renamed in, since tests read a file
+// as soon as it shows, and the prompt comes last, so a test that sees it can read the others.
 export function fakeCodex(): void {
   script(
     "codex",
@@ -120,7 +120,10 @@ s="$CODEX_HOME/sessions"
 n=$(( $(cat "$s/count" 2>/dev/null || echo 0) + 1 )); echo $n > "$s/count"
 git branch -r > "$s/branches-$n.new"; mv "$s/branches-$n.new" "$s/branches-$n"
 git rev-parse origin/main > "$s/main-$n.new" 2>&1; mv "$s/main-$n.new" "$s/main-$n"
-cat > "$s/prompt-$n.new"; mv "$s/prompt-$n.new" "$s/prompt-$n"
+cat > "$s/prompt-$n.new"
+f=$(grep -o '/[^ ]*/since-last-round\\.diff' "$s/prompt-$n.new" | head -1)
+test -z "$f" || cp "$f" "$s/since-$n"
+mv "$s/prompt-$n.new" "$s/prompt-$n"
 test -e "$CODEX_HOME/check-$n" && { touch "$s/checking-$n"; sc check > /dev/null 2>&1; }
 test -e "$CODEX_HOME/slow-$n" && sleep 30
 i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done

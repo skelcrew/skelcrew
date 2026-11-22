@@ -320,6 +320,28 @@ export function nextRound(thread: Recorded): number {
   return Math.max(top_round ?? 0, rounds) + 1;
 }
 
+// Returns the last round a reviewer finished, approving or asking for changes, with the commit it
+// reviewed and its findings, and the summary of the latest submit, or null before any. A review
+// that failed found nothing, so it never counts. A kept approval counts, at the commit it kept.
+export function lastReviewed(
+  thread: Recorded,
+): { round: number; commit: string; findings: string[]; summary: string } | null {
+  let last: { round: number; commit: string; findings: string[] } | null = null;
+  let summary = "";
+  for (const event of recordOf(thread)) {
+    if (event.kind === "submitted") summary = event.summary;
+    if (event.kind === "verdict" && (event.verdict === "approve" || event.verdict === "changes"))
+      last = { round: event.round, commit: event.commit, findings: event.findings };
+    if (event.kind === "before") {
+      const { verdict, review_round, reviewed_commit, review_findings } = event.round;
+      const counted = verdict === "approve" || verdict === "changes";
+      if (counted && review_round !== null && reviewed_commit !== null)
+        last = { round: review_round, commit: reviewed_commit, findings: review_findings ?? [] };
+    }
+  }
+  return last && { ...last, summary };
+}
+
 // Returns whether the thread has used up its rounds of changes. Past that a review's changes
 // are held, and the thread needs you until you decide, let it go on, or its reviewer approves.
 // An approval answers the changes the limit held, so an approved thread is ready like any other.

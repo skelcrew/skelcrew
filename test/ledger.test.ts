@@ -7,6 +7,7 @@ import {
   changesTyped,
   checkSet,
   failureOver,
+  lastReviewed,
   letGoOn,
   limitDecided,
   limitNeedsYou,
@@ -420,4 +421,46 @@ test("the round fields are always what the record comes to", () => {
     top_round: 3,
     review_failed: false,
   });
+});
+
+// From round 2 on, the reviewer sees what changed since the last review that gave a verdict.
+test("the last round reviewed is the last that approved or asked for changes, never one that failed", () => {
+  const verdict = (round: number, said: "approve" | "changes" | "failed", commit: string) => ({
+    kind: "verdict" as const,
+    at: round,
+    round,
+    verdict: said,
+    limit: 3,
+    by: "codex" as const,
+    commit,
+    line: "",
+    findings: said === "changes" ? [`fix ${commit}`] : [],
+    changes: null,
+    posting: null,
+  });
+  const submit = (summary: string) => ({
+    kind: "submitted" as const,
+    at: 0,
+    summary,
+    unreviewed: false,
+  });
+  expect(lastReviewed(thread({ round_log: [] }))).toBeNull();
+  expect(
+    lastReviewed(thread({ round_log: [submit("First"), verdict(1, "failed", "a1")] })),
+  ).toBeNull();
+  const log = [
+    submit("First"),
+    verdict(1, "changes", "a1"),
+    submit("Second"),
+    verdict(2, "failed", "b2"),
+  ];
+  expect(lastReviewed(thread({ round_log: log }))).toEqual({
+    round: 1,
+    commit: "a1",
+    findings: ["fix a1"],
+    summary: "Second",
+  });
+  // A row from before Skelcrew kept a record says the same from its own fields.
+  const old = thread({ verdict: "approve", review_round: 4, reviewed_commit: "c3" });
+  expect(lastReviewed(old)).toEqual({ round: 4, commit: "c3", findings: [], summary: "" });
 });
