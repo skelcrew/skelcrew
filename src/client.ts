@@ -451,7 +451,7 @@ export async function reportQuestion(state: "asked" | "answered" | "closed"): Pr
     });
     const input = Input.safeParse(parseJson(text));
     const asked = input.success ? input.data.tool_input.questions.map((q) => q.question) : [];
-    const question = asked.join("\n\n").slice(0, 2000);
+    const question = asked.join("\n\n");
     return void (await request({ command: "question asked", ...(question ? { question } : {}) }));
   }
   const input = z.object({ prompt: z.string() }).safeParse(parseJson(text));

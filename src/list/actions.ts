@@ -107,7 +107,8 @@ export function picked(row: Row, pick: Pick, repo: string): Picked | null {
 
 // Returns what a pick on Skelcrew's own item on `row` asks the daemon, with what the bottom line
 // asks first, for a merge, and says meanwhile, or null with no such option. Merging the approved
-// PR carries the commit you saw approved, as m does.
+// PR carries the commit you saw approved, as m does, and merging without approval the PR's head
+// you saw, as sc merge --skip-review does.
 function ownPick(row: Row, pick: Letter, repo: string): Question | null {
   if (!row.ask || row.ask.acts === null || row.task === null) return null;
   const at = letters.indexOf(pick);
@@ -118,6 +119,7 @@ function ownPick(row: Row, pick: Letter, repo: string): Question | null {
   const merge = act === "merge" && row.merge && "ask" in row.merge ? row.merge : null;
   if (act === "merge" && merge === null) return null;
   const commit = merge?.request.command === "merge" ? { commit: merge.request.commit } : {};
+  const head = act === "skip review" && row.ask.head ? { head: row.ask.head } : {};
   return {
     ask:
       act === "skip review"
@@ -131,6 +133,7 @@ function ownPick(row: Row, pick: Letter, repo: string): Question | null {
       seen: { title: row.ask.title, text: row.ask.text },
       pick,
       ...commit,
+      ...head,
     },
     queues: false,
   };

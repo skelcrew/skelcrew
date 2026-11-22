@@ -61,8 +61,15 @@ export const numbered = sections.filter((section) => section !== "needs you");
 
 // The item a row shows under Needs you: its short title, its text and its options, in letter
 // order. `acts` is what each option of Skelcrew's own item does, and null on the lead's item,
-// whose pick goes to the lead.
-export type Ask = { title: string; text: string; options: string[]; acts: Act[] | null };
+// whose pick goes to the lead. `head` is the PR's head as Skelcrew's copy had it when the item
+// was read, on an item that offers a merge without approval, which merges only that commit.
+export type Ask = {
+  title: string;
+  text: string;
+  options: string[];
+  acts: Act[] | null;
+  head?: string;
+};
 
 // The mark of a row with the lead's item, which waits on your answer, whatever else it shows.
 const answerMark: Mark = { sign: "●", colour: "yellow" };
@@ -231,12 +238,14 @@ const askOf = (item: Item): Ask => ({
   acts: null,
 });
 
-// Returns Skelcrew's own item as a row shows it.
-const ownAsk = (own: OwnItem): Ask => ({
+// Returns Skelcrew's own item as a row shows it, with the PR's head when it offers a merge
+// without approval.
+const ownAsk = (own: OwnItem, head: string | null): Ask => ({
   title: own.title,
   text: own.text,
   options: own.options.map((option) => option.label),
   acts: own.options.map((option) => option.act),
+  ...(head !== null && own.options.some((option) => option.act === "skip review") ? { head } : {}),
 });
 
 // What the list reads of a task beyond what Thread has: its PR's link, saved as the forge's copy
@@ -350,7 +359,7 @@ function taskRow(
     more: 0,
     place: null,
     waits: "",
-    ask: item ? askOf(item) : own && ownAsk(own),
+    ask: item ? askOf(item) : own && ownAsk(own, copy?.head ?? null),
   };
 }
 
