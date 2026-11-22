@@ -345,11 +345,15 @@ test("a pick on Skelcrew's own item that runs a command is recorded as your deci
   const seen = inProcess(`
 const limit = { status: "waiting", rounds: 8, verdict: "changes", held: "Fix it.", needs_you: true, review_findings: ["Handle an empty file"] };
 const decided = [];
+const before = [];
 for (const pick of ["a", "b", "c"]) {
   record(db, "app-12", { ...limit, handed: null });
-  await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, pick, async () => "ran");
+  await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, pick, async () => { before.push(thread().decisions.length); return "ran"; });
   decided.push(thread().decisions.length);
 }
+record(db, "app-12", { ...limit, handed: null });
+const refused = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", async () => { throw new Error("CI failed"); }).catch((error) => error.message);
+const afterRefused = thread().decisions.length;
 record(db, "app-12", { rounds: 0, verdict: "approve", held: null, review_findings: null, reviewed_commit: "abcdef1234567890" });
 await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "a", async () => "ran");
 decided.push(thread().decisions.length);
@@ -357,8 +361,13 @@ record(db, "app-12", { needs_you: false, verdict: null, erred: true, said: "OAut
 for (const pick of ["a", "b"]) await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, pick, async () => "ran");
 record(db, "app-12", { erred: false, asking: true, said: "CSV or JSON?" });
 await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", async () => "ran");
-console.log(JSON.stringify({ decided, decisions: thread().decisions, notes: notes() }));`);
+console.log(JSON.stringify({ decided, before, refused, afterRefused, decisions: thread().decisions, notes: notes() }));`);
   expect(seen.decided).toEqual([1, 2, 3, 4]);
+  // The decision is saved before its command runs, so a daemon that stops in between still has
+  // it, and a command that is refused takes it back.
+  expect(seen.before).toEqual([1, 2, 3]);
+  expect(seen.refused).toBe("CI failed");
+  expect(seen.afterRefused).toBe(3);
   const told = (seen.notes as string[]).map((note) =>
     note.endsWith("as the human's decision on the task."),
   );
