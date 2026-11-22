@@ -102,6 +102,42 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
   }, 60_000);
 
+  // A remote that can't take the task as the thread ends loses nothing: each poll tries again.
+  test("not-blocking findings a merge couldn't file are filed by a later poll", async () => {
+    script(
+      "codex",
+      `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+cat > /dev/null
+echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag better","severity":"P2","blocking":false}]}' > "$out"`,
+    );
+    await approvedApp12();
+    const refusing = join(home, "bin", "git");
+    writeFileSync(
+      refusing,
+      `#!/bin/sh\ncase "$*" in *push*"refs/skelcrew/"*) echo refused >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      { mode: 0o755 },
+    );
+    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
+    await until(() => thread().status === "done");
+    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
+    await until(() =>
+      leadTyped().includes(
+        "Its not-blocking findings couldn't be filed yet, and each poll tries again",
+      ),
+    );
+    expect(thread().not_blocking_task).toBeNull();
+    rmSync(refusing);
+    const filedAs = /APP-12 merged earlier\. Its not-blocking findings are in APP-(\d+)\./;
+    await until(() => filedAs.test(leadTyped()));
+    const number = leadTyped().match(filedAs)?.[1];
+    const remote = join(home, "github", "simon", "app.git");
+    expect(git(remote, "log", "-1", "--format=%B", `refs/skelcrew/tasks/t${number}`)).toContain(
+      "1. P2: Name the flag better",
+    );
+    await morePolls();
+    expect(leadTyped().split("merged earlier").length - 1).toBe(1);
+  }, 90_000);
+
   // m on the screen's list of PRs asks on your socket. The lead's and builders' sockets refuse it,
   // so merging stays your choice, and no sc command an agent runs can merge.
   test("a merge asked on your socket goes to the forge at the commit you saw, and agents can't ask", async () => {

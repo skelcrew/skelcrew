@@ -21,7 +21,8 @@ import {
   startedRef,
 } from "./git.ts";
 import { lastReviewed } from "./ledger.ts";
-import { record, repositoryOf, type Thread, taskName, threadName } from "./thread.ts";
+import { noteForLead, typeLeadNotes } from "./messages.ts";
+import { readThread, record, repositoryOf, Thread, taskName, threadName } from "./thread.ts";
 
 // A task in the backlog: its name, such as t104, its title and description, when it was filed,
 // as an ISO time so it sorts beside the tracker's issues, and by whom, such as simon or simon via
@@ -267,16 +268,12 @@ export function fileTask(
 }
 
 // Files what the thread's latest review found that didn't block as one task of the backlog, once
-// its work merged, so none is lost with the thread. `merged` names what merged, such as #7 and
-// its link. Returns what the lead's note adds about it, or nothing when the latest review found
-// none, as they were all fixed. It files once: the task's name is saved on the thread as the
-// filing is settled, and a filing cut short is found again by its words. A task that can't be
-// filed is said in the note instead, so the lead can file it.
-export async function fileNotBlocking(
-  db: Database,
-  thread: Thread,
-  merged: { name: string; link: string | null },
-): Promise<string> {
+// its work merged, so none is lost with the thread. It names the PR, or the branch without one.
+// Returns what the lead's note adds about it, or nothing when the latest review found none, as
+// they were all fixed. It files once: the task's name is saved on the thread as the filing is
+// settled, and a filing cut short is found again by its words, which every try gives the same. A
+// task that can't be filed yet is said in the note, and each poll tries again.
+export async function fileNotBlocking(db: Database, thread: Thread): Promise<string> {
   const repository = repositoryOf(db, thread);
   const named = (task: string) => taskName(repository.name, task);
   if (thread.not_blocking_task !== null)
@@ -284,9 +281,9 @@ export async function fileNotBlocking(
   const found = lastReviewed(thread)?.notBlocking ?? [];
   if (found.length === 0) return "";
   const listed = found.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
-  const from = `From ${merged.link ?? merged.name}, ${threadName(db, thread)}.`;
-  const title = `Not-blocking findings from ${merged.name}'s review`;
-  const body = `Skelcrew's reviewer found these in ${merged.name} and didn't let them block it, so they wait here:\n\n${listed}\n\n${from}`;
+  const merged = thread.pr === null ? `branch ${thread.branch}` : `#${thread.pr}`;
+  const title = `Not-blocking findings from ${merged}'s review`;
+  const body = `Skelcrew's reviewer found these in ${merged} and didn't let them block it, so they wait here:\n\n${listed}\n\nFrom ${merged}, ${threadName(db, thread)}.`;
   try {
     const saved = (task: string) =>
       record(
@@ -303,8 +300,29 @@ export async function fileNotBlocking(
     console.log(
       `${threadName(db, thread)}: couldn't file its not-blocking findings: ${errorText(error)}`,
     );
-    return ` Its not-blocking findings couldn't be filed: ${errorText(error)}`;
+    return ` Its not-blocking findings couldn't be filed yet, and each poll tries again: ${errorText(error)}`;
   }
+}
+
+// Files again what each merged thread of the repository found that didn't block, where filing it
+// failed as the thread ended, such as while the remote couldn't be reached. Each poll of the
+// repository tries, and the lead hears once it is filed.
+export async function fileNotBlockingAgain(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+): Promise<void> {
+  const ended = db
+    .query(`SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND status = 'done'
+      AND merged = 1 AND not_blocking_task IS NULL AND round_log LIKE '%"notBlocking":["%'`)
+    .all(repository.owner, repository.repo)
+    .map((row) => Thread.parse(row));
+  for (const thread of ended) {
+    const said = await fileNotBlocking(db, thread);
+    if (readThread(db, thread.folder).not_blocking_task !== null)
+      noteForLead(db, sessions, repository, `${threadName(db, thread)} merged earlier.${said}`);
+  }
+  typeLeadNotes(db, sessions);
 }
 
 // Writes tasks into the daemon's copy of the repository's backlog, over any of the same name.

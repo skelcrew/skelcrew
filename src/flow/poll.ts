@@ -20,7 +20,7 @@ import {
 } from "../plugins/ask.ts";
 import { capture } from "../run.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
-import { fileNotBlocking } from "./backlog.ts";
+import { fileNotBlocking, fileNotBlockingAgain } from "./backlog.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openPrs, openTasks, prOf, saveItems } from "./copy.ts";
 import {
@@ -328,9 +328,7 @@ async function actOnPr(
     // A merge files what the latest review found that didn't block, so it isn't lost.
     const merged = pr.state === "merged";
     const skipped = merged ? await finishSkippedMerge(db, thread, pr) : null;
-    const filed = merged
-      ? await fileNotBlocking(db, readThread(db, folder), { name: `#${pr.id}`, link: pr.link })
-      : "";
+    const filed = merged ? await fileNotBlocking(db, readThread(db, folder)) : "";
     const note = `${skipped ?? decision.note}${filed}`;
     await endThread(db, sessions, thread, decision.end, note, merged);
   }
@@ -460,8 +458,7 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   const tree = await git("rev-parse", `${ref("bases")}^{tree}`);
   const done = merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim();
   if (done && unchanged()) {
-    const branch = { name: `branch ${thread.branch}`, link: null };
-    const filed = await fileNotBlocking(db, readThread(db, thread.folder), branch);
+    const filed = await fileNotBlocking(db, readThread(db, thread.folder));
     await endThread(
       db,
       sessions,
@@ -644,6 +641,7 @@ async function pollRepository(
         );
     }
   }
+  await fileNotBlockingAgain(db, sessions, repository);
 }
 
 // Polls each repository's tracker and forge for what changed in its tasks and PRs. The PRs of
