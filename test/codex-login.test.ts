@@ -321,3 +321,33 @@ test("a Codex session that fails to start leaves no copy of the login behind", a
   expect(readdirSync(copies).length).toBe(1);
   expect(started.argv.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
 });
+
+test("a session's copy goes as the session ends, and an agent that ignores the hang-up with it", async () => {
+  saveLogin(0);
+  const given = { name: "app-12", socket: join(home, "sock"), folder: join(home, "lead") };
+  const started = await harnessNamed("codex").start({ ...given, env: { HOME: home, PATH: "" } });
+  await started.launch(async () => {});
+  const [copy = ""] = readdirSync(join(data(), "codex-logins"));
+  const folder = join(data(), "codex-logins", copy);
+  // The step that removes the copy, around an agent that ignores a hang-up and writes what it
+  // reads, in place of the sandbox, which can't start everywhere tests run.
+  const agent = `trap "" HUP; read line; echo "$line" > ${join(home, "read")}; echo $$ > ${join(home, "pid")}; exec sleep 300`;
+  const command = [...started.argv.slice(0, 4), "sh", "-c", agent];
+  const tmux = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const run = (...args: string[]) =>
+    Bun.spawnSync(["tmux", "-L", tmux, "-f", "/dev/null", ...args]);
+  try {
+    run("new-session", "-d", "-s", "app-12", ...command);
+    run("send-keys", "-t", "=app-12:", "typed", "Enter");
+    for (let i = 0; i < 100 && !existsSync(join(home, "pid")); i++) await Bun.sleep(20);
+    expect(readFileSync(join(home, "read"), "utf8")).toBe("typed\n");
+    const pid = Number(readFileSync(join(home, "pid"), "utf8"));
+    run("kill-server");
+    const alive = () => Bun.spawnSync(["kill", "-0", String(pid)]).success;
+    for (let i = 0; i < 100 && (alive() || existsSync(folder)); i++) await Bun.sleep(20);
+    expect(alive()).toBe(false);
+    expect(existsSync(folder)).toBe(false);
+  } finally {
+    run("kill-server");
+  }
+});

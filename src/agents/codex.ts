@@ -459,12 +459,15 @@ async function startCommand(given: {
 }
 
 // Returns `argv` run so that `folder` is removed once it ends, outside the sandbox, whether it
-// exits or its session is ended. A kill that leaves no time for it leaves the folder to the
-// daemon's sweep.
+// exits or its session is ended. It runs in the background, on the terminal's input, so a
+// signal that ends the session ends it at once, rather than once the agent exits, which it may
+// never do. A kill that leaves no time for it leaves the folder to the daemon's sweep.
 const removingOnEnd = (folder: string, argv: string[]): string[] => [
   "/bin/sh",
   "-c",
-  `trap 'rm -rf "$0"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; "$@"`,
+  `trap 'rm -rf "$0"' EXIT; exec 3<&0; "$@" <&3 3<&- & agent=$!; exec 3<&-
+for s in HUP INT TERM; do trap "kill -TERM $agent 2> /dev/null; exit 1" $s; done
+wait $agent`,
   folder,
   ...argv,
 ];
