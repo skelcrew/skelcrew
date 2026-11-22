@@ -252,6 +252,11 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
   reads the credential through `AuthStorage.read`, which compares the file's device, inode, size
   and times with the last read, and reads it again under its lock when they changed. So
   Skelcrew renames a new copy over the old one: Pi sees the new inode, and never half a file.
+- **Read Pi's login under Pi's lock.** Pi writes a renewal over `auth.json` in place, so a read
+  while it writes can find half a file, and an agent would start with no login. Pi's lock is a
+  folder named after the file's real path plus `.lock`, made with `mkdir`. Pi keeps the folder's
+  time fresh while it holds it, and takes over one older than 30 seconds. Skelcrew makes the
+  same folder to read the login, waits while a pi holds it, and removes a stale one.
 - **A read-only `auth.json` can't hold a sign-in for Pi.** Pi writes the file in place, with no
   rename, but it renews inside a lock, and writes only after the provider answered. A write that
   fails throws away the renewal, so the turn fails, though the provider already rotated the

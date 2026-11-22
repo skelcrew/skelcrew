@@ -10,6 +10,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -704,6 +705,43 @@ describe("starting a lead or a builder", () => {
     await renewLogins(home, path);
     expect(copied(copy)).toEqual({ anthropic: { ...renewed, refresh: "" } });
     expect(readFileSync(join(home, "renewals"), "utf8").split("\n").length - 1).toBe(3);
+  });
+
+  test("a copy waits while Pi holds its lock on the login, so it never copies half a renewal", async () => {
+    const login = join(data(), "pi", "auth.json");
+    saveLogin({ anthropic: signIn("first", "r1", 60) });
+    // Pi renews in place, inside its lock, as `pi auth print-bearer-token` does.
+    mkdirSync(`${login}.lock`);
+    writeFileSync(login, '{"anthropic":{"type":"oauth","acc');
+    const started = start();
+    await Bun.sleep(300);
+    expect(existsSync(join(agentFolder(), "auth.json"))).toBe(false);
+    const renewed = signIn("second", "r2", 8 * 60);
+    writeFileSync(login, JSON.stringify({ anthropic: renewed }));
+    rmSync(`${login}.lock`, { recursive: true });
+    await started;
+    expect(copied(join(agentFolder(), "auth.json"))).toEqual({
+      anthropic: { ...renewed, refresh: "" },
+    });
+  });
+
+  test("a lock a pi left as it died doesn't hold a copy back", async () => {
+    const login = join(data(), "pi", "auth.json");
+    saveLogin({ google: { type: "api_key", key: "k" } });
+    mkdirSync(`${login}.lock`);
+    const minuteAgo = new Date(Date.now() - 60_000);
+    utimesSync(`${login}.lock`, minuteAgo, minuteAgo);
+    await start();
+    expect(copied(join(agentFolder(), "auth.json"))).toEqual({
+      google: { type: "api_key", key: "k" },
+    });
+    expect(existsSync(`${login}.lock`)).toBe(false);
+  });
+
+  test("a login that can't be read stops the start, rather than start an agent with none", async () => {
+    mkdirSync(join(data(), "pi"), { recursive: true });
+    writeFileSync(join(data(), "pi", "auth.json"), '{"anthropic":');
+    await expect(start()).rejects.toThrow("Skelcrew's Pi login can't be read");
   });
 
   test("a session gets no login when Skelcrew has none", async () => {

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -42,15 +43,43 @@ const Logins = z.record(z.string(), z.record(z.string(), z.unknown()));
 // A sign-in, which Pi renews with its refresh token before its access token expires.
 const SignIn = z.looseObject({ type: z.literal("oauth"), expires: z.number() });
 
-// Returns Skelcrew's Pi login, or none when there is none or it can't be read. Only a file
-// counts, never a link or a pipe.
+// Returns Skelcrew's Pi login, or none when there is none. Only a file counts, never a link or a
+// pipe. Throws when it can't be read.
 function savedLogins(home: string): Record<string, Record<string, unknown>> {
   const file = join(piHome(home), "auth.json");
   if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) return {};
   try {
     return Logins.parse(JSON.parse(readFileSync(file, "utf8")));
   } catch {
-    return {};
+    throw new Error("Skelcrew's Pi login can't be read");
+  }
+}
+
+// Returns Skelcrew's Pi login, read under Pi's own lock: the folder beside the file that Pi makes
+// while it reads or writes it, as Pi writes a renewal in place. So a renewal is never read half
+// written. Pi keeps a lock it holds fresher than 30 seconds, so an older one was left by a pi
+// that died, and goes, as Pi takes it over too. Throws when the lock stays held for a minute.
+async function lockedLogins(home: string): Promise<Record<string, Record<string, unknown>>> {
+  const file = join(piHome(home), "auth.json");
+  if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) return {};
+  const lock = `${realpathSync(file)}.lock`;
+  const giveUp = Date.now() + 60_000;
+  while (true) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+      const since = lstatSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? Date.now();
+      if (Date.now() - since > 30_000) rmSync(lock, { recursive: true, force: true });
+      else if (Date.now() > giveUp) throw new Error("Pi kept Skelcrew's Pi login locked");
+      else await Bun.sleep(50);
+    }
+  }
+  try {
+    return savedLogins(home);
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
   }
 }
 
@@ -59,7 +88,11 @@ function savedLogins(home: string): Record<string, Record<string, unknown>> {
 // shell doesn't count: the daemon's service gets only PATH, so its agents would never see it.
 // No pi runs, as one would run a key that is a command.
 export function piLoggedIn(home: string): boolean {
-  if (Object.keys(savedLogins(home)).length > 0) return true;
+  try {
+    if (Object.keys(savedLogins(home)).length > 0) return true;
+  } catch {
+    return false;
+  }
   const models = join(piHome(home), "models.json");
   if (!lstatSync(models, { throwIfNoEntry: false })?.isFile()) return false;
   try {
@@ -89,7 +122,7 @@ const signInLasts = "20m";
 async function renewLogin(home: string, path: string): Promise<string[]> {
   const soon = Date.now() + renewWithin;
   const failed: string[] = [];
-  for (const [provider, login] of Object.entries(savedLogins(home))) {
+  for (const [provider, login] of Object.entries(await lockedLogins(home))) {
     const signIn = SignIn.safeParse(login);
     if (!signIn.success || signIn.data.expires > soon) continue;
     try {
@@ -116,8 +149,8 @@ async function renewLogin(home: string, path: string): Promise<string[]> {
 // Returns what an agent's copy of Skelcrew's login holds, or null when there is no login. A
 // sign-in goes without its refresh token: a renewal rotates that token, which would end the
 // sign-in for Skelcrew's login and every other copy. Skelcrew renews it instead.
-function copiedLogin(home: string): string | null {
-  const logins = savedLogins(home);
+async function copiedLogin(home: string): Promise<string | null> {
+  const logins = await lockedLogins(home);
   if (Object.keys(logins).length === 0) return null;
   return JSON.stringify(
     Object.fromEntries(
@@ -135,12 +168,13 @@ const copies = new Map<string, string>();
 
 // Gives an agent folder its own copy of Skelcrew's login, written anew each start, so an agent
 // that changed its copy never changes another's, nor keeps its change. Whatever the agent left
-// there goes first, a link too, so the write never goes through one.
-function copyLogin(home: string, agentFolder: string): void {
+// there goes first, a link too, so the write never goes through one. A login that can't be read
+// throws, so no agent starts without it.
+async function copyLogin(home: string, agentFolder: string): Promise<void> {
   const copy = join(agentFolder, "auth.json");
+  const copied = await copiedLogin(home);
   rmSync(copy, { recursive: true, force: true });
   copies.delete(copy);
-  const copied = copiedLogin(home);
   if (copied === null) return;
   writeFileSync(copy, copied, { mode: 0o600, flag: "wx" });
   copies.set(copy, copied);
@@ -153,7 +187,7 @@ function copyLogin(home: string, agentFolder: string): void {
 // are done, and the next one tries again.
 export async function renewLogins(home = homedir(), path = process.env.PATH ?? ""): Promise<void> {
   const failed = await renewLogin(home, path);
-  const copied = copiedLogin(home);
+  const copied = await copiedLogin(home);
   const sessions = join(dataDir(home), "pi-sessions");
   const found = loginCopies(home).map((name) => join(sessions, name, "auth.json"));
   for (const copy of new Set([...copies.keys(), ...found])) {
@@ -331,7 +365,7 @@ async function startCommand(given: {
   if (system) writeFileSync(instructions, system);
   if (skills) copySkills(skills, join(agentFolder, "skills"), home);
   await renewLogin(home, env.PATH ?? "");
-  copyLogin(home, agentFolder);
+  await copyLogin(home, agentFolder);
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
@@ -388,7 +422,7 @@ async function reviewCommand(given: {
   const loaded = join(agentFolder, "skelcrew.ts");
   mkdirSync(agentFolder, { recursive: true, mode: 0o700 });
   await renewLogin(home, process.env.PATH ?? "");
-  copyLogin(home, agentFolder);
+  await copyLogin(home, agentFolder);
   writeFileSync(loaded, extensionSource);
   copyModels(home, agentFolder);
   if (given.skills) copySkills(given.skills, join(agentFolder, "skills"), home);
