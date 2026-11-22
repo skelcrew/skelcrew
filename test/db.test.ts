@@ -689,6 +689,7 @@ ${check}`,
 
 // No task is named after its issue, so an issue keeps its place in the copy whatever its ID,
 // even one shaped like a task's own, such as t1. It is reached by its ID after a #.
+// A tracker that doesn't say how it writes its IDs has them shown as they are.
 test("an issue with any ID is kept in the copy, and never takes a task's name", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = ""] = homes;
@@ -730,7 +731,7 @@ console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").a
       { task: "APP-1", title: "One", issue: null },
       { task: "APP-1", title: "One", issue: null },
       { task: "APP#T1", title: "Issue t1", issue: "t1" },
-      { task: "APP#1", title: "Issue 1", issue: "#1" },
+      { task: "APP#1", title: "Issue 1", issue: "1" },
     ],
   });
 }, 60_000);
@@ -747,9 +748,11 @@ test("a task with an old name gets a number of its own, and its old name still r
   const before = `db.run(\`INSERT INTO threads (owner, repo, task, folder, branch, status)
   VALUES ('simon', 'app', '2', 'app-2', 'skelcrew/2-old', 'working'),
     ('simon', 'app', 'wr4', 'app-wr4', 'skelcrew/wr4-older', 'done'),
-    ('simon', 'app', 'jott-12', 'app-jott-12', 'skelcrew/jott-12-oldest', 'done')\`);
+    ('simon', 'app', 'jott-12', 'app-jott-12', 'skelcrew/jott-12-oldest', 'done'),
+    ('simon', 'app', 'abc123', 'app-abc123', 'skelcrew/abc123-first', 'done')\`);
 db.run(\`INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', '2', 'Old'),
-  ('simon', 'app', 'wr4', 'Older'), ('simon', 'app', 'jott-12', 'Oldest')\`);`;
+  ('simon', 'app', 'wr4', 'Older'), ('simon', 'app', 'jott-12', 'Oldest'),
+  ('simon', 'app', 'abc123', 'First')\`);`;
   const run = startOn(laptop, remote, ["New"], before);
   const out = await new Response(run.stdout).text();
   expect(await new Response(run.stderr).text()).toBe("");
@@ -757,7 +760,8 @@ db.run(\`INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', '2
     "renamed APP-2 to APP-1, its number",
     "renamed APP-WR4 to APP-2, its number",
     "renamed APP-JOTT-12 to APP-3, its number",
-    '["APP-4"]',
+    "renamed APP-ABC123 to APP-4, its number",
+    '["APP-5"]',
   ]);
   // Another machine that holds the same task named after issue #2 gives it the same number.
   const same = `db.run(\`INSERT INTO threads (owner, repo, task, folder, branch, status)
@@ -766,7 +770,7 @@ db.run("INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', '2'
   const other = startOn(lapdog, remote, ["Newer"], same);
   const otherOut = await new Response(other.stdout).text();
   expect(await new Response(other.stderr).text()).toBe("");
-  expect(otherOut.trim().split("\n")).toEqual(["renamed APP-2 to APP-1, its number", '["APP-5"]']);
+  expect(otherOut.trim().split("\n")).toEqual(["renamed APP-2 to APP-1, its number", '["APP-6"]']);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread, resolveTask, threadName } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
@@ -775,7 +779,7 @@ const named = (typed) => {
   return { typed, name: threadName(db, readThread(db, folder)), folder, branch, issue, alias };
 };
 const split = (repository, typed) => resolveTask(db, repository, typed);
-console.log(JSON.stringify({ named: ["t1", "2", "#2", "wr4", "4"].map(named),
+console.log(JSON.stringify({ named: ["t1", "2", "#2", "wr4", "abc123", "5"].map(named),
   split: [split("APP-JOTT", "12"), split("app", "jott-12")] }));`;
   const shown = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: laptop },
@@ -791,11 +795,20 @@ console.log(JSON.stringify({ named: ["t1", "2", "#2", "wr4", "4"].map(named),
       { typed: "2", name: "APP-2", ...older },
       { typed: "#2", name: "APP-1", ...old },
       { typed: "wr4", name: "APP-2", ...older },
+      // An issue's ID of letters and digits, such as abc123, keeps its issue.
       {
-        typed: "4",
+        typed: "abc123",
         name: "APP-4",
-        folder: "app-4",
-        branch: "skelcrew/4-new",
+        folder: "app-abc123",
+        branch: "skelcrew/abc123-first",
+        issue: "abc123",
+        alias: "abc123",
+      },
+      {
+        typed: "5",
+        name: "APP-5",
+        folder: "app-5",
+        branch: "skelcrew/5-new",
         issue: null,
         alias: null,
       },
@@ -815,7 +828,7 @@ console.log(JSON.stringify({ named: ["t1", "2", "#2", "wr4", "4"].map(named),
       .split("\n")
       .map((line) => line.split("/").at(-1))
       .sort(),
-  ).toEqual(["last", "t1", "t2", "t3", "t4", "t5"]);
+  ).toEqual(["last", "t1", "t2", "t3", "t4", "t5", "t6"]);
 }, 60_000);
 
 // A screen of the release before 2026-11-18 keeps running while a newer release opens its

@@ -630,6 +630,26 @@ ${threadSql({ task: "t20", status: "stopped", issue: "a1b2c3", issue_ref: "ENG-7
     expect(await issueOf()).toBe("ENG-7");
   });
 
+  // A task renamed from an old name of any shape, such as app-abc123 for an issue whose ID is
+  // abc123, is reached by it. A tracker that doesn't say how it writes its IDs has them shown as
+  // they are, never as GitHub writes its own.
+  test("reaches a task by an old name of letters and digits, and shows its issue's ID as it is", async () => {
+    sql(
+      threadSql({
+        task: "t30",
+        status: "stopped",
+        alias: "abc123",
+        issue: "abc123",
+        title: "Old work",
+      }),
+    );
+    serve();
+    await untilAnswers();
+    const shown = await skel(["show", "app-abc123"]);
+    expect(shown.err).toBe("");
+    expect(shown.out).toStartWith("APP-30  Old work\nStage   working\nIssue   abc123\n");
+  });
+
   test("shows a task as JSON for tools", async () => {
     serve();
     await untilAnswers();

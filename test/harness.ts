@@ -337,6 +337,7 @@ export function taskItem(id: string, title: string, more: object = {}): object {
     created: "2026-11-05T10:00:00Z",
     updated: "2026-11-05T10:00:00Z",
     closes: `Closes #${id}`,
+    ref: `#${id}`,
     ...more,
   };
 }
@@ -379,7 +380,7 @@ export function itemSql(
   const common = { id: String(id), title, body: "", state: "open", author: null, labels: [] };
   const item =
     kind === "task"
-      ? { kind, ...common, link, created, updated: created, closes: `Closes #${id}` }
+      ? { kind, ...common, link, created, updated: created, closes: `Closes #${id}`, ref: `#${id}` }
       : { kind, ...common, link, created, updated: created, branch: `b${id}`, base: "main" };
   const pr = kind === "pr" ? { conflicts: false, checks: [], reviews: [], comments: [] } : {};
   const json = JSON.stringify({ ...item, ...pr, ...more }).replaceAll("'", "''");
@@ -394,8 +395,8 @@ export function itemSql(
 // thread already saved is left as it is, so a test can run it before each step.
 export function threadSql(row: Record<string, string | number | null>): string {
   const { owner = "simon", repo = "app", task: given = "12" } = row;
-  // A task given by a number, such as 12, is task t12 on issue #12, named APP-12, as Skelcrew
-  // saves a task started on an issue.
+  // A task given by a number, such as 12, is task t12 on GitHub's issue #12, named APP-12, as
+  // Skelcrew saves a task started on an issue.
   const numbered = /^\d+$/.test(String(given));
   const task = numbered ? `t${given}` : given;
   const full: Record<string, string | number | null> = {
@@ -404,7 +405,7 @@ export function threadSql(row: Record<string, string | number | null>): string {
     folder: `${repo}-${given}`,
     branch: `skelcrew/${given}`,
     status: "working",
-    ...(numbered ? { issue: String(given) } : {}),
+    ...(numbered ? { issue: String(given), issue_ref: `#${given}` } : {}),
     ...row,
     task,
   };

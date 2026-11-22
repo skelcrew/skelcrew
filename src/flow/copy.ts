@@ -156,13 +156,13 @@ const parseItems = (rows: unknown[]) =>
   );
 
 // Returns an issue as its tracker writes it, such as #12 or JOTT-12: as the copy has it, else as
-// the task saved it as it started, as a closed issue leaves the copy. An older plugin doesn't
-// say, and GitHub's wrote a number alone, as #12.
+// the task saved it as it started, as a closed issue leaves the copy. A plugin that doesn't say
+// how its tracker writes it, such as an older one, has its ID shown as it is.
 export const issueRef = (
   id: string,
   inCopy?: { ref?: string | undefined },
   saved?: string | null,
-) => inCopy?.ref ?? saved ?? (/^\d+$/.test(id) ? `#${id}` : id);
+) => inCopy?.ref ?? saved ?? id;
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
 // sc show. Throws when the copy doesn't have it.

@@ -278,13 +278,21 @@ export const taskColumns = {
 };
 
 // Saves its issue on each task named after it, from before tasks kept their issue apart: one
-// whose ID isn't Skelcrew's own, such as 12 or jott-12 rather than t1 or wr4. Any sc run does it
-// as the column is added, and the daemon again as it starts, for a task an earlier release's
-// daemon started meanwhile. A database whose threads haven't moved onto tasks yet keeps the
-// task's columns on its threads.
+// whose ID isn't shaped like Skelcrew's own, a letter or two and a number, such as t1 or wr4, as
+// the copy of the tracker left out every issue of that shape. Any sc run does it as the column
+// is added, and the daemon again as it starts, for a task an earlier release's daemon started
+// meanwhile. A database whose threads haven't moved onto tasks yet keeps the task's columns on
+// its threads.
 export function fillIssues(db: Database, table: "tasks" | "threads" = "tasks"): void {
-  db.run(`UPDATE ${table} SET issue = CAST(task AS TEXT) WHERE issue IS NULL AND alias IS NULL
-    AND (CAST(task AS TEXT) GLOB '[0-9]*' OR CAST(task AS TEXT) GLOB '*[^a-zA-Z0-9]*')`);
+  const rows = db
+    .query(
+      `SELECT rowid, CAST(task AS TEXT) AS task FROM ${table} WHERE issue IS NULL AND alias IS NULL`,
+    )
+    .all()
+    .map((row) => z.object({ rowid: z.number(), task: z.string() }).parse(row));
+  for (const { rowid, task } of rows)
+    if (!/^[a-z]{1,2}\d+$/i.test(task))
+      db.run(`UPDATE ${table} SET issue = ? WHERE rowid = ?`, [task, rowid]);
 }
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
