@@ -346,7 +346,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     });
     expect(started.stderr.toString()).toBe("");
     expect(started.stdout.toString()).toBe("Started APP-12.\n");
-    expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
+    expect(thread()).toMatchObject({ task: "t12", status: "working", base: "next" });
   }, 60_000);
 
   // The tracker can take its time to answer a claim, and an sc start that comes in meanwhile
@@ -372,7 +372,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(await new Response(started.stderr).text()).toBe("");
     expect(await new Response(started.stdout).text()).toBe("Started APP-12.\n");
     await started.exited;
-    expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
+    expect(thread()).toMatchObject({ task: "t12", status: "working", base: "next" });
   }, 30_000);
 
   // sc start polls first, so a builder never starts from an old title or body.
@@ -388,7 +388,11 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       stderr: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
-    expect(thread()).toMatchObject({ task: 12, title: "Add export as CSV", body: "With headers" });
+    expect(thread()).toMatchObject({
+      task: "t12",
+      title: "Add export as CSV",
+      body: "With headers",
+    });
   }, 60_000);
 
   // The fake tracker answers the claim with nothing, as a plugin not yet updated does, and
@@ -426,7 +430,7 @@ echo "Not logged in"; exit 1`,
     answer(plugin, "took", { took: true });
     pr({ labeled: true });
     serve();
-    await until(() => thread().task === 12);
+    await until(() => thread().issue === "12");
     // Assigning you comes after the thread started, and the claim isn't asked twice.
     await until(() => thread().assigned === 1);
     expect(claims()).toEqual([claim12]);
@@ -453,7 +457,7 @@ echo "Not logged in"; exit 1`,
     await until(() => listed().length === 1);
     expect(listed()).toEqual([
       {
-        task: "APP-12",
+        task: "APP#12",
         stage: "issue",
         title: "Add export",
         short: null,
@@ -469,7 +473,7 @@ echo "Not logged in"; exit 1`,
     await morePolls();
     expect(claims()).toEqual([]);
     changes([issue12(true)]);
-    await until(() => thread().task === 12);
+    await until(() => thread().issue === "12");
     expect(listed()).toMatchObject([{ task: "APP-12", issue: "#12", stage: "working" }]);
     expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
     // A task from a label runs the default flow, unless the lead switches it.
@@ -500,9 +504,10 @@ echo "Not logged in"; exit 1`,
     // shows it.
     expect(listed()).toEqual([]);
     expect(listed("--all")).toMatchObject([{ task: "APP-12", issue: "#12", stage: "merged" }]);
+    // The issue closed stays beside the task, as the tracker wrote it, once the copy drops it.
     changes([taskItem("12", "Add export", { state: "closed", labels: ["skelcrew"] })]);
-    await until(() => listed("--all")[0]?.issue === null);
-    expect(listed("--all")).toMatchObject([{ task: "APP-12", stage: "merged" }]);
+    await morePolls();
+    expect(listed("--all")).toMatchObject([{ task: "APP-12", issue: "#12", stage: "merged" }]);
     expect(assigns()).toEqual([assignOn]);
   }, 60_000);
 
@@ -521,7 +526,7 @@ echo "Not logged in"; exit 1`,
     });
     expect(started.stderr.toString()).toBe("");
     expect(started.stdout.toString()).toBe("Started APP-12.\n");
-    expect(thread()).toMatchObject({ task: 12, status: "working" });
+    expect(thread()).toMatchObject({ task: "t12", status: "working" });
     await until(() => took().length === 2);
     expect(took()).toEqual([claim12, claim12]);
   }, 30_000);
@@ -702,12 +707,12 @@ echo "Not logged in"; exit 1`,
     );
     expect(started.stderr.toString()).toBe("");
     await until(() => thread().status === "waiting", 30_000);
-    Bun.spawnSync([process.execPath, main, "stop", `app-t1`], { env: env() });
+    Bun.spawnSync([process.execPath, main, "stop", `app-12`], { env: env() });
     expect(thread().status).toBe("stopped");
     expect([...claims(), ...assigns()]).toEqual([]);
   }, 60_000);
 
-  // The test above stops the daemon as the review of app-t1's first round starts. bubblewrap
+  // The test above stops the daemon as the review of app-12's first round starts. bubblewrap
   // starts its sandbox's first process in its own time, and that process only asks to die with
   // bwrap once it runs. A stop that ends bwrap in between leaves it waiting forever on a bwrap
   // that is gone, with bwrap's own command line, and no longer under the daemon. Here bwrap

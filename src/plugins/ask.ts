@@ -107,6 +107,14 @@ const repositoryKey = (repository: Repository) => `${repository.owner}/${reposit
 // time, or null to ask for everything open again.
 const Changed = z.object({ items: z.array(Item), next: z.string().nullable() });
 
+// Returns an item as the plugin answered it, with the issue written as its tracker writes it.
+// GitHub's plugin from before it said so gives a number alone, which GitHub writes as #12, so it
+// is written so for that plugin alone. Any other tracker's ID stays as it said.
+export function writtenAs<T extends Item>(plugin: string, item: T): T {
+  if (item.kind !== "task" || item.ref !== undefined || plugin !== "github") return item;
+  return /^\d+$/.test(item.id) ? { ...item, ref: `#${item.id}` } : item;
+}
+
 // Asks a plugin what changed in the repository since `next`, or for everything open when `next`
 // is null. The plugin answers for the jobs it does there, and for `prs`, the PRs Skelcrew
 // watches. Returns the items, and the `next` to pass on the following call.
@@ -118,12 +126,13 @@ export async function askWhatChanged(
   next: string | null,
   prs: number[],
 ): Promise<z.infer<typeof Changed>> {
-  return callPlugin(
+  const changed = await callPlugin(
     db,
     plugin,
     { ask: "changed", repository: repositoryKey(repository), jobs, next, prs },
     Changed,
   );
+  return { ...changed, items: changed.items.map((item) => writtenAs(plugin, item)) };
 }
 
 // Returns the repository's tracker, or throws saying it has none. Used before asking what only a
@@ -152,16 +161,17 @@ export async function createTask(
   title: string,
   body: string,
 ): Promise<Task> {
+  const tracker = requireTracker(db, repository);
   const task = await callPlugin(
     db,
-    requireTracker(db, repository),
+    tracker,
     { ask: "create task", repository: repositoryKey(repository), title, body },
     Item,
   );
   // Item also covers PRs, and only a task is right here.
   if (task.kind !== "task")
     throw new Error("the tracker answered with something that isn't an issue");
-  return task;
+  return writtenAs(tracker, task);
 }
 
 // Closes the task's issue in the repository's tracker, for sc rm, first posting the comment

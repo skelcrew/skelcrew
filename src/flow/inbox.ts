@@ -78,7 +78,9 @@ export function postItem(
   const thread = task === null ? null : threadOn(db, repository, task);
   const waiting =
     task !== null &&
-    (openTasks(db, owner, repo).some((issue) => issue.id === task) ||
+    (openTasks(db, owner, repo).some(
+      (issue) => `#${issue.id}` === task || issue.id === thread?.issue,
+    ) ||
       backlogOf(db, owner, repo).some((filed) => filed.task === task));
   const live = thread !== null && thread.status !== "done";
   if (task !== null && !live && !waiting)

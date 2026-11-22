@@ -295,7 +295,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
       db.run(
-        "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, round_log = NULL WHERE task = 12",
+        "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, round_log = NULL WHERE task = 't12'",
       );
       db.close();
       // Nobody will approve it, so neither the question nor the answer says so.

@@ -12,7 +12,7 @@ import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
 import { needsInstall } from "../plugins/repository.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { backlogOf, filedTask } from "./backlog.ts";
-import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
+import { type Item, issueRef, openTasks, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { itemOf } from "./inbox.ts";
 import { nextRound, roundOf } from "./ledger.ts";
@@ -236,7 +236,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
 }
 
 // A task as sc ls shows it: its name, such as app-12, its title and the short title the lead
-// gave it, its stage, its issue while that is open in Skelcrew's copy, such as #12, and how its
+// gave it, its stage, its issue as its tracker writes it, such as #12, and how its
 // builder stands, or null with no thread. `pr` and `checks` are as sc ps gives them for its thread, and
 // null with none. `review` is where Skelcrew's review stands, with a forge or without one, and
 // null with no thread. `asks` is whether the lead's item on it waits in Needs you.
@@ -261,10 +261,6 @@ export const TaskRow = z.object({
 });
 export type TaskRow = z.infer<typeof TaskRow>;
 
-// Returns a task's issue as its tracker writes it. GitHub writes a number as #12, while a
-// tracker such as Linear has IDs like JOTT-12 that stand alone.
-const issueId = (id: string) => (/^\d+$/.test(id) ? `#${id}` : id);
-
 // Returns the tasks of every repository, or of one, for sc ls: each task with a thread, newest
 // first, then each open issue with none and each task of the backlog, newest first, across all
 // the repositories asked for.
@@ -287,14 +283,14 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     const worked = rows.map((saved) => {
       const thread = Thread.parse(saved);
       const row = threadRow(db, thread, forge);
-      const issue = open.find((item) => item.id === thread.task);
+      const issue = open.find((item) => item.id === thread.issue);
       const latest = thread.status === "done" ? issue?.title : undefined;
       const task: TaskRow = {
         task: taskName(r.name, thread.task),
         stage: taskStage(thread, issue !== undefined),
         title: removeControlCodes(latest ?? thread.title ?? issue?.title ?? ""),
         short: row.short,
-        issue: issue ? issueId(issue.id) : null,
+        issue: thread.issue === null ? null : issueRef(thread.issue, issue, thread.issue_ref),
         thread: {
           status: row.status,
           needsYou: row.needsYou,
@@ -308,17 +304,17 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         review: reviewOf(thread),
         asks: row.needsYouFor === itemWaits,
       };
-      return { at: z.object({ at: z.number() }).parse(saved).at, id: thread.task, task };
+      return { at: z.object({ at: z.number() }).parse(saved).at, issue: thread.issue, task };
     });
     const waiting = open
-      .filter((item) => !worked.some((w) => w.id === item.id))
+      .filter((item) => !worked.some((w) => w.issue === item.id))
       .map((item) => {
         const task: TaskRow = {
-          task: taskName(r.name, item.id),
+          task: taskName(r.name, `#${item.id}`),
           stage: "issue",
           title: removeControlCodes(item.title),
           short: null,
-          issue: issueId(item.id),
+          issue: issueRef(item.id, item),
           thread: null,
           pr: null,
           checks: null,
@@ -379,9 +375,9 @@ export const PrPage = z.object({
 export type PrPage = z.infer<typeof PrPage>;
 
 // One task as sc show shows it, with its stage. `body` is its description as its reviewer gets
-// it. `issue` is the issue it came from, such as #12, with the link the task started with, or the
-// one in Skelcrew's copy for a task not started, or null for a task with no issue, such as app-t1. `threads` names each of its threads with its role, such
-// as app-12/builder. `pr` is its PR's number, as sc ps gives it, and `review` where Skelcrew's
+// it. `issue` is the issue it came from, as its tracker writes it, such as #12, with the link the
+// task started with, or the one in Skelcrew's copy for an issue no task has yet, or null for a
+// task with no issue. `threads` names each of its threads with its role, such as app-12/builder. `pr` is its PR's number, as sc ps gives it, and `review` where Skelcrew's
 // review stands, with a forge or without one. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
 // it, as after a merge. `merge` is its armed merge with what it waits on, such as `merges without
 // approval · waiting on its checks`, or null with none, as the list's rows leave that out.
@@ -500,7 +496,8 @@ export function readTask(db: Database, which: Which): TaskView {
   // issue's latest words, or else what it saved as it started.
   // A task of the backlog has neither a thread nor an issue, and shows the words it was filed with.
   const thread = threadOn(db, `${owner}/${repo}`, task);
-  const issue = openTasks(db, owner, repo).find((item) => item.id === task);
+  const issueId = task.startsWith("#") ? task.slice(1) : (thread?.issue ?? null);
+  const issue = openTasks(db, owner, repo).find((item) => item.id === issueId);
   const filed = thread ? null : filedTask(db, owner, repo, task);
   if (!thread && !issue && !filed) throw new Error(`there is no task ${taskName(name, task)}`);
   const current = thread && thread.status !== "done" && thread.status !== "failed";
@@ -508,8 +505,6 @@ export function readTask(db: Database, which: Which): TaskView {
     thread && (thread.status !== "done" || !issue)
       ? threadTask(db, current ? thread : { ...thread, updates: [] })
       : (filed ?? { title: issue?.title ?? "", body: issue?.body ?? "" });
-  // Its issue, unless it is a task of Skelcrew's own, such as t1.
-  const own = ownTask(task);
   const row = thread && threadRow(db, thread, forge);
   const pr = row?.pr ?? null;
   const item = itemOf(db, owner, repo, task);
@@ -517,7 +512,13 @@ export function readTask(db: Database, which: Which): TaskView {
     task: `${taskName(name, task)}`,
     stage: taskStage(thread, issue !== undefined || filed !== null),
     title: removeControlCodes(described.title),
-    issue: own ? null : { id: issueId(task), link: thread?.issue_link ?? issue?.link ?? null },
+    issue:
+      issueId === null
+        ? null
+        : {
+            id: issueRef(issueId, issue, thread?.issue_ref),
+            link: thread?.issue_link ?? issue?.link ?? null,
+          },
     threads: row
       ? [
           {
@@ -725,16 +726,18 @@ function happening(task: TaskRow): string {
 // out of sight.
 const titleRoom = 40;
 
-// Prints tasks for sc ls: as JSON for tools, or else as a table with each task's name, its stage,
-// its short title or its title, and what is happening on it.
+// Prints tasks for sc ls: as JSON for tools, or else as a table with each task's name, its issue
+// as its tracker writes it, such as #483, its stage, its short title or its title, and what is
+// happening on it. sc show gives the issue's link.
 export function printTasks(tasks: TaskRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(tasks));
   else if (tasks.length === 0) console.log("There are no tasks.");
   else
     table(
-      ["TASK", "STAGE", "TITLE", "STATUS"],
+      ["TASK", "ISSUE", "STAGE", "TITLE", "STATUS"],
       tasks.map((task) => [
         task.task,
+        task.issue ?? "",
         task.stage,
         fitted(task.short ?? task.title, titleRoom),
         happening(task),

@@ -108,6 +108,15 @@ export function git(cwd: string, ...args: string[]): string {
   return run.stdout.toString().trim();
 }
 
+// Claims task numbers 1 to `last` in a repository's bare remote, as tasks before would
+// have, so the next task takes the number after. A test whose task starts on issue #12 then has
+// task APP-12 too, which keeps its folders and names short to read.
+export function numberedBefore(bare: string, last: number): void {
+  const tree = git(bare, "hash-object", "-t", "tree", "-w", "/dev/null");
+  const claim = git(bare, "commit-tree", tree, "-m", "Skelcrew claims tasks before");
+  for (let n = 1; n <= last; n++) git(bare, "update-ref", `refs/skelcrew/names/t${n}`, claim);
+}
+
 // Returns where a path really leads, even before the file is there: a daemon makes its socket
 // only once it starts. It goes one name at a time, as the system does, so a link is followed
 // before a `..` after it: `link/..` is the folder above where the link leads, not the link's own.
@@ -328,6 +337,7 @@ export function taskItem(id: string, title: string, more: object = {}): object {
     created: "2026-11-05T10:00:00Z",
     updated: "2026-11-05T10:00:00Z",
     closes: `Closes #${id}`,
+    ref: `#${id}`,
     ...more,
   };
 }
@@ -370,7 +380,7 @@ export function itemSql(
   const common = { id: String(id), title, body: "", state: "open", author: null, labels: [] };
   const item =
     kind === "task"
-      ? { kind, ...common, link, created, updated: created, closes: `Closes #${id}` }
+      ? { kind, ...common, link, created, updated: created, closes: `Closes #${id}`, ref: `#${id}` }
       : { kind, ...common, link, created, updated: created, branch: `b${id}`, base: "main" };
   const pr = kind === "pr" ? { conflicts: false, checks: [], reviews: [], comments: [] } : {};
   const json = JSON.stringify({ ...item, ...pr, ...more }).replaceAll("'", "''");
@@ -381,16 +391,21 @@ export function itemSql(
 // Returns SQL that saves a thread and its task, as sc start and the rounds after it would have,
 // for a test that reads them without a daemon. `row` names the thread's task, and anything else
 // either holds, each saved where it belongs. Its repository is simon/app, its folder app-12 for
-// task 12, and its status working, unless `row` says otherwise. A thread already saved is left as
-// it is, so a test can run it before each step.
+// task 12, which is t12 on issue #12, and its status working, unless `row` says otherwise. A
+// thread already saved is left as it is, so a test can run it before each step.
 export function threadSql(row: Record<string, string | number | null>): string {
-  const { owner = "simon", repo = "app", task = "12" } = row;
+  const { owner = "simon", repo = "app", task: given = "12" } = row;
+  // A task given by a number, such as 12, is task t12 on GitHub's issue #12, named APP-12, as
+  // Skelcrew saves a task started on an issue.
+  const numbered = /^\d+$/.test(String(given));
+  const task = numbered ? `t${given}` : given;
   const full: Record<string, string | number | null> = {
     owner,
     repo,
-    folder: `${repo}-${task}`,
-    branch: `skelcrew/${task}`,
+    folder: `${repo}-${given}`,
+    branch: `skelcrew/${given}`,
     status: "working",
+    ...(numbered ? { issue: String(given), issue_ref: `#${given}` } : {}),
     ...row,
     task,
   };
@@ -401,12 +416,12 @@ export function threadSql(row: Record<string, string | number | null>): string {
     `INSERT OR IGNORE INTO ${table} (${columns.join(", ")})
       VALUES (${columns.map((column) => literal(full[column] ?? null)).join(", ")});`;
   const onTask = (column: string) => column in taskColumns;
-  const named = Object.keys(full);
+  const columns = Object.keys(full);
   return `${insert(
     "threads",
-    named.filter((column) => !onTask(column)),
+    columns.filter((column) => !onTask(column)),
   )}
-${insert("tasks", ["owner", "repo", "task", ...named.filter(onTask)])}`;
+${insert("tasks", ["owner", "repo", "task", ...columns.filter(onTask)])}`;
 }
 
 // Runs sc with these arguments at a terminal of its own, in a tmux session on a socket of its

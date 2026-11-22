@@ -25,6 +25,7 @@ import {
   git,
   homeEnv,
   insideSandbox,
+  numberedBefore,
   read,
   runSkel,
   source,
@@ -205,6 +206,8 @@ function addApp(): void {
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
+  // Its task on issue #12 is APP-12.
+  numberedBefore(join(home, "github", "simon", "app.git"), 11);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");
 openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'");`;

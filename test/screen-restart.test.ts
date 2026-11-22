@@ -61,7 +61,7 @@ test("R on a task whose builder runs asks, n restarts nothing, and y restarts it
 
 test("a task whose builder isn't running offers no restart, and R there does nothing", async () => {
   daemon();
-  sql("UPDATE threads SET status = 'stopped' WHERE task = '12'");
+  sql("UPDATE threads SET status = 'stopped' WHERE task = 't12'");
   open("lead");
   await ready("lead");
   press("M-S-Down");

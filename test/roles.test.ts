@@ -255,6 +255,41 @@ Bring such a question, and any you can't answer, to the human in this chat, nami
 const namesInLowercase = (text: string) =>
   text.replace(/\bAPP-T?\d+\b/g, (name) => name.toLowerCase());
 
+// What the lead was told of task names before every task took a number of Skelcrew's, with its
+// issue beside it, and what it is told now.
+const numberedTasks = [
+  [
+    'such as starting app-t3 again, post an item with yes and no, such as sc ask app-t3 "Start app-t3, Dark mode?" --option yes --option no. On a yes, run sc start app-t3 yourself.',
+    'such as starting app-3 again, post an item with yes and no, such as sc ask app-3 "Start app-3, Dark mode?" --option yes --option no. On a yes, run sc start app-3 yourself.',
+  ],
+  [
+    "",
+    "Every task is named by its repository and a number of Skelcrew's, such as app-14, whether or not it has an issue. Its issue shows beside it as the tracker writes it, such as #13. An issue no task has yet goes by its repository and its issue, such as APP#13. Older names, such as app-t100, still reach their tasks.\n\n",
+  ],
+  ["prints its name, such as app-t100. <repo>", "prints its name, such as app-100. <repo>"],
+  ["prints its name, such as app-t104. It starts", "prints its name, such as app-104. It starts"],
+  [
+    "sc start app-t104 starts it, and sc rm app-t104 deletes it",
+    "sc start app-104 starts it, and sc rm app-104 deletes it",
+  ],
+  [
+    "and prints its name, such as app-13. It starts nothing.",
+    "and prints how to name it, such as APP#13 for issue #13. It starts nothing.",
+  ],
+  [
+    "- sc start app-13 starts a thread on an issue in the tracker.",
+    "- sc start APP#13 starts a thread on issue #13 in the tracker. The task it makes takes a number of its own, such as app-14, and sc start prints it. Use that name from then on.",
+  ],
+  [
+    "and closes issue #13 with the reason as its comment too.",
+    "and closes its issue, such as #13, with the reason as its comment too.",
+  ],
+  [
+    "--keep-issue: issue #13 stays open, it needs no words of the human's, and sc start app-13 starts the thread over on it. A thread with no issue, such as app-t100, has nothing that stays open, and sc start app-t100 starts it over.",
+    "--keep-issue: its issue stays open, it needs no words of the human's, and sc start app-13 starts the thread over on it. A thread with no issue, such as app-100, has nothing that stays open, and sc start app-100 starts it over.",
+  ],
+];
+
 // What the lead's file says since needs you became an inbox the lead writes to with sc ask, each
 // with what it said before: the lead posts an item rather than marking a thread or asking in its
 // chat.
@@ -275,7 +310,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(builtInRole("builder").instructions).not.toMatch(/\bapp-t?\d+\b/);
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   let lead = namesInLowercase(builtInRole("lead").instructions);
-  for (const [before = "", now = ""] of inbox) {
+  for (const [before = "", now = ""] of [...numberedTasks, ...inbox]) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
   }

@@ -107,7 +107,7 @@ test("Needs you shows only while a task needs you, and the row you are on stays"
   await until(() => /^[▸▹] \S \d+\b/.test(selected()), "Building's first row");
   const [, task = ""] = /^[▸▹] \S (\d+)\b/.exec(selected()) ?? [];
   const name = new RegExp(` ${task}\\b`);
-  sql(`UPDATE threads SET needs_you = 1 WHERE task = ${task}`);
+  sql(`UPDATE threads SET needs_you = 1 WHERE task = 't${task}'`);
   await until(() => isOpen("Needs you  1"), "it under Needs you");
   expect(selected()).toMatch(name);
   sql("UPDATE threads SET needs_you = 0");
@@ -132,7 +132,7 @@ test("on a task's row plain 1 to 6 open and close the stages, and no agent gets 
 });
 
 test("a click on a stage's heading opens or closes it, and on Needs you does nothing", async () => {
-  sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 't12'");
   open("lead");
   await ready("lead");
   await until(() => isOpen("Needs you  1"), "app-12 under Needs you");
@@ -147,7 +147,7 @@ test("a click on a stage's heading opens or closes it, and on Needs you does not
 });
 
 test("Alt-Shift-Down and Alt-Shift-Up move between the lead, Needs you and the open stages", async () => {
-  sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 't12'");
   open("lead");
   await ready("lead");
   await until(() => isOpen("Needs you  1"), "app-12 under Needs you");
@@ -168,16 +168,16 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   open("lead");
   await ready("lead");
   press("M-0");
-  await until(() => / 31\b/.test(selected()), "APP-31 in Backlog");
-  await until(onDetails, "app-31's details");
+  await until(() => / #31\b/.test(selected()), "APP#31 in Backlog");
+  await until(onDetails, "app#31's details");
   type("s");
-  await until(() => footer().includes("Start APP-31? y/n"), "the question");
+  await until(() => footer().includes("Start APP#31? y/n"), "the question");
   type("n");
-  await until(() => !footer().includes("Start APP-31?"), "the question to go");
+  await until(() => !footer().includes("Start APP#31?"), "the question to go");
   type("s");
-  await until(() => footer().includes("Start APP-31? y/n"), "the question again");
+  await until(() => footer().includes("Start APP#31? y/n"), "the question again");
   type("y");
-  await until(() => acted.includes("start simon/app 31"), "the daemon to start app-31");
+  await until(() => acted.includes("start simon/app #31"), "the daemon to start app#31");
 });
 
 // The notice comes from the database, which the daemon writes once it installed a release.
@@ -218,6 +218,9 @@ test("f on a queued task in the task queue asks to start it now over the limit, 
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\nlimits: { threads: 1 }\n");
   sql(threadSql({ task: "20", title: "Dark mode", status: "queued", queued_since: 1000 }));
+  // APP-30 was APP-T20 until the daemon renumbered it past a clash. y starts the row's own task,
+  // named by its number, never the old name APP-T20, which the daemon takes for APP-30.
+  sql(threadSql({ task: "t30", alias: "t20", folder: "app-t20", title: "Old", status: "done" }));
   open("lead");
   await ready("lead");
   await until(() => left().some((line) => line.includes("Task queue")), "Task queue");
