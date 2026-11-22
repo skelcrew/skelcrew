@@ -197,7 +197,9 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
 - **A turn ends at `agent_settled`, not `agent_end`.** Pi tries a 429 three times, and each try
   ends with `agent_end`. Only `agent_settled` comes once, after the retries, with `aborted` true
   for Esc. A turn that ended on an error has an assistant message with `stopReason: "error"`
-  and Pi's words in `errorMessage`, such as `429: {"message":"..."}`.
+  and Pi's words in `errorMessage`, such as `429: {"message":"..."}`. The status comes first, so a 429
+  anywhere else, such as in a request ID, is no limit. A provider can echo a key in that message,
+  and Skelcrew logs it, so the extension takes keys out first.
 - **`input` fires for the first message too.** The message on the command line comes as typed,
   with `source: "interactive"`. A long paste shows as "[paste #1 +40 lines]", but `input` gets
   its whole text.

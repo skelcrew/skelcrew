@@ -646,6 +646,9 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       verdict: "failed",
       body: "the reviewer answered outside the shape: it gave no answer",
     });
+    // Without Pi's own error line, a line a test printed last is never taken for it.
+    fakePi(["cat > /dev/null", "echo 'warning: a test is slow' >&2", "exit 1"]);
+    expect(await start({ harness: "pi" })).toEqual({ verdict: "failed", body: "pi exited with 1" });
   });
 
   // The file CI's result is in, as the reviewer's prompt names it.

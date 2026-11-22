@@ -149,6 +149,24 @@ describe("the extension in a lead or a builder", () => {
     expect(hooks()).toBe(`hook turn-failed | ${said}`);
   });
 
+  test("a key in Pi's error never reaches Skelcrew, whether in the environment or shaped like one", async () => {
+    const { emit } = fakePi();
+    const before = process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_API_KEY = "or-secret-1234567890";
+    try {
+      const error =
+        "401: key or-secret-1234567890 refused, also sk-ant-api03-abcdefghij, AIzaSyA1234567890abcdefghijk, Bearer eyJhbGciOi.xyz";
+      await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
+      await emit("agent_settled", { aborted: false });
+    } finally {
+      process.env.OPENROUTER_API_KEY = before;
+    }
+    const said = "401: key [key] refused, also [key], [key], Bearer [key]";
+    expect(hooks()).toBe(
+      `hook turn-failed | ${JSON.stringify({ error: "error", error_details: said })}`,
+    );
+  });
+
   test("an error that only mentions a quota is an error, not a usage limit", async () => {
     const { emit } = fakePi();
     const error = '403: {"message":"quota project not set"}';
@@ -239,9 +257,16 @@ describe("the extension in a review", () => {
       const error = '429: {"message":"Rate limited.\\nSlow down."}';
       await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
       await emit("agent_settled", { aborted: false });
+      await emit(
+        "agent_end",
+        answer({ content: [], stopReason: "error", errorMessage: "401: sk-proj-abcdefghijkl" }),
+      );
+      await emit("agent_settled", { aborted: false });
     } finally {
       process.stderr.write = write;
     }
+    expect(pi.failure("", printed.at(-1) ?? "")).toBe("401: [key]");
+    printed.pop();
     expect(hooks()).toBe("");
     // Pi prints a warning and the commands' own lines around it, and an error a test logged.
     const err = `Warning: tmux extended-keys is off\nERROR: rate limit in a test\n${printed.join("")}429: {"message":"Rate limited."}\nSlow down.\n`;
@@ -288,6 +313,8 @@ describe("usage limits", () => {
       '403: {"message":"quota project not set"}',
       "Your quota is shown at https://example.com",
       "500: internal error at 4291 requests",
+      "500: request 429 failed",
+      "404: no resource 429: gone",
       "fetch failed",
     ])
       expect(pi.usageLimit(error, now)).toBeNull();
@@ -303,6 +330,7 @@ describe("usage limits", () => {
   test("the extension and Skelcrew count the same errors as limits", () => {
     for (const error of [
       "429: slow down",
+      "500: request 429 failed",
       "You exceeded your current quota",
       "quota project not set",
       "4291 requests",

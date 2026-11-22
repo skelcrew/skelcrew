@@ -601,7 +601,8 @@ function styles(screen: string[]): { shaded: boolean; dim: boolean }[] {
 // a line holding only › never shows. codex exec reads CODEX_API_KEY: given only
 // OPENAI_API_KEY, it sent no key at all, so both get into the sandbox for those who use a key
 // rather than a login. The first run looks for `program` and, when it is missing, prints the
-// line that installs it.
+// line that installs it. A failed review that reports no error of its own is said by the last
+// line it printed.
 export const codex = {
   name: "codex",
   title: "Codex",
@@ -617,5 +618,6 @@ export const codex = {
   review: reviewCommand,
   answer: readAnswer,
   failure: reportedError,
+  guessesErrors: true,
   usageLimit,
 } as const;

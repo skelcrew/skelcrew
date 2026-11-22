@@ -492,7 +492,8 @@ function inputStart(screen: string[]): number | null {
 // Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for
 // a message once that is gone and a line holding only its ❯ prompt shows. `keys` are the API key
 // variables let into the sandbox, for those who use a key rather than a login. The first run
-// looks for `program` and, when it is missing, prints the line that installs it.
+// looks for `program` and, when it is missing, prints the line that installs it. A failed review
+// that reports no error of its own is said by the last line it printed.
 export const claude = {
   name: "claude",
   title: "Claude Code",
@@ -508,5 +509,6 @@ export const claude = {
   review: reviewCommand,
   answer: parseAnswer,
   failure: reportedError,
+  guessesErrors: true,
   usageLimit,
 } as const;

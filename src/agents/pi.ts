@@ -30,7 +30,7 @@ const readyMark = "◇ Pi is ready for a message";
 const busyMark = "◆ Pi is at work";
 const verdictTool = "skelcrew_verdict";
 const isUsageLimit = (error: string) =>
-  /(^|\D)429(\D|$)/.test(error) || /exceeded[^.]*quota/i.test(error);
+  /^429(\D|$)/.test(error.trim()) || /exceeded[^.]*quota/i.test(error);
 
 // Returns Skelcrew's own Pi agent folder, where the first run's pi auth login saves the login, and
 // where you put a models.json for every agent: apart from yours in ~/.pi, so neither side's
@@ -318,7 +318,7 @@ function reportedError(_out: string, err: string): string | null {
 }
 
 // Returns whether Pi's error says a usage limit is reached, and when it resets, or null when it
-// says something else. Only a 429, or a quota exceeded, is a limit. The reset comes only from
+// says something else. Only a 429 Pi puts first, or a quota exceeded, is a limit. The reset comes only from
 // "resets at" or "try again at", as other words with "reset" in them name no time. A limit with
 // no time passes on its own, so it is waited out.
 function usageLimit(error: string, now: number): { reset: number | null } | null {
@@ -346,7 +346,8 @@ function inputStart(screen: string[]): number | null {
 }
 
 // Pi as Skelcrew knows it, with the marks its extension draws: one line while a turn runs, which
-// counts seconds, and another while Pi waits with nothing typed. `keys` are the API key variables
+// counts seconds, and another while Pi waits with nothing typed. A failed review says only the
+// error the extension printed, as any other line Pi printed may be a command's. `keys` are the API key variables
 // of the providers Pi reads from the environment, let into the sandbox for those who use a key
 // rather than a login. Copilot's is a GitHub token, which no agent may see, so it stays out. The
 // first run looks for `program` and, when it is missing, prints the line that installs it: the
@@ -396,5 +397,6 @@ export const pi = {
   review: reviewCommand,
   answer: readAnswer,
   failure: reportedError,
+  guessesErrors: false,
   usageLimit,
 } as const;

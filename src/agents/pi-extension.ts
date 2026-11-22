@@ -15,11 +15,26 @@ export const busyMark = "◆ Pi is at work";
 // The tool a reviewer gives its verdict with, as Pi has no setting that holds an answer to a shape.
 export const verdictTool = "skelcrew_verdict";
 
-// Reports whether a Pi error says a usage limit was reached: an HTTP 429, or a message that a
-// quota was exceeded. An error that only mentions a quota, such as Google's "quota project not
-// set", is no limit: waiting never fixes it.
+// Reports whether a Pi error says a usage limit was reached: an HTTP 429, which Pi puts first, as
+// in "429: {...}", or a message that a quota was exceeded. A 429 elsewhere, such as in a request
+// ID, and an error that only mentions a quota, such as Google's "quota project not set", are no
+// limit: waiting never fixes them.
 export function isUsageLimit(error: string): boolean {
-  return /(^|\D)429(\D|$)/.test(error) || /exceeded[^.]*quota/i.test(error);
+  return /^429(\D|$)/.test(error.trim()) || /exceeded[^.]*quota/i.test(error);
+}
+
+// Returns Pi's error with every key taken out, as Skelcrew keeps it in the task's log: the value
+// of each key or token in the environment, and anything shaped like a key, such as sk-... or a
+// Google key, which a provider can echo back.
+export function withoutKeys(error: string): string {
+  let said = error;
+  for (const [name, value] of Object.entries(process.env))
+    if (value && value.length >= 8 && /(KEY|TOKEN|SECRET)/.test(name))
+      said = said.split(value).join("[key]");
+  return said
+    .replace(/\b(sk|rk|pk)-[\w-]{8,}/g, "[key]")
+    .replace(/\bAIza[\w-]{20,}/g, "[key]")
+    .replace(/\b(Bearer|Basic) [\w.~+/=-]{8,}/gi, "$1 [key]");
 }
 
 // What Pi gives a handler besides its event, as far as this extension uses it.
@@ -105,7 +120,7 @@ export default function skelcrew(pi: Pi): void {
     // for it.
     pi.on("agent_settled", (event) => {
       if (field(event, "aborted") === true || !failed()) return;
-      const said = text(last, "errorMessage").replace(/\s+/g, " ").trim();
+      const said = withoutKeys(text(last, "errorMessage")).replace(/\s+/g, " ").trim();
       process.stderr.write(`\nskelcrew: Pi failed: ${said || "an unknown error"}\n`);
     });
     return;
@@ -117,7 +132,7 @@ export default function skelcrew(pi: Pi): void {
   pi.on("agent_settled", async (event) => {
     if (field(event, "aborted") === true) return hook("turn-interrupted");
     if (failed()) {
-      const said = text(last, "errorMessage");
+      const said = withoutKeys(text(last, "errorMessage"));
       const error = isUsageLimit(said) ? "rate_limit" : "error";
       return hook("turn-failed", { error, error_details: said });
     }

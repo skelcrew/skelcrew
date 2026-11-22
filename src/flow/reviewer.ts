@@ -190,8 +190,8 @@ async function spawnReviewer(given: {
 }
 
 // Returns the error a reviewer that failed ended on, never a line of the prompt it was given:
-// the error its harness reports, else, when `guess`, the last line it printed on stderr, or
-// else stdout. A harness can echo the prompt as it starts, so the end of what it printed can be
+// the error its harness reports, else, when `guess` and the harness allows it, the last line it
+// printed on stderr, or else stdout. A harness can echo the prompt as it starts, so the end of what it printed can be
 // the task's text rather than what went wrong. A task can hold a line that looks like the
 // harness's own error, such as "ERROR: connection refused" in a bug report, so the echoed
 // prompt is taken out before anything is read.
@@ -218,7 +218,7 @@ function failureOf(
   const [out, err] = [own(finished.out), own(finished.err)];
   const reported = harnessNamed(name).failure(out, err);
   if (reported !== null) return reported.slice(0, 2000);
-  if (!guess) return null;
+  if (!guess || !harnessNamed(name).guessesErrors) return null;
   for (const printed of [err, out]) {
     const last = printed.split("\n").findLast((line) => line.trim() !== "");
     if (last !== undefined) return last.trim().slice(0, 2000);
