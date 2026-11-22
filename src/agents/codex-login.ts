@@ -174,6 +174,13 @@ export function dropLogin(folder: string): void {
 export const startedShared = (home: string, name: string) =>
   sharedLoginLeft(home) && !sessionFolders(home).some((folder) => sessionOf(folder) === name);
 
+// Removes every copy of the session with this name, as one starts with it: only one session runs
+// by a name, so any copy left is a session's before, which ended without removing it.
+export function dropSessionLogins(home: string, name: string): void {
+  for (const folder of sessionFolders(home))
+    if (sessionOf(folder) === name) dropLogin(join(sessionCopies(home), folder));
+}
+
 // Removes the copy of each session `runs` says doesn't run. A session still starting runs, and
 // one `runs` can't answer for keeps its copy. Each is asked about apart, so one slow to answer
 // holds up no other.

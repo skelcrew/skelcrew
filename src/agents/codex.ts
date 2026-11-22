@@ -22,6 +22,7 @@ import { copySkills, type SkillsFrom } from "../skills.ts";
 import {
   copyLogin,
   dropLogin,
+  dropSessionLogins,
   hasLogin,
   ownLogin,
   renewLogin,
@@ -442,6 +443,7 @@ async function startCommand(given: {
   const link = join(sessionHome, "auth.json");
   const launch = async <T>(start: () => Promise<T>): Promise<T> => {
     try {
+      dropSessionLogins(home, name);
       if (!(await copyLogin(home, login)))
         throw new Error("Skelcrew's Codex login went while the session started");
       rmSync(link, { force: true });

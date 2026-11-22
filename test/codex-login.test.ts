@@ -277,6 +277,22 @@ test("a copy that can't be written whole is removed", async () => {
   expect(existsSync(copy)).toBe(false);
 });
 
+test("a session starting removes the copy a session before by its name left", async () => {
+  saveLogin(0);
+  // A session before ended without removing its copy, as when it was killed.
+  const left = sessionLogin(home, "app-12");
+  await copyLogin(home, left);
+  const other = sessionLogin(home, "app-13");
+  await copyLogin(home, other);
+  const given = { name: "app-12", socket: join(home, "sock"), folder: join(home, "lead") };
+  const started = await harnessNamed("codex").start({ ...given, env: { HOME: home, PATH: "" } });
+  await started.launch(async () => {});
+  expect(existsSync(left)).toBe(false);
+  expect(existsSync(other)).toBe(true);
+  const copies = readdirSync(join(data(), "codex-logins"));
+  expect(copies.filter((folder) => folder.startsWith("app-12+")).length).toBe(1);
+});
+
 test("a Codex session that fails to start leaves no copy of the login behind", async () => {
   saveLogin(0);
   const folder = join(home, "lead");
