@@ -566,15 +566,21 @@ A chat plugin, such as Slack, would be where you hear that a task needs you and 
 
 ### Notifiers
 
-A notifier reaches you while you are away, such as by email or a push to your phone. It is asked through its `call` like a tracker, with `notify`, the message's type, a title on one line, a short plain-text body and links, each a name and a URL. It answers `null` once it delivered it, or fails with its error. Its recipient and credentials live only in its own settings, which its `setup` asks for, so neither Skelcrew nor any agent can change where a message goes.
+A notifier reaches you while you are away, such as by email or a push to your phone. It is asked through its `call` like a tracker, with one JSON line on stdin:
+
+```json
+{ "ask": "notify", "type": "needs-you", "title": "APP-12 needs you", "body": "approve the design", "links": [{ "name": "APP-12 #7", "url": "https://github.com/simon/app/pull/7" }] }
+```
+
+`type` is `needs-you`, `digest` or `asked`. `title` is one line, `body` plain text over lines, and `links` may be empty. It prints `null` once it delivered the message, or exits with an error, as **I/O plugins** says. Its recipient and credentials live only in its own settings, which its `setup` asks for, so neither Skelcrew nor any agent can change where a message goes.
 
 Your `notify:` names the notifier for needs-you messages and for the digest, and one with no notifier isn't sent. `sc repo ls` says when it names a plugin that isn't installed or isn't a notifier. There are three types:
 
-- **needs-you**, when a thread starts needing you, from the same events as the lead's note. It goes once per mark, never again while that mark stands.
-- **digest**, once a day at `digest_at`, 08:00 local time by default, or once the daemon is back if it was off then, even before that day's time. For each repository it lists what merged since the last one, what waits on you, what is under way and the backlog.
+- **needs-you**, when a thread starts needing you, from the same events as the lead's note, and when the lead or you mark it anew. A change in why it needs you, such as a question becoming an error, sends nothing more.
+- **digest**, once a day at `digest_at`, 08:00 local time by default, or once the daemon is back if it was off then, even before that day's time. For each repository it lists, in full, what merged since the last one delivered, what waits on you, what is under way and the backlog, each with its PR's or issue's link where it has one.
 - **asked**, which the lead sends with `sc notify --via <notifier> "<subject>" "<text>"`, only when you ask it to, with your exact words in `--asked-file`, through the notifier you asked for, such as email or push. Without your words, or with no such notifier installed, it is refused. `sc notify` answers once the notifier delivered it, or with why it couldn't.
 
-At most 10 needs-you, 5 asked and 2 digest messages are delivered each hour, counted when they are delivered, so a notifier that was slow can't send a backlog at once. One past its limit is dropped, and the daemon's log says so. A body holds at most 4000 characters: a longer needs-you message or digest says it was cut short, and a longer asked message is refused. Text from a tracker or forge goes in only as names, states and links, never a title or body, so nothing written there can ride along. Control characters are removed from all of it.
+At most 10 needs-you, 5 asked and 2 digest messages are delivered each hour, counted when they are delivered, so a notifier that was slow can't send a backlog at once. One past its limit is dropped, and the daemon's log says so. A needs-you or asked body holds at most 4000 characters: a longer needs-you message says it was cut short, and a longer asked message is refused. A message the daemon's stop cut short is sent again once it is back, but for an asked one, which `sc notify` already said failed. Text from a tracker or forge goes in only as names, states and links, never a title or body, so nothing written there can ride along. Control characters are removed from all of it.
 
 ### GitHub
 

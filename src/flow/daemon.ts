@@ -79,7 +79,7 @@ import {
   noteForLead,
   typeLeadNotes,
 } from "./messages.ts";
-import { queueDigest, sendAsked, sendNotifications } from "./notify.ts";
+import { queueDigest, resumeNotifications, sendAsked, sendNotifications } from "./notify.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -310,6 +310,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   moveTurnEnded(db);
   finishUpgrade(db);
   saveApprovedCommits(db);
+  resumeNotifications(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile

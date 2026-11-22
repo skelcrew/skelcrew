@@ -27,7 +27,7 @@ const perHour: Record<MessageType, number> = { "needs-you": 10, asked: 5, digest
 
 const hour = 60 * 60 * 1000;
 const kept = 2 * 24 * hour;
-const bodyLimit = 4000;
+const bodyLimit: Record<MessageType, number> = { "needs-you": 4000, asked: 4000, digest: 100_000 };
 
 function routeOf(type: MessageType): string | null {
   if (type === "asked") return null;
@@ -47,8 +47,8 @@ export function queueNotification(
 ): boolean {
   if (via === null) return false;
   const body =
-    message.body.length > bodyLimit
-      ? `${message.body.slice(0, bodyLimit)}\n… cut short: sc ls shows the rest`
+    message.body.length > bodyLimit[type]
+      ? `${message.body.slice(0, bodyLimit[type])}\n… cut short: sc ls shows the rest`
       : message.body;
   save(db, type, { ...message, body }, via, "waiting", now);
   return true;
@@ -141,12 +141,13 @@ async function deliver(db: Database, id: number): Promise<string | null> {
 }
 
 export function noticeNeedsYou(db: Database, thread: Thread): void {
-  let mark: string | null;
+  let reason: string | null;
   try {
-    mark = needsYouFor(thread) === null ? null : (thread.needs_you_for ?? needsYouFor(thread));
+    reason = needsYouFor(thread);
   } catch {
     return;
   }
+  const mark = reason === null ? null : (thread.needs_you_for ?? "");
   const had = z
     .object({ mark: z.string() })
     .nullable()
@@ -161,7 +162,7 @@ export function noticeNeedsYou(db: Database, thread: Thread): void {
   const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
   queueNotification(db, "needs-you", {
     title: `${name} needs you`,
-    body: mark,
+    body: thread.needs_you_for ?? reason ?? "",
     links: pr === null ? [] : [{ name: `${name} #${pr.id}`, url: pr.link }],
   });
 }
@@ -184,9 +185,9 @@ export async function sendAsked(
       `${asked.via} isn't an installed notifier, so it can't reach the human: ${have}. The human adds one with sc plugin add -g`,
     );
   }
-  if (asked.text.length > bodyLimit)
+  if (asked.text.length > bodyLimit.asked)
     throw new Error(
-      `the message is ${asked.text.length} characters, and one holds at most ${bodyLimit}: shorten it`,
+      `the message is ${asked.text.length} characters, and one holds at most ${bodyLimit.asked}: shorten it`,
     );
   const message = { title: asked.subject, body: asked.text, links: [] };
   const id = save(db, "asked", message, asked.via, "sending", Date.now());
@@ -204,8 +205,6 @@ export function digestDue(now: Date, at: string, last: number | null): boolean {
   return last < slot.getTime();
 }
 
-const sectionLimit = 20;
-
 export function digestOf(db: Database, since: number): Message {
   const links: Message["links"] = [];
   const parts = repositories(db).map((r) => {
@@ -213,10 +212,13 @@ export function digestOf(db: Database, since: number): Message {
       .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? ORDER BY rowid")
       .all(r.owner, r.repo)
       .map((row) => Thread.parse(row));
+    const open = openTasks(db, r.owner, r.repo);
     const named = (thread: Thread, state: string) => {
       const name = threadName(db, thread);
       const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
+      const issue = open.find((item) => item.id === thread.task);
       if (pr !== null) links.push({ name: `${name} #${pr.id}`, url: pr.link });
+      else if (issue) links.push({ name, url: issue.link });
       return [name, state, pr === null ? "" : `#${pr.id}`].filter(Boolean).join(" · ");
     };
     const merged = threads
@@ -228,7 +230,7 @@ export function digestOf(db: Database, since: number): Message {
       return mark === null ? [] : [named(t, mark.slice(0, 80))];
     });
     const underWay = live.filter((t) => needsYouFor(t) === null).map((t) => named(t, t.status));
-    const issues = openTasks(db, r.owner, r.repo)
+    const issues = open
       .filter((item) => !threads.some((t) => t.task === item.id))
       .map((item) => {
         const name = taskName(r.name, item.id);
@@ -236,12 +238,8 @@ export function digestOf(db: Database, since: number): Message {
         return name;
       });
     const filed = backlogOf(db, r.owner, r.repo).map((t) => taskName(r.name, t.task));
-    const section = (heading: string, names: string[]) => {
-      if (names.length === 0) return [];
-      const more = names.length - sectionLimit;
-      const shown = names.slice(0, sectionLimit).map((name) => `  ${name}`);
-      return [`${heading}:`, ...shown, ...(more > 0 ? [`  and ${more} more`] : [])];
-    };
+    const section = (heading: string, names: string[]) =>
+      names.length === 0 ? [] : [`${heading}:`, ...names.map((name) => `  ${name}`)];
     const lines = [
       ...section("Merged", merged),
       ...section("Waits on you", waits),
@@ -287,4 +285,11 @@ export function notifyProblems(db: Database): string[] {
       : "which isn't installed: sc plugin add -g adds it";
     return [`Your config.yaml sends ${type} messages through ${plugin}, ${why}.`];
   });
+}
+
+export function resumeNotifications(db: Database): void {
+  db.run(
+    "UPDATE notifications SET state = 'failed' WHERE state IN ('sending', 'delivering') AND type = 'asked'",
+  );
+  db.run("UPDATE notifications SET state = 'waiting' WHERE state = 'delivering'");
 }
