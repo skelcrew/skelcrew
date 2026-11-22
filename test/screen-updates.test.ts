@@ -86,12 +86,11 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   expect(readFileSync(written, "utf8")).toBe("");
 });
 
-// What the screen wrote that shows on your terminal, without tmux's codes that move the cursor,
-// set colours and modes. A redraw of any cell shows here, however many codes came with it.
-function printed(sent: string): string {
+// What a turn leaves once the codes that only move the cursor, set colours or set modes are
+// taken out. A code that erases, inserts, deletes or scrolls cells stays, as does any other text.
+function shownBy(turn: string): string {
   const esc = "\x1b";
-  const codes = new RegExp(`${esc}(\\[[0-?]*[ -/]*[@-~]|[()][0-9A-Za-z]|[=>78M])`, "g");
-  return [...sent.replaceAll(codes, "")].filter((character) => character >= " ").join("");
+  return turn.replaceAll(new RegExp(`${esc}(\\[[0-?]*[ABCDGHdmhlr]|\\(B)`, "g"), "");
 }
 
 // A spinner on the mark of an agent at work turns about four times a second. Each turn is a
@@ -127,7 +126,7 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
   expect(beforeFirst?.length ?? 0).toBeLessThan(250);
   expect(turns.length).toBeGreaterThan(0);
   for (const turn of turns) {
-    expect(printed(turn)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
+    expect(shownBy(turn)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
     expect(turn.replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠿")).toBe(
       (turns[0] ?? "").replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠿"),
     );
