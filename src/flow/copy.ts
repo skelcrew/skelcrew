@@ -157,6 +157,41 @@ export function saveItems(
   })();
 }
 
+// The descriptions Skelcrew gave its PRs, by owner/repo#number, each with when the forge took
+// it. A forge's answer asked for before then may still hold the description before.
+const described = new Map<string, { body: string; at: number }>();
+
+// Saves the description Skelcrew just gave the PR in its copy, so sc show shows it, and keeps it
+// over the forge's answers asked for before `at`, when the forge took it, such as a poll's under
+// way. A PR the copy doesn't have yet takes it as a poll brings it.
+export function savePrDescription(
+  db: Database,
+  owner: string,
+  repo: string,
+  pr: number,
+  body: string,
+  at: number,
+): void {
+  described.set(`${owner}/${repo}#${pr}`, { body, at });
+  const copied = prOf(db, owner, repo, pr);
+  if (copied) saveItems(db, owner, repo, [{ ...copied, body }], []);
+}
+
+// Returns the forge's answer, asked for at `asked`, with each PR Skelcrew gave a description
+// since holding that one. From an answer asked for after, the forge's description counts.
+export function withDescriptions(owner: string, repo: string, items: Item[], asked: number) {
+  return items.map((item): Item => {
+    const key = `${owner}/${repo}#${item.id}`;
+    const given = item.kind === "pr" ? described.get(key) : undefined;
+    if (given === undefined) return item;
+    if (given.at < asked) {
+      described.delete(key);
+      return item;
+    }
+    return { ...item, body: given.body };
+  });
+}
+
 // Returns the items that the query's rows hold, checked, as what was saved could come from an
 // older Skelcrew. An item it can't read is left out until the next poll saves it again.
 const parseItems = (rows: unknown[]) =>

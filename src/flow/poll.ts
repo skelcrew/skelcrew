@@ -21,7 +21,7 @@ import {
 import { capture } from "../run.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
-import { type Item, openPrs, openTasks, prOf, saveItems } from "./copy.ts";
+import { type Item, openPrs, openTasks, prOf, saveItems, withDescriptions } from "./copy.ts";
 import {
   allGreen,
   ciOnHead,
@@ -560,12 +560,18 @@ async function pollRepository(
       const watched = jobs.includes("forge")
         ? threads.flatMap((t) => (t.pr === null ? [] : [t.pr]))
         : [];
+      const asked = Date.now();
       const answer = await askWhatChanged(db, plugin, repository, jobs, next, watched);
       const kinds: Item["kind"][] = [
         ...(jobs.includes("tracker") ? ["task" as const] : []),
         ...(jobs.includes("forge") ? ["pr" as const] : []),
       ];
-      const items = answer.items.filter((item) => kinds.includes(item.kind));
+      const items = withDescriptions(
+        owner,
+        repo,
+        answer.items.filter((item) => kinds.includes(item.kind)),
+        asked,
+      );
       saveItems(db, owner, repo, items, next === null ? kinds : []);
       if (items.some((item) => item.kind === "pr" && ciState(item) !== null))
         ciShowedIn(`${owner}/${repo}`);
