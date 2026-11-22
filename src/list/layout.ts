@@ -3,7 +3,6 @@
 // those that are open, and the bottom line with the keys and the machine's load. It reads
 // nothing, so what you see can be tested without a terminal.
 import { letters } from "../flow/requests.ts";
-import { ListStage } from "../flow/stage.ts";
 import {
   amber,
   blue,
@@ -24,7 +23,15 @@ import {
   yellow,
 } from "../screen/look.ts";
 import { itemKeys } from "./actions.ts";
-import { type Ci, type Heading, leadLooks, type Row, type Section, type Tab } from "./rows.ts";
+import {
+  type Ci,
+  type Heading,
+  leadLooks,
+  numbered,
+  type Row,
+  type Section,
+  type Tab,
+} from "./rows.ts";
 
 // What the list shows besides its rows: the names of the version of Skelcrew running here, longest
 // first, such as v0.4.2 or 6f1c2ab (checkout), where it runs on a remote, or empty on this machine,
@@ -150,15 +157,10 @@ const still = spinner.slice(0, 1);
 // The widest section name, so every heading's count starts in the same column.
 const sectionNameWidth = Math.max(...Object.values(sectionNames).map((name) => name.length));
 
-// Returns the number key that opens and closes a section, as its heading shows it: 0 for the
-// task queue, then 1 to 6 for the stages in order. Needs you has none, as it never closes, since
-// it is where you must look, so its key's place is blank.
+// Returns the number key that opens and closes a section, as its heading shows it. Needs you has
+// none, as it never closes, since it is where you must look, so its key's place is blank.
 const keyOf = (section: Section) =>
-  section === "needs you"
-    ? " "
-    : section === "task queue"
-      ? "0"
-      : String(ListStage.options.indexOf(section) + 1);
+  section === "needs you" ? " " : String(numbered.indexOf(section));
 
 // Returns a section's heading as a line: the number key that opens and closes it, dim, then its
 // name in its section's colour, bold while open, or bright while open and dim while closed for a
@@ -612,7 +614,6 @@ function leadBlock(
   const running = headings.reduce((sum, heading) => sum + heading.working, 0);
   const parts = [
     { count: running, word: "running", code: "" },
-    { count: count("task queue"), word: "queued", code: grey },
     { count: count("ready") + merges, word: "ready", code: green },
     { count: count("needs you") - merges, word: "needs you", code: yellow },
   ].filter((part) => part.count > 0);
@@ -695,8 +696,7 @@ export function drawRows(
             }))
           : [],
       );
-      const queue = heading.section === "task queue";
-      const after = queue || (parted && ours.length > 0) ? [blankLine] : [];
+      const after = parted && ours.length > 0 ? [blankLine] : [];
       const plain = headingLine(heading, countWidth, width);
       const text = onHeading === heading.section ? shaded(plain, width) : plain;
       const line = { text, row: null, target: { section: heading.section } };

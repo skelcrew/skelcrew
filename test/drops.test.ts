@@ -10,6 +10,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -23,6 +24,7 @@ import {
   escapeTime,
   largestDrop,
   pasteFilter,
+  runWithDrops,
 } from "../src/screen/drops.ts";
 
 let home = "";
@@ -76,6 +78,30 @@ async function afterCopies(): Promise<string> {
 }
 
 const pasted = (text: string) => `\x1b[200~${text}\x1b[201~`;
+
+// Waits until the screen has taken a snapshot of a dropped file holding each of `texts`.
+async function snapshotted(...texts: string[]): Promise<void> {
+  const held = () =>
+    readdirSync(tmpdir())
+      .filter((name) => name.startsWith("skelcrew-drop-"))
+      .map((name) => {
+        try {
+          return readFileSync(join(tmpdir(), name, "file"), "utf8");
+        } catch {
+          return "";
+        }
+      });
+  for (let waited = 0; waited < 250; waited++) {
+    const now = held();
+    if (texts.every((text) => now.includes(text))) return;
+    await Bun.sleep(20);
+  }
+}
+
+// Waits until `done` says yes, for up to five seconds.
+async function until(done: () => boolean): Promise<void> {
+  for (let waited = 0; !done() && waited < 250; waited++) await Bun.sleep(20);
+}
 
 // The copies in the agent's folder, by the path the paste gave.
 const copies = (text: string) =>
@@ -257,6 +283,26 @@ test("a missing path, a folder, a file you can't read and one too big keep their
   ).toHaveLength(1);
 });
 
+test("files dropped together are each copied, however much they add up to, and their snapshots go", async () => {
+  const halves = ["one.bin", "two.bin"].map((name) => {
+    const path = file(name, "");
+    Bun.spawnSync(["truncate", "-s", String(largestDrop / 2 + 1), path]);
+    return path;
+  });
+  filter()(Buffer.from(pasted(halves.join(" "))));
+  for (let waited = 0; !sent.includes("\x1b[201~") && waited < 500; waited++) await Bun.sleep(20);
+  expect(copies(sent.replaceAll(dropSignal, ""))).toHaveLength(2);
+  await Bun.sleep(50);
+  const left = readdirSync(tmpdir())
+    .filter((name) => name.startsWith("skelcrew-drop-"))
+    .filter(
+      (name) =>
+        statSync(join(tmpdir(), name, "file"), { throwIfNoEntry: false })?.size ===
+        largestDrop / 2 + 1,
+    );
+  expect(left).toEqual([]);
+}, 15000);
+
 test("a paste split over several reads arrives whole, and keys after it follow it", async () => {
   const shot = file("shot.png");
   const take = filter();
@@ -270,6 +316,17 @@ test("a paste split over several reads arrives whole, and keys after it follow i
   expect(out).toMatch(
     new RegExp(`^x\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~aftermore$`),
   );
+});
+
+test("a dropped file is read at once, so one deleted while the drop asks where it goes still arrives", async () => {
+  const shot = file("shot.png");
+  const take = filter(() => {
+    rmSync(shot);
+    return agent;
+  });
+  take(Buffer.from(pasted(shot)));
+  const [copy = ""] = copies(await afterCopies());
+  expect(readFileSync(copy, "utf8")).toBe("the text of shot.png");
 });
 
 test("everything sent after a drop waits for its paste, then follows in order", async () => {
@@ -295,6 +352,7 @@ test("everything sent after a drop waits for its paste, then follows in order", 
   take(Buffer.from("\x1b[A"));
   take(Buffer.from("\x1b[<65;3;4M"));
   take(Buffer.from("q"));
+  await until(() => sent !== "");
   await Bun.sleep(20);
   expect(sent).toBe(dropSignal);
   finish();
@@ -306,9 +364,101 @@ test("everything sent after a drop waits for its paste, then follows in order", 
   );
 });
 
+test("files dropped while an earlier drop is still on its way are read at once, and the pastes keep their order", async () => {
+  const first = file("first.png");
+  const second = file("second.png");
+  const third = file("third.png");
+  let finish: () => void = () => {};
+  let held = true;
+  const take = pasteFilter(
+    (bytes) => {
+      sent += Buffer.from(bytes).toString();
+    },
+    {
+      where: async (ask) => {
+        ask();
+        return agent;
+      },
+      put: (folder, files) =>
+        held
+          ? new Promise((done) => {
+              held = false;
+              finish = () => done(copyDrops(folder, files));
+            })
+          : copyDrops(folder, files),
+    },
+  );
+  take(Buffer.from(pasted(first)));
+  await until(() => !held);
+  take(Buffer.from(pasted(second)));
+  take(Buffer.from(pasted(third)));
+  await snapshotted("the text of second.png", "the text of third.png");
+  const snapshots = readdirSync(tmpdir()).filter((name) =>
+    name.startsWith(`skelcrew-drop-${process.pid}-`),
+  );
+  expect(snapshots.length).toBeGreaterThan(0);
+  for (const name of snapshots) expect(statSync(join(tmpdir(), name)).mode & 0o777).toBe(0o700);
+  rmSync(second);
+  rmSync(third);
+  finish();
+  await until(() => copies(sent).length === 3);
+  const found = copies(await afterCopies());
+  expect(found.map((copy) => copy.slice(copy.lastIndexOf("/") + 1))).toEqual([
+    "first.png",
+    "second.png",
+    "third.png",
+  ]);
+  expect(found.map((copy) => readFileSync(copy, "utf8"))).toEqual([
+    "the text of first.png",
+    "the text of second.png",
+    "the text of third.png",
+  ]);
+});
+
+test("the same path dropped twice while an earlier drop is on its way keeps what each drop held", async () => {
+  const first = file("first.png");
+  const shot = file("shot.png", "before");
+  let finish: () => void = () => {};
+  let held = true;
+  const take = pasteFilter(
+    (bytes) => {
+      sent += Buffer.from(bytes).toString();
+    },
+    {
+      where: async (ask) => {
+        ask();
+        return agent;
+      },
+      put: (folder, files) =>
+        held
+          ? new Promise((done) => {
+              held = false;
+              finish = () => done(copyDrops(folder, files));
+            })
+          : copyDrops(folder, files),
+    },
+  );
+  take(Buffer.from(pasted(first)));
+  await until(() => !held);
+  take(Buffer.from(pasted(shot)));
+  await snapshotted("before");
+  writeFileSync(shot, "after");
+  take(Buffer.from(pasted(shot)));
+  await snapshotted("before", "after");
+  rmSync(shot);
+  finish();
+  await until(() => copies(sent).length === 3);
+  const found = copies(await afterCopies());
+  expect(found.map((copy) => readFileSync(copy, "utf8"))).toEqual([
+    "the text of first.png",
+    "before",
+    "after",
+  ]);
+});
+
 test("a copy runs off the screen's way, so nothing waits on it", async () => {
   const shot = file("shot.png");
-  const copying = copyDrops(agent, [shot]);
+  const copying = copyDrops(agent, [{ path: shot, snapshot: shot }]);
   // Nothing was copied while the call ran: the copy happens while keys, the mouse and resizes
   // go on.
   expect(existsSync(join(agent, dropsFolder))).toBe(false);
@@ -514,4 +664,47 @@ test("a file already in the agent's folder keeps its path", async () => {
   writeFileSync(inside, "notes");
   filter()(Buffer.from(pasted(inside)));
   expect(await afterCopies()).toBe(pasted(inside));
+});
+
+test("a screen that opens deletes the snapshots a screen that ended left, never a running one's", async () => {
+  const ended = Bun.spawn(["true"]);
+  await ended.exited;
+  const left = mkdtempSync(join(tmpdir(), `skelcrew-drop-${ended.pid}-`));
+  writeFileSync(join(left, "file"), "an old drop");
+  const running = mkdtempSync(join(tmpdir(), `skelcrew-drop-${process.pid}-`));
+  try {
+    await runWithDrops(["true"], { where: async () => null, put: async () => [] });
+    expect(existsSync(left)).toBe(false);
+    expect(existsSync(running)).toBe(true);
+  } finally {
+    rmSync(left, { recursive: true, force: true });
+    rmSync(running, { recursive: true, force: true });
+  }
+});
+
+test("a screen that closes while a drop is still being copied or sent leaves no snapshot of it", async () => {
+  const shot = file("shot.png", "");
+  Bun.spawnSync(["truncate", "-s", String(20 * 1024 * 1024), shot]);
+  const take = pasteFilter(() => {}, {
+    where: async () => agent,
+    put: () => new Promise(() => {}),
+  });
+  take(Buffer.from(pasted(shot)));
+  await take.close();
+  await Bun.sleep(200);
+  const mine = readdirSync(tmpdir()).filter((name) =>
+    name.startsWith(`skelcrew-drop-${process.pid}-`),
+  );
+  expect(mine).toEqual([]);
+});
+
+test("a screen opens when your temporary folder is missing", async () => {
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = join(home, "no-such-folder");
+  try {
+    expect(await runWithDrops(["true"], { where: async () => null, put: async () => [] })).toBe(0);
+  } finally {
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+  }
 });

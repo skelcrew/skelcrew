@@ -25,7 +25,7 @@ import {
 import { agentsSaid } from "../flow/merging.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
-import { ListStage, listStage } from "../flow/stage.ts";
+import { type ListStage, listStage } from "../flow/stage.ts";
 import { counted, ordinal } from "../flow/task-queue.ts";
 import { Thread, taskName } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
@@ -40,11 +40,23 @@ export type Question = { ask: string; working: string; request: DaemonRequest; q
 // forge plugin is too old to merge.
 type Action = Question | { refused: string };
 
-// The sections of the list, in the order it shows them: Needs you, Task queue, then each stage. Up
-// next holds what waits for a builder: the tasks queued under limits.threads, in the order they
-// start, then the threads paused with sc stop.
+// The sections of the list, in the order it shows them: Needs you, then the stages, with Task queue
+// between Backlog and Building. Task queue holds what waits for a builder: the tasks queued under
+// limits.threads, in the order they start, then the threads paused with sc stop.
 export type Section = "needs you" | "task queue" | ListStage;
-export const sections: Section[] = ["needs you", "task queue", ...ListStage.options];
+export const sections: Section[] = [
+  "needs you",
+  "backlog",
+  "task queue",
+  "building",
+  "reviewing",
+  "checks",
+  "ready",
+  "done",
+];
+// The sections a number key opens and closes, each by its place here: Backlog is 0, Task queue 1.
+// Needs you has no key, as it never closes.
+export const numbered = sections.filter((section) => section !== "needs you");
 
 // What a row under Needs you shows of a mark Skelcrew set itself, until the lead posts an item.
 export const leadLooks = "the lead is looking at this";
