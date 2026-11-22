@@ -378,7 +378,7 @@ async function reviewNow(given: {
   instructions: string;
   clone: string;
   issue: { title: string; body: string };
-  bounds?: () => Bounds;
+  bounds?: () => Promise<Bounds>;
   base: string;
   test: string[] | undefined;
   commit: string;
@@ -528,21 +528,14 @@ async function reviewNow(given: {
     }
     // Check for cancellation and the time limit on both sides of the run, so a review that was
     // stopped says so rather than reading half an answer.
+    const bounds = await given.bounds?.();
     const before = whyStopped();
     if (before) return before;
     const tests: Tests = given.docsOnly ? "docs only" : ci ? { ci: ciFile } : "run";
     // Skills the harness has no folder for are listed last, after the blanks are filled, so a
     // skill's description is never taken for one.
     const told = skillsTold(launch.skills);
-    const prompt = reviewerPrompt(
-      given.instructions,
-      issue,
-      base,
-      tests,
-      given.test,
-      last,
-      given.bounds?.(),
-    );
+    const prompt = reviewerPrompt(given.instructions, issue, base, tests, given.test, last, bounds);
     const input = told ? `${prompt}\n\n${told}` : prompt;
     const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });
     const after = whyStopped();
