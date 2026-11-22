@@ -681,3 +681,19 @@ test("a screen that opens deletes the snapshots a screen that ended left, never 
     rmSync(running, { recursive: true, force: true });
   }
 });
+
+test("a screen that closes while a drop is still being copied or sent leaves no snapshot of it", async () => {
+  const shot = file("shot.png", "");
+  Bun.spawnSync(["truncate", "-s", String(20 * 1024 * 1024), shot]);
+  const take = pasteFilter(() => {}, {
+    where: async () => agent,
+    put: () => new Promise(() => {}),
+  });
+  take(Buffer.from(pasted(shot)));
+  await take.close();
+  await Bun.sleep(200);
+  const mine = readdirSync(tmpdir()).filter((name) =>
+    name.startsWith(`skelcrew-drop-${process.pid}-`),
+  );
+  expect(mine).toEqual([]);
+});

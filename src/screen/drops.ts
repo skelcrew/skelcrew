@@ -281,22 +281,32 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // Whether a drop's files are on their way, and what you sent meanwhile.
   let dropping = false;
   const waiting: Buffer[] = [];
+  // Whether the screen has closed, and the snapshots being made, which close waits for.
+  let closed = false;
+  const copying = new Set<Promise<Dropped | null>>();
   // Copies a dropped file at once, as macOS deletes a screenshot's file within seconds of its
   // drop, and a drop onto a server's screen takes a while to learn where the file goes. The copy
   // is on disk, a clone where the disk can make one, so drops never fill the screen's memory.
   // Only a regular file, or a link to one, that you can read and that isn't over largestDrop is
   // copied. Any other gives null and keeps its path. It copies without holding up the screen, as
   // a disk can be slow to answer.
-  const readDropped = async (path: string): Promise<Dropped | null> => {
+  const readDropped = (path: string): Promise<Dropped | null> => {
+    const reading = makeSnapshot(path);
+    copying.add(reading);
+    reading.finally(() => copying.delete(reading));
+    return reading;
+  };
+  const makeSnapshot = async (path: string): Promise<Dropped | null> => {
     let folder = "";
     try {
       const found = await stat(path);
-      if (!found.isFile() || found.size > largestDrop) return null;
+      if (closed || !found.isFile() || found.size > largestDrop) return null;
       folder = await mkdtemp(join(tmpdir(), `${snapshotsStart}${process.pid}-`));
       const snapshot = join(folder, "file");
       await copyFile(path, snapshot, constants.COPYFILE_FICLONE);
       if ((await stat(snapshot)).size > largestDrop)
         throw new Error("the file grew as it was copied");
+      if (closed) throw new Error("the screen closed");
       return { path, snapshot };
     } catch {
       if (folder) await rm(folder, { recursive: true, force: true });
@@ -514,7 +524,14 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       return;
     }
   };
-  return take;
+  // Closes the filter as the screen closes: no snapshot is made from then on, and every one
+  // made is deleted, once those being made are done.
+  const close = async () => {
+    closed = true;
+    await Promise.all(copying);
+    clearSnapshots((pid) => pid === process.pid);
+  };
+  return Object.assign(take, { close });
 }
 
 // Runs a command, such as the screen's tmux client or ssh, in a terminal of its own between it
@@ -564,6 +581,6 @@ export async function runWithDrops(
     process.off("SIGWINCH", resized);
     terminal.close();
     if (saved) stty(saved);
-    clearSnapshots((pid) => pid === process.pid);
+    await take.close();
   }
 }
