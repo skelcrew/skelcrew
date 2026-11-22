@@ -173,6 +173,8 @@ test("the reviewer's choices go to the lead, not into the builder, and an approv
   const approved = reach(thread(), { ...approval, choices: [choice] });
   expect(approved.change).toMatchObject({ rounds: 0, verdict: "approve" });
   expect(approved.tell).toBeNull();
+  expect(roundOf({ ...thread(), ...approved.change }).verdict).toBe("approve");
+  expect(approved.change.round_log?.at(-1)).toMatchObject({ kind: "verdict", choices: [choice] });
   expect(approved.choices).toBe(
     `'s reviewer left you a choice, which doesn't count as changes: 1) ${choice} Decide, or ask the human, then record it with sc decide.`,
   );

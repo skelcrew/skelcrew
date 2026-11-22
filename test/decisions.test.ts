@@ -61,6 +61,27 @@ console.log(JSON.stringify({ first, second, decisions, shown: view.decisions }))
   ]);
 });
 
+// Starting the task over clears its decisions, so the thread's log keeps the human's words.
+test("the thread's log keeps a human decision's words, for after the task starts over", () => {
+  const seen = inProcess(`
+decide(db, "app", "12", "Never save provider text.", "no, don't save it\\n");
+const { readFileSync } = await import("node:fs");
+const { join } = await import("node:path");
+const { threadsDir } = await import(${JSON.stringify(source("paths.ts"))});
+const lines = readFileSync(join(threadsDir(), "app-12.log"), "utf8").trim().split("\\n");
+const last = JSON.parse(lines.at(-1));
+console.log(JSON.stringify({ why: last.why, decisions: last.decisions }));`);
+  expect(seen.why).toBe("the human decided: Never save provider text.");
+  expect(seen.decisions).toEqual([
+    {
+      by: "human",
+      at: expect.any(Number),
+      text: "Never save provider text.",
+      words: "no, don't save it\n",
+    },
+  ]);
+});
+
 test("what must stay true replaces the list it had, and sc show lists it", () => {
   const seen = inProcess(`
 keepTrue(db, "app", "12", ["Exports stay under a second."]);

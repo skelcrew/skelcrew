@@ -86,7 +86,8 @@ export const RoundEvent = z.discriminatedUnion("kind", [
   // The commit was pushed, and its review is on its way.
   z.object({ kind: z.literal("review started"), at: z.number(), commit: z.string() }),
   // A review's verdict, with the round it took and the limit it was judged by, its reviewer, the
-  // first line of what it said, its findings, the changes it asked for, and what to post.
+  // first line of what it said, its findings, the choices it left the lead, none in an event from
+  // before them, the changes it asked for, and what to post.
   z.object({
     kind: z.literal("verdict"),
     at: z.number(),
@@ -97,6 +98,7 @@ export const RoundEvent = z.discriminatedUnion("kind", [
     commit: z.string(),
     line: z.string(),
     findings: z.array(z.string()),
+    choices: z.array(z.string()).default([]),
     changes: z.string().nullable(),
     posting: Posting.nullable(),
   }),
@@ -632,6 +634,7 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
     commit: sha,
     line: review.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
     findings: "findings" in review ? review.findings : [],
+    choices: "choices" in review ? (review.choices ?? []) : [],
     changes,
     posting,
   };
@@ -645,7 +648,7 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
     status: asked && !held ? ("working" as const) : ("waiting" as const),
   } satisfies Partial<Thread>;
   const note = forge ? null : noteNow(saved, limitNote);
-  const left = "choices" in review ? (review.choices ?? []) : [];
+  const left = verdict.choices;
   const choices =
     left.length === 0
       ? null
