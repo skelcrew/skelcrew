@@ -16,14 +16,14 @@ export const busyMark = "◆ Pi is at work";
 export const verdictTool = "skelcrew_verdict";
 
 // Reports whether a Pi error says a usage limit was reached: an HTTP 429, which Pi puts first, as
-// in "429: {...}", or a message that the quota itself was exceeded, as in "exceeded your current
-// quota" or "Quota exceeded". A 429 elsewhere, such as in a request ID, and an error that only
-// mentions a quota, such as "exceeded retry count: quota project not set", are no limit: waiting
-// never fixes them.
+// in "429: {...}", or a message that the quota itself was exceeded: "exceeded" and up to four
+// words before "quota", as in "exceeded your allocated quota", or "Quota exceeded". A 429
+// elsewhere, such as in a request ID, and an error that only mentions a quota, such as "exceeded
+// retry count: quota project not set", are no limit: waiting never fixes them.
 export function isUsageLimit(error: string): boolean {
   return (
     /^429(\D|$)/.test(error.trim()) ||
-    /\bexceeded (?:your |the |its )?(?:current |daily |monthly )?quota\b|\bquota exceeded\b/i.test(
+    /\bexceeded(?: [a-z-]+){0,4} quota\b(?! project)|\bquota (?:has been |was )?exceeded\b/i.test(
       error,
     )
   );

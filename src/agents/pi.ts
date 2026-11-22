@@ -31,7 +31,7 @@ const busyMark = "◆ Pi is at work";
 const verdictTool = "skelcrew_verdict";
 const isUsageLimit = (error: string) =>
   /^429(\D|$)/.test(error.trim()) ||
-  /\bexceeded (?:your |the |its )?(?:current |daily |monthly )?quota\b|\bquota exceeded\b/i.test(
+  /\bexceeded(?: [a-z-]+){0,4} quota\b(?! project)|\bquota (?:has been |was )?exceeded\b/i.test(
     error,
   );
 

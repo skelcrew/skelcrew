@@ -369,6 +369,12 @@ describe("usage limits", () => {
     expect(pi.usageLimit("RESOURCE_EXHAUSTED: You exceeded your current quota", now)).toEqual({
       reset: null,
     });
+    for (const error of [
+      "403: You exceeded your allocated quota",
+      "exceeded the free tier API quota for today",
+      "Your quota has been exceeded",
+    ])
+      expect(pi.usageLimit(error, now)).toEqual({ reset: null });
   });
 
   test("an error that only mentions a quota, or any other error, is no limit", () => {
@@ -379,6 +385,8 @@ describe("usage limits", () => {
       "500: request 429 failed",
       "404: no resource 429: gone",
       "exceeded retry count: quota project not set",
+      "exceeded the quota project's settings",
+      "exceeded retry limit; quota unchanged",
       "fetch failed",
     ])
       expect(pi.usageLimit(error, now)).toBeNull();
@@ -403,6 +411,11 @@ describe("usage limits", () => {
       "500: request 429 failed",
       "exceeded retry count: quota project not set",
       "Quota exceeded for quota metric 'Generate requests'",
+      "403: You exceeded your allocated quota",
+      "exceeded the free tier API quota for today",
+      "Your quota has been exceeded",
+      "exceeded the quota project's settings",
+      "exceeded retry limit; quota unchanged",
       "You exceeded your current quota",
       "quota project not set",
       "4291 requests",
