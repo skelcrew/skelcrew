@@ -19,6 +19,7 @@ import {
 import { threadTask } from "./copy.ts";
 import { dropItem, itemOpen } from "./inbox.ts";
 import { Posting, ReviewPost, RoundEvent, reviewPending, roundMoved } from "./ledger.ts";
+import { noticeNeedsYou } from "./notify.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -387,7 +388,8 @@ export const readThread = (db: Database, folder: string) =>
 // a note not yet typed is dropped. While the lead's item on the thread is open, the round limit
 // or an approval brings no note unless a new round came, as the lead is already asking you. A
 // thread that ends drops its item, and an item posted after, such as to start it again, stays.
-// The daemon types saved notes with typeLeadNotes.
+// The daemon types saved notes with typeLeadNotes. A thread that starts needing you also queues a
+// needs-you message to you.
 export function record(
   db: Database,
   folder: string,
@@ -459,6 +461,7 @@ export function record(
       : why;
   log(db, thread, cleared);
   reportStatus(db, thread);
+  noticeNeedsYou(db, thread);
   if (thread.short !== before.short) renameOnHost(db, folder);
   return thread;
 }

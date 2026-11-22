@@ -278,7 +278,8 @@ function hostCallsOf(settings: string): number[] {
 
 // Installs the fake tracker and forge as a plugin named `name`, doing `jobs`, for a test with
 // this home, and returns its settings folder, where it keeps the questions it is asked and
-// reads its answers. Its git_credentials lend nothing, as the tests' remotes are folders.
+// reads its answers. Its git_credentials lend nothing, as the tests' remotes are folders. With
+// the job notifier, it is a notifier, which keeps each message it is handed the same way.
 export function fakePlugin(
   home: string,
   name = "github",
@@ -292,7 +293,7 @@ export function fakePlugin(
 version: 0.1.0
 skelcrew: 0.1.0
 about: A tracker and forge for tests
-jobs: [${jobs.join(", ")}]
+${jobs.includes("notifier") ? "kind: io\nprovides: [notifier]" : `jobs: [${jobs.join(", ")}]`}
 call: [bun, ${JSON.stringify(join(import.meta.dir, "fake-plugin.ts"))}]
 git_credentials: ["true"]
 `,

@@ -186,3 +186,8 @@ function readYaml(file: string): object {
 // ask it to in the conversation. Only your config.yaml can say so, so a repository's files never
 // grant it. On unless you turn it off. Throws when your config isn't valid.
 export const leadCanMerge = (): boolean => readSettings(["leadCanMerge"]).leadCanMerge;
+
+// Returns the notifier plugin each type of message to you goes through, and when the daily
+// digest goes. Only your config.yaml says, so no repository can send your messages elsewhere.
+// Throws when your config isn't valid.
+export const notifySettings = () => readSettings(["notify", "digestAt"]);
