@@ -497,7 +497,6 @@ function leadBlock(
   const running = headings.reduce((sum, heading) => sum + heading.working, 0);
   const parts = [
     { count: running, word: "running", code: "" },
-    { count: count("task queue"), word: "queued", code: grey },
     { count: count("ready") + merges, word: "ready", code: green },
     { count: count("needs you") - merges, word: "needs you", code: yellow },
   ].filter((part) => part.count > 0);
