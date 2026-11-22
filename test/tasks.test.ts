@@ -85,17 +85,6 @@ console.log(JSON.stringify(shown));`;
 const shownBefore = () =>
   JSON.parse(readFileSync(join(saved, "before-tasks.json"), "utf8").replaceAll("$HOME", home));
 
-// Changes what the release before tasks showed of notes-t1, whose builder had ended its turn
-// without a submit, to what Skelcrew shows of such a turn now. It then needed you, in yellow. It
-// now waits on the lead, which got the builder's last message: dim, among the working threads,
-// and counted nowhere.
-function turnEndedWaits(saved: ReturnType<typeof shownBefore>): void {
-  for (const row of [...saved.ps, ...saved.psNotes])
-    if (row.thread === "notes-t1") row.needsYou = false;
-  for (const task of saved.show) if (task.issue === "notes-t1") task.thread.needsYou = false;
-  saved.tabs[1].needYou = 0;
-}
-
 // Changes what the release before tasks showed of app-14, whose thread failed, to what Skelcrew
 // shows of it now. It then needed you. The lead now starts it again, so it waits beside the
 // stopped threads, red but hollow, and counts nowhere.
@@ -115,10 +104,14 @@ function namesInUppercase(saved: ReturnType<typeof shownBefore>): ReturnType<typ
 }
 
 // Adds what sc ps now says each thread needs you for, which the release before
-// tasks didn't say: app-t1's builder asked a question, and app-13 is approved with green checks,
-// waiting for you to merge it.
+// tasks didn't say: app-t1's builder asked a question, app-13 is approved with green checks,
+// waiting for you to merge it, and notes-t1's builder ended its turn without a submit.
 function sayWhatFor(saved: ReturnType<typeof shownBefore>): void {
-  const words: Record<string, string> = { "app-t1": "question", "app-13": "ready to merge" };
+  const words: Record<string, string> = {
+    "app-t1": "question",
+    "app-13": "ready to merge",
+    "notes-t1": "turn ended",
+  };
   for (const row of [...saved.ps, ...saved.psNotes])
     row.needsYouFor = row.needsYou ? (words[row.thread] ?? null) : null;
 }
@@ -144,7 +137,6 @@ openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");
 openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUES ('simon', 'app', '41', 'abc123', 'main', 0)");`);
   // Before the new daemon moves it, sc shows the threads as they are.
   const shownThen = shownBefore();
-  turnEndedWaits(shownThen);
   failedWaits(shownThen);
   sayWhatFor(shownThen);
   const shownNow = namesInUppercase(shownThen);

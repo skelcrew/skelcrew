@@ -483,6 +483,61 @@ console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
   expect(said).toBe("refused\ntrue 0\n");
 });
 
+// Removing a repository whose clone is moved aside but whose dropped files can't be, as their
+// folder is read-only.
+function removingStuck(body: string): string {
+  return runWithFakeHost(
+    "sessions",
+    `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const fs = require("node:fs");
+const path = require("node:path");
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES ('app', 'simon', 'app', '', 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("DELETE FROM threads");
+const clone = cloneDir("simon", "app");
+fs.mkdirSync(path.join(clone, "src"), { recursive: true });
+fs.writeFileSync(path.join(clone, "src", "app.ts"), "");
+const lead = leadOf(db, "simon", "app").folder;
+fs.mkdirSync(path.join(lead, ".skelcrew-drops"), { recursive: true });
+${body}`,
+    {},
+  );
+}
+
+test("a repository whose dropped files can't be moved keeps its whole clone, so removing it can be tried again", () => {
+  const said = removingStuck(`fs.chmodSync(lead, 0o500);
+console.log(await removeRepo("app", "unused").then(() => "removed", () => "refused"));
+fs.chmodSync(lead, 0o700);
+const listed = db.query("SELECT 1 FROM repositories WHERE repo = 'app'").get() !== null;
+console.log(listed, fs.existsSync(path.join(clone, "src", "app.ts")));
+console.log(await removeRepo("app", "unused"));
+console.log(fs.existsSync(clone), fs.readdirSync(path.dirname(clone)));`);
+  expect(said).toBe("refused\ntrue true\nRemoved app and Skelcrew's clone of it.\nfalse []\n");
+});
+
+test("a removed repository's clone that can't be deleted is named for you, and a later removal leaves it", () => {
+  const said = removingStuck(`fs.chmodSync(path.join(clone, "src"), 0o500);
+console.log(await removeRepo("app", "unused"));
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES ('app', 'simon', 'app', '', 'fake')");
+fs.mkdirSync(clone);
+console.log(await removeRepo("app", "unused"));
+const left = fs.readdirSync(path.dirname(clone));
+console.log(left.length, fs.existsSync(path.join(path.dirname(clone), left[0] ?? "", "src", "app.ts")));
+fs.chmodSync(path.join(path.dirname(clone), left[0] ?? "", "src"), 0o700);`);
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  const [first, second, left] = said.split("\n");
+  expect(first).toMatch(
+    new RegExp(
+      `^Removed app, but Skelcrew couldn't delete ${clone}\\.removing-\\d+\\. Delete it yourself\\.$`,
+    ),
+  );
+  expect([second, left]).toEqual(["Removed app and Skelcrew's clone of it.", "1 true"]);
+});
+
 test("removing a repository ends its lead on a plugin's host, found by its labels, and removes its login copy", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
@@ -506,6 +561,43 @@ console.log(await hasSession(host, "fake-lead-app"), fs.existsSync(session + "/a
   expect(said).toBe("Removed app and Skelcrew's clone of it.\nfalse false\n");
   expect(readFileSync(join(fake, "asked"), "utf8")).toContain('"ask":"end"');
 });
+
+test("a closed tab whose lead still runs on a plugin's host opens again, and one whose lead doesn't stays closed", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { reopenTabsOfRunningLeads } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, tab_closed, lead_host) VALUES ('app', 'simon', 'app', '', 1, 1, 'fake'), ('web', 'simon', 'web', '', 1, 1, 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+await reopenTabsOfRunningLeads(db, "unused");
+console.log(JSON.stringify(db.query("SELECT repo, tab_closed FROM repositories ORDER BY repo").all()));`,
+    {},
+  );
+  expect(said).toContain('[{"repo":"app","tab_closed":0},{"repo":"web","tab_closed":1}]');
+});
+
+test("a tab closed again while the daemon's start looks at its lead stays closed", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { closeTabAndEndLead, reopenTabsOfRunningLeads } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, tab_closed, lead_host) VALUES ('app', 'simon', 'app', '', 1, 1, 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "slow-list"))}, "");
+const looking = reopenTabsOfRunningLeads(db, "unused");
+await Bun.sleep(500);
+db.run("UPDATE repositories SET tab_closed = 0");
+const closing = closeTabAndEndLead(db, "unused", { name: "app", owner: "simon", repo: "app", forge: null, remote: "" }, "close");
+await looking;
+console.log("tab", db.query("SELECT tab_closed FROM repositories").get().tab_closed);
+await closing;`,
+    {},
+  );
+  expect(said).toContain("tab 1");
+}, 40_000);
 
 // Closing a repository ends its lead in the lead's turn. A host slow to end it can see you open
 // the repository again meanwhile. The start that opening asks for then comes after the end, so it
@@ -546,6 +638,66 @@ test("a repository opened again before its lead's end came keeps its lead runnin
 const ended = await endLeadOfClosedTab(db, "unused", repository, "close");
 const sawOld = await reopen();`);
   expect(JSON.parse(said)).toEqual({ ended: false, sawOld: true, running: true });
+}, 40_000);
+
+test("a lead its host fails to end gets its tab back, unless it was opened again meanwhile", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said =
+    closingLead(`const failEnd = () => require("node:fs").writeFileSync(${JSON.stringify(join(fake, "fail-end"))}, "");
+const { closeTabAndEndLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const tab = () => db.query("SELECT tab_closed FROM repositories").get().tab_closed;
+db.run("UPDATE repositories SET tab_closed = 0");
+failEnd();
+const failed = await closeTabAndEndLead(db, "unused", repository, "close").catch(() => "failed");
+console.log(failed, tab());
+failEnd();
+const opening = closeTabAndEndLead(db, "unused", repository, "close").catch(() => "failed");
+await Bun.sleep(500);
+db.run("UPDATE repositories SET tab_closed = 0");
+console.log(await opening, tab());
+const ended = false;
+const sawOld = null;`);
+  expect(said.split("\n").slice(0, 2)).toEqual(["failed 0", "failed 0"]);
+}, 40_000);
+
+test("a close that fails while you close again leaves the tab closed, and the second close ends the lead", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said =
+    closingLead(`require("node:fs").writeFileSync(${JSON.stringify(join(fake, "fail-end"))}, "");
+const { closeTabAndEndLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+db.run("UPDATE repositories SET tab_closed = 0");
+const first = closeTabAndEndLead(db, "unused", repository, "close").catch(() => "failed");
+await Bun.sleep(500);
+const second = closeTabAndEndLead(db, "unused", repository, "close");
+console.log(await first, db.query("SELECT tab_closed FROM repositories").get().tab_closed);
+const ended = await second;
+console.log(db.query("SELECT tab_closed FROM repositories").get().tab_closed);
+const sawOld = null;`);
+  expect(said).toBe(
+    `failed 1\n1\n${JSON.stringify({ ended: true, sawOld: null, running: false })}\n`,
+  );
+}, 40_000);
+
+test("a repository opened again while its removal ends its lead keeps its clone and record", () => {
+  const said =
+    closingLead(`const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+db.run("UPDATE repositories SET tab_closed = 0 WHERE repo = 'app'");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+const removing = removeRepo("app", "unused").then(() => "removed", (error) => error.message);
+await Bun.sleep(500);
+const sawOld = await reopen();
+const ended = await removing;
+console.log(fs.existsSync(cloneDir("simon", "app")), db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get()?.tab_closed);`);
+  const [kept, outcome] = said.trim().split("\n");
+  expect(kept).toBe("true 0");
+  expect(JSON.parse(outcome ?? "")).toEqual({
+    ended: "app was opened again meanwhile, so it isn't removed",
+    sawOld: false,
+    running: false,
+  });
 }, 40_000);
 
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {

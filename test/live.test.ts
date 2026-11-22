@@ -237,6 +237,7 @@ test("what is left fills the live view from the bottom up", async () => {
     more: 0,
     place: null,
     waits: "",
+    ask: null,
   };
   const details = {
     view: {
@@ -251,6 +252,7 @@ test("what is left fills the live view from the bottom up", async () => {
       prPage: null,
       merge: null,
       filed: null,
+      item: null,
     },
     findings: [],
     updates: [],

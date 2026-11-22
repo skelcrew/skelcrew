@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import {
   existsSync,
   mkdirSync,
@@ -12,6 +13,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { type Labels, processTree, startSession, stillRunning } from "../src/agents/sessions.ts";
+import { closeTabAndEndLead } from "../src/flow/lead.ts";
 import { sidebarFor } from "../src/screen/screen.ts";
 import { fakePlugin, source, threadSql, until as wait } from "./harness.ts";
 
@@ -366,7 +368,7 @@ export const release = () => {
 export function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, now } = z
+      const { command, from, tab, repo, task, pr, commit, by, now, verb } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
@@ -377,11 +379,24 @@ export function daemon(): void {
           commit: z.string().default(""),
           by: z.number().default(0),
           now: z.boolean().default(false),
+          verb: z.enum(["close", "remove"]).default("close"),
         })
         .parse(JSON.parse(data.toString()));
-      // Answers nothing, as no daemon would, so closing a repository ends its lead itself.
+      // Ends the lead as the daemon does.
       if (command === "end lead") {
-        connection.destroy();
+        const [owner = "", name = ""] = repo.split("/");
+        const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+        db.run("PRAGMA busy_timeout = 5000");
+        const repository = { name, owner, repo: name, forge: null, remote: "" };
+        closeTabAndEndLead(db, agents, repository, verb)
+          .then(
+            (ended) => ({ ended }),
+            (error: Error) => ({ error: error.message }),
+          )
+          .then((said) => {
+            db.close();
+            connection.end(`${JSON.stringify(said)}\n`);
+          });
         return;
       }
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);

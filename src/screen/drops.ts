@@ -3,8 +3,9 @@
 // is on your laptop. So a layer between your terminal and the screen copies each dropped file into
 // the agent's own folder and passes the paste on with the copies' paths. Everything else passes
 // through untouched.
-import { constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
+import { constants, lstatSync, readdirSync, rmSync } from "node:fs";
+import { copyFile, mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 // The folder inside an agent's folder that holds its dropped files. It ignores itself in git, so
@@ -124,17 +125,41 @@ function writtenLike(written: string, path: string): string {
   return path.replace(/[\s\\'"$`!&*()|;<>?[\]{}#~^]/g, "\\$&");
 }
 
-// Says whether a dropped file can be copied: a regular file, or a link to one, that you can read
-// and that isn't over largestDrop. A folder, a missing path or one you can't read keeps its path.
-// It looks without holding up the screen, as a disk can be slow to answer.
-async function droppable(path: string): Promise<boolean> {
+// A dropped file, as it was when it was dropped: its path as pasted, and a copy of it made then,
+// in a folder of the screen's own that only you can read.
+export type Dropped = { path: string; snapshot: string };
+
+// How the folder of each dropped file's snapshot is named in your temporary folder, before the
+// screen's process ID and a random part. Only you can read it.
+const snapshotsStart = "skelcrew-drop-";
+
+// Deletes the snapshots a screen left in your temporary folder, such as one that was killed
+// before it could. A temporary folder that is missing or can't be read has none. `ended` says whether a screen with that process ID has ended, so a screen
+// running in another terminal keeps the drops it is sending.
+function clearSnapshots(ended: (pid: number) => boolean): void {
+  let names: string[] = [];
   try {
-    const found = await stat(path);
-    if (!found.isFile() || found.size > largestDrop) return false;
-    await access(path, constants.R_OK);
-    return true;
-  } catch {
+    names = readdirSync(tmpdir());
+  } catch {}
+  for (const name of names) {
+    const pid = Number(name.match(/^skelcrew-drop-(\d+)-/)?.[1]);
+    if (!pid || !ended(pid)) continue;
+    const folder = join(tmpdir(), name);
+    try {
+      const found = lstatSync(folder);
+      if (found.isDirectory() && found.uid === userInfo().uid)
+        rmSync(folder, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+// Says whether the process with this ID has ended. One of another user's is still running.
+function hasEnded(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
     return false;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "EPERM");
   }
 }
 
@@ -183,13 +208,13 @@ async function readableBy(folder: string, file: string): Promise<boolean> {
 // Copies dropped files into an agent's folder on this machine, and returns each copy's path, in
 // order, or null for a file left as it was. A file the agent can read where it is is left.
 // It runs without holding up the screen, so a big file or a slow disk never stops it.
-export function copyDrops(folder: string, files: string[]): Promise<(string | null)[]> {
+export function copyDrops(folder: string, files: Dropped[]): Promise<(string | null)[]> {
   return Promise.all(
     files.map(async (file) => {
-      if (await readableBy(folder, file)) return null;
-      const copy = dropPath(folder, file);
+      if (await readableBy(folder, file.path)) return null;
+      const copy = dropPath(folder, file.path);
       const copying = Bun.spawn(dropCommand(copy), {
-        stdin: Bun.file(file),
+        stdin: Bun.file(file.snapshot),
         stdout: "ignore",
         stderr: "ignore",
       });
@@ -200,11 +225,11 @@ export function copyDrops(folder: string, files: string[]): Promise<(string | nu
 
 // Where dropped files go: `where` asks the screen which agent's folder your typing goes to, and
 // gives it back, or null for none. It calls `ask` to send dropSignal on once it is ready to see
-// the sidebar's answer change. `put` puts the files in that folder, and returns each one's new
-// path, in order, or null for one left as it was.
+// the sidebar's answer change. `put` puts the files, read as they were dropped, in that folder,
+// and returns each one's new path, in order, or null for one left as it was.
 export type Drop = {
   where: (ask: () => void) => Promise<string | null>;
-  put: (folder: string, files: string[]) => Promise<(string | null)[]>;
+  put: (folder: string, files: Dropped[]) => Promise<(string | null)[]>;
 };
 
 // A whole control sequence, such as an arrow key or a mouse event: Esc, [, its parameters and
@@ -260,6 +285,70 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // Whether a drop's files are on their way, and what you sent meanwhile.
   let dropping = false;
   const waiting: Buffer[] = [];
+  // Whether the screen has closed, and the snapshots being made, which close waits for.
+  let closed = false;
+  const copying = new Set<Promise<Dropped | null>>();
+  // Copies a dropped file at once, as macOS deletes a screenshot's file within seconds of its
+  // drop, and a drop onto a server's screen takes a while to learn where the file goes. The copy
+  // is on disk, a clone where the disk can make one, so drops never fill the screen's memory.
+  // Only a regular file, or a link to one, that you can read and that isn't over largestDrop is
+  // copied. Any other gives null and keeps its path. It copies without holding up the screen, as
+  // a disk can be slow to answer.
+  const readDropped = (path: string): Promise<Dropped | null> => {
+    const reading = makeSnapshot(path);
+    copying.add(reading);
+    reading.finally(() => copying.delete(reading));
+    return reading;
+  };
+  const makeSnapshot = async (path: string): Promise<Dropped | null> => {
+    let folder = "";
+    try {
+      const found = await stat(path);
+      if (closed || !found.isFile() || found.size > largestDrop) return null;
+      folder = await mkdtemp(join(tmpdir(), `${snapshotsStart}${process.pid}-`));
+      const snapshot = join(folder, "file");
+      await copyFile(path, snapshot, constants.COPYFILE_FICLONE);
+      if ((await stat(snapshot)).size > largestDrop)
+        throw new Error("the file grew as it was copied");
+      if (closed) throw new Error("the screen closed");
+      return { path, snapshot };
+    } catch {
+      if (folder) await rm(folder, { recursive: true, force: true });
+      return null;
+    }
+  };
+  // Deletes a dropped file's snapshot once it is copied or no drop needs it.
+  const letGo = (file: Dropped | null) => {
+    if (file) rm(dirname(file.snapshot), { recursive: true, force: true }).catch(() => {});
+  };
+
+  // The files of drops that came while another was on its way, read as they came: by path, one
+  // read for each paste that waits, in the order the pastes came.
+  const readEarly = new Map<string, Promise<Dropped | null>[]>();
+  // Returns how many whole pastes of paths that wait name each path.
+  const pathsWaiting = () => {
+    const text = Buffer.concat(waiting).toString();
+    const named = new Map<string, number>();
+    let at = text.indexOf("\x1b[200~");
+    while (at >= 0) {
+      const end = text.indexOf("\x1b[201~", at);
+      if (end < 0) break;
+      const parts = pastedPaths(text.slice(at + pasteStart.length, end)) ?? [];
+      for (const path of new Set(parts.flatMap((part) => part.path ?? [])))
+        named.set(path, (named.get(path) ?? 0) + 1);
+      at = text.indexOf("\x1b[200~", end);
+    }
+    return named;
+  };
+  // Reads the files of the drops that wait, so a drop that comes while another is on its way is
+  // read at once too, and each drop keeps what its files held then.
+  const readWaiting = () => {
+    for (const [path, count] of pathsWaiting()) {
+      const reads = readEarly.get(path) ?? [];
+      while (reads.length < count) reads.push(readDropped(path));
+      readEarly.set(path, reads);
+    }
+  };
 
   // Sends what is waiting to be added, now that the stream is between sequences.
   const addWaiting = () => {
@@ -304,20 +393,26 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   };
 
   // Returns the paste's text with each droppable path replaced by its copy's, or null when
-  // nothing was copied, so the paste goes on as it came.
-  // where the files go, which happens only when one of them can be copied.
+  // nothing was copied, so the paste goes on as it came. Each file is read once, before asking
+  // where it goes, and only when one can be copied is that asked.
   const rewritten = async (text: string): Promise<string | null> => {
     const parts = pastedPaths(text);
     if (!parts) return null;
-    // Only the files that can be copied go to `drop`, each once, in the order pasted.
-    const paths = parts.flatMap((part) => (part.path === undefined ? [] : [part.path]));
-    const can = await Promise.all(paths.map(droppable));
-    const files = paths.filter((_, at) => can[at]);
+    const paths = [
+      ...new Set(parts.flatMap((part) => (part.path === undefined ? [] : [part.path]))),
+    ];
+    const reading = paths.map((path) => readEarly.get(path)?.shift() ?? readDropped(path));
+    const files = (await Promise.all(reading)).filter((file) => file !== null);
     if (files.length === 0) return null;
-    const folder = await drop.where(() => add(Buffer.from(dropSignal)));
-    if (folder === null) return null;
-    const copies = await drop.put(folder, files);
-    const copyOf = new Map(files.map((file, at) => [file, copies[at] ?? null]));
+    let copies: (string | null)[] = [];
+    try {
+      const folder = await drop.where(() => add(Buffer.from(dropSignal)));
+      if (folder === null) return null;
+      copies = await drop.put(folder, files);
+    } finally {
+      for (const file of files) letGo(file);
+    }
+    const copyOf = new Map(files.map((file, at) => [file.path, copies[at] ?? null]));
     if (![...copyOf.values()].some((copy) => copy !== null)) return null;
     return parts
       .map((part) => {
@@ -330,6 +425,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   const take = (piece: Uint8Array): void => {
     if (dropping) {
       waiting.push(Buffer.from(piece));
+      readWaiting();
       return;
     }
     if (cutLater) clearTimeout(cutLater);
@@ -416,16 +512,30 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       const release = () => {
         dropping = false;
         for (const next of waiting.splice(0)) take(next);
+        const named = pathsWaiting();
+        for (const [path, reads] of readEarly) {
+          for (const unused of reads.splice(0, reads.length - (named.get(path) ?? 0)))
+            unused.then(letGo);
+          if (reads.length === 0) readEarly.delete(path);
+        }
       };
       rewritten(text)
         .catch(() => null)
         .then((changed) =>
           add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`), release),
         );
+      readWaiting();
       return;
     }
   };
-  return take;
+  // Closes the filter as the screen closes: no snapshot is made from then on, and every one
+  // made is deleted, once those being made are done.
+  const close = async () => {
+    closed = true;
+    await Promise.all(copying);
+    clearSnapshots((pid) => pid === process.pid);
+  };
+  return Object.assign(take, { close });
 }
 
 // Runs a command, such as the screen's tmux client or ssh, in a terminal of its own between it
@@ -437,6 +547,7 @@ export async function runWithDrops(
   drop: Drop,
   env: Record<string, string | undefined> = process.env,
 ): Promise<number> {
+  clearSnapshots(hasEnded);
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     return Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
   // Your terminal is set raw, with nothing done to what goes out either, so the command's own
@@ -474,5 +585,6 @@ export async function runWithDrops(
     process.off("SIGWINCH", resized);
     terminal.close();
     if (saved) stty(saved);
+    await take.close();
   }
 }

@@ -5,6 +5,9 @@ import { FlowName } from "../flows.ts";
 import { TaskId } from "./copy.ts";
 import type { Thread } from "./thread.ts";
 
+// The letters an item's options in the inbox go by, in order.
+export const letters = ["a", "b", "c", "d"] as const;
+
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
 // for something else.
 const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
@@ -33,7 +36,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   // Renames each live builder on a plugin's host by its title as it is now, after sc repo added
   // or removed a repository, which can change the names in titles.
   z.object({ command: z.literal("rename builders") }),
-  // Ends a repository's lead whose tab you closed, for closing or removing the repository.
+  // Closes a repository's tab and ends its lead, for closing or removing the repository.
   z.object({ command: z.literal("end lead"), repo: z.string(), verb: z.enum(["close", "remove"]) }),
   // Whether a word names a repository Skelcrew has. It isn't `repo`, as a word that names none
   // is no request about another repository.
@@ -158,13 +161,26 @@ export const DaemonRequest = z.discriminatedUnion("command", [
       .optional(),
     asked: z.string().optional(),
   }),
-  // Marks a thread as needing you, with the action you must take, or with a null `reason`, clears
-  // its mark.
+  // The lead's item for a task, or with no task for its repository, with its options, or with
+  // `clear` taking its item off.
   z.object({
-    command: z.literal("needs you"),
+    command: z.literal("ask"),
     repo: z.string(),
-    task: TaskId,
-    reason: z.string().regex(/\S/).nullable(),
+    task: TaskId.optional(),
+    text: z.string().default(""),
+    options: z.array(z.string()).default([]),
+    clear: z.boolean().default(false),
+  }),
+  // Your answer to an item: an option's letter, or a reply in your own words. `seen` is the item's
+  // text and options as you saw them, so an answer never goes to an item the lead replaced
+  // meanwhile, even with the same text.
+  z.object({
+    command: z.literal("answer"),
+    repo: z.string(),
+    task: TaskId.optional(),
+    seen: z.object({ text: z.string(), options: z.array(z.string()) }),
+    pick: z.enum(letters).optional(),
+    reply: z.string().optional(),
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   // A lead's brief for another repository's lead. `to` names that repository. It isn't `repo`,
@@ -215,9 +231,9 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // Merging is yours alone: no agent may merge, as merging stays a human's choice.
 // A lead may arm a merge, when ready or without Skelcrew's approval, only while your config lets it,
 // which the daemon checks at each one, and only when you ask it to. The lead may cancel one, which
-// is always safe. Builders and reviewers can't. Only you and the lead may mark a thread as
-// needing you, or clear it: a builder brings what it needs to the lead. Only a lead may brief another repository's lead, as
-// each lead plans its own repository's work.
+// is always safe. Builders and reviewers can't. Only the lead posts items in the inbox, and only you
+// answer them: a builder brings what it needs to the lead. Only a lead may brief another
+// repository's lead, as each lead plans its own repository's work.
 export type Caller =
   | "you"
   | { lead: { owner: string; repo: string } }
@@ -252,7 +268,7 @@ export const allowed = {
     "merge when ready",
     "merge skip review",
     "merge cancel",
-    "needs you",
+    "answer",
     "check",
   ],
   lead: [
@@ -275,7 +291,7 @@ export const allowed = {
     "merge when ready",
     "merge skip review",
     "merge cancel",
-    "needs you",
+    "ask",
     "tell",
     "brief lead",
     "question asked",
