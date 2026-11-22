@@ -519,12 +519,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // sc start names its task as typed, and the name is looked up here: once as it comes in, and
   // again once the poll before a new thread brought in the issues the tracker has now, such as
   // issue #12 for APP-12 on a daemon that just started.
-  const mustKeep = (caller: Caller, keep: string[] | undefined) => {
-    if (keep === undefined && leadOfCaller(caller) !== null)
-      throw new Error(
-        'give what the change must keep true as you start it, so its first review checks it: add --keep "<property>" two to four times, such as --keep "each agent\'s login stays separate" --keep "old exports still open"',
-      );
-  };
   const startTask = async (
     given: Extract<DaemonRequest, { command: "start" }>,
   ): Promise<{ started: string }> => {
@@ -1081,9 +1075,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "turn interrupted":
         return { state };
       case "start": {
-        const before = threadOn(db, request.repo, request.task);
-        const fresh = before === null || before.status === "done" || before.status === "failed";
-        if (fresh) mustKeep(caller, request.keep);
         const started = await startTask(request);
         const after = threadOn(db, request.repo, request.task);
         const { keep } = request;
@@ -1100,7 +1091,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return started;
       }
       case "start new": {
-        mustKeep(caller, request.keep);
         const repository = findRepository(db, request.repo);
         if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
         const thread = await startThread(db, request);
