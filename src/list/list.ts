@@ -2,14 +2,14 @@
 // a picker. Enter attaches you full screen to an agent through its session host, and leaving it
 // comes back here, on the same row. It also starts an issue, merges a task ready for review and
 // opens its PR, each asking first where it can't be taken back. The number keys open and close
-// the stages, under Needs you, which holds every task waiting on you, and Task queue, which holds
-// what waits for a builder, in the order it starts. Shift with an arrow reorders that queue.
+// the stages, under Needs you, which holds every task waiting on you. Task queue, the stage between
+// Backlog and Building, holds what waits for a builder, in the order it starts. Shift with an
+// arrow reorders that queue.
 import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadSession } from "../flow/lead.ts";
-import { ListStage } from "../flow/stage.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
 import { updateNotice } from "../machine/update.ts";
@@ -33,6 +33,7 @@ import { drawPane, type Live } from "./pane.ts";
 import {
   buildersNote,
   listRows,
+  numbered,
   type Open,
   type Question,
   type Row,
@@ -562,9 +563,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (key === "tab") return nextRepository(1);
     if (key === "back tab") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
-    if (key === "0") return toggleSection("task queue");
-    const stage = ListStage.options[Number(key) - 1];
-    if (/^[1-6]$/.test(key) && stage) return toggleSection(stage);
+    const numberedSection = /^\d$/.test(key) ? numbered[Number(key)] : undefined;
+    if (numberedSection) return toggleSection(numberedSection);
     if (key === "enter" && row) return openRow(row);
     if (key === "o" && row?.task && paneWidth(process.stdout.columns || 80) > 0) {
       fullOutput = !fullOutput;
