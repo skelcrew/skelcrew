@@ -20,7 +20,7 @@ import { leadOf } from "../flow/lead.ts";
 import { closeRepo, removeRepo } from "../flow/repo.ts";
 import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
-import { cloneOf, liveThreads } from "../flow/thread.ts";
+import { cloneOf, liveThreads, typedTask } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
 import {
@@ -421,7 +421,7 @@ export async function runSidebar(
       request: {
         command: "restart",
         repo: repository,
-        ...(task === null ? {} : { task }),
+        ...(task === null ? {} : { task: typedTask(task) }),
       },
       queues: false,
     };
@@ -767,7 +767,7 @@ export async function runSidebar(
     }
     working = true;
     try {
-      said = await moveQueued(`${open.owner}/${open.repo}`, row.task, by);
+      said = await moveQueued(`${open.owner}/${open.repo}`, typedTask(row.task), by);
     } catch (error) {
       said = errorText(error);
     }

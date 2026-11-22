@@ -56,7 +56,7 @@ test("R on a task whose builder runs asks, n restarts nothing, and y restarts it
   await until(() => footer().includes("Restart APP-12's builder?"), "the question again");
   type("y");
   await until(() => footer() === "  Restarted APP-12's builder.", "what the daemon said");
-  expect(acted).toEqual(["restart simon/app t12"]);
+  expect(acted).toEqual(["restart simon/app 12"]);
 });
 
 test("a task whose builder isn't running offers no restart, and R there does nothing", async () => {

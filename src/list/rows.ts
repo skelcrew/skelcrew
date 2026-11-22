@@ -26,7 +26,7 @@ import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
 import { counted, ordinal } from "../flow/task-queue.ts";
-import { Thread, taskLabel, taskName } from "../flow/thread.ts";
+import { Thread, taskLabel, taskName, typedTask } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { agentProgress, builderProgress } from "../screen/progress.ts";
@@ -427,7 +427,12 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     return {
       ask: `Start ${name} now, over ${over}? y/n`,
       working: `Starting ${name}…`,
-      request: { command: "start", repo: `${open.owner}/${open.repo}`, task, now: true },
+      request: {
+        command: "start",
+        repo: `${open.owner}/${open.repo}`,
+        task: typedTask(task),
+        now: true,
+      },
       queues: false,
     };
   };
@@ -487,13 +492,21 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         ? {
             ask: `Queue ${name}? ${waitsOn(queue.length)}, so it starts${after}. y/n`,
             working: `Queueing ${name}…`,
-            request: { command: "start", repo: `${open.owner}/${open.repo}`, task },
+            request: {
+              command: "start",
+              repo: `${open.owner}/${open.repo}`,
+              task: typedTask(task),
+            },
             queues: true,
           }
         : {
             ask: `Start ${name}? y/n`,
             working: `Starting ${name}…`,
-            request: { command: "start", repo: `${open.owner}/${open.repo}`, task },
+            request: {
+              command: "start",
+              repo: `${open.owner}/${open.repo}`,
+              task: typedTask(task),
+            },
             queues: false,
           },
       startNow: noPlace ? startNow(task) : null,

@@ -204,7 +204,7 @@ test("Shift-Up on a queued task in the task queue moves it in the queue, and the
   await until(() => / 20\b/.test(selected()) && onDetails(), "APP-20's details");
   await until(() => footer().includes("⇧↑↓ reorder"), "the key in the footer");
   press("S-Up");
-  await until(() => acted.includes("queue move simon/app t20 -1"), "the daemon to move APP-20");
+  await until(() => acted.includes("queue move simon/app 20 -1"), "the daemon to move APP-20");
   await until(() => footer().includes("APP-20 starts next"), "its place in the footer");
   expect(read("lead.typed")).toBe("");
 });
@@ -217,6 +217,9 @@ test("f on a queued task in the task queue asks to start it now over the limit, 
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\nlimits: { threads: 1 }\n");
   sql(threadSql({ task: "20", title: "Dark mode", status: "queued", queued_since: 1000 }));
+  // APP-30 was APP-T20 until the daemon renumbered it past a clash. y starts the row's own task,
+  // named by its number, never the old name APP-T20, which the daemon takes for APP-30.
+  sql(threadSql({ task: "t30", alias: "t20", folder: "app-t20", title: "Old", status: "done" }));
   open("lead");
   await ready("lead");
   await until(() => left().some((line) => line.includes("Task queue")), "Task queue");
@@ -229,6 +232,6 @@ test("f on a queued task in the task queue asks to start it now over the limit, 
     "the question",
   );
   type("y");
-  await until(() => acted.includes("start simon/app t20 now"), "the daemon to start APP-20");
+  await until(() => acted.includes("start simon/app 20 now"), "the daemon to start APP-20");
   expect(read("lead.typed")).toBe("");
 });

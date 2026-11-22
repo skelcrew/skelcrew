@@ -327,6 +327,28 @@ test("a claim the tracker hasn't taken yet is what the queue waits on, with buil
 
 // A paused thread's last change can come from a poll, such as its CI, so the newest task comes
 // first, however lately each changed.
+// A task the daemon renumbered past a clash keeps its old number as an alias, such as t1, while
+// another task holds that number now. What a row asks the daemon names the row's own task as a
+// person would, by its number, so the daemon never takes it for the old name APP-T1.
+test("a row's start names its own task, though another task's old name is its number", () => {
+  queueTwo();
+  sql(`${threadSql({ task: "1", title: "Holds number 1", status: "queued", queued_since: 3000 })}
+${threadSql({ task: "t3", alias: "t1", folder: "app-t1", title: "Was APP-T1", status: "queued", queued_since: 4000 })}`);
+  const all = rows();
+  const asked = ["APP-1", "APP-3"].map(
+    (name) => all.find((row) => row.name === name)?.startNow?.request,
+  );
+  const tasks = asked.map((request) => (request && "task" in request ? request.task : null));
+  expect(tasks).toEqual(["1", "3"]);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { resolveTask } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+console.log(JSON.stringify(${JSON.stringify(tasks)}.map((task) => resolveTask(db, "simon/app", task).task)));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual(["t1", "t3"]);
+});
+
 test("Task queue has the paused tasks newest first, whenever each last changed", () => {
   sql(
     threadSql({
@@ -605,7 +627,7 @@ test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest
   expect(backlog[0]?.start).toEqual({
     ask: "Start APP-5? y/n",
     working: "Starting APP-5…",
-    request: { command: "start", repo: "simon/app", task: "t5" },
+    request: { command: "start", repo: "simon/app", task: "5" },
     queues: false,
   });
   expect(shown("t5")).toContain("Filed   by simon on 7 November 2026");
@@ -2075,7 +2097,7 @@ test("s asks to start a task in Backlog, and y starts it", async () => {
   type("s");
   await until(() => seen().includes("Start APP-5? y/n"), "the question");
   type("y");
-  await until(() => asked.includes("start simon/app t5"), "the start");
+  await until(() => asked.includes("start simon/app 5"), "the start");
   // The line says what the daemon did, as the task could have been queued meanwhile.
   await until(() => seen().includes("Started."), "the daemon's answer");
 });
@@ -2088,7 +2110,7 @@ test("shift+up on a queued task moves it earlier in the queue, and the line says
   await arrowTo("▸ ○ 20 ");
   expect(seen()).toContain("shift+↑↓ reorder");
   press("S-Up");
-  await until(() => asked.includes("queue move simon/app t20 -1"), "the move");
+  await until(() => asked.includes("queue move simon/app 20 -1"), "the move");
   await until(() => seen().includes("APP-20 starts next"), "its place");
   press("Down");
   await until(() => here().startsWith("▸ ○ 9 "), "the paused row");
@@ -2107,7 +2129,7 @@ test("f on a queued task, or on Backlog with every builder busy, asks to start i
   type("f");
   await until(() => seen().includes("Start APP-20 now, over the limit of 3? y/n"), "the question");
   type("y");
-  await until(() => asked.includes("start simon/app t20 now"), "the start");
+  await until(() => asked.includes("start simon/app 20 now"), "the start");
   await until(() => seen().includes("Started."), "the daemon's answer");
   press("Down");
   await until(() => here().startsWith("▸ ○ 9 "), "the paused row");
@@ -2119,7 +2141,7 @@ test("f on a queued task, or on Backlog with every builder busy, asks to start i
   await until(() => seen().includes("Start APP#31 now, over the limit of 3? y/n"), "the question");
   type("n");
   await Bun.sleep(300);
-  expect(asked.filter((line) => line.startsWith("start"))).toEqual(["start simon/app t20 now"]);
+  expect(asked.filter((line) => line.startsWith("start"))).toEqual(["start simon/app 20 now"]);
 });
 
 // With every builder busy, s on Backlog asks to queue the task, and once queued the line keeps

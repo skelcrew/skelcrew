@@ -569,6 +569,11 @@ export const taskName = (repository: string, task: string) =>
 // names the repository.
 export const taskLabel = (task: string) => task.replace(/^t(?=\d+$)/i, "").toUpperCase();
 
+// Returns the task as a person would name it to the daemon, such as 103 for t103, for a request
+// the list or sidebar makes for its row. A stored ID such as t1 reads as the old name APP-T1,
+// which can be another task once its own was renumbered past a clash.
+export const typedTask = (task: string) => task.replace(/^t(?=\d+$)/, "");
+
 // Returns the repository and task a name typed as a repository and a task stands for, the task
 // as Skelcrew stores it. A number is the task of that number, such as t158 for APP-158, else the
 // task that had it as its old name, such as APP-483 from when tasks were named after their
