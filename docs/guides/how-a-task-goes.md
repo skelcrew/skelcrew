@@ -37,7 +37,11 @@ If the builder has a question, it asks the lead. The lead answers it, or brings 
 
 ## 4. The reviewer reviews
 
-Each round gets a fresh reviewer. It reads the change with fresh eyes, as it never saw the builder's work in progress. If you chose a second coding agent for reviews, it runs on that one.
+Each round gets a fresh reviewer, in the default flow.
+
+A repository can add a flow with no review, for changes too small to need one, such as a typo. The lead tells you when it picks one. Such a task skips this step and goes straight to CI. Its row says `not reviewed`, never `approved`, so you know nobody reviewed it.
+
+The reviewer reads the change with fresh eyes, as it never saw the builder's work in progress. If you chose a second coding agent for reviews, it runs on that one.
 
 It either approves, or asks for changes. Its review shows on the pull request, from `skelcrew[bot]`.
 
@@ -45,7 +49,7 @@ Only serious problems hold a pull request back. These are called P1s: a bug peop
 
 Everything else is P2 or below: wording, style, naming, unlikely edge cases. Those never block. The review lists them as not blocking, and approves.
 
-After round 3, a P1 blocks only when this change brought it. A problem that was already there gets listed, not blocked on.
+After a few rounds, 3 by default, the review gets less strict. A P1 then blocks only when this change brought it. A problem that was already there gets listed, not blocked on. A repository can set that number in its flow, in `.agents/flows/`.
 
 When the task merges, Skelcrew files the not-blocking findings as one task in the backlog, so nothing is lost.
 
@@ -61,13 +65,15 @@ Other things wake the builder too:
 
 ## 6. The round limit
 
-A builder and a reviewer could go back and forth for a long time. So after 3 rounds of changes, Skelcrew stops sending reviews to the builder, and the task needs you.
+A builder and a reviewer could go back and forth for a long time. So after a number of rounds of changes, 3 by default, Skelcrew stops sending reviews to the builder, and the task needs you.
 
 It shows under Needs you, and the lead tells you, such as:
 
 ```
 APP-12 needs you: changes asked for after 3 rounds of changes, so the round limit is reached
 ```
+
+The repository's flow can set another limit. So can you, with `rounds:` in `~/.config/skelcrew/config.yaml`.
 
 You decide what happens next:
 
@@ -80,6 +86,8 @@ Your own comments on the pull request always reach the builder, even past the li
 ## 7. CI
 
 Once the review approves, the task waits for CI under Checks. When every check passes, it moves to Ready.
+
+A task on a flow with no review waits for CI the same way. Once CI passes, its row says `ready to merge, not reviewed`.
 
 ## 8. You merge
 

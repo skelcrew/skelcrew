@@ -86,6 +86,8 @@ You can also start a task from GitHub. Add the `skelcrew` label to an issue, and
 
 The builder opens a pull request. A reviewer agent reviews it, and the builder fixes what the review asks. This goes on until the review approves it.
 
+It doesn't go on forever. After 3 rounds of changes, by default, the task stops and waits for you under Needs you. [How a task goes](how-a-task-goes.md#6-the-round-limit) says what to do then.
+
 Once it is approved and CI passes, the task shows under Ready. Merge it on GitHub as you always do.
 
 Or, in the sidebar, go to the task's row and press `m`. It asks before it merges:
