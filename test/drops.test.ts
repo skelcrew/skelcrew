@@ -363,6 +363,46 @@ test("files dropped while an earlier drop is still on its way are read at once, 
   ]);
 });
 
+test("the same path dropped twice while an earlier drop is on its way keeps what each drop held", async () => {
+  const first = file("first.png");
+  const shot = file("shot.png", "before");
+  let finish: () => void = () => {};
+  let held = true;
+  const take = pasteFilter(
+    (bytes) => {
+      sent += Buffer.from(bytes).toString();
+    },
+    {
+      where: async (ask) => {
+        ask();
+        return agent;
+      },
+      put: (folder, files) =>
+        held
+          ? new Promise((done) => {
+              held = false;
+              finish = () => done(copyDrops(folder, files));
+            })
+          : copyDrops(folder, files),
+    },
+  );
+  take(Buffer.from(pasted(first)));
+  await Bun.sleep(20);
+  take(Buffer.from(pasted(shot)));
+  await Bun.sleep(20);
+  writeFileSync(shot, "after");
+  take(Buffer.from(pasted(shot)));
+  await Bun.sleep(20);
+  rmSync(shot);
+  finish();
+  const found = copies(await afterCopies());
+  expect(found.map((copy) => readFileSync(copy, "utf8"))).toEqual([
+    "the text of first.png",
+    "before",
+    "after",
+  ]);
+});
+
 test("a copy runs off the screen's way, so nothing waits on it", async () => {
   const shot = file("shot.png");
   const copying = copyDrops(agent, [{ path: shot, bytes: readFileSync(shot) }]);

@@ -264,27 +264,32 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // Whether a drop's files are on their way, and what you sent meanwhile.
   let dropping = false;
   const waiting: Buffer[] = [];
-  // The files of drops that came while another was on its way, read as they came, by path.
-  const readEarly = new Map<string, Promise<Dropped | null>>();
-  // Returns the paths of each whole paste of paths that waits.
+  // The files of drops that came while another was on its way, read as they came: by path, one
+  // read for each paste that waits, in the order the pastes came.
+  const readEarly = new Map<string, Promise<Dropped | null>[]>();
+  // Returns how many whole pastes of paths that wait name each path.
   const pathsWaiting = () => {
     const text = Buffer.concat(waiting).toString();
-    const named = new Set<string>();
+    const named = new Map<string, number>();
     let at = text.indexOf("\x1b[200~");
     while (at >= 0) {
       const end = text.indexOf("\x1b[201~", at);
       if (end < 0) break;
-      for (const part of pastedPaths(text.slice(at + pasteStart.length, end)) ?? [])
-        if (part.path !== undefined) named.add(part.path);
+      const parts = pastedPaths(text.slice(at + pasteStart.length, end)) ?? [];
+      for (const path of new Set(parts.flatMap((part) => part.path ?? [])))
+        named.set(path, (named.get(path) ?? 0) + 1);
       at = text.indexOf("\x1b[200~", end);
     }
     return named;
   };
   // Reads the files of the drops that wait, so a drop that comes while another is on its way is
-  // read at once too.
+  // read at once too, and each drop keeps what its files held then.
   const readWaiting = () => {
-    for (const path of pathsWaiting())
-      if (!readEarly.has(path)) readEarly.set(path, readDropped(path));
+    for (const [path, count] of pathsWaiting()) {
+      const reads = readEarly.get(path) ?? [];
+      while (reads.length < count) reads.push(readDropped(path));
+      readEarly.set(path, reads);
+    }
   };
 
   // Sends what is waiting to be added, now that the stream is between sequences.
@@ -338,8 +343,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
     const paths = [
       ...new Set(parts.flatMap((part) => (part.path === undefined ? [] : [part.path]))),
     ];
-    const reading = paths.map((path) => readEarly.get(path) ?? readDropped(path));
-    for (const path of paths) readEarly.delete(path);
+    const reading = paths.map((path) => readEarly.get(path)?.shift() ?? readDropped(path));
     const read = await Promise.all(reading);
     const files = read.filter((file) => file !== null);
     if (files.length === 0) return null;
@@ -447,7 +451,10 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
         dropping = false;
         for (const next of waiting.splice(0)) take(next);
         const named = pathsWaiting();
-        for (const path of readEarly.keys()) if (!named.has(path)) readEarly.delete(path);
+        for (const [path, reads] of readEarly) {
+          reads.splice(0, reads.length - (named.get(path) ?? 0));
+          if (reads.length === 0) readEarly.delete(path);
+        }
       };
       rewritten(text)
         .catch(() => null)
