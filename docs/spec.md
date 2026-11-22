@@ -38,7 +38,7 @@ The code is small, plain and tested. `AGENTS.md` says how to write it, and `docs
 | Flow | The stages a task goes through and their settings, such as the round limit and the reviewer's role. A file in `.agents/flows/`. |
 | Role | What an agent does on a task: its instructions, harness and model. `lead`, `builder` and `reviewer` come built in. A flow can name others. A file in `.agents/roles/`. |
 | Thread | One agent working on a task, in one role, on one harness, in one session. A task usually has one thread, its builder. |
-| Harness | The coding agent an agent runs on: Claude Code or Codex. |
+| Harness | The coding agent an agent runs on: Claude Code or Codex, or Pi, which is experimental. |
 | Daemon | Skelcrew's long-running process, one per machine, which runs the flow, polls trackers and forges, and talks to plugins. |
 | Builder | The role that writes the change. Its thread lives from the task's start until its PR merges or closes. |
 | Reviewer | The role that reviews each round, fresh each time. It runs once per round, with no session and no thread, and never inherits the builder's context. |
@@ -175,7 +175,7 @@ adversarially …
 
 `lead`, `builder` and `reviewer` always exist, from the built-in defaults when the repository has no file for them. A flow names the roles it uses, so a repository that adds a flow can add a role file for it. A role with no `harness` or `model` gets yours, as **Which wins** says.
 
-A model name belongs to its harness, so your top-level `model` applies only to a role on your top-level harness. A role on another harness with no `model` gets that harness's default: `opus` for Claude Code, and Codex's own pick for Codex. Skelcrew passes a model to the harness as written and keeps no list of names. Before it starts a Codex session, it checks the model against `codex debug models`.
+A model name belongs to its harness, so your top-level `model` applies only to a role on your top-level harness. A role on another harness with no `model` gets that harness's default: `opus` for Claude Code, Codex's own pick for Codex, and Pi's own pick for Pi, whose models are named `provider/model`. Skelcrew passes a model to the harness as written and keeps no list of names. Before it starts a Codex session, it checks the model against `codex debug models`.
 
 ### `.agents/flows/`
 
@@ -212,6 +212,7 @@ Skills come from Skelcrew's clone of the repository, at the `.agents/` you appro
 
 - **Claude Code.** Into the `skills/` folder of the session's own config folder, in `~/.local/share/skelcrew/claude/`. Every Claude Code session has one, reviews included.
 - **Codex.** A Codex lead or builder has a `CODEX_HOME` of its own, and its skills go into `skills/` there. Reviews share Skelcrew's `CODEX_HOME`, whose `skills/` stays read-only and empty, since anything there would steer every later review in every repository. So a Codex review gets them the third way: they are copied into the review's own folder, and its instructions list those paths. Never the clone's `.agents/skills/`, which is the builder's branch, as a builder must not steer its own reviewer.
+- **Pi.** Into `skills/` of the agent folder each Pi session and review has of its own, where Pi finds them.
 - **Any other harness**, or one with no folder of one session's own: Skelcrew adds one line per skill to the role's instructions, with its name, description and the path of its `SKILL.md`, so the agent reads it when it needs it.
 
 Skills a repository keeps in `.claude/skills/` already reach Claude Code from the clone, and Skelcrew leaves them alone.
@@ -359,7 +360,7 @@ Every command an agent can run answers quickly, as Claude Code moves a shell com
 
 1. It checks for `tmux`, `bwrap` (0.11 or newer, for reviews, which see a clone through an overlay) or `sandbox-exec`, `git`, and every harness a role uses. If one is missing, it says exactly what to install before it asks anything, as steps to take rather than an error: `Before Skelcrew can start, install:`, then the commands, such as `sudo apt install tmux`, then for a missing harness `a coding agent, one of:` with the command for each, then `Then run sc again.`
 2. On a machine with no harness picked, it saves `harness` in `config.yaml`. With only one installed, it asks nothing: it says which it found and which it didn't, such as `Claude Code detected` and `Codex not found`, then `Agents will run on Claude Code`, and reviews run on it too. With both installed, it asks which agents run on, in a list you move through with the arrow keys and choose from with Enter, each marked `installed`. It then asks the same way which harness reviews run on, offering the other one first, since a second model sees what the builder's misses. It saves that as `roles: { reviewer: { harness: … } }`, and nothing when you pick your own.
-3. It logs in each harness that has no login yet. For Claude Code it asks you to run `claude setup-token` yourself in another terminal, which gives a long-lived token for agents, and to paste it. Over SSH you run that on your laptop, where the browser is. Skelcrew checks that what you paste looks like a token and saves it in `~/.config/skelcrew/`, readable only by you. Nothing renews it, so your own login is never touched. For Codex it runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skelcrew/codex/`, on the terminal's alternate screen, and waits for Enter before switching back if Codex fails. That is a login of Skelcrew's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. Each Codex agent and review gets its own copy of it, without the refresh token, and Skelcrew renews the login outside the sandbox.
+3. It logs in each harness that has no login yet. For Claude Code it asks you to run `claude setup-token` yourself in another terminal, which gives a long-lived token for agents, and to paste it. Over SSH you run that on your laptop, where the browser is. Skelcrew checks that what you paste looks like a token and saves it in `~/.config/skelcrew/`, readable only by you. Nothing renews it, so your own login is never touched. For Codex it runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skelcrew/codex/`, on the terminal's alternate screen, and waits for Enter before switching back if Codex fails. That is a login of Skelcrew's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. Each Codex agent and review gets its own copy of it, without the refresh token, and Skelcrew renews the login outside the sandbox. For Pi, when a role uses it, it asks which provider Pi signs in to and runs `pi auth login <provider> --no-browser` with Pi's folder set to `~/.local/share/skelcrew/pi/`, a login of Skelcrew's own. Pi is experimental, so step 2 never offers it: agents run on it where your config names `harness: pi`.
 4. It installs each plugin the files name at its locked version, asking as **Trust** says, into `~/.local/share/skelcrew/plugins/<name>/<version>/`, and runs its `build`. It refuses a plugin that needs a newer Skelcrew, and one named `none`.
 5. It runs each plugin's `setup` that hasn't run on this machine, in your terminal.
 6. In a checkout whose `skelcrew.yaml` is there, it adds the repository to Skelcrew if it isn't added yet, as **Repositories** says, so a clone of a repository set up for Skelcrew needs only `sc install`. Outside a repository it adds nothing: it sets up the machine, your own plugins and those the repositories Skelcrew has name, from its clones, as step 4 says.
@@ -696,7 +697,7 @@ Your `session:` setting picks the host for new sessions. Each thread remembers t
 
 The built-in transport works on any host's sessions, as it uses only `paste`, `keys` and `read`, with the busy and ready marks each harness module gives. It waits until the agent is idle and its screen is quiet, read a moment apart, with a line holding only the harness's bare prompt. It readies the text, reads once more for a person's draft, pastes it as a bracketed paste, and sends Enter on its own a moment later. No hook can see a draft, so this screen check stays whatever the state says, and a turn can start with no hook, such as when a background task ends.
 
-Mid-turn, Claude Code's spinner and Codex's "Working" line show "esc to interrupt" and redraw every second as their timer counts. The agent's own text can hold those words too, such as a reply about Skelcrew's code, but it sits still. So while those words show, Skelcrew watches the screen a second and a half more, long enough to see the timer tick, before it takes them for the agent's own. An agent whose state is `working` gets no message until its turn ends, even right after a message went in.
+Mid-turn, Claude Code's spinner and Codex's "Working" line show "esc to interrupt" and redraw every second as their timer counts. Pi's input has no prompt mark, so Skelcrew's extension draws a line of its own above it: `Skelcrew: ready` when Pi is idle with nothing typed, and `Skelcrew: working` with the seconds counting while a turn runs, which Skelcrew reads as Pi's busy mark. The agent's own text can hold those words too, such as a reply about Skelcrew's code, but it sits still. So while those words show, Skelcrew watches the screen a second and a half more, long enough to see the timer tick, before it takes them for the agent's own. An agent whose state is `working` gets no message until its turn ends, even right after a message went in.
 
 A host that can do better provides its own. herdr does: `hc send --if idle` waits for a person's draft and types only when the agent is idle, and `hc events` says when it is.
 
@@ -724,6 +725,7 @@ The sandbox stays in core on every host, drawn by the harness module. A host run
 - **bubblewrap on Linux, `sandbox-exec` on a Mac**, drawing the same boundary: the agent's folder writable, the rest of the system read-only, the home folder and credentials hidden.
 - **Claude Code.** Each session gets its own config folder in `~/.local/share/skelcrew/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from `sc install`. Your `~/.claude` stays hidden. Its own permission prompts and sandbox are turned off, since Skelcrew's draws the boundary. Inherited `CLAUDE_CODE_*` variables are removed. The folder is marked as trusted in the session's copy of its settings, or it waits at a question nobody sees. A lead's settings turn off Claude Code's tips, so they don't crowd the lead's greeting. Its notices that need you, such as a login problem, still show. So do its announcements, such as of a new model, as Anthropic's servers send them and no setting turns them off. The first message goes on the command line.
 - **Codex.** It gets Skelcrew's `CODEX_HOME` and runs with its own sandbox and approvals turned off. A Codex lead or builder gets a folder of its own for its conversation. Each agent and review gets its own copy of the login, without the refresh token, and Skelcrew renews the login outside the sandbox.
+- **Pi** (experimental). Each lead and builder gets an agent folder of its own for its conversation, and each review one in its own folder. Pi runs with `--no-approve`, so the folder's own `.pi/` and `.agents/skills/` stay out. It gets no provider's key variable. Each agent and review gets its own copy of Skelcrew's Pi login, without refresh tokens, and Skelcrew renews it outside the sandbox. Skelcrew's extension for Pi, loaded into each session, runs the hooks and takes a review's answer through a tool whose parameters are the answer's shape. A provider's error text can echo a key, so Skelcrew keeps none of it: only the kind of failure, its HTTP status and when a limit resets.
 - **The lead** works in its own folder in `~/.local/share/skelcrew/leads/<owner>/<repo>/`. It reads Skelcrew's clone of every repository Skelcrew has, its own included, read-only at `~/.local/share/skelcrew/repos/<owner>/<repo>/`, kept current by the daemon's polls. A repository added later shows up in a running lead. It never sees another repository's tasks or conversation. Builders and reviewers see only their own task's clone.
 - **The reviewer** sees the task's clone through a throwaway layer, so it can run tests but changes nothing.
 - **Dropped files.** A file dropped onto the screen is copied into the agent's folder rather than the sandbox letting the agent reach it, so the boundary stays the same. The copy is made outside the sandbox, so a link the agent made in its folder never leads it to write anywhere else, or over anything.
@@ -735,13 +737,13 @@ Skelcrew keeps each agent's state on its thread: `working`, `idle`, `asking` or 
 
 The state comes from the harness's hooks wherever a hook fires. The lead gets the same hooks as builders, but a lead's hooks only keep its state: they never flag needs you or bring a note.
 
-| Happens | Claude Code | Codex |
-| --- | --- | --- |
-| A message goes in | `UserPromptSubmit`: `working` | `UserPromptSubmit`: `working` |
-| A turn ends normally | `Stop`: `idle` | `Stop`: `idle` |
-| A turn ends on an error | `StopFailure`: `error` | No hook |
-| The agent asks a question | `PreToolUse` on `AskUserQuestion`: `asking`, and `PostToolUse` makes it `working` again | No question tool: the agent asks the lead with `sc tell lead`, or ends its turn with the question, so `Stop` marks it `idle` and its last message goes to the lead |
-| You press Esc | No hook | `Interrupt`: `idle` |
+| Happens | Claude Code | Codex | Pi, through Skelcrew's extension |
+| --- | --- | --- | --- |
+| A message goes in | `UserPromptSubmit`: `working` | `UserPromptSubmit`: `working` | `input`: `working` |
+| A turn ends normally | `Stop`: `idle` | `Stop`: `idle` | `agent_settled`: `idle` |
+| A turn ends on an error | `StopFailure`: `error` | No hook | `agent_settled` with an error: `error` |
+| The agent asks a question | `PreToolUse` on `AskUserQuestion`: `asking`, and `PostToolUse` makes it `working` again | No question tool: the agent asks the lead with `sc tell lead`, or ends its turn with the question, so `Stop` marks it `idle` and its last message goes to the lead | As Codex |
+| You press Esc | No hook | `Interrupt`: `idle` | `agent_settled`, aborted: `idle` |
 
 The `Stop` hook also tells Skelcrew the commit the builder's clone has checked out, and its last message when nothing in the clone is uncommitted.
 
@@ -826,7 +828,6 @@ A database from an earlier release is moved forward once, when the new daemon st
 - Richer flows: custom stages, several reviewers, skipping stages other than the review, and picking a flow by label or rule. They come once real use shows what is needed
 - Reviewers as threads, which would remember earlier rounds at the cost of the fresh view
 - More than one PR per task, such as one per repository
-- Harnesses other than Claude Code and Codex
 - Windows
 - Per-task environments such as a database each (the `setup` commands only)
 - Agents talking to each other, beyond the lead and a builder telling each other and leads briefing each other, and a host's own messaging carrying them

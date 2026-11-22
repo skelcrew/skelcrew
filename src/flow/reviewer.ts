@@ -383,14 +383,23 @@ async function spawnReviewer(given: {
   return { out, err, code };
 }
 
+// Returns the programs a harness needs to see in the sandbox: its own, and those it runs on, such
+// as Pi's Node, which can be installed apart from it under the home folder.
+function programsOf(name: HarnessName): string[] {
+  const harness = harnessNamed(name);
+  return "programs" in harness ? [...harness.programs] : [harness.program];
+}
+
 // Returns the error a reviewer that failed ended on, never a line of the prompt it was given:
 // the error its harness reports, else, when `guess`, the last line it printed on stderr, or
-// else stdout. A harness can echo the prompt as it starts, so the end of what it printed can be
+// else stdout. A harness whose output may hold a provider's error text, which can echo a key,
+// is never guessed from. A harness can echo the prompt as it starts, so the end of what it printed can be
 // the task's text rather than what went wrong. A task can hold a line that looks like the
 // harness's own error, such as "ERROR: connection refused" in a bug report, so the echoed
 // prompt is taken out before anything is read.
 function failureOf(
   name: HarnessName,
+  folder: string,
   finished: { out: string; err: string },
   prompt: string,
   guess: boolean,
@@ -410,9 +419,9 @@ function failureOf(
       .join("\n");
   };
   const [out, err] = [own(finished.out), own(finished.err)];
-  const reported = harnessNamed(name).failure(out, err);
+  const reported = harnessNamed(name).failure(out, err, folder);
   if (reported !== null) return reported.slice(0, 2000);
-  if (!guess) return null;
+  if (!guess || "outputMayHoldKeys" in harnessNamed(name)) return null;
   for (const printed of [err, out]) {
     const last = printed.split("\n").findLast((line) => line.trim() !== "");
     if (last !== undefined) return last.trim().slice(0, 2000);
@@ -436,8 +445,8 @@ function readVerdict(
   const failed = (otherwise: string): Review | Limited => {
     // Only the error the harness itself reports can be a usage limit. A line guessed at could
     // be a test's output, and would hold every review on the harness for nothing.
-    const reported = failureOf(name, finished, prompt, false);
-    const error = reported ?? (code === 0 ? null : failureOf(name, finished, prompt, true));
+    const reported = failureOf(name, folder, finished, prompt, false);
+    const error = reported ?? (code === 0 ? null : failureOf(name, folder, finished, prompt, true));
     const limit = reported === null ? null : harnessNamed(name).usageLimit(reported, Date.now());
     if (error !== null && limit !== null) return { verdict: "limited", body: error, ...limit };
     if (code === 0)
@@ -621,7 +630,7 @@ async function reviewNow(given: {
       mounts: [...mounts, ...launch.mounts],
       cwd: at,
       command: ["sh", "-c", checkout, given.commit, index, ...launch.command],
-      programs: [harnessNamed(harness).program],
+      programs: programsOf(harness),
     });
     // CI's result is there before the reviewer starts, and kept current while it runs. The
     // first answer is waited for, but never past a cancellation or the time limit.

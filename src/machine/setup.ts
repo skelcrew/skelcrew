@@ -1,11 +1,16 @@
 // The first run: what a plain sc sets up on a new machine, skipping each step already
 // done.
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { configFile, yourConfigDocument } from "../config.ts";
+import { hasPiLogin, piHome } from "../agents/pi-login.ts";
+import { approvedAgents } from "../approved-agents.ts";
+import { agentRole, configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
+import { repositoryFlows } from "../flows.ts";
 import { errorText, toRun } from "../format.ts";
 import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from "../paths.ts";
 import { addPlugin, installYourPlugins } from "../plugins/install.ts";
@@ -30,8 +35,9 @@ import { loginPath, serviceFile } from "./service.ts";
 // The environment a step looks programs up in and runs them with.
 type Env = Record<string, string | undefined>;
 
-// The harnesses agents can run on, in the order the first run offers them.
-const harnesses = HarnessName.options.map(harnessNamed);
+// The harnesses the first run offers, in order. Pi is experimental, so agents run on it only
+// where your config names it.
+const harnesses = HarnessName.options.filter((name) => name !== "pi").map(harnessNamed);
 // The programs agents need on Linux, each with the apt package that has it.
 const linuxTools = [
   { command: "tmux", package: "tmux" },
@@ -54,9 +60,60 @@ function missingHarness(env: Env): string[] {
   const PATH = env.PATH ?? "";
   const saved = readSettings(["yourHarness"]).yourHarness;
   // Before you pick one, any installed harness will do.
-  const wanted = harnesses.filter((h) => saved === undefined || h.name === saved);
-  if (wanted.some((h) => Bun.which(h.program, { PATH }))) return [];
-  return wanted.map((h) => h.install);
+  const wanted = saved === undefined ? harnesses : [harnessNamed(saved)];
+  const missing = wanted.some((h) => Bun.which(h.program, { PATH })) ? [] : wanted;
+  // A role that names Pi needs it, whichever harness is yours.
+  if (piInUse() && !Bun.which(harnessNamed("pi").program, { PATH }))
+    missing.push(harnessNamed("pi"));
+  return [...new Set(missing.map((h) => h.install))];
+}
+
+// Returns whether a role runs on Pi: yours, your reviewer's, or a role of a repository Skelcrew
+// has, as you approved its .agents/: its lead, and the builder and reviewer of each of its
+// flows, which can be roles of its own. Pi is experimental, so only a role that names it uses
+// it. A flow whose settings can't be read counts for none, as its agents stop on that anyway.
+function piInUse(): boolean {
+  const { yourHarness, yourReviewer } = readSettings(["yourHarness", "yourReviewer"]);
+  if (yourHarness === "pi" || yourReviewer === "pi") return true;
+  const db = openDb();
+  try {
+    const repositories = z
+      .array(z.object({ owner: z.string(), repo: z.string() }))
+      .parse(db.query("SELECT owner, repo FROM repositories").all());
+    const named = (read: () => boolean) => {
+      try {
+        return read();
+      } catch {
+        return false;
+      }
+    };
+    const stages = ["builder", "reviewer"] as const;
+    return repositories.some((place) => {
+      const repository = { ...place, agents: approvedAgents(place) };
+      if (named(() => agentRole("lead", repository).harness === "pi")) return true;
+      return named(() =>
+        repositoryFlows(repository).some((flow) =>
+          named(() =>
+            stages.some((role) => agentRole(role, { ...repository, flow }).harness === "pi"),
+          ),
+        ),
+      );
+    });
+  } finally {
+    db.close();
+  }
+}
+
+// Checks that Pi is installed and signed in once a role runs on it, for sc install and plain sc
+// after they added the checkout you are in: the first run, before that, couldn't read its roles.
+export function setUpPiForRoles(): void {
+  if (!piInUse()) return;
+  const env = Bun.which("pi") ? process.env : { ...process.env, PATH: loginPath() };
+  const pi = harnessNamed("pi");
+  if (!Bun.which(pi.program, { PATH: env.PATH ?? "" })) stopForTools([], [], [pi.install]);
+  if (hasPiLogin(homedir())) return;
+  console.log("");
+  logInPi(env, "Sign in to Pi for the roles that run on it.");
 }
 
 // Stops the first run, before it asks anything, when a program agents need is missing, saying
@@ -238,6 +295,25 @@ function logInCodex(env: Env, line: string): void {
   console.log("Signed in to Codex.");
 }
 
+// Logs Skelcrew in to Pi in its own folder, which no agent sees, for the provider you name: Pi
+// signs in with an account, or saves the provider's API key. A key in your shell never reaches
+// the agents, as the daemon's service gets only PATH, so this login is what they run on. Pi
+// uses a device code or a link rather than a browser here, as the machine may have none.
+function logInPi(env: Env, line: string): void {
+  console.log(line);
+  const provider = prompt("Provider, such as anthropic, openai-codex or openrouter:")?.trim() ?? "";
+  if (!/^[\w.-]+$/.test(provider))
+    throw new Error("no provider was named, so Pi has no login for Skelcrew");
+  mkdirSync(piHome(), { recursive: true, mode: 0o700 });
+  const piEnv = { ...env, PI_CODING_AGENT_DIR: piHome() };
+  const login = ["pi", "auth", "login", provider, "--no-browser"];
+  Bun.spawnSync(login, { env: piEnv, stdio: ["inherit", "inherit", "inherit"] });
+  const check = ["pi", "auth", "check", "--provider", provider];
+  if (!Bun.spawnSync(check, { env: piEnv, stdout: "pipe", stderr: "pipe" }).success)
+    throw new Error("pi auth login didn't finish, so Pi has no login for Skelcrew");
+  console.log("Signed in to Pi.");
+}
+
 // Returns whether a plugin named github is installed, so sc offers it only until it is.
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
 
@@ -331,10 +407,11 @@ function pickReviewer(harness: HarnessName): void {
 }
 
 // Reports whether agents on this harness have their login: Claude Code's token from the
-// first run, or Skelcrew's own Codex login, which reviews use too. Only files are looked at, as
-// plain sc checks this each time it starts.
+// first run, or Skelcrew's own Codex or Pi login, which reviews use too. Only files are looked
+// at, as plain sc checks this each time it starts.
 function agentsLoggedIn(harness: HarnessName): boolean {
   if (harness === "claude") return existsSync(claudeTokenFile());
+  if (harness === "pi") return hasPiLogin(homedir());
   return existsSync(join(codexHome(), "auth.json"));
 }
 
@@ -347,7 +424,12 @@ function agentsLoggedIn(harness: HarnessName): boolean {
 export function setupDone(): boolean {
   const harness = readSettings(["yourHarness"]).yourHarness;
   if (harness === undefined) return false;
-  return agentsLoggedIn(harness) && (existsSync(setUpFile()) || existsSync(serviceFile()));
+  // Pi must be there too, found here or where your login shell finds it, as firstRun looks.
+  const piFound = () => Bun.which("pi") !== null || Bun.which("pi", { PATH: loginPath() }) !== null;
+  const piReady = !piInUse() || (agentsLoggedIn("pi") && piFound());
+  return (
+    agentsLoggedIn(harness) && piReady && (existsSync(setUpFile()) || existsSync(serviceFile()))
+  );
 }
 
 // Completes unfinished machine setup before plain sc starts the daemon and attaches to the
@@ -482,7 +564,7 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const uses = (name: HarnessName) =>
     agents === name || (savedReviewerHarness() ?? agents) === name;
   if (uses("claude") && !existsSync(claudeTokenFile())) {
-    const forReviews = harness === "codex" ? " for reviews" : "";
+    const forReviews = harness !== undefined && harness !== "claude" ? " for reviews" : "";
     steps.push({
       title: "Claude's sign-in",
       take: () => {
@@ -500,6 +582,11 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
     steps.push({
       title: "Codex's sign-in",
       take: () => logInCodex(env, `Sign in to Codex${forReviews}. Press Enter to start.`),
+    });
+  if (piInUse() && !hasPiLogin(homedir()))
+    steps.push({
+      title: "Pi's sign-in",
+      take: () => logInPi(env, "Sign in to Pi for the roles that run on it."),
     });
   return steps;
 }

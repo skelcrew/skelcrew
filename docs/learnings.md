@@ -180,6 +180,103 @@ that covers the code you are about to write.
   before its `Stop` hooks, which run only when the model needs no follow-up. The abort path
   runs the `Interrupt` hooks instead. `Stop`'s input has `last_assistant_message`.
 
+## Starting Pi
+
+Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
+
+- **Pi's npm package is `@earendil-works/pi-coding-agent`.** `@mariozechner/pi-coding-agent`
+  stopped at 0.73 and is deprecated. Pi needs Node 22.19 or newer: on Node 20 it stops at once
+  with "does not provide an export named 'enableCompileCache'". Bun can't run it either: it
+  stops with "webidl.util.markAsUncloneable is not a function".
+- **Pass `--no-approve`, or the session waits.** In a folder with `.pi/` or `.agents/skills/`,
+  Pi asks whether to trust it before anything else, and nobody is there to answer. The flag also
+  keeps that folder's settings, extensions and skills out, as unapproved skills must be.
+- **Its input has no prompt mark, and its busy line changes words.** The empty input is a blank
+  line between two rules. While it works it shows "Working", "Retrying (1/3) in 2s..." or
+  "Compacting context...". So Skelcrew's extension draws a line of its own above the input: a
+  ready mark while Pi is idle with nothing typed, and a busy line counting seconds otherwise.
+- **A turn ends at `agent_settled`, not `agent_end`.** Pi tries a 429 three times, and each try
+  ends with `agent_end`, and starts with `agent_start` again. Only `agent_settled` comes once,
+  after the retries, with `aborted` true for Esc. A turn that ended on an error has an assistant
+  message with `stopReason: "error"` and Pi's words in `errorMessage`, such as
+  `429: {"message":"..."}`.
+- **Pi keeps no HTTP status on a message, only text, and each provider API puts it elsewhere.**
+  Run against providers' documented error bodies, Pi 1.6.0 wrote `429: {...}` on OpenAI's
+  completions API, `429 {...}` on Anthropic's, `openrouter API error (429): {...}` on OpenAI's
+  responses API, and Google's body alone, `{"error":{"code":429,...}}`, on Google's. A limit is
+  a 429 read from those places. Providers' words for limits vary too much to go by: a rule built
+  on them kept counting errors such as "exceeded retry count for quota requests". OpenAI's 429
+  for credit run out names `insufficient_quota` as the body's code, so it is told apart: it lasts
+  until you pay. The errors Pi wrote are kept in `test/pi-errors.json`.
+- **A ChatGPT sign-in's limit comes in Pi's own words, with no status.** On `openai-codex` Pi
+  turns any 429 into "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.",
+  the minutes taken from the body's `resets_at`. A body with `insufficient_quota` gets the same
+  words, so there the two can't be told apart.
+- **Never keep a provider's error text: it can echo a key, and no rule can find every key.**
+  Decided by Simon, after rounds of taking keys out kept missing some. OpenAI's 401 names the
+  start and end of the key it was sent. A key may be in no variable: `pi auth login` saves it in
+  `auth.json`, and a command in `models.json` gives a new one for each request. No event shows
+  the key a request sent: `before_provider_headers` holds no auth header, as the provider's SDK
+  adds it after. So the extension sends Skelcrew only the kind of failure, the HTTP status and
+  words of its own, such as "usage limit reached (429), resets at 3:15 PM". The clock is the
+  only part taken from the provider's text. Attach to the agent to read the rest.
+- **`input` fires for the first message too.** The message on the command line comes as typed,
+  with `source: "interactive"`. A long paste shows as "[paste #1 +40 lines]", but `input` gets
+  its whole text.
+- **`--session-id` both starts and brings back a session.** Pi saves it in `--session-dir` as
+  `<time>_<id>.jsonl`, and only once a message went in.
+- **A command in a review can print a line like Pi's error.** So the extension's error line
+  carries a mark Skelcrew makes for each review. The extension deletes it from `process.env` as
+  it loads, and Pi's `bash` tool starts commands with `process.env` as it is then, so they never
+  see it. Checked by running `env` from the tool.
+- **Pi can fail before any event of the extension's.** For a model it doesn't know it prints
+  `Error: Model "nosuch/m" not found. ...` and exits with 1. Until the extension's `agent_start`
+  line, a review has failed to start, which Skelcrew says in words of its own.
+- **A key in the shell you run setup in never reaches the agents.** The daemon's service, under
+  systemd or launchd, gets only PATH. So Skelcrew passes Pi no provider's key variable, and setup
+  asks for Pi's sign-in, which saves a key too, whatever your shell holds.
+- **`pi -p` reads its prompt from stdin, whole.** Run with stdin open and nothing written, it
+  waits forever.
+- **Pi has no setting that holds an answer to a shape.** The reviewer gets a tool from
+  Skelcrew's extension, whose parameters are the shape, and Pi checks its arguments against it.
+  The tool returns `terminate: true`, so Pi ends the review there, with no request after it.
+- **`auth.json` can hold a command Pi runs for a key.** A key written as `!command` runs when Pi
+  needs it. So no agent may write a login another reads: each gets its own copy, which Skelcrew
+  writes anew from its own login as the agent starts. No sandbox sees Skelcrew's login.
+- **Renewing a sign-in rotates its refresh token.** Pi's own code says so, and the old token may
+  stop working. Copies that each renewed would end the sign-in for the rest. So a copy holds no
+  refresh token. As the daemon keeps the logins, and as an agent starts, Skelcrew renews a
+  sign-in that ends within 20 minutes, outside the sandbox, with
+  `pi auth print-bearer-token --min-expiry 20m`. That takes Pi's lock and saves the renewal in
+  Skelcrew's login. Pi in a sandbox tries to renew its copy itself 5 minutes before it ends, so
+  the gap leaves several tries. A copy Pi can't renew fails with
+  "OAuth refresh failed for anthropic: ...", which Skelcrew reports as an expired sign-in.
+- **A running Pi reads a changed `auth.json` for its next request.** In 1.6.0, each request
+  reads the credential through `AuthStorage.read`, which compares the file's device, inode, size
+  and times with the last read, and reads it again under its lock when they changed. So
+  Skelcrew renames a new copy over the old one: Pi sees the new inode, and never half a file.
+- **Read Pi's login under Pi's lock.** Pi writes a renewal over `auth.json` in place, so a read
+  while it writes can find half a file, and an agent would start with no login. Pi's lock is a
+  folder named after the file's real path plus `.lock`, made with `mkdir`. Pi keeps the folder's
+  time fresh while it holds it, and takes over one older than 30 seconds. Skelcrew makes the
+  same folder to read the login, waits while a pi holds it, and removes a stale one.
+- **A read-only `auth.json` can't hold a sign-in for Pi.** Pi writes the file in place, with no
+  rename, but it renews inside a lock, and writes only after the provider answered. A write that
+  fails throws away the renewal, so the turn fails, though the provider already rotated the
+  refresh token. A shared read-only login would end your sign-in at the first renewal. Pi also
+  locks the file just to read it, by making a `.lock` folder beside it. In a read-only folder
+  `pi auth check` says "invalid", even for an API key. A read-only file in a writable folder
+  reads fine.
+- **`pi auth login` needs the provider's name.** Without one it only prints its usage. So setup
+  asks which provider, and runs it with `--no-browser`, as the machine may have none.
+- **Interactive Pi downloads `fd` and `rg` when they aren't on the PATH.** It saves them in its
+  agent folder's `bin/`, so each lead and builder downloads them once, at its first start, and
+  keeps them. Reviews run in print mode, whose tools never need them, so they download nothing.
+  Installing `fd` and `ripgrep` on the machine skips the download.
+- **Bun can't import one file both as text and as a module.** Skelcrew writes the extension's
+  own source into each session, so `pi.ts` imports it as text, and repeats the marks the screen
+  is read by. A test pins the two together.
+
 ## The sandbox
 
 - **The boundary holds against mistakes and overreach, not an agent set on escaping.**

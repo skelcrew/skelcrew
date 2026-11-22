@@ -1057,6 +1057,35 @@ test("install in a clone with skelcrew.yaml installs what it pins and adds the r
   expect(again.out).not.toContain("Adding");
 });
 
+// The first run comes before the checkout is added, so its roles are read once it is in: a
+// builder on Pi gets Pi signed in by the same sc install.
+test("install in a clone whose builder runs on Pi signs Pi in once the repository is added", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const commit = publishGitHubPlugin();
+  writeFileSync(
+    join(checkout, "skelcrew.yaml"),
+    "plugins: [skelcrew/skelcrew-github]\nbuilder: { harness: pi }\n",
+  );
+  writeFileSync(
+    join(checkout, "skelcrew.lock"),
+    `skelcrew/skelcrew-github: {name: github, version: 0.1.0, commit: ${commit}}\n`,
+  );
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "on pi");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
+  fake(
+    "pi",
+    `[ "$1 $2" = "auth login" ] && echo '{"anthropic":{"type":"api_key","key":"k"}}' > "$PI_CODING_AGENT_DIR/auth.json"
+exit 0`,
+  );
+  const run = await installAtTerminal(checkout, "y\nanthropic\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Adding simon/app to Skelcrew...");
+  expect(run.out).toContain("Sign in to Pi for the roles that run on it.");
+  expect(run.out).toContain("Signed in to Pi.");
+  expect(calls()).toContain("pi auth login anthropic --no-browser");
+});
+
 // A checkout with no skelcrew.yaml is no repository for Skelcrew yet, so sc install only sets up
 // the machine there, as outside a repository: sc repo add adds such a repository.
 test("install in a checkout without skelcrew.yaml adds nothing", async () => {

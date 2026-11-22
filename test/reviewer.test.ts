@@ -488,6 +488,54 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     });
   }
 
+  // A provider's error text can echo a key, so a Pi review that fails keeps none of what Pi
+  // printed, only the words of Skelcrew's extension, after the review's mark.
+  test("a Pi review that fails keeps nothing Pi printed but the extension's words", async () => {
+    const piHome = join(home, ".local", "share", "skelcrew", "pi");
+    mkdirSync(piHome, { recursive: true });
+    writeFileSync(join(piHome, "auth.json"), '{"openai":{"type":"api_key","key":"sk-test"}}');
+    const leaked =
+      'echo \'401: {"message":"Incorrect API key provided: sk-proj-abcd****wxyz."}\' >&2';
+    const fakePi = (extra: string[]) =>
+      script("pi", ["cat > /dev/null", 'echo "$SKELCREW_PI_MARK started" >&2', ...extra, "exit 1"]);
+    fakePi([leaked]);
+    expect(await review({ ...given(), harness: "pi" })).toEqual({
+      verdict: "failed",
+      body: "pi exited with 1",
+    });
+    fakePi(['echo "$SKELCREW_PI_MARK the provider refused Pi\'s login (401)" >&2', leaked]);
+    expect(await review({ ...given(), harness: "pi" })).toEqual({
+      verdict: "failed",
+      body: "pi exited with 1: the provider refused Pi's login (401)",
+    });
+  });
+
+  // Pi from npm runs on node, which a version manager can install under the home folder, apart
+  // from Pi's own npm prefix. The review's sandbox hides the home folder, so it shows Node too.
+  test("a Pi review runs on a Node installed apart from Pi, under the home folder", async () => {
+    const piHome = join(home, ".local", "share", "skelcrew", "pi");
+    mkdirSync(piHome, { recursive: true });
+    writeFileSync(join(piHome, "auth.json"), '{"openai":{"type":"api_key","key":"sk-test"}}');
+    const nodeBin = join(home, "node", "bin");
+    mkdirSync(nodeBin, { recursive: true });
+    writeFileSync(join(nodeBin, "node"), '#!/bin/sh\nexec sh "$@"\n', { mode: 0o755 });
+    script("pi", [
+      "cat > /dev/null",
+      'echo "$SKELCREW_PI_MARK started" >&2',
+      `printf '%s' '${approve.replace("}", ',"choices":[]}')}' > "$SKELCREW_PI_REVIEW/answer.json"`,
+    ]);
+    writeFileSync(
+      join(bin, "pi"),
+      readFileSync(join(bin, "pi"), "utf8").replace("#!/bin/sh", "#!/usr/bin/env node"),
+    );
+    const onNode = { ...env(), PATH: `${bin}:${nodeBin}:/usr/local/bin:/usr/bin:/bin` };
+    expect(await review({ ...given(), harness: "pi", env: onNode })).toEqual({
+      verdict: "approve",
+      body: "Looks right.",
+      findings: [],
+    });
+  });
+
   test("fails a review when Codex fails, saying why", async () => {
     fakeCodex(approve, ["echo 'not logged in' >&2", "exit 1"]);
     const done = await start();

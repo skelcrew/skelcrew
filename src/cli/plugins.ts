@@ -24,6 +24,8 @@ export async function installCommand(args: string[]): Promise<void> {
   if (options.has("--from")) return;
   const { installRepo } = await import("../flow/repo.ts");
   await installRepo("skelcrew");
+  const { setUpPiForRoles } = await import("../machine/setup.ts");
+  setUpPiForRoles();
 }
 
 export async function pluginCommand(args: string[], json: boolean): Promise<void> {

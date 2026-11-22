@@ -8,15 +8,19 @@ import {
   takeSharedLogin as codexTakeSharedLogin,
   renewLogin,
   startedShared,
-  sweepLogins,
-  sweepReviewLogins,
 } from "./codex-login.ts";
+import { sweepLogins, sweepReviewLogins } from "./login-copies.ts";
+import { pi } from "./pi.ts";
 
 // A harness's name, as your config and Skelcrew's database write it.
-export const HarnessName = z.enum(["claude", "codex"]);
+export const HarnessName = z.enum(["claude", "codex", "pi"]);
 export type HarnessName = z.infer<typeof HarnessName>;
 
-const harnesses = { claude, codex } satisfies Record<HarnessName, { name: HarnessName }>;
+const harnesses = { claude, codex, pi } satisfies Record<HarnessName, { name: HarnessName }>;
+
+// The harnesses whose agents get a copy of Skelcrew's login, each with how it renews it.
+// Claude Code's agents log in with a token that never renews, so it has none.
+const withCopies = [codex, pi];
 
 // Returns the harness your config names, such as "claude", with how to start it and what its
 // screen shows. The type follows the name, so a caller sees exactly what that harness offers.
@@ -25,16 +29,19 @@ export function harnessNamed<Name extends HarnessName>(name: Name): (typeof harn
 }
 
 // Keeps the copies of Skelcrew's logins its agents get: removes the copy of each session `runs`
-// says ended, and renews the login when due. Only Codex agents get copies. The two run side by
-// side, so a host slow to answer never holds up a renewal, nor a login that can't be renewed
-// the sweep.
+// says ended, and renews each login when due. They all run side by side, so a host slow to
+// answer never holds up a renewal, nor a login that can't be renewed the sweep.
 export async function keepLogins(home: string, runs: (name: string) => Promise<boolean>) {
-  const [swept, renewed] = await Promise.allSettled([sweepLogins(home, runs), renewLogin(home)]);
-  for (const outcome of [swept, renewed]) if (outcome.status === "rejected") throw outcome.reason;
+  const outcomes = await Promise.allSettled(
+    withCopies.flatMap((h) => [sweepLogins(home, h.name, runs), h.renewLogin(home)]),
+  );
+  for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
 }
 
 // Removes every review's copy of a login, as the daemon starts, before any review runs.
-export const dropReviewLogins = (home: string) => sweepReviewLogins(home);
+export function dropReviewLogins(home: string): void {
+  for (const h of withCopies) sweepReviewLogins(home, h.name);
+}
 
 // Returns whether the login an earlier release shared with every Codex agent is still there.
 export const sharedLoginLeft = (home: string) => codexSharedLoginLeft(home);
