@@ -16,6 +16,7 @@ import {
   installPlugin,
   lockedAs,
   matchesLock,
+  newestLocked,
   refuseOtherName,
   refusePersonal,
   removePlugin,
@@ -178,6 +179,19 @@ function nameAndPin(folder: string, source: string, locked: Locked): void {
     "# Written by sc plugin add and sc plugin update. Commit it.\n",
     source,
     locked,
+  );
+}
+
+// Names `source` in the skelcrew.yaml in `folder` and pins it in its skelcrew.lock, for sc init,
+// installing nothing: at the version installed here from the same source, or else at its newest.
+export function pinRepositoryPlugin(folder: string, source: string): void {
+  const here = installedPlugins(openDb()).find((plugin) => plugin.source === source);
+  const locked = here
+    ? lockedAs(readManifest(here.folder), commitOf(here.folder))
+    : newestLocked(source);
+  writeBoth(
+    () => nameAndPin(folder, source, locked),
+    [join(folder, "skelcrew.yaml"), join(folder, "skelcrew.lock")],
   );
 }
 

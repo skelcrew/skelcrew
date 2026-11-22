@@ -29,7 +29,7 @@ const sections: [string, [string, string][]][] = [
   [
     "REPOSITORIES",
     [
-      ["init", "Write skelcrew.yaml, skelcrew.lock and .agents/ here and add this repository"],
+      ["init", "Write skelcrew.yaml, skelcrew.lock and .agents/ here, and nothing else"],
       ["repo add [<path> | <url> | <owner/repo>]", "Add a repository, this one by default"],
       ["repo ls", "Repositories Skelcrew works on"],
       ["repo rm <name>", "Remove Skelcrew's clone of one"],
@@ -39,7 +39,7 @@ const sections: [string, [string, string][]][] = [
   [
     "PLUGINS",
     [
-      ["install", "Set up this machine and the plugins your files name, asking"],
+      ["install", "Set up this machine, the plugins your files name, and this repository"],
       ["plugin add <owner/repo>", "Add a plugin to this repository, after asking"],
       ["plugin add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
       ["plugin update -g [<name>]", "Move one, or all, to its newest version, after asking"],

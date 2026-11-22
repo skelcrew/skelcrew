@@ -1,7 +1,6 @@
 // The commands for the repositories Skelcrew works on: sc init and sc repo.
 import { runByAgent } from "../agents/sandbox.ts";
 import { usage } from "./input.ts";
-import { leadCommand } from "./screen.ts";
 
 export async function repoCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, ...rest] = args;
@@ -10,7 +9,7 @@ export async function repoCommand(args: string[], json: boolean): Promise<void> 
   const { listRepositories, printRepositories } = await import("../flow/list.ts");
   const { addRepo, initRepo, removeRepo, trustRepo } = await import("../flow/repo.ts");
   if (command === "init" && args.length === 1) {
-    if (await initRepo("skelcrew")) await leadCommand(false);
+    initRepo();
     return;
   }
   if (sub === "add" && rest.length <= 1) {

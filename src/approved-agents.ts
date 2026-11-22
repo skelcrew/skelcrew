@@ -92,9 +92,9 @@ export function approveAgents(place: Place, tree: string | null): void {
 }
 
 // Returns the git tree of the .agents/ folder that committing in the checkout at `checkout` would
-// bring, for sc init, so it can be approved or asked about before it reaches the default branch,
+// bring, for sc install, so it can be approved or asked about before it reaches the default branch,
 // or null when it holds no file. That is what the checkout has staged, as a commit takes it, and
-// every new file, as sc init asks you to commit the files it wrote, even where a .gitignore rule
+// every new file, as sc init tells you to commit the files it wrote, even where a .gitignore rule
 // matches them. It is read through a copy of the checkout's index, so the index
 // itself never changes, and the tree and its files are then copied into Skelcrew's clone, which
 // approving needs. Throws when git can't read them.
@@ -243,7 +243,7 @@ export function agentsFolder(place: Place, tree: string, folder: string): string
 }
 
 // Shows what the repository's .agents/ on its default branch holds, or what changed in it since
-// the version you approved, and asks whether to approve it. sc init passes `current`, the tree of
+// the version you approved, and asks whether to approve it. sc install passes `current`, the tree of
 // the .agents/ in your checkout, to ask about that one instead. A yes approves it. A no keeps what
 // you approved, or the built-in roles, and is saved, so plain sc doesn't ask again. With no
 // answer, such as Ctrl-D, nothing is saved. Runs only in your own terminal, as a yes from an

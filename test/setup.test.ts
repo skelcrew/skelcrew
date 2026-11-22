@@ -100,11 +100,12 @@ beforeEach(async () => {
 esac`,
   );
   fake("loginctl", "exit 0");
-  // Skelcrew has a repository, so plain Skelcrew has a lead to open once set up. The GitHub plugin
+  // Skelcrew has a repository, so plain Skelcrew has a lead to open once set up, and sc install in a
+  // checkout of it adds nothing. The GitHub plugin
   // is installed, so the first run doesn't offer it, unless a test removes it.
   const db = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
 const db = openDb();
-db.run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', 'git@example.com:simon/app.git')");
 db.run("INSERT INTO plugins (name, folder) VALUES ('github', '/nowhere')");`;
   const added = Bun.spawnSync([process.execPath, "-e", db], {
     env: { HOME: home },

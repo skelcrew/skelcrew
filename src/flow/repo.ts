@@ -6,6 +6,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -20,6 +21,7 @@ import {
   agentsAnswered,
   agentsOnDefaultBranch,
   approveAgents,
+  approvedAgents,
   askAboutAgents,
   checkoutAgents,
   forgetAgents,
@@ -27,19 +29,16 @@ import {
 import { agentRole } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { builtInFlowText } from "../flows.ts";
-import { errorText, toRun } from "../format.ts";
+import { errorText } from "../format.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
-import { askYes, setUpPlugin } from "../plugins/install.ts";
+import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
 import {
-  addRepositoryPlugin,
-  gitHubShown,
   githubPlugin,
-  installRepositoryPlugins,
   namePlugin,
-  repositoryNeeds,
+  pinRepositoryPlugin,
   repositoryPlugins,
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
@@ -595,55 +594,66 @@ const starterConfig = [
 ].join("\n");
 
 function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
-  const onGitHub = parseRemote(remote);
-  if (onGitHub?.host !== "github.com") return null;
+  if (parseRemote(remote)?.host !== "github.com") return null;
   try {
     const { plugins, lock } = repositoryPlugins(root);
     if (plugins.length > 0) return null;
     if (lock[githubPlugin]) {
       namePlugin(root, githubPlugin);
-      installPinned();
       return "named";
     }
-    const shown = gitHubShown(`${onGitHub.owner}/${onGitHub.repo}`);
-    if (addRepositoryPlugin(githubPlugin, shown) !== null) return "pinned";
+    pinRepositoryPlugin(root, githubPlugin);
+    return "pinned";
   } catch (error) {
     console.log(`Skelcrew couldn't add ${githubPlugin}: ${errorText(error)}.`);
     return null;
   }
-  console.log(`skelcrew.yaml names no forge plugin yet. sc plugin add ${githubPlugin} adds it.`);
-  return null;
 }
 
-// Installs the forge's plugin at the version the checkout's skelcrew.lock pins, as sc install
-// does: a plugin new here, or at another version, is shown and asked about, and one at its pin
-// asks nothing. One left out is only reported, naming sc install, as skelcrew.yaml names it now.
-function installPinned(): void {
-  try {
-    installRepositoryPlugins(repositoryNeeds().filter(({ source }) => source === githubPlugin));
-  } catch (error) {
-    console.log(
-      `Skelcrew couldn't install ${githubPlugin}: ${errorText(error)}. sc install installs it.`,
-    );
-  }
-}
-
-// Writes the built-in .agents/ into the checkout at `root`, which has none: the three roles,
-// each with your harness and model as its frontmatter, so the repository works the same for a
-// teammate, and the default flow. Each file is new, so no write follows a link.
-function writeAgents(root: string): void {
-  const write = (path: string, text: string) => {
-    const file = join(root, ".agents", path);
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, text, { flag: "wx" });
-  };
+// Returns the built-in .agents/ as sc init writes it, each file by its path inside .agents/: the
+// three roles, each with your harness and model as its frontmatter, so the repository works the
+// same for a teammate, and the default flow.
+function builtInAgents(): Map<string, string> {
+  const files = new Map<string, string>();
   for (const name of ["lead", "builder", "reviewer"] as const) {
     const lines = Object.entries(agentRole(name)).map(
       ([key, value]) => `${key}: ${yamlValue(value)}`,
     );
-    write(`roles/${name}.md`, `---\n${lines.join("\n")}\n---\n${builtInRole(name).instructions}`);
+    files.set(
+      join("roles", `${name}.md`),
+      `---\n${lines.join("\n")}\n---\n${builtInRole(name).instructions}`,
+    );
   }
-  write("flows/default.yaml", builtInFlowText);
+  files.set(join("flows", "default.yaml"), builtInFlowText);
+  return files;
+}
+
+// Writes the built-in .agents/ into the checkout at `root`, which has none. Each file is new, so no
+// write follows a link.
+function writeAgents(root: string): void {
+  for (const [path, text] of builtInAgents()) {
+    const file = join(root, ".agents", path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text, { flag: "wx" });
+  }
+}
+
+// Reports whether the .agents/ folder at `root` holds the built-in files alone, as sc init writes
+// them. A link counts as a file that differs.
+function holdsBuiltInAgents(root: string): boolean {
+  const folder = join(root, ".agents");
+  const expected = builtInAgents();
+  const found = readdirSync(folder, { recursive: true, encoding: "utf8" }).filter(
+    (path) => !lstatSync(join(folder, path)).isDirectory(),
+  );
+  return (
+    found.length === expected.size &&
+    found.every(
+      (path) =>
+        lstatSync(join(folder, path)).isFile() &&
+        readFileSync(join(folder, path), "utf8") === expected.get(path),
+    )
+  );
 }
 
 // Returns the top folder of the checkout you are in, or null outside one.
@@ -655,21 +665,12 @@ export function checkoutTop(): string | null {
   return top.success ? top.stdout.toString().trim() : null;
 }
 
-// Sets up the checkout you are in for Skelcrew, for sc init, with the standard setup every
-// repository shares: writes the starter skelcrew.yaml and the built-in .agents/ at its top,
-// leaving either as it is when there, names the forge's plugin and pins it in skelcrew.lock, then
-// adds the repository as sc repo add does. Setup and test stay commented examples, which the lead
-// proposes before anything else. The .agents/ it writes holds only the built-in defaults, so it is approved
-// as written, unless you already answered for the repository's .agents/: that answer stands, so
-// sc init on an old branch never swaps the roles new tasks start on. One that was there is shown
-// and asked about, as it may differ from the default branch. Stops
-// outside a git repository, and in one with no remote, as Skelcrew works from its own clone. That
-// clone is at the default branch, so it offers to commit and push the files there. `sessions`
-// names where the repository's lead runs. Returns whether it pushed them, so sc init can open the
-// lead, which reads the repository only as the default branch has it.
-export async function initRepo(sessions: string): Promise<boolean> {
-  // Stop before writing anything where the files couldn't count: outside a checkout, or in one
-  // with no remote for Skelcrew to clone.
+// Writes the standard setup every repository shares into the checkout you are in, for sc init:
+// the starter skelcrew.yaml and the built-in .agents/ at its top, leaving either as it is when
+// there, and names the forge's plugin, pinned in skelcrew.lock. It adds nothing to Skelcrew,
+// installs nothing and sets up nothing: that is sc install's job. Stops outside a git repository,
+// and in one with no remote, as the remote says which forge's plugin to name.
+export function initRepo(): void {
   const root = checkoutTop();
   if (root === null)
     throw new Error(
@@ -683,19 +684,7 @@ export async function initRepo(sessions: string): Promise<boolean> {
   // A new file is made only where none is, so the write never follows a link.
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  // Read before anything is written: changes of yours to a file sc init edits would ride along in
-  // the commit it offers, so they keep it from offering. Only the files it then wrote count.
-  // Each file is asked about on its own, so nothing has to be read back out of git's lines.
-  // .agents/ counts too: tracked files there you deleted come back as sc init writes it, and the
-  // commit would take the deletions and the new files alike.
-  const dirty = ["skelcrew.yaml", "skelcrew.lock", ".agents/"].filter(
-    // Untracked files are always listed, whatever status.showUntrackedFiles says, as a file of
-    // yours that git doesn't track yet holds changes of yours all the same.
-    (path) =>
-      gitIn(root, ["status", "--porcelain", "--untracked-files=all", "--", path]).said !== "",
-  );
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
-  // The forge's plugin is installed before the repository comes in, so it can claim the remote.
   const forge = addForgePlugin(root, remote);
   if (hasConfig)
     console.log(
@@ -706,143 +695,67 @@ export async function initRepo(sessions: string): Promise<boolean> {
   const hasAgents = lstatSync(join(root, ".agents"), { throwIfNoEntry: false }) !== undefined;
   if (!hasAgents) writeAgents(root);
   else console.log(".agents/ is there already, so Skelcrew left it as it is.");
-  // Bring the repository in. A repository you didn't trust isn't in, and gets no approval.
-  const isNew = repositoryAt(openDb(), remote) === undefined;
-  await addRepo(root, sessions);
-  const added = repositoryAt(openDb(), remote);
-  // Skelcrew reads only a folder of .agents/ with files in it. A link or a file at .agents counts
-  // as none, so there is nothing to approve.
-  // A tracked file whose edits aren't staged has two versions, and git commit takes one while
-  // git commit -a takes the other, so Skelcrew can't tell which to show you. It asks you to
-  // settle that first rather than approve the wrong one. A file staged and then deleted is such
-  // an edit too, so with none, a checkout without .agents/ tracks nothing there, and what sc init
-  // wrote is all a commit would hold.
-  const unstaged = !Bun.spawnSync(["git", "-C", root, "diff", "--quiet", "--", ".agents"]).success;
-  if (added && unstaged)
-    console.log(
-      ".agents/ has changes you haven't staged, so Skelcrew can't tell which version you'll commit. Stage or drop them, then run sc init again.",
-    );
-  const current =
-    added && !unstaged && lstatSync(join(root, ".agents")).isDirectory()
-      ? checkoutAgents(added, root)
-      : null;
-  if (added && current !== null) {
-    if (!hasAgents && !agentsAnswered(added)) approveAgents(added, current);
-    else if (!hasAgents)
-      console.log(
-        `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,
-      );
-    // A repository new to Skelcrew was asked about its default branch's .agents/ as it came in,
-    // so the checkout's is asked about only when it differs.
-    else if (!isNew || current !== agentsOnDefaultBranch(added))
-      askAboutAgents(added, added.name, current);
-  }
-  // Say what was written or changed, then offer to bring it to the default branch.
   const wrote = [
     hasConfig && forge === null ? null : "skelcrew.yaml",
     forge === "pinned" ? "skelcrew.lock" : null,
     hasAgents ? null : ".agents/",
   ].filter((name) => name !== null);
-  if (wrote.length === 0) return false;
-  const many = wrote.length > 1;
-  console.log(`\nWrote ${wrote.slice(0, -1).join(", ")}${many ? " and " : ""}${wrote.at(-1)}.`);
-  // A file of yours that sc init left as it was stays out of its commit, changes and all.
-  const touched = dirty.filter((path) => wrote.includes(path));
-  return added !== undefined && (await offerPush(openDb(), root, wrote, touched, added));
-}
-
-// Runs git in the checkout at `root` and returns whether it worked, with what it said.
-function gitIn(root: string, args: string[]): { ok: boolean; said: string } {
-  const run = Bun.spawnSync(["git", "-C", root, ...args], { stdout: "pipe", stderr: "pipe" });
-  return { ok: run.success, said: `${run.stdout}${run.stderr}`.trim() };
-}
-
-// Offers to commit the files sc init wrote, `files`, and push them to the repository's default
-// branch, as Skelcrew's lead and builders read the repository only as it is there. It is offered
-// only on the default branch, where a push brings them straight in, only while nothing else is
-// staged, so the commit is plainly sc init's alone, and only when `dirty`, the files sc init
-// edited that had changes of yours already, is empty, as the commit would take those changes too.
-// The commit names its files all the same, so nothing else ever joins it. Nor is it offered while
-// the branch isn't where the remote has it, as the push would send commits of yours too.
-// Otherwise, after a no, with no terminal to answer in, or when git fails, it shows the commands to run yourself.
-// On another branch they commit and push that branch, to merge into the default branch, as
-// switching to it can fail where it tracks a file sc init wrote here. Returns whether it pushed, once
-// Skelcrew's clone has the files too, so the lead opens on them.
-async function offerPush(
-  db: Database,
-  root: string,
-  files: string[],
-  dirty: string[],
-  repository: Repository,
-): Promise<boolean> {
-  const paths = files.map((file) => file.replace(/\/$/, ""));
-  const branch = gitIn(cloneDir(repository.owner, repository.repo), [
-    "symbolic-ref",
-    "--short",
-    "HEAD",
-  ]).said;
-  const head = gitIn(root, ["symbolic-ref", "--short", "HEAD"]);
-  const current = head.ok ? head.said : "";
-  // A checkout on no branch gets one first, which can't fail, so its commit has a branch to push.
-  const here = current || "skelcrew-setup";
-  // What to run yourself. The commit names its files, so other staged work stays out of it, and
-  // the push names its branch, which a branch with no upstream would need anyway.
-  const commit = `git commit -m "Set up Skelcrew" -- ${paths.join(" ")}`;
-  const push = `git push origin ${here}`;
-  const steps = [
-    ...(current ? [] : [`git switch -c ${here}`]),
-    `git add ${paths.join(" ")}`,
-    commit,
-    push,
-  ];
-  const show = (why: string, left = steps) => {
-    console.log(`${why}\n${toRun(left)}`);
+  if (wrote.length > 0) {
+    const many = wrote.length > 1;
+    console.log(`Wrote ${wrote.slice(0, -1).join(", ")}${many ? " and " : ""}${wrote.at(-1)}.`);
     console.log(
-      here === branch
-        ? "Then run sc."
-        : `Then merge ${here} into ${branch}, such as with a pull request, and run sc.`,
+      "Commit and push them once sc install is done, as Skelcrew's agents read them from your default branch.",
     );
-    return false;
-  };
-  const commitThem = `Skelcrew reads these files from ${branch}, so commit and push them there:`;
-  if (here !== branch)
-    return show(
-      `You are on ${current || "no branch"}, and Skelcrew reads these files from ${branch}. Once they are there, the lead uses them. To commit and push them:`,
+  }
+  console.log("Next: sc install");
+}
+
+// Adds the checkout you are in to Skelcrew, for sc install, when its skelcrew.yaml says it is a
+// repository for Skelcrew and Skelcrew doesn't have it yet, as sc repo add does. Then it approves
+// the checkout's .agents/ when it holds only the built-in files sc init writes, and shows and asks
+// about any other, as it may be on no default branch yet. An answer you gave already stands, so sc
+// install on an old branch never swaps the roles new tasks start on. `sessions` names where the
+// repository's lead runs.
+export async function installRepo(sessions: string): Promise<void> {
+  const root = checkoutTop();
+  if (
+    root === null ||
+    lstatSync(join(root, "skelcrew.yaml"), { throwIfNoEntry: false }) === undefined
+  )
+    return;
+  const remote = originHere(root);
+  if (!remote) {
+    console.log(
+      "This checkout has no remote, so Skelcrew didn't add it. Push it somewhere, such as to GitHub, then run sc install again.",
     );
-  if (!gitIn(root, ["diff", "--cached", "--quiet"]).ok)
-    return show(
-      `Other changes are staged here, so Skelcrew leaves the commit to you. The commit below names its files, so they stay out of it. ${commitThem}`,
+    return;
+  }
+  const isNew = repositoryAt(openDb(), remote) === undefined;
+  if (isNew) await addRepo(root, sessions);
+  // A repository you didn't trust isn't in, and gets no approval.
+  const added = repositoryAt(openDb(), remote);
+  // Skelcrew reads only a folder of .agents/ with files in it.
+  if (!added || !lstatSync(join(root, ".agents"), { throwIfNoEntry: false })?.isDirectory()) return;
+  // A tracked file whose edits aren't staged has two versions, and git commit takes one while
+  // git commit -a takes the other, so Skelcrew can't tell which to show you.
+  if (!Bun.spawnSync(["git", "-C", root, "diff", "--quiet", "--", ".agents"]).success) {
+    console.log(
+      ".agents/ has changes you haven't staged, so Skelcrew can't tell which version you'll commit. Stage or drop them, then run sc install again.",
     );
-  if (dirty.length > 0)
-    return show(
-      `${dirty.join(" and ")} had changes of yours already, which the commit would take too, so Skelcrew leaves it to you. ${commitThem}`,
+    return;
+  }
+  const current = checkoutAgents(added, root);
+  if (current === null || current === approvedAgents(added)) return;
+  const builtIn = holdsBuiltInAgents(root);
+  if (builtIn && !agentsAnswered(added)) approveAgents(added, current);
+  else if (builtIn)
+    console.log(
+      `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,
     );
-  if (!process.stdin.isTTY) return show(commitThem);
-  // The push takes every commit the branch has that the remote doesn't, so commits of yours not
-  // pushed yet would go out with it. The remote's branch is asked for, as the checkout's own
-  // record of it can be out of date.
-  const remoteHead = gitIn(root, ["ls-remote", "origin", `refs/heads/${branch}`]);
-  const ahead = gitIn(root, ["rev-parse", "HEAD"]).said !== remoteHead.said.split("\t")[0];
-  if (!remoteHead.ok || ahead)
-    return show(
-      `${branch} here isn't where it is on the remote, so a push would send commits of yours too, and Skelcrew leaves it to you. ${commitThem}`,
-    );
-  if (!askYes(`Commit and push these files to ${branch} now? [Y/n]`)) return show(commitThem);
-  // Each step stops at the first that fails, naming what git said and what is left to run.
-  const added = gitIn(root, ["add", "--", ...paths]);
-  if (!added.ok) return show(`git add failed: ${added.said}`);
-  const committed = gitIn(root, ["commit", "-q", "-m", "Set up Skelcrew", "--", ...paths]);
-  if (!committed.ok) return show(`git commit failed: ${committed.said}`, [commit, push]);
-  const pushed = gitIn(root, ["push", "-q", "origin", `HEAD:refs/heads/${branch}`]);
-  if (!pushed.ok)
-    return show(
-      `git push failed: ${pushed.said}\nThe lead only sees the files once they are pushed.`,
-      [push],
-    );
-  console.log(`Pushed them to ${branch}.`);
-  // The daemon refreshes the clone within a poll, which the lead opening now would beat.
-  await refreshClone(db, repository);
-  return true;
+  // A repository new to Skelcrew was asked about its default branch's .agents/ as it came in,
+  // so the checkout's is asked about only when it differs.
+  else if (!isNew || current !== agentsOnDefaultBranch(added))
+    askAboutAgents(added, added.name, current);
 }
 
 // Records your trust from outside the sandbox and brings in the repository: one Skelcrew has,

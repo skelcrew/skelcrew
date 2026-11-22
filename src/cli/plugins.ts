@@ -1,5 +1,6 @@
 // The commands for plugins: sc plugin adds, removes, updates and lists them and runs their setup,
-// and sc install sets up this machine and the plugins your files name.
+// and sc install sets up this machine and the plugins your files name, and adds the repository
+// you run it in.
 import { usage } from "./input.ts";
 
 export async function installCommand(args: string[]): Promise<void> {
@@ -15,7 +16,14 @@ export async function installCommand(args: string[]): Promise<void> {
     putSentFiles(files);
   }
   const { install } = await import("../machine/setup.ts");
-  if (!install(options.get("--from"))) process.exitCode = 1;
+  if (!install(options.get("--from"))) {
+    process.exitCode = 1;
+    return;
+  }
+  // On a server, the checkout is on your laptop, so only a run here adds a repository.
+  if (options.has("--from")) return;
+  const { installRepo } = await import("../flow/repo.ts");
+  await installRepo("skelcrew");
 }
 
 export async function pluginCommand(args: string[], json: boolean): Promise<void> {
