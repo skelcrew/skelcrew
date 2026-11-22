@@ -131,11 +131,16 @@ export async function claimOwnName(
   }
 }
 
+// Files a task in the backlog and returns its name, and whether an earlier filing whose answer
+// was lost had filed it already. Each try is noted until it is settled, so the same filing run
+// again finds it. `saved` keeps the name where the caller needs it, in the same step that drops
+// the note, so a stop between the two can never file it twice.
 export function fileTask(
   db: Database,
   repository: Repository,
   folder: string,
   given: { title: string; body: string; by: string },
+  saved: (task: string) => void = () => {},
 ): Promise<{ task: string; already: boolean }> {
   return inTurn(repository, async () => {
     const { owner, repo } = repository;
@@ -152,8 +157,15 @@ export function fileTask(
       .map((row) => z.object({ task: z.string(), claim_commit: z.string() }).parse(row));
     for (const note of notes) {
       const holds = await claimedAt(db, repository, note.task);
-      forget(note.claim_commit);
-      if (holds === note.claim_commit) return { task: note.task, already: true };
+      if (holds !== note.claim_commit) {
+        forget(note.claim_commit);
+        continue;
+      }
+      db.transaction(() => {
+        saved(note.task);
+        forget(note.claim_commit);
+      })();
+      return { task: note.task, already: true };
     }
     const kept = { ...given, created: new Date().toISOString() };
     const tried: string[] = [];
@@ -166,7 +178,10 @@ export function fileTask(
       );
     };
     const task = await claimOwnName(db, repository, folder, JSON.stringify(kept), note);
-    for (const commit of tried) forget(commit);
+    db.transaction(() => {
+      saved(task);
+      for (const commit of tried) forget(commit);
+    })();
     return { task, already: false };
   });
 }
@@ -174,9 +189,9 @@ export function fileTask(
 // Files what the thread's latest review found that didn't block as one task of the backlog, once
 // its work merged, so none is lost with the thread. `merged` names what merged, such as #7 and
 // its link. Returns what the lead's note adds about it, or nothing when the latest review found
-// none, as they were all fixed. It files once: the task's name is saved on the thread, and a task
-// filed but not yet saved is found again in the daemon's copy by its last line. A task that can't
-// be filed is said in the note instead, so the lead can file it.
+// none, as they were all fixed. It files once: the task's name is saved on the thread as the
+// filing is settled, and a filing cut short is found again by its words. A task that can't be
+// filed is said in the note instead, so the lead can file it.
 export async function fileNotBlocking(
   db: Database,
   thread: Thread,
@@ -193,17 +208,17 @@ export async function fileNotBlocking(
   const title = `Not-blocking findings from ${merged.name}'s review`;
   const body = `Skelcrew's reviewer found these in ${merged.name} and didn't let them block it, so they wait here:\n\n${listed}\n\n${from}`;
   try {
-    const { owner, repo } = repository;
-    const filed =
-      backlogOf(db, owner, repo).find((task) => task.body.endsWith(from))?.task ??
-      (await fileTask(db, repository, cloneDir(owner, repo), { title, body, by: "skelcrew" })).task;
-    record(
-      db,
-      thread.folder,
-      { not_blocking_task: filed },
-      `filed its review's not-blocking findings as ${named(filed)}`,
-    );
-    return ` Its not-blocking findings are in ${named(filed)}.`;
+    const saved = (task: string) =>
+      record(
+        db,
+        thread.folder,
+        { not_blocking_task: task },
+        `filed its review's not-blocking findings as ${named(task)}`,
+      );
+    const clone = cloneDir(repository.owner, repository.repo);
+    const given = { title, body, by: "skelcrew" };
+    const { task } = await fileTask(db, repository, clone, given, saved);
+    return ` Its not-blocking findings are in ${named(task)}.`;
   } catch (error) {
     console.log(
       `${threadName(db, thread)}: couldn't file its not-blocking findings: ${errorText(error)}`,

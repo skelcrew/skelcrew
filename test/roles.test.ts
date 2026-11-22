@@ -372,7 +372,7 @@ ${strictBlocking}`;
 }
 
 // What the reviewer is told of which findings block, in the flow's strict rounds.
-const strictBlocking = `Give each finding a severity and say whether it blocks. P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done. A failing check is a P1, and so is a change that breaks something the task says must stay true. Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or P3.
+const strictBlocking = `Give each finding a severity and say whether it blocks. P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done. A failing check is a P1, and so is a change that breaks something the task says must stay true. Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below, down to P4.
 
 Only a P1 can block. A P1 blocks whether the change brings it or the base branch already has it. Every other finding doesn't block: the PR can merge with it, and Skelcrew files it for later.
 
