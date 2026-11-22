@@ -960,9 +960,9 @@ console.log(await startOrMerge({ command: "pick", repo: "simon/app", task: "12",
     // At the round limit, going on decides it, as sc start does, and stopping stops the builder,
     // as sc stop does.
     const atLimit = () =>
-      sql(`UPDATE tasks SET round_log = NULL, rounds = 3, verdict = 'changes', held = 'Fix it.', review_findings = NULL;
+      sql(`UPDATE tasks SET round_log = NULL, rounds = 4, verdict = 'changes', held = 'Fix it.', review_findings = NULL;
 UPDATE threads SET erred = 0, asking = 0, turn_ended = 0, needs_you = 1, limit_decided = 0, handed = NULL WHERE folder = 'app-12'`);
-    const limit = ["Review still wants changes after 3 rounds", "The latest review asks:"] as const;
+    const limit = ["Review still wants changes after 4 rounds", "The latest review asks:"] as const;
     atLimit();
     expect((await skel(["show", "app-12"])).out).toContain(limit[0]);
     expect(pick(...limit, "a")).toContain("APP-12 goes on past the round limit.");

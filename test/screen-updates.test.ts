@@ -104,8 +104,11 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(1500);
   const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
-  expect(sent).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
-  expect(sent.length).toBeLessThan(1000);
+  // Each turn sends its cell and little else, however many turns fall in the time watched: about
+  // 175 bytes with tmux's own codes, where a redraw of the screen would send thousands.
+  const turns = sent.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g)?.length ?? 0;
+  expect(turns).toBeGreaterThan(0);
+  expect(sent.length / turns).toBeLessThan(250);
 });
 
 test("over sc --remote the lead at work shows a still mark, and the screen sends nothing", async () => {
