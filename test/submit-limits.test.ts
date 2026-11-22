@@ -3,6 +3,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import { join } from "node:path";
 import { answer, asked, git, insideSandbox, read, source, until as waitFor } from "./harness.ts";
 import {
@@ -425,6 +426,55 @@ done`,
     await waitFor(() => holds("APP-12/builder"), { timeout: 30_000 });
     // Its session ends with no word to Skelcrew, and the thread still waits.
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
+    expect(check.exitCode).toBeNull();
+    expect(read(join(home, "daemon.log"))).toContain(
+      "APP-12/builder gave back a check slot in simon/app: its builder has ended",
+    );
+  }, 90_000);
+
+  test("a builder's check slot is given back once its thread is removed, though its sc check runs on", async () => {
+    addApp();
+    config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    await startApp12();
+    await until(() => thread().status === "waiting", 30_000);
+    const check = checkOn(builderSocket());
+    await waitFor(() => holds("APP-12/builder"), { timeout: 30_000 });
+    expect((await skel(["rm", "app-12", "--keep-issue"])).err).toBe("");
+    await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
+    expect(check.exitCode).toBeNull();
+    expect(read(join(home, "daemon.log"))).toContain(
+      "APP-12/builder gave back a check slot in simon/app: its builder has ended",
+    );
+  }, 90_000);
+
+  test("a builder restarted while its sc check runs on gives the old builder's slot back", async () => {
+    addApp();
+    config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    await startApp12();
+    await until(() => thread().status === "waiting", 30_000);
+    const check = checkOn(builderSocket());
+    await waitFor(() => holds("APP-12/builder"), { timeout: 30_000 });
+    // The new builder runs in a session of the same name, and must not keep the old one's slot.
+    const restarted = await new Promise<string>((done) => {
+      const connection = createConnection(join(home, "run", "skelcrew.sock"));
+      let reply = "";
+      connection.on("error", () => {});
+      connection.on("connect", () =>
+        connection.write(
+          `${JSON.stringify({ command: "restart", repo: "simon/app", task: "12" })}\n`,
+        ),
+      );
+      connection.on("data", (data) => {
+        reply += data.toString();
+      });
+      connection.on("close", () => done(reply));
+    });
+    expect(restarted).toContain("Restarted APP-12's builder.");
     await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
     expect(check.exitCode).toBeNull();
     expect(read(join(home, "daemon.log"))).toContain(

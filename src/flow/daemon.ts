@@ -38,6 +38,7 @@ import { assignIssue } from "./assign.ts";
 import { filedTask, fileTask, unfileTask } from "./backlog.ts";
 import {
   bringBack,
+  builderStartOf,
   endEarlierBuilder,
   failThread,
   refuseSecondBuilder,
@@ -1107,14 +1108,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       const holder =
         thread === null ? "you" : `${threadName(db, thread)}/${reviewer ? "reviewer" : "builder"}`;
       const review = reviewer ? reviewOn(reviewSocket(reviewer.folder)) : null;
+      const start = thread === null ? null : builderStartOf(thread.folder);
       const runs = async () => {
         if (thread === null) return true;
         if (reviewer) return review !== null && reviewOn(reviewSocket(reviewer.folder)) === review;
         const live = db
           .query("SELECT 1 FROM task_threads WHERE folder = ? AND status IN ('working', 'waiting')")
           .get(thread.folder);
+        if (live === null || builderStartOf(thread.folder) !== start) return false;
         const now = readThread(db, thread.folder);
-        if (live === null || now.host === null) return false;
+        if (now.host === null) return false;
         const { host, id } = await builderSession(db, sessions, now);
         return agentRuns(host, id);
       };

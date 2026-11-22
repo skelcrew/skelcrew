@@ -579,6 +579,14 @@ export function startOnHost(
   return supervisor(thread.folder).start({ start: () => startSessionOn(db, thread, on, session) });
 }
 
+const builderStarts = new Map<string, number>();
+let buildersStarted = 0;
+
+// Returns which start of the thread's builder is the latest, by a number of its own, or null
+// when none started since the daemon did. So a check slot a builder took is given back once
+// that builder has ended, even when a new one runs in a session of the same name.
+export const builderStartOf = (folder: string) => builderStarts.get(folder) ?? null;
+
 async function startSessionOn(
   db: Database,
   thread: Thread,
@@ -597,6 +605,7 @@ async function startSessionOn(
     title,
   };
   record(db, thread.folder, { host: on.name, host_id: null });
+  builderStarts.set(thread.folder, ++buildersStarted);
   const id = await startSession(on.host, thread.folder, { ...session, labels });
   forgetStatus(on.name, id);
   record(db, thread.folder, { host_id: id });
