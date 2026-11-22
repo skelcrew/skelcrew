@@ -1137,6 +1137,28 @@ test("a repository can't name a runtime plugin", async () => {
   expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
 });
 
+test("a repository can't name a notifier, as it reaches you", async () => {
+  const folder = onGitHub("skelcrew/skelcrew-email");
+  fakePlugin(folder, "0.1.0");
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace("provides: [tracker, forge]", "provides: [notifier]"),
+  );
+  git(folder, "init", "-q", "-b", "main");
+  git(folder, "add", ".");
+  git(folder, "commit", "-q", "-m", "0.1.0");
+  git(folder, "tag", "v0.1.0");
+  const app = appCheckout();
+  const added = await skel(["plugin", "add", "skelcrew/skelcrew-email"], "y\n", "", {}, app);
+  expect(added.code).toBe(1);
+  expect(added.out).not.toContain("[Y/n]");
+  expect(added.err).toContain(
+    "fake is a notifier, which reaches you, so it is always yours and never a repository's. sc plugin add -g adds it as yours",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+});
+
 // The files and the machine change together, so an add whose files can't be written takes back
 // the plugin it installed.
 test("sc plugin add without -g removes the plugin it installed when the repository's files can't be written", async () => {

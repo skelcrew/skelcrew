@@ -46,35 +46,43 @@ export function queueNotification(
   via = routeOf(type),
 ): boolean {
   if (via === null) return false;
-  db.run("DELETE FROM notifications WHERE queued < ? AND state != 'waiting'", [now - kept]);
-  const recent = z
-    .object({ n: z.number() })
-    .parse(
-      db
-        .query("SELECT COUNT(*) AS n FROM notifications WHERE type = ? AND queued >= ?")
-        .get(type, now - hour),
-    ).n;
-  if (recent >= perHour[type]) {
-    console.log(
-      `dropped a ${type} message, as at most ${perHour[type]} go each hour: ${removeControlCodes(message.title)}`,
-    );
-    return false;
-  }
+  const body =
+    message.body.length > bodyLimit
+      ? `${message.body.slice(0, bodyLimit)}\n… cut short: sc ls shows the rest`
+      : message.body;
+  save(db, type, { ...message, body }, via, "waiting", now);
+  return true;
+}
+
+function save(
+  db: Database,
+  type: MessageType,
+  message: Message,
+  via: string,
+  state: "waiting" | "sending",
+  now: number,
+): number {
+  db.run(
+    `DELETE FROM notifications WHERE queued < ? AND state NOT IN ('waiting', 'sending')
+      AND id IS NOT (SELECT MAX(id) FROM notifications WHERE type = 'digest')`,
+    [now - kept],
+  );
   const clean = {
     title: removeControlCodes(message.title).trim(),
-    body: message.body.split(/\r?\n/).map(removeControlCodes).join("\n").slice(0, bodyLimit),
+    body: message.body.split(/\r?\n/).map(removeControlCodes).join("\n"),
     links: message.links.map((link) => ({
       name: removeControlCodes(link.name),
       url: removeControlCodes(link.url),
     })),
   };
-  db.run("INSERT INTO notifications (type, message, queued, via) VALUES (?, ?, ?, ?)", [
+  db.run("INSERT INTO notifications (type, message, queued, via, state) VALUES (?, ?, ?, ?, ?)", [
     type,
     JSON.stringify(clean),
     now,
     via,
+    state,
   ]);
-  return true;
+  return z.object({ id: z.number() }).parse(db.query("SELECT last_insert_rowid() AS id").get()).id;
 }
 
 let sending = false;
@@ -84,36 +92,49 @@ export async function sendNotifications(db: Database): Promise<void> {
   sending = true;
   try {
     const waiting = z
-      .array(z.object({ id: z.number(), type: MessageType, message: z.string(), via: z.string() }))
-      .parse(
-        db
-          .query(
-            "SELECT id, type, message, via FROM notifications WHERE state = 'waiting' ORDER BY id",
-          )
-          .all(),
-      );
-    for (const { id, type, message, via } of waiting) {
-      const state = await send(db, via, type, message);
-      db.run("UPDATE notifications SET state = ? WHERE id = ?", [state, id]);
-    }
+      .array(z.object({ id: z.number() }))
+      .parse(db.query("SELECT id FROM notifications WHERE state = 'waiting' ORDER BY id").all());
+    for (const { id } of waiting) await deliver(db, id);
   } finally {
     sending = false;
   }
 }
 
-async function send(
-  db: Database,
-  route: string,
-  type: MessageType,
-  saved: string,
-): Promise<"sent" | "failed"> {
+async function deliver(db: Database, id: number): Promise<string | null> {
+  const row = z
+    .object({ type: MessageType, message: z.string(), via: z.string() })
+    .parse(db.query("SELECT type, message, via FROM notifications WHERE id = ?").get(id));
+  const { type, via } = row;
+  const message = Message.parse(JSON.parse(row.message));
+  const sent = z
+    .object({ n: z.number() })
+    .parse(
+      db
+        .query(
+          "SELECT COUNT(*) AS n FROM notifications WHERE type = ? AND state = 'sent' AND sent >= ?",
+        )
+        .get(type, Date.now() - hour),
+    ).n;
+  const end = (state: string, error: string | null) => {
+    db.run("UPDATE notifications SET state = ?, sent = ? WHERE id = ?", [
+      state,
+      state === "sent" ? Date.now() : null,
+      id,
+    ]);
+    return error;
+  };
+  if (sent >= perHour[type]) {
+    console.log(
+      `dropped a ${type} message, as at most ${perHour[type]} go each hour: ${message.title}`,
+    );
+    return end("dropped", `at most ${perHour[type]} such messages go each hour: try again later`);
+  }
   try {
-    const message = Message.parse(JSON.parse(saved));
-    await callPlugin(db, route, { ask: "notify", type, ...message }, z.null());
-    return "sent";
+    await callPlugin(db, via, { ask: "notify", type, ...message }, z.null());
+    return end("sent", null);
   } catch (error) {
-    console.log(`couldn't send a ${type} message through ${route}: ${errorText(error)}`);
-    return "failed";
+    console.log(`couldn't send a ${type} message through ${via}: ${errorText(error)}`);
+    return end("failed", errorText(error));
   }
 }
 
@@ -143,16 +164,16 @@ export function noticeNeedsYou(db: Database, thread: Thread): void {
   });
 }
 
-export function queueAsked(
+export async function sendAsked(
   db: Database,
   asked: { subject: string; text: string; words: string | undefined; via: string },
-): string {
+): Promise<string> {
   if (!asked.words?.trim())
     throw new Error(
       "sc notify sends the human a message only when they ask for one: write their words exactly to a file with your file-writing tool and add --asked-file <file>",
     );
-  if (!pluginsWithJob(db, "notifier").includes(asked.via)) {
-    const notifiers = pluginsWithJob(db, "notifier");
+  const notifiers = pluginsWithJob(db, "notifier");
+  if (!notifiers.includes(asked.via)) {
     const have =
       notifiers.length === 0
         ? "none is installed"
@@ -161,17 +182,24 @@ export function queueAsked(
       `${asked.via} isn't an installed notifier, so it can't reach the human: ${have}. The human adds one with sc plugin add -g`,
     );
   }
+  if (asked.text.length > bodyLimit)
+    throw new Error(
+      `the message is ${asked.text.length} characters, and one holds at most ${bodyLimit}: shorten it`,
+    );
   const message = { title: asked.subject, body: asked.text, links: [] };
-  if (!queueNotification(db, "asked", message, Date.now(), asked.via))
-    throw new Error(`at most ${perHour.asked} such messages go each hour: try again later`);
-  return `Sending "${removeControlCodes(asked.subject)}" to the human through ${asked.via}.`;
+  const id = save(db, "asked", message, asked.via, "sending", Date.now());
+  const error = await deliver(db, id);
+  if (error !== null) throw new Error(`${asked.via} didn't send it: ${error}`);
+  return `Sent "${removeControlCodes(asked.subject).trim()}" to the human through ${asked.via}.`;
 }
 
 export function digestDue(now: Date, at: string, last: number | null): boolean {
   const [hours = 0, minutes = 0] = at.split(":").map(Number);
-  const today = new Date(now);
-  today.setHours(hours, minutes, 0, 0);
-  return now.getTime() >= today.getTime() && (last === null || last < today.getTime());
+  const slot = new Date(now);
+  slot.setHours(hours, minutes, 0, 0);
+  if (last === null) return now >= slot;
+  if (now < slot) slot.setDate(slot.getDate() - 1);
+  return last < slot.getTime();
 }
 
 const sectionLimit = 20;

@@ -374,10 +374,14 @@ export function refuseOtherName(manifest: Manifest, called: string | undefined):
     );
 }
 
-export function refuseRuntime(manifest: Manifest, io: boolean | undefined): void {
+export function refusePersonal(manifest: Manifest, io: boolean | undefined): void {
   if (io && manifest.kind === "runtime")
     throw new Error(
       `${manifest.name} is a runtime plugin, which is always yours and never a repository's. sc plugin add -g adds it as yours`,
+    );
+  if (io && manifest.provides.includes("notifier"))
+    throw new Error(
+      `${manifest.name} is a notifier, which reaches you, so it is always yours and never a repository's. sc plugin add -g adds it as yours`,
     );
 }
 
@@ -429,7 +433,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       throw new OnlyReachesMachines(manifest.name);
     refuseInstalled(db, manifest.name, io);
     checkSkelcrewVersion(manifest);
-    refuseRuntime(manifest, io);
+    refusePersonal(manifest, io);
     refuseOtherName(manifest, called);
     const answer = ask ? confirmPlugin(manifest, given, "Install", shown) : true;
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
@@ -525,7 +529,7 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     if (manifest.name !== name)
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
     checkSkelcrewVersion(manifest);
-    refuseRuntime(manifest, io);
+    refusePersonal(manifest, io);
     refuseOtherName(manifest, called);
     const answer = ask ? confirmPlugin(manifest, source, "Update") : true;
     if (answer === null) throw unanswered(`updating ${name}`);

@@ -43,7 +43,7 @@ test("needs-you and the digest go where your config routes them, and the lead's 
   const email = fakePlugin(home, "email", ["notifier"]);
   config("notify:\n  needs-you: push\n");
   run(`record(db, "app-12", { needs_you_for: "apply the fix in #7" }, "the lead marked it");
-notify.queueAsked(db, { subject: "Status", text: "All green.", words: "email me the status", via: "email" });
+await notify.sendAsked(db, { subject: "Status", text: "All green.", words: "email me the status", via: "email" });
 console.log(notify.queueNotification(db, "digest", { title: "d", body: "", links: [] }));
 await notify.sendNotifications(db);`);
   expect(messages(push)).toEqual([
@@ -77,14 +77,15 @@ await notify.sendNotifications(db);`);
   ]);
 });
 
-test("each type has a limit an hour, and the log says when a message is dropped", () => {
+test("each type has a limit an hour of what it delivers, and the log says when a message is dropped", () => {
   const push = fakePlugin(home, "push", ["notifier"]);
   config("notify:\n  needs-you: push\n");
-  const out = run(`for (let i = 0; i < 12; i++)
-  notify.queueNotification(db, "needs-you", { title: "APP-" + i + " needs you", body: "x", links: [] });
+  const out = run(`const hoursAgo = Date.now() - 3 * 3600 * 1000;
+for (let i = 0; i < 12; i++)
+  notify.queueNotification(db, "needs-you", { title: "APP-" + i + " needs you", body: "x", links: [] }, hoursAgo);
 for (let i = 0; i < 6; i++)
   try {
-    notify.queueAsked(db, { subject: "s" + i, text: "t", words: "email me", via: "push" });
+    await notify.sendAsked(db, { subject: "s" + i, text: "t", words: "email me", via: "push" });
   } catch (error) {
     console.log("refused: " + error.message);
   }
@@ -94,19 +95,19 @@ await notify.sendNotifications(db);`);
   expect(out).toContain(
     "dropped a needs-you message, as at most 10 go each hour: APP-10 needs you",
   );
-  expect(out).toContain("refused: at most 5 such messages go each hour");
+  expect(out).toContain("refused: push didn't send it: at most 5 such messages go each hour");
 });
 
 test("the lead's message is refused without the human's words, or through a notifier that isn't installed", async () => {
   const email = fakePlugin(home, "email", ["notifier"]);
   const out = run(`for (const words of [undefined, "  \\n"])
   try {
-    notify.queueAsked(db, { subject: "Status", text: "All green.", words, via: "email" });
+    await notify.sendAsked(db, { subject: "Status", text: "All green.", words, via: "email" });
   } catch (error) {
     console.log(error.message);
   }
 try {
-  notify.queueAsked(db, { subject: "Status", text: "All green.", words: "text me", via: "push" });
+  await notify.sendAsked(db, { subject: "Status", text: "All green.", words: "text me", via: "push" });
 } catch (error) {
   console.log(error.message);
 }
@@ -120,6 +121,28 @@ await notify.sendNotifications(db);`);
   const bare = await runSkel(["notify", "--via", "email", "Status", "All green."], env);
   expect(bare.code).toBe(1);
   expect(bare.err).toContain("sc notify was given arguments it doesn't take");
+});
+
+test("the lead hears when its message wasn't sent, or is too long to send whole", () => {
+  const email = fakePlugin(home, "email", ["notifier"]);
+  writeFileSync(join(email, "fail-notify"), "the mail server refused the login");
+  const out = run(`for (const text of ["All green.", "x".repeat(4001)])
+  try {
+    await notify.sendAsked(db, { subject: "Status", text, words: "email me", via: "email" });
+  } catch (error) {
+    console.log(error.message);
+  }`);
+  expect(out).toContain("email didn't send it: email failed: the mail server refused the login");
+  expect(out).toContain("the message is 4001 characters, and one holds at most 4000: shorten it");
+});
+
+test("a needs-you message or digest too long to send whole says it was cut short", () => {
+  const push = fakePlugin(home, "push", ["notifier"]);
+  config("notify:\n  needs-you: push\n");
+  run(`notify.queueNotification(db, "needs-you", { title: "t", body: "x".repeat(5000), links: [] });
+await notify.sendNotifications(db);`);
+  const [message] = messages(push);
+  expect(message?.body).toBe(`${"x".repeat(4000)}\n… cut short: sc ls shows the rest`);
 });
 
 test("a route to a plugin that isn't a notifier, or isn't installed, shows in sc repo ls", async () => {
@@ -136,7 +159,7 @@ test("a route to a plugin that isn't a notifier, or isn't installed, shows in sc
 
 test("a control character never reaches a notifier", () => {
   const push = fakePlugin(home, "push", ["notifier"]);
-  run(`notify.queueAsked(db, { subject: "St\\u001b[2Jatus\\n", text: "one\\nt\\u0007wo", words: "email me", via: "push" });
+  run(`await notify.sendAsked(db, { subject: "St\\u001b[2Jatus\\n", text: "one\\nt\\u0007wo", words: "email me", via: "push" });
 await notify.sendNotifications(db);`);
   expect(messages(push)).toEqual([
     { ask: "notify", type: "asked", title: "St [2Jatus", body: "one\nt wo", links: [] },
@@ -181,6 +204,20 @@ Backlog:
     expect(JSON.stringify(digest)).not.toContain(text);
 });
 
+test("the digest lists what merged since the last one, however long ago it went", () => {
+  const email = fakePlugin(home, "email", ["notifier"]);
+  config("notify:\n  digest: email\n  needs-you: email\n  digest_at: '00:00'\n");
+  const day = 24 * 3600 * 1000;
+  const sql = threadSql({ task: "13", status: "done", merged: 1, changed: Date.now() - 4 * day });
+  run(`db.run(\`${sql}\`);
+db.run("INSERT INTO notifications (type, message, queued, state, via) VALUES ('digest', '{}', ?, 'sent', 'email')", [Date.now() - 5 * 24 * 3600 * 1000]);
+notify.queueNotification(db, "needs-you", { title: "t", body: "b", links: [] });
+notify.queueDigest(db);
+await notify.sendNotifications(db);`);
+  const digest = messages(email).find((m) => m.type === "digest");
+  expect(digest?.body).toContain("APP-13 · merged");
+});
+
 test("the digest goes once a day, at the time your config sets or else at 08:00", () => {
   const at = (day: number, time: string) => new Date(`2026-11-${day}T${time}:00`);
   expect(digestDue(at(22, "07:59"), "08:00", null)).toBe(false);
@@ -189,6 +226,7 @@ test("the digest goes once a day, at the time your config sets or else at 08:00"
   expect(digestDue(at(23, "08:01"), "08:00", at(22, "08:00").getTime())).toBe(true);
   expect(digestDue(at(23, "07:30"), "08:00", at(22, "08:00").getTime())).toBe(false);
   expect(digestDue(at(23, "15:00"), "08:00", at(21, "08:00").getTime())).toBe(true);
+  expect(digestDue(at(23, "07:00"), "08:00", at(21, "08:00").getTime())).toBe(true);
   const email = fakePlugin(home, "email", ["notifier"]);
   config("notify:\n  digest: email\n  digest_at: '21:30'\n");
   run(`notify.queueDigest(db, new Date("2026-11-22T21:00:00"));

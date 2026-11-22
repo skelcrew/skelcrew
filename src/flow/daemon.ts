@@ -79,7 +79,7 @@ import {
   noteForLead,
   typeLeadNotes,
 } from "./messages.ts";
-import { queueAsked, queueDigest, sendNotifications } from "./notify.ts";
+import { queueDigest, sendAsked, sendNotifications } from "./notify.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -966,11 +966,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { told: "lead" };
       case "notify": {
         const { subject, text, asked: words, via } = request;
-        const said = queueAsked(db, { subject, text, words, via });
-        sendNotifications(db).catch((error) =>
-          console.log(`couldn't send messages: ${errorText(error)}`),
-        );
-        return { said };
+        return { said: await sendAsked(db, { subject, text, words, via }) };
       }
       case "brief lead": {
         // Only you bring a repository in, in your own terminal, so the lead is told how to ask.

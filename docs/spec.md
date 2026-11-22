@@ -512,7 +512,7 @@ A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at 
 
 Messages and the sandbox stay in core, between the two. Work comes in through an I/O plugin, becomes a message, and reaches an agent through the runtime. No plugin can provide messages or the sandbox, so the rules about who may reach whom, and what an agent can touch, are Skelcrew's on every setup. Harnesses are never plugins: each is built into Skelcrew, one module per harness, because that module draws the sandbox boundary.
 
-A runtime plugin is always personal, added with `sc plugin add -g`, since how you run and watch your agents is yours. So is a notifier, as it reaches you. Any other I/O plugin is usually the repository's, in `plugins:`.
+A runtime plugin is always personal, added with `sc plugin add -g`, since how you run and watch your agents is yours. So is a notifier, as it reaches you, and a repository's files can't name one. Any other I/O plugin is usually the repository's, in `plugins:`.
 
 ### The manifest
 
@@ -571,10 +571,10 @@ A notifier reaches you while you are away, such as by email or a push to your ph
 Your `notify:` names the notifier for needs-you messages and for the digest, and one with no notifier isn't sent. `sc repo ls` says when it names a plugin that isn't installed or isn't a notifier. There are three types:
 
 - **needs-you**, when a thread starts needing you, from the same events as the lead's note. It goes once per mark, never again while that mark stands.
-- **digest**, once a day at `digest_at`, 08:00 local time by default, or once the daemon is back if it was off then. For each repository it lists what merged since the last one, what waits on you, what is under way and the backlog.
-- **asked**, which the lead sends with `sc notify --via <notifier> "<subject>" "<text>"`, only when you ask it to, with your exact words in `--asked-file`, through the notifier you asked for, such as email or push. Without your words, or with no such notifier installed, it is refused.
+- **digest**, once a day at `digest_at`, 08:00 local time by default, or once the daemon is back if it was off then, even before that day's time. For each repository it lists what merged since the last one, what waits on you, what is under way and the backlog.
+- **asked**, which the lead sends with `sc notify --via <notifier> "<subject>" "<text>"`, only when you ask it to, with your exact words in `--asked-file`, through the notifier you asked for, such as email or push. Without your words, or with no such notifier installed, it is refused. `sc notify` answers once the notifier delivered it, or with why it couldn't.
 
-At most 10 needs-you, 5 asked and 2 digest messages go each hour. One past its limit is dropped, and the daemon's log says so. Text from a tracker or forge goes in only as names, states and links, never a title or body, so nothing written there can ride along. Control characters are removed from all of it.
+At most 10 needs-you, 5 asked and 2 digest messages are delivered each hour, counted when they are delivered, so a notifier that was slow can't send a backlog at once. One past its limit is dropped, and the daemon's log says so. A body holds at most 4000 characters: a longer needs-you message or digest says it was cut short, and a longer asked message is refused. Text from a tracker or forge goes in only as names, states and links, never a title or body, so nothing written there can ride along. Control characters are removed from all of it.
 
 ### GitHub
 
