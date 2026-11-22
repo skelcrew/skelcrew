@@ -209,7 +209,7 @@ const builderOf = (caller: Caller): Thread | null =>
 const leadOfCaller = (caller: Caller) =>
   caller !== "you" && "lead" in caller ? caller.lead : null;
 
-// Returns a task of the repository's backlog, with its name, such as APP-T104, or null when the
+// Returns a task of the repository's backlog, with its name, such as APP-104, or null when the
 // backlog has no task of that ID or a thread works on it, for sc rm.
 function filedOn(db: Database, repository: string, task: string) {
   const { owner, repo, name } = findRepository(db, repository);
