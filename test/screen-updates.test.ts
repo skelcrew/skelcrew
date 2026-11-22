@@ -86,9 +86,11 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   expect(readFileSync(written, "utf8")).toBe("");
 });
 
-// What a turn leaves once the codes that only move the cursor, set colours or the scroll region,
-// or set modes that change no cell, are taken out: synchronized updates, the cursor's blink and
-// visibility, and mouse reports. Any other code stays, as does any other text.
+// What a turn leaves once the codes that change no cell are taken out: cursor moves (A to D, G, H,
+// f, d), colours (m) and the markers of a synchronized update (?2026). tmux adds the rest to every
+// turn, and none of them draws: ?12 and ?25 set the cursor's blink and visibility, ?1000, ?1002,
+// ?1003 and ?1006 set how the mouse reports, r sets the scroll region without scrolling, and ( B
+// picks the plain character set for what comes next. Any other code stays, as does any other text.
 function shownBy(turn: string): string {
   const esc = "\x1b";
   const kept = `${esc}(\\[[0-9;]*[ABCDGHfdmr]|\\[\\?(2026|12|25|1000|1002|1003|1006)[hl]|\\(B)`;
