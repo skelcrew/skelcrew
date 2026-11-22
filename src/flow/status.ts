@@ -32,15 +32,16 @@ import {
 export type Status = "working" | "idle" | "needs you" | "ready" | "error";
 
 // Returns whether Skelcrew sees itself that the thread needs you: its builder's host plugin is
-// missing, its builder asked with its harness's question tool, its harness stopped on an error, or
-// its flag is up, such as for an approval with green checks or the round limit. A merge you armed
-// decides an approval, and arming one or sc start decides the latest review's round limit, so
-// neither needs you then. A usage limit isn't one, as the builder is woken once it resets. Nor is
-// a review that failed, which the lead can run again, nor a builder that stopped without
-// submitting, whose words went to the lead. The lead's items are apart, in the inbox.
+// missing, its builder asked with its harness's question tool, stopped without submitting, or its
+// harness stopped on an error, or its flag is up, such as for an approval with green checks or the
+// round limit. A merge you armed decides an approval, and arming one or sc start decides the
+// latest review's round limit, so neither needs you then. A usage limit isn't one, as the builder
+// is woken once it resets. Nor is a review that failed, which the lead can run again. The lead's
+// items are apart, in the inbox.
 export const needsYou = (thread: Thread) =>
   thread.needs_you_for !== null ||
   thread.asking ||
+  (thread.turn_ended && (thread.status === "working" || thread.status === "waiting")) ||
   (thread.erred && !thread.limited) ||
   (thread.needs_you && !decided(thread));
 
@@ -452,9 +453,10 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (roundOf(thread).review_failed && verdict === "timed out" && !underWay)
     return "review timed out";
   if (roundOf(thread).review_failed) return "review failed";
-  if (needsYou(thread)) return "needs you";
-  // Not needing you: a builder that stopped without submitting waits on the lead, who got its
-  // last message. Its word doesn't claim a question, as it may be only a reply.
+  // A builder that stopped without submitting needs you while the lead reads its last message,
+  // but anything else it needs you for says so first. Its word doesn't claim a question, as it
+  // may be only a reply.
+  if (needsYou({ ...thread, turn_ended: false })) return "needs you";
   if (thread.turn_ended) return "turn ended";
   // Not needing you: a builder or a review waiting out a usage limit says until when.
   const limitWord = (reset: number | null) =>
@@ -529,8 +531,14 @@ export function turnEnded(
       record(db, folder, { status: "waiting" }, replied);
     return;
   }
+  // The lead has the builder's own words already, so it gets no note that the thread needs you.
   if (!thread.turn_ended)
-    record(db, folder, { turn_ended: true }, "its builder stopped without submitting");
+    record(
+      db,
+      folder,
+      { turn_ended: true, noting: thread.noting },
+      "its builder stopped without submitting",
+    );
 }
 
 // The builder's turn ended on an error, from Claude Code's StopFailure hook, with the kind of

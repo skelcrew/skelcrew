@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { backlogOf } from "./backlog.ts";
+import { openTasks } from "./copy.ts";
 import { leadOf } from "./lead.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository } from "./repo.ts";
@@ -54,7 +56,8 @@ function aboutOf(db: Database, owner: string, repo: string, task: string): strin
 }
 
 // Posts the lead's item for a task, or with `task` null for the repository, replacing the one open
-// there. A task that has a thread must still be live: a done one has nothing left to decide.
+// there. The task must show in the list, with a thread that isn't done, an open issue or a place
+// in the backlog, so its item can be seen and answered.
 // Every item passes through here, so a plugin that pushes Needs you hears of each one here.
 export function postItem(
   db: Database,
@@ -73,6 +76,12 @@ export function postItem(
   const thread = task === null ? null : threadOn(db, repository, task);
   if (thread?.status === "done")
     throw new Error(`${aboutOf(db, owner, repo, thread.task)} is done already`);
+  const listed =
+    task === null ||
+    thread !== null ||
+    openTasks(db, owner, repo).some((issue) => issue.id === task) ||
+    backlogOf(db, owner, repo).some((filed) => filed.task === task);
+  if (!listed) throw new Error(`there is no task ${aboutOf(db, owner, repo, task ?? "")}`);
   db.run(
     "INSERT OR REPLACE INTO asks (owner, repo, task, text, options, posted) VALUES (?, ?, ?, ?, ?, ?)",
     [owner, repo, task ?? "", said, JSON.stringify(picks), Date.now()],
@@ -119,13 +128,17 @@ export function answerItem(
     if (reply === "") throw new Error("type a reply first");
     words = `You replied on ${about}: ${reply}\n\nThe item was: ${item.text}`;
   }
-  db.run("DELETE FROM asks WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, item.task]);
   const folder = join(leadOf(db, owner, repo).folder, "answers");
   mkdirSync(folder, { recursive: true });
   const file = join(folder, `${about.toLowerCase()}-${Date.now()}.txt`);
   writeFileSync(file, `${words}\n`);
   const note = `${words}\n\nThese words are the human's: give --asked-file ${file} to what you run on this answer.`;
-  noteForLead(db, sessions, { owner, repo }, note, null, true);
+  // The item goes only with its note saved, so an answer that fails on the way keeps the item to
+  // answer again.
+  db.transaction(() => {
+    noteForLead(db, sessions, { owner, repo }, note, null, true);
+    db.run("DELETE FROM asks WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, item.task]);
+  })();
   typeLeadNotes(db, sessions);
   const thread = task === null ? null : threadOn(db, repository, task);
   if (thread !== null) {

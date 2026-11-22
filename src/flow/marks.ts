@@ -21,9 +21,6 @@ export type Shown = { word: string; status: Status; mark: Mark };
 export function markOf(status: Status, word: string): Mark {
   if (status === "error") return { sign: word === "failed" ? "○" : "●", colour: "red" };
   if (status === "needs you") return { sign: "●", colour: "yellow" };
-  // A builder that stopped without submitting goes to Needs you at once, while the lead reads
-  // its words.
-  if (word === "turn ended") return { sign: "●", colour: "yellow" };
   const failed = ["review failed", "review timed out", "submit failed", "check failed"];
   if (failed.includes(word)) return { sign: "○", colour: "red" };
   if (status === "ready") return { sign: "●", colour: "green" };

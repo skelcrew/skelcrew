@@ -32,7 +32,7 @@ test("a hollow mark is bright while the builder works, and dim while the thread 
 });
 
 test("a turn that ended without a submit shows under Needs you at once, while the lead reads it", () => {
-  expect(markOf("idle", "turn ended")).toEqual({ sign: "●", colour: "yellow" });
+  expect(markOf("needs you", "turn ended")).toEqual({ sign: "●", colour: "yellow" });
 });
 
 test("a review under way or held on a usage limit is dim even while the builder works", () => {

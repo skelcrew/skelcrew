@@ -36,6 +36,10 @@ function inProcess(body: string): Record<string, unknown> {
   const code = `import { openDb, marksToItems } from ${JSON.stringify(source("db.ts"))};
 import { answerItem, clearItem, itemOf, postItem } from ${JSON.stringify(source("flow/inbox.ts"))};
 import { noteLimit } from ${JSON.stringify(source("flow/round.ts"))};
+import { verdictReached } from ${JSON.stringify(source("flow/ledger.ts"))};
+import { turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { listRows, sectionHeadings, shownRows } from ${JSON.stringify(source("list/rows.ts"))};
 import { drawRows } from ${JSON.stringify(source("list/layout.ts"))};
@@ -201,11 +205,19 @@ console.log(JSON.stringify({ before, after: lines() }));`);
   expect(after).not.toContain("the lead is looking at this");
 });
 
-test("a builder that stops without submitting shows under Needs you at once", () => {
+// The lead has the builder's own words already, as a message from it, so it gets no note that
+// the thread needs you. sc ps and a host's status say it does, as the sidebar shows.
+test("a builder that stops without submitting needs you at once, with no note for the lead", () => {
   const seen = inProcess(`
-record(db, "app-12", { status: "waiting", turn_ended: true });
-console.log(JSON.stringify({ section: row("APP-12").section, says: row("APP-12").says }));`);
-  expect(seen).toEqual({ section: "needs you", says: "turn ended" });
+turnEnded(db, "none", "app-12", { message: "Should I delete the old exports?" });
+const ps = listThreads(db, "app")[0];
+console.log(JSON.stringify({ section: row("APP-12").section, says: row("APP-12").says, ps: { needsYou: ps.needsYou, needsYouFor: ps.needsYouFor }, noting: thread().noting }));`);
+  expect(seen).toEqual({
+    section: "needs you",
+    says: "turn ended",
+    ps: { needsYou: true, needsYouFor: "turn ended" },
+    noting: null,
+  });
 });
 
 // The lead already asks you, so hearing the thread needs you for the same thing again would only
@@ -227,6 +239,42 @@ console.log(JSON.stringify({ limit, round, question: thread().noting }));`);
     round: "a new review asked for changes past the round limit",
     question: "its builder asked a question",
   });
+});
+
+// A later review that reaches the round limit again is news, though the item about the last one
+// is still open.
+test("while an item is open, a new review reaching the round limit still brings a note", () => {
+  const seen = inProcess(`
+db.run("UPDATE repositories SET forge = 'github'");
+record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", pr: 7 });
+postItem(db, "app", "12", ${JSON.stringify(asked)}, ${options});
+const review = { verdict: "changes", body: "Fix it.", findings: ["Fix it."] };
+const reached = { review, by: "claude", sha: "a".repeat(40), maxRounds: 3, ready: null, forge: true, kept: null, now: Date.now() };
+const o = verdictReached(thread(), reached);
+record(db, "app-12", o.change, o.why);
+console.log(JSON.stringify({ needs: thread().needs_you, noting: thread().noting }));`);
+  expect(seen.needs).toBe(true);
+  expect(seen.noting).toEqual(expect.stringContaining("round limit"));
+});
+
+test("an item is refused for a task the list doesn't show, as nobody could answer it", () => {
+  const seen = inProcess(`
+const tried = () => { try { postItem(db, "app", "99", "Start APP-99?", ["yes", "no"]); return "posted"; } catch (error) { return error.message; } };
+console.log(JSON.stringify({ said: tried(), left: db.query("SELECT COUNT(*) AS n FROM asks").get().n }));`);
+  expect(seen).toEqual({ said: "there is no task APP-99", left: 0 });
+});
+
+// The answer's file and the lead's note are saved before the item goes, so an answer that fails on
+// the way, such as on a full disk, leaves the item to answer again.
+test("an answer that can't be saved keeps its item", () => {
+  const seen = inProcess(`
+postItem(db, "app", "12", ${JSON.stringify(asked)}, ${options});
+const answers = ${JSON.stringify(join(data(), "leads", "simon", "app", "answers"))};
+mkdirSync(dirname(answers), { recursive: true });
+writeFileSync(answers, "not a folder");
+const said = (() => { try { answerItem(db, "none", "app", "12", asSeen("12"), { pick: "a" }); return "answered"; } catch { return "failed"; } })();
+console.log(JSON.stringify({ said, kept: itemOf(db, "simon", "app", "12") !== null, notes: notes() }));`);
+  expect(seen).toEqual({ said: "failed", kept: true, notes: [] });
 });
 
 test("an item goes when its thread ends, and the lead can take one off", () => {
@@ -276,6 +324,7 @@ console.log(JSON.stringify({
 // repository's tab counts it, on a thread, a task not started or the repository itself.
 test("an item fills its row's mark, and the repository's tab counts each one", () => {
   const seen = inProcess(`
+db.run("INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit) VALUES ('simon', 'app', 't3', 'Dark mode', 'Add it', '2026-11-22T10:00:00Z', 'simon', 'c')");
 postItem(db, "app", "12", ${JSON.stringify(asked)}, ${options});
 postItem(db, "app", "t3", "Start APP-T3?", ["yes", "no"]);
 postItem(db, "app", null, "Add simon/web?", ["yes", "no"]);
