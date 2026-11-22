@@ -34,12 +34,12 @@ function httpStatus(error: string): number | null {
   }
 }
 
-// A clock right after "resets at" or "try again at", such as "3:15 PM" or "Dec 31st, 2099
-// 11:59 PM", made only of a month's name, digits and am or pm.
+// A clock right after "resets at" or "try again at", such as "3:15 PM", "14:00" or "Dec 31st,
+// 2099 11:59 PM", made only of a month's name, digits and am or pm.
 const months = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
 const day = `(?:(?:${months})[a-z]{0,6}\\.? \\d{1,2}(?:st|nd|rd|th)?,? (?:\\d{4},? )?)?`;
 const resetClock = new RegExp(
-  `(?:resets at|try again at) (${day}\\d{1,2}(?::\\d{2})? ?[ap]\\.?m)\\b`,
+  `(?:resets at|try again at) (${day}(?:\\d{1,2}(?::\\d{2})? ?[ap]\\.?m\\b|\\d{1,2}:\\d{2}(?!\\d)))`,
   "i",
 );
 

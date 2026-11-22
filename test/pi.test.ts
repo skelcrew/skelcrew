@@ -229,6 +229,9 @@ describe("the extension in a lead or a builder", () => {
   });
 
   test("a reset comes only from the clock right after resets at or try again at", async () => {
+    expect(await failedTurn('429: {"message":"Your limit resets at 14:00."}')).toBe(
+      sent("rate_limit", "rate limited (429), resets at 14:00"),
+    );
     const at = '429 {"error":{"message":"Try again at Dec 31st, 2099 11:59 PM."}}';
     expect(await failedTurn(at)).toBe(
       sent("rate_limit", "rate limited (429), resets at Dec 31st, 2099 11:59 PM"),
@@ -391,6 +394,14 @@ describe("usage limits", () => {
     expect(pi.usageLimit(`${limitWords}, resets at Dec 31st, 2099 11:59 PM`, now)).toEqual({
       reset: new Date(2099, 11, 31, 23, 59).getTime(),
     });
+    // A 24-hour time has no AM or PM.
+    expect(pi.usageLimit(`${limitWords}, resets at 14:00`, now)).toEqual({
+      reset: new Date(2026, 10, 22, 14, 0).getTime(),
+    });
+    expect(pi.usageLimit(`${limitWords}, resets at Dec 31st, 2099 23:59`, now)).toEqual({
+      reset: new Date(2099, 11, 31, 23, 59).getTime(),
+    });
+    expect(pi.usageLimit(`${limitWords}, resets at 25:00`, now)).toEqual({ reset: null });
     expect(pi.usageLimit(limitWords, now)).toEqual({ reset: null });
     for (const error of [
       "auth failed (401): check Pi's login or key",

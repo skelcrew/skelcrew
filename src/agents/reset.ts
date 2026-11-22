@@ -2,10 +2,11 @@
 // "try again at 1:59 PM" or Claude Code's "resets 2pm (Europe/London)".
 
 const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-// A clock time, with the day before it when the reset isn't today: "1:59 PM", "2pm",
-// "Nov 17th, 2026 1:59 PM" or "Nov 17, 2pm".
+// A clock time, with the day before it when the reset isn't today: "1:59 PM", "2pm", "14:00",
+// "Nov 17th, 2026 1:59 PM" or "Nov 17, 2pm". With no AM or PM it is a 24-hour time, which has
+// its minutes.
 const clock = new RegExp(
-  `(?:\\b(${months.join("|")})[a-z]*\\.? (\\d{1,2})(?:st|nd|rd|th)?,? (?:(\\d{4}),? )?)?(\\d{1,2})(?::(\\d{2}))? ?([ap])\\.?m\\b`,
+  `(?:\\b(${months.join("|")})[a-z]*\\.? (\\d{1,2})(?:st|nd|rd|th)?,? (?:(\\d{4}),? )?)?(\\d{1,2})(?::(\\d{2}))?(?: ?([ap])\\.?m\\b|(?<=:\\d{2})(?!\\d))`,
   "i",
 );
 // The time zone Claude Code names after the time, such as "(Europe/London)" or "(UTC)".
@@ -76,9 +77,10 @@ export function resetTime(text: string, now: number): number | null {
   // Read the parts of the time, and give up on any that can't be one.
   const found = clock.exec(text);
   if (!found) return null;
-  const [, month, day, year, hour, minute = "0", half = "a"] = found;
-  if (Number(hour) > 12 || Number(minute) > 59) return null;
-  const hours = (Number(hour) % 12) + (half.toLowerCase() === "p" ? 12 : 0);
+  const [, month, day, year, hour, minute = "0", half] = found;
+  if (Number(hour) > (half === undefined ? 23 : 12) || Number(minute) > 59) return null;
+  const hours =
+    half === undefined ? Number(hour) : (Number(hour) % 12) + (half.toLowerCase() === "p" ? 12 : 0);
   const zone = zoneOf(text) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const today = clockIn(zone, now);
   // The first of the given days whose time hasn't gone, allowing the minute just gone.
