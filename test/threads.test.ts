@@ -1752,6 +1752,7 @@ describe("the backlog", () => {
       pr: null,
       checks: null,
       review: null,
+      asks: false,
     });
     const shown = await skel("show", "APP-T2");
     expect(shown.err).toBe("");

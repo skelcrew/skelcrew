@@ -462,6 +462,7 @@ echo "Not logged in"; exit 1`,
         pr: null,
         checks: null,
         review: null,
+        asks: false,
       },
     ]);
     // Nothing starts until the label is added.
