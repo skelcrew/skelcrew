@@ -1096,6 +1096,55 @@ test("the task queue shows its key 1 between Backlog and Building, and an empty 
   ).toBe("↑↓ move  ⏎ open/close  0-6 sections  q/esc quit");
 });
 
+// Every stage is spaced alike, the task queue too: one blank line after a stage whose rows show,
+// and none after a heading with no rows under it, whether it is closed or open and empty.
+test("only a stage showing rows has a blank line after it, at every stage boundary", () => {
+  const open: Section[] = [
+    "needs you",
+    "backlog",
+    "task queue",
+    "building",
+    "reviewing",
+    "checks",
+    "ready",
+    "done",
+  ];
+  const stages = (lines: string[]) =>
+    lines.slice(lines.findIndex((line) => line.startsWith(" 0 Backlog"))).map((l) => l.trimEnd());
+  expect(stages(drawn(1, 40, 80, open)).slice(0, 16)).toEqual([
+    " 0 Backlog    1",
+    "   ○ #31  Export as CSV  14d",
+    "",
+    " 1 Task queue 1",
+    "   ○ 9    Old work",
+    "     paused · 1m",
+    "",
+    " 2 Building   1",
+    "   ○ 7    Login redirect",
+    "     5m",
+    "",
+    " 3 Reviewing  0",
+    " 4 Checks     0",
+    " 5 Ready      0",
+    " 6 Done       0",
+    "",
+  ]);
+  sql("DELETE FROM threads WHERE folder = 'app-9';");
+  expect(stages(drawn(1, 40, 80, open)).slice(0, 11)).toEqual([
+    " 0 Backlog    1",
+    "   ○ #31  Export as CSV  14d",
+    "",
+    " 1 Task queue 0",
+    " 2 Building   1",
+    "   ○ 7    Login redirect",
+    "     5m",
+    "",
+    " 3 Reviewing  0",
+    " 4 Checks     0",
+    " 5 Ready      0",
+  ]);
+});
+
 // Each heading is a place you can be on, so Enter there can open or close its stage. Drawn while
 // your typing goes elsewhere, as the screen's sidebar does, the row you are on is only outlined.
 test("the rows shown have every heading among them, a heading you are on is shaded, and its keys say open/close", () => {
