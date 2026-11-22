@@ -1,7 +1,7 @@
 // Each repository's lead: your agent session for that repository on this machine, in its own
 // folder, kept alive in a session of its own.
 import type { Database } from "bun:sqlite";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
@@ -27,6 +27,7 @@ import { cloneDir, leadPlaces, reposDir } from "../paths.ts";
 import { filesFor, type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
 import type { Settings } from "../settings.ts";
+import { takeSharedLoginWhenFree } from "./logins.ts";
 import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
@@ -274,6 +275,7 @@ export async function startLead(
     [owner, repo],
   );
   const files = filesFor(host);
+  await takeSharedLoginWhenFree(db, sessions, lead.name);
   const started = await harness.start({
     name: lead.name,
     socket: lead.socket,
@@ -303,10 +305,9 @@ export async function startLead(
   // its repository's first tab.
   const labels: Labels = { repository: `${owner}/${repo}`, role: "lead" };
   const { argv, env } = started;
-  // A lead that never started leaves nothing the harness made for it, such as a login.
-  let id: string;
-  try {
-    id = await startSession(host, lead.name, {
+  // The harness may need to write something as the session starts, such as a login.
+  const run = () =>
+    startSession(host, lead.name, {
       folder: lead.folder,
       command: argv,
       env,
@@ -314,11 +315,7 @@ export async function startLead(
       keepOnExit: true,
       files,
     });
-  } catch (error) {
-    for (const made of "unstarted" in started ? started.unstarted : [])
-      rmSync(made, { recursive: true, force: true });
-    throw error;
-  }
+  const id = await ("launch" in started ? started.launch(run) : run());
   db.run("UPDATE repositories SET lead_host_id = ? WHERE owner = ? AND repo = ?", [
     id,
     owner,

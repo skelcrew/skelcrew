@@ -57,14 +57,15 @@ const renewUrl = () =>
 const hour = 3_600_000;
 const day = 24 * hour;
 
-// Moves a login the first run's codex login saved in `codexHome`, Skelcrew's own CODEX_HOME,
-// into Skelcrew's own login folder, and links it from there, for codex run outside the sandbox.
-// Returns that folder. A login an earlier release shared is copied into a new file there, and
-// the shared folder removed: an agent still running from then can write in that folder, and
-// could have linked the file there to another name.
-export function ownLogin(home: string, codexHome: string): string {
+// Returns whether the login an earlier release shared with every agent, writable, is still
+// there, as Codex agents it started may still run on it.
+export const sharedLoginLeft = (home: string) => existsSync(sharedFolder(home));
+
+// Takes the login an earlier release shared, once no agent it started runs: copies it into a
+// new file in Skelcrew's own folder, as an agent from then could have linked the old one to
+// another name, removes the shared folder, and marks the login to be renewed at once.
+export function takeSharedLogin(home: string, codexHome: string): void {
   const own = ownFolder(home);
-  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
   mkdirSync(own, { recursive: true, mode: 0o700 });
   const shared = join(sharedFolder(home), "auth.json");
   if (
@@ -77,6 +78,20 @@ export function ownLogin(home: string, codexHome: string): string {
     writeFileSync(takenMark(home), "");
   }
   rmSync(sharedFolder(home), { recursive: true, force: true });
+  ownLogin(home, codexHome);
+}
+
+// Moves a login the first run's codex login saved in `codexHome`, Skelcrew's own CODEX_HOME,
+// into Skelcrew's own login folder, and links it from there, for codex run outside the sandbox.
+// Returns that folder. Throws while the login an earlier release shared is still there.
+export function ownLogin(home: string, codexHome: string): string {
+  if (sharedLoginLeft(home))
+    throw new Error(
+      "Codex agents started before Skelcrew gave each its own login still run. Restart each with sc stop and sc start, and Codex agents get their own login once none is left",
+    );
+  const own = ownFolder(home);
+  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  mkdirSync(own, { recursive: true, mode: 0o700 });
   for (const file of ["auth.json", "auth.lock"]) {
     const at = join(codexHome, file);
     const found = lstatSync(at, { throwIfNoEntry: false });
@@ -136,29 +151,39 @@ export async function copyLogin(home: string, folder: string): Promise<boolean> 
   if (own === null) return false;
   if (lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink())
     throw new Error(`${folder} is a link, so Skelcrew won't write a login through it`);
-  mkdirSync(folder, { recursive: true, mode: 0o700 });
-  writeLogin(folder, withoutRenewal(own));
+  try {
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    writeLogin(folder, withoutRenewal(own));
+  } catch (error) {
+    dropLogin(folder);
+    throw error;
+  }
   return true;
 }
+
+// Returns whether Skelcrew has a login of its own to copy, rather than an API key.
+export const hasLogin = (home: string) => existsSync(join(ownFolder(home), "auth.json"));
 
 // Removes an agent's copy, once its session or review ended.
 export function dropLogin(folder: string): void {
   rmSync(folder, { recursive: true, force: true });
 }
 
-// Returns whether a session was started without a copy of its own while Skelcrew has a login,
-// as a release before gave every agent one shared, writable login.
+// Returns whether a session may run on the login an earlier release shared: one with no copy of
+// its own while that login is still there.
 export const startedShared = (home: string, name: string) =>
-  [ownFolder(home), sharedFolder(home)].some((folder) => existsSync(join(folder, "auth.json"))) &&
-  !sessionFolders(home).some((folder) => sessionOf(folder) === name);
+  sharedLoginLeft(home) && !sessionFolders(home).some((folder) => sessionOf(folder) === name);
 
-// Removes the copy of each session `runs` says doesn't run. A session still starting runs.
+// Removes the copy of each session `runs` says doesn't run. A session still starting runs, and
+// one `runs` can't answer for keeps its copy, while the rest are still looked at.
 export async function sweepLogins(
   home: string,
   runs: (name: string) => Promise<boolean>,
 ): Promise<void> {
-  for (const folder of sessionFolders(home))
-    if (!(await runs(sessionOf(folder)))) dropLogin(join(sessionCopies(home), folder));
+  for (const folder of sessionFolders(home)) {
+    const running = await runs(sessionOf(folder)).catch(() => true);
+    if (!running) dropLogin(join(sessionCopies(home), folder));
+  }
 }
 
 // Removes every review's copy. As the daemon starts, no review runs yet.

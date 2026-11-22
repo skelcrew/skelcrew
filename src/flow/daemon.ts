@@ -8,7 +8,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { keepLogins, readyLogins, sharesLogin } from "../agents/harness.ts";
+import { dropReviewLogins } from "../agents/harness.ts";
 import {
   agentRuns,
   endExitedSession,
@@ -35,7 +35,6 @@ import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
 import { closeTask, createTask, mergePr, trackerOf } from "../plugins/ask.ts";
-import type { Host } from "../plugins/runtime.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import { filedTask, fileTask, unfileTask } from "./backlog.ts";
@@ -72,6 +71,7 @@ import {
 import { roundOf } from "./ledger.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
+import { keepAgentLogins } from "./logins.ts";
 import {
   agentsSaid,
   alreadyMerging,
@@ -128,7 +128,6 @@ import {
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { type Restarted, supervisor } from "./supervisor.ts";
 import {
   backToQueue,
   claimOwed,
@@ -140,7 +139,6 @@ import {
   queuedText,
 } from "./task-queue.ts";
 import {
-  builderHarness,
   builderSession,
   findThread,
   liveThreads,
@@ -273,61 +271,6 @@ const look = z.coerce
   .min(0)
   .catch(2000)
   .parse(process.env.SKELCREW_LOOK_MS ?? 2000);
-
-// Returns the repositories Skelcrew has, by owner and name.
-const allRepositories = (db: Database) =>
-  z
-    .array(z.object({ owner: z.string(), repo: z.string() }))
-    .parse(db.query("SELECT owner, repo FROM repositories").all());
-
-// Returns whether the lead or builder whose session has the given name may still run. One that
-// is starting runs, as does one whose host doesn't answer for now or whose host plugin is gone,
-// as it may still run there.
-async function agentNamedRuns(db: Database, sessions: string, name: string): Promise<boolean> {
-  try {
-    const thread = db.query("SELECT folder FROM task_threads WHERE folder = ?").get(name);
-    if (thread) {
-      if (supervisor(name).state().busy) return true;
-      const { host, id } = await builderSession(db, sessions, readThread(db, name));
-      return await agentRuns(host, id);
-    }
-    for (const { owner, repo } of allRepositories(db)) {
-      if (leadOf(db, owner, repo).name !== name) continue;
-      if (leadAgent(owner, repo).state().busy) return true;
-      const lead = await leadSession(db, sessions, owner, repo);
-      return lead === null || (await agentRuns(lead.host, lead.id));
-    }
-    return false;
-  } catch {
-    return true;
-  }
-}
-
-// Ends each Codex lead and builder still running from a release that gave every agent one
-// shared, writable login, before Skelcrew's login moves out of their reach and is renewed, and
-// before any agent comes back. Each then comes back with its own copy. One that can't be ended
-// is restarted later.
-async function endSharedLogins(db: Database, sessions: string): Promise<void> {
-  const agents: { name: string; reach: () => Promise<{ host: Host; id: string } | null> }[] = [];
-  for (const thread of liveThreads(db))
-    if (sharesLogin(builderHarness(thread).name, homedir(), thread.folder))
-      agents.push({ name: thread.folder, reach: () => builderSession(db, sessions, thread) });
-  for (const { owner, repo } of allRepositories(db)) {
-    const lead = leadOf(db, owner, repo);
-    if (lead.harness !== null && sharesLogin(lead.harness, homedir(), lead.name))
-      agents.push({ name: lead.name, reach: () => leadSession(db, sessions, owner, repo) });
-  }
-  for (const { name, reach } of agents) {
-    try {
-      const found = await reach();
-      if (found === null || !(await agentRuns(found.host, found.id))) continue;
-      await stopSession(found.host, found.id);
-      console.log(`Ended ${name}, which shared one login with every agent, to start it again.`);
-    } catch (error) {
-      console.log(`couldn't end ${name}, which shares one login: ${errorText(error)}`);
-    }
-  }
-}
 
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
@@ -1226,8 +1169,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // A task that left the queue but whose builder's start the stop cut short goes back to it
   // first, as it can't be brought back.
   backToQueue(db);
-  await endSharedLogins(db, sessions);
-  await readyLogins(homedir());
+  dropReviewLogins(homedir());
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -1262,64 +1204,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       ),
     exitLook,
   );
-  // A Codex lead or builder still running from a release that shared one writable login with
-  // every agent is restarted, so it comes back with its own copy. One whose restart fails is
-  // tried again at the next look, until it no longer runs on the shared login.
-  const restarting = new Set<string>();
-  const restartOnce = async (name: string, restart: () => Promise<Restarted>) => {
-    if (restarting.has(name)) return;
-    restarting.add(name);
-    try {
-      const restarted = await restart();
-      if (typeof restarted === "object" && "failed" in restarted) throw restarted.failed;
-      console.log(`Restarted ${name}, which shared one login with every agent.`);
-    } catch (error) {
-      console.log(`couldn't restart ${name}, which shares one login: ${errorText(error)}`);
-    } finally {
-      restarting.delete(name);
-    }
-  };
-  // A host that can't be asked about one agent holds up no other.
-  const restartShared = async () => {
-    for (const thread of liveThreads(db)) {
-      if (!sharesLogin(builderHarness(thread).name, homedir(), thread.folder)) continue;
-      try {
-        const { host, id } = await builderSession(db, sessions, thread);
-        if (await agentRuns(host, id))
-          restartOnce(thread.folder, () => restartBuilder(db, sessions, thread));
-      } catch (error) {
-        console.log(`couldn't reach ${thread.folder}, which shares one login: ${errorText(error)}`);
-      }
-    }
-    for (const repository of openedRepositories(db)) {
-      const { owner, repo } = repository;
-      const lead = leadOf(db, owner, repo);
-      if (lead.harness === null || !sharesLogin(lead.harness, homedir(), lead.name)) continue;
-      const tabOpen = () =>
-        db
-          .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
-          .get(owner, repo) !== null;
-      try {
-        const found = await leadSession(db, sessions, owner, repo);
-        if (found === null || !(await agentRuns(found.host, found.id))) continue;
-        restartOnce(lead.name, () => leadAgent(owner, repo).restart(leadHost(repository), tabOpen));
-      } catch (error) {
-        console.log(`couldn't reach ${lead.name}, which shares one login: ${errorText(error)}`);
-      }
-    }
-  };
   // The agents' logins are kept now, before any agent starts, and every ten seconds from here
-  // on. A session's copy goes as it ends, and the sweep removes one a kill left behind. Neither
-  // the restarts nor the logins wait on the other.
-  const keep = () =>
-    doing("keeping the agents' logins", () => {
-      restartShared().catch((error) =>
-        console.log(`couldn't restart the agents on one shared login: ${errorText(error)}`),
-      );
-      keepLogins(homedir(), (name) => agentNamedRuns(db, sessions, name)).catch((error) =>
-        console.log(`couldn't keep the agents' logins: ${errorText(error)}`),
-      );
-    });
+  // on. A session's copy goes as it ends, and the sweep removes one a kill left behind.
+  const keep = () => doing("keeping the agents' logins", () => keepAgentLogins(db, sessions));
   keep();
   setInterval(keep, 10_000);
   // From here on, the daemon also looks every two seconds for a working agent whose screen

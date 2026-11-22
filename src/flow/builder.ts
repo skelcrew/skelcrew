@@ -30,6 +30,7 @@ import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { openTasks, threadTask } from "./copy.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
 import { freshRounds, pastRoundLimit, roundOf } from "./ledger.ts";
+import { takeSharedLoginWhenFree } from "./logins.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus, needsYou } from "./status.ts";
@@ -537,6 +538,7 @@ async function startOnConfiguredHost(
   if (!restarting)
     db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
   const files = filesFor(host);
+  await takeSharedLoginWhenFree(db, sessions, thread.folder);
   const started = await harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
@@ -555,14 +557,9 @@ async function startOnConfiguredHost(
   });
   const { argv, env } = started;
   const on = { host, name: hostName };
-  // A builder that never started leaves nothing the harness made for it, such as a login.
-  try {
-    await startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
-  } catch (error) {
-    for (const made of "unstarted" in started ? started.unstarted : [])
-      rmSync(made, { recursive: true, force: true });
-    throw error;
-  }
+  // The harness may need to write something as the session starts, such as a login.
+  const run = () => startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
+  await ("launch" in started ? started.launch(run) : run());
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
 }
 

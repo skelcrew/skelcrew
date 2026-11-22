@@ -603,21 +603,35 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(read(join(builder(), "auth.json"))).toBe(leadCopy);
   }, 60_000);
 
-  test("a builder still running on the one shared login starts again with its own", async () => {
+  test("Codex agents get their own login once no agent runs on the one shared login", async () => {
     saveLogin();
     await startApp12();
-    // As a release before left it: no copy of its own, and a link to the shared login.
+    // As a release before left it: the builder runs on the shared login, with no copy of its own.
     const daemon = running.shift();
     daemon?.kill();
     await daemon?.exited;
+    const own = join(data(), "codex-own-login");
+    mkdirSync(join(data(), "codex-login"));
+    renameSync(join(own, "auth.json"), join(data(), "codex-login", "auth.json"));
     for (const copy of copiesOf("app-12")) rmSync(copy, { recursive: true });
     rmSync(join(builder(), "auth.json"));
     symlinkSync(join(data(), "codex-login", "auth.json"), join(builder(), "auth.json"));
+    // Taking the shared login renews it, which goes nowhere here.
+    const renewals = { CODEX_REFRESH_TOKEN_URL_OVERRIDE: "http://127.0.0.1:9/oauth/token" };
+    startDaemon(socket, { ...env(), ...renewals }, running);
+    // The builder keeps running on it, and app's lead hears once that it should be restarted.
+    await until(() =>
+      read(join(lead(), "typed")).includes("Restart each with sc stop and sc start"),
+    );
+    expect(read(join(lead(), "typed"))).toContain("still run: app-12.");
+    expect(existsSync(join(data(), "codex-login", "auth.json"))).toBe(true);
+    // Restarted, it gets a copy of its own, and the shared login goes.
+    expect((await skel(["stop", "app-12"])).err).toBe("");
     rmSync(join(builder(), "args"));
-    startDaemon(socket, env(), running);
+    expect((await skel(["start", "app-12"])).err).toBe("");
     await until(() => read(join(builder(), "args")) !== "");
-    expect(args()[0]).toBe("resume");
     expect(JSON.parse(read(join(builder(), "auth.json"))).tokens.refresh_token).toBe("");
     expect(copiesOf("app-12").length).toBe(1);
+    expect(existsSync(join(data(), "codex-login"))).toBe(false);
   }, 60_000);
 });

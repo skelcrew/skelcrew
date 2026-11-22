@@ -22,6 +22,7 @@ import { copySkills, type SkillsFrom } from "../skills.ts";
 import {
   copyLogin,
   dropLogin,
+  hasLogin,
   ownLogin,
   renewLogin,
   reviewLogin,
@@ -317,9 +318,9 @@ async function checkModel(home: string, model: string, env: Record<string, strin
     throw new Error(`Codex doesn't offer the model ${model}. It offers ${models.join(", ")}`);
 }
 
-// Prepares a session's own CODEX_HOME and returns its sandbox command and environment, and the
-// folders to remove if the session never starts, for the
-// lead or a builder. It starts afresh with the first message in `prompt`, or brings back a
+// Prepares a session's own CODEX_HOME and returns its sandbox command and environment, and
+// launch, which writes its copy of the login, then starts the session with what it is given,
+// for the lead or a builder. It starts afresh with the first message in `prompt`, or brings back a
 // saved conversation with `resume`. A builder, given its thread's clone, works there; a lead
 // works in its own `folder`. Each sees nothing else but `origin`, Skelcrew's clone of its
 // repository, read-only, its own copy of Skelcrew's login, and for a lead
@@ -346,7 +347,7 @@ async function startCommand(given: {
   skills?: SkillsFrom;
   files?: string | undefined;
   env?: Record<string, string | undefined>;
-}): Promise<{ argv: string[]; env: Record<string, string>; unstarted: string[] }> {
+}) {
   const { name, socket, model, thread, folder, origin, repositories, prompt, system, resume } =
     given;
   const { skills, files } = given;
@@ -416,38 +417,43 @@ async function startCommand(given: {
   const path = env.PATH ?? "";
   // A login left from before, its own or a link to one shared, never stays. Codex renews by
   // renaming a new file beside the one a link leads to, so the copy has a folder of its own.
-  // It is made last, and removed if a step after it fails. The caller removes it too if the
-  // session never starts, and the session removes it as it ends.
+  // It is written by launch, as the session starts, and removed if anything there fails. The
+  // session removes it as it ends.
   for (const file of ["auth.json", "auth.lock"])
     rmSync(join(sessionHome, file), { recursive: true, force: true });
   const login = sessionLogin(home, name);
-  const loggedIn = await copyLogin(home, login);
+  const loggedIn = hasLogin(home);
+  if (loggedIn) mounts.push(...rw(login));
   // Codex starts through the step that turns off the skills in its folder's .agents/skills/,
   // put in after resume and --no-daemon. Only a builder has a thread. The lead is what you type
   // into, so it keeps its priority.
-  let argv: string[];
-  try {
-    if (loggedIn) {
-      symlinkSync(join(login, "auth.json"), join(sessionHome, "auth.json"));
-      mounts.push(...rw(login));
+  const argv = sandboxArgs({
+    home,
+    path,
+    mounts,
+    socket,
+    cwd,
+    command: withSkillsOff(resume ? 2 : 1, command.slice(1)),
+    programs: ["codex"],
+    normalPriority: !thread,
+    files,
+  });
+  if (!loggedIn) return { argv, env: kept, launch: <T>(start: () => Promise<T>) => start() };
+  const link = join(sessionHome, "auth.json");
+  const launch = async <T>(start: () => Promise<T>): Promise<T> => {
+    try {
+      if (!(await copyLogin(home, login)))
+        throw new Error("Skelcrew's Codex login went while the session started");
+      rmSync(link, { force: true });
+      symlinkSync(join(login, "auth.json"), link);
+      return await start();
+    } catch (error) {
+      dropLogin(login);
+      rmSync(link, { force: true });
+      throw error;
     }
-    argv = sandboxArgs({
-      home,
-      path,
-      mounts,
-      socket,
-      cwd,
-      command: withSkillsOff(resume ? 2 : 1, command.slice(1)),
-      programs: ["codex"],
-      normalPriority: !thread,
-      files,
-    });
-  } catch (error) {
-    dropLogin(login);
-    throw error;
-  }
-  if (!loggedIn) return { argv, env: kept, unstarted: [] };
-  return { argv: removingOnEnd(login, argv), env: kept, unstarted: [login] };
+  };
+  return { argv: removingOnEnd(login, argv), env: kept, launch };
 }
 
 // Returns `argv` run so that `folder` is removed once it ends, outside the sandbox, whether it

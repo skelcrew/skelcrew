@@ -5,8 +5,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:te
 import {
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -25,7 +27,12 @@ import {
   sessionLogin,
   startedShared,
 } from "../src/agents/codex-login.ts";
-import { keepLogins, readyLogins } from "../src/agents/harness.ts";
+import {
+  dropReviewLogins,
+  harnessNamed,
+  keepLogins,
+  takeSharedLogin,
+} from "../src/agents/harness.ts";
 
 let home = "";
 let server: Server<undefined>;
@@ -168,7 +175,7 @@ test("the copies of sessions that ended go at once, and those of sessions that r
   expect(existsSync(ended)).toBe(false);
   // A review's copy goes only as the daemon starts, when no review runs.
   expect(existsSync(review)).toBe(true);
-  await readyLogins(home);
+  dropReviewLogins(home);
   expect(existsSync(review)).toBe(false);
 });
 
@@ -196,7 +203,9 @@ test("the login an earlier release shared moves out of its agents' reach and is 
   linkSync(join(shared, "auth.json"), join(shared, "kept"));
   const sharedFile = statSync(join(shared, "auth.json")).ino;
   expect(startedShared(home, "app-12")).toBe(true);
-  await readyLogins(home);
+  // While it is there, no agent gets a login of its own.
+  expect(() => ownLogin(home, join(data(), "codex"))).toThrow("sc stop and sc start");
+  await takeSharedLogin(home);
   expect(existsSync(shared)).toBe(false);
   expect(statSync(own()).ino).not.toBe(sharedFile);
   // Renewed at once, though fresh, as those agents knew its refresh token.
@@ -205,14 +214,64 @@ test("the login an earlier release shared moves out of its agents' reach and is 
   // Codex run outside the sandbox finds it through Skelcrew's CODEX_HOME.
   expect(read(join(data(), "codex", "auth.json")).tokens.refresh_token).toBe("refresh-2");
   // Once is enough.
-  await readyLogins(home);
+  await takeSharedLogin(home);
   expect(sent).toEqual(["refresh-1"]);
 });
 
-test("a session with no copy of its own started on the one shared login", async () => {
-  expect(startedShared(home, "app-12")).toBe(false);
+test("a session with no copy of its own may run on the login an earlier release shared", async () => {
   saveLogin(0);
+  expect(startedShared(home, "app-12")).toBe(false);
+  mkdirSync(join(data(), "codex-login"));
+  writeFileSync(join(data(), "codex-login", "auth.json"), "{}");
   expect(startedShared(home, "app-12")).toBe(true);
   await copyLogin(home, sessionLogin(home, "app-12"));
   expect(startedShared(home, "app-12")).toBe(false);
+});
+
+test("a host that can't answer for one session holds up neither the sweep nor the renewal", async () => {
+  saveLogin(0);
+  const unknown = sessionLogin(home, "app-12");
+  const ended = sessionLogin(home, "app-13");
+  await copyLogin(home, unknown);
+  await copyLogin(home, ended);
+  saveLogin(2 * day);
+  await keepLogins(home, async (name) => {
+    if (name === "app-12") throw new Error("the host doesn't answer");
+    return false;
+  });
+  expect(existsSync(unknown)).toBe(true);
+  expect(existsSync(ended)).toBe(false);
+  expect(sent).toEqual(["refresh-1"]);
+  expect(read(join(unknown, "auth.json")).tokens.access_token).toBe(
+    read(own()).tokens.access_token,
+  );
+});
+
+test("a Codex session that fails to start leaves no copy of the login behind", async () => {
+  saveLogin(0);
+  const folder = join(home, "lead");
+  const given = {
+    name: "app-12",
+    socket: join(home, "sock"),
+    folder,
+    env: { HOME: home, PATH: process.env.PATH ?? "" },
+  };
+  const started = await harnessNamed("codex").start(given);
+  const copies = join(data(), "codex-logins");
+  const sessionHome = join(data(), "codex-sessions", "app-12");
+  let copy = "";
+  await expect(
+    started.launch(async () => {
+      [copy = ""] = readdirSync(copies);
+      expect(read(join(sessionHome, "auth.json")).tokens.refresh_token).toBe("");
+      throw new Error("the host refused it");
+    }),
+  ).rejects.toThrow("the host refused it");
+  expect(copy).not.toBe("");
+  expect(readdirSync(copies)).toEqual([]);
+  expect(lstatSync(join(sessionHome, "auth.json"), { throwIfNoEntry: false })).toBeUndefined();
+  // A start that works keeps it, for the session to remove as it ends.
+  await started.launch(async () => {});
+  expect(readdirSync(copies).length).toBe(1);
+  expect(started.argv.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
 });
