@@ -62,6 +62,7 @@ const working: Thread = {
   issue_link: null,
   issue: null,
   alias: null,
+  issue_ref: null,
   closes: null,
   host: "tmux",
   host_id: null,

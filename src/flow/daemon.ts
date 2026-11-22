@@ -196,7 +196,7 @@ function removalOf(db: Database, repository: string, task: string, keepIssue: bo
     throw new Error(
       `${name} never started, and --keep-issue keeps its issue open, so there is nothing to remove`,
     );
-  const shown = open === null ? null : issueRef(inCopy ?? { id: open });
+  const shown = open === null ? null : issueRef(open, inCopy, thread?.issue_ref);
   return { name, filed, thread, open, issue, shown };
 }
 
@@ -442,10 +442,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Returns the request with the task it names as Skelcrew stores it, such as t158 for APP-158
   // or for its old name APP-T158, or #12 for an issue no task has yet, as resolveTask says.
-  const resolveName = (request: DaemonRequest): DaemonRequest =>
-    "task" in request && request.task !== undefined && "repo" in request && request.repo
-      ? { ...request, task: resolveTask(db, request.repo, request.task) }
-      : request;
+  const resolveName = (request: DaemonRequest): DaemonRequest => {
+    if (!("task" in request) || request.task === undefined || !("repo" in request) || !request.repo)
+      return request;
+    const { repository, task } = resolveTask(db, request.repo, request.task);
+    return { ...request, repo: repository, task };
+  };
   const setUpAndStart = async (thread: Thread) => {
     try {
       await endEarlierBuilder(db, sessions, thread);
@@ -1112,7 +1114,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       else if (asked.data.command === "check") checkFor(connection, caller, asked.data);
       else
         Promise.resolve()
-          .then(() => handle(resolveName(limitToOwnRepository(asked.data, caller)), caller))
+          .then(() => handle(limitToOwnRepository(resolveName(asked.data), caller), caller))
           .then(reply, (error) => reply({ error: errorText(error) }));
     };
     connection.on("data", read);

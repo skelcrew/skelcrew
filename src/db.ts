@@ -225,6 +225,8 @@ const threadColumns = {
 // so the next round's number goes on above it. `round_log` is the record of the round's events,
 // as JSON, which the round ledger counts the rounds from, and writes `rounds` and `top_round` with.
 // `issue` is the tracker's ID of the task's issue, such as 12, or null for a task with no issue.
+// `issue_ref` is that issue as its tracker wrote it as the task started, such as #12, so it shows
+// so once the issue has left Skelcrew's copy, or null from a plugin that didn't say.
 // `alias` is the name a task had before every task took a number of Skelcrew's, such as 12 or
 // wr4, which still reaches it.
 export const taskColumns = {
@@ -272,6 +274,7 @@ export const taskColumns = {
   round_log: "TEXT",
   issue: "TEXT",
   alias: "TEXT",
+  issue_ref: "TEXT",
 };
 
 // Saves its issue on each task named after it, from before tasks kept their issue apart: one

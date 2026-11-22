@@ -86,6 +86,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     issue_link: null,
     issue: null,
     alias: null,
+    issue_ref: null,
     closes: null,
     merge_plan: null,
     merge_id: null,

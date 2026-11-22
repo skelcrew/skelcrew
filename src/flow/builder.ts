@@ -150,10 +150,10 @@ async function recordThread(
   const fromIssue = (id: string) => {
     const found = tracked ? openTasks(db, owner, repo).find((item) => item.id === id) : undefined;
     if (!found) throw new Error(`there is no open issue ${taskName(name, `#${id}`)}`);
-    const { title, body, link, closes } = found;
-    return { issue: found.id, title, body, issueLink: link, closes };
+    const { title, body, link, closes, ref = null } = found;
+    return { issue: found.id, title, body, issueLink: link, closes, issueRef: ref };
   };
-  const noIssue = { issue: null, issueLink: null, closes: "" };
+  const noIssue = { issue: null, issueLink: null, closes: "", issueRef: null };
   let task: string;
   let from: {
     issue: string | null;
@@ -161,6 +161,7 @@ async function recordThread(
     body: string;
     issueLink: string | null;
     closes: string | null;
+    issueRef: string | null;
   };
   let fromBacklog: Filed | null = null;
   if ("title" in given) {
@@ -187,6 +188,7 @@ async function recordThread(
         body: had.body ?? "",
         issueLink: had.issue_link,
         closes: had.closes,
+        issueRef: had.issue_ref,
       };
     else
       throw new Error(
@@ -195,7 +197,7 @@ async function recordThread(
           : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc add ${name} "<title>" "<body>" --start`,
       );
   }
-  const { issue, title, body, issueLink, closes } = from;
+  const { issue, title, body, issueLink, closes, issueRef } = from;
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -283,6 +285,7 @@ async function recordThread(
       closes,
       issue,
       alias: before?.alias ?? null,
+      issue_ref: issueRef,
       merge_plan: null,
       merge_id: null,
       merge_by: null,
@@ -325,8 +328,8 @@ async function recordThread(
     db.run(
       `INSERT OR REPLACE INTO tasks
         (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow,
-          queued_since, issue, alias)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?)`,
+          queued_since, issue, alias, issue_ref)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -342,6 +345,7 @@ async function recordThread(
         thread.queued_since,
         issue,
         thread.alias,
+        issueRef,
       ],
     );
     const claims = [owner, repo, issue ?? ""];

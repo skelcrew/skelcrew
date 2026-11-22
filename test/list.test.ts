@@ -119,7 +119,7 @@ function shown(task: string): string {
 import { printTask, showTask } from ${JSON.stringify(source("flow/list.ts"))};
 import { resolveTask } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
-printTask(await showTask(db, { repo: "app", task: resolveTask(db, "app", ${JSON.stringify(task)}) }), false);`;
+printTask(await showTask(db, { repo: "app", task: resolveTask(db, "app", ${JSON.stringify(task)}).task }), false);`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!run.success) throw new Error(run.stderr.toString());
   return run.stdout.toString();

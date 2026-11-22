@@ -73,7 +73,7 @@ const shown = {
   show: await Promise.all(
     tasks.map((name) => {
       const [repo, task] = name.split("-");
-      return list.showTask(db, { repo, task: resolveTask(db, repo, task) }).catch(String);
+      return list.showTask(db, { repo, task: resolveTask(db, repo, task).task }).catch(String);
     }),
   ),
   tabs: repositoryTabs(db, null),

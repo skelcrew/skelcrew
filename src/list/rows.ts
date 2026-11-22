@@ -517,7 +517,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       )
       .map((issue) => {
         const task = threads.find(({ thread }) => thread.issue === issue.id)?.thread.task;
-        const label = task === undefined ? issueRef(issue) : taskLabel(task);
+        const label = task === undefined ? issueRef(issue.id, issue) : taskLabel(task);
         const changed = Date.parse(issue.updated);
         return {
           created: issue.created,

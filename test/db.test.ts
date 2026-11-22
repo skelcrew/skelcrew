@@ -713,7 +713,7 @@ import { resolveTask } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 saveItems(db, "simon", "app", ${JSON.stringify([issue("t1"), issue("wr4"), issue("1")])}, ["task"]);
 const show = async (typed) => {
-  const { task, title, issue } = await showTask(db, { repo: "app", task: resolveTask(db, "app", typed) });
+  const { task, title, issue } = await showTask(db, { repo: "app", task: resolveTask(db, "app", typed).task });
   return { task, title, issue: issue?.id ?? null };
 };
 console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").all(),
@@ -735,35 +735,48 @@ console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").a
   });
 }, 60_000);
 
-// A task named before every task took a number, after its issue, such as app-2 for issue #2, or
-// by a machine's code, such as app-wr4, gets a number claimed on the remote as the daemon next
-// refreshes the repository, so it never clashes with another's. It keeps its folder and branch,
-// and its old name still reaches it, but where a number and an old name are the same, the
-// number wins, and the issue is reached by its ID after a #.
+// A task named before every task took a number, after its issue, such as app-2 for issue #2 or
+// app-jott-12 for Linear's JOTT-12, or by a machine's code, such as app-wr4, gets a number
+// claimed on the remote as the daemon next refreshes the repository, so it never clashes with
+// another's. Another machine holding the same task gives it the same number. It keeps its folder
+// and branch, and its old name still reaches it, but where a number and an old name are the
+// same, the number wins, and the issue is reached by its ID after a #.
 test("a task with an old name gets a number of its own, and its old name still reaches it", async () => {
   const { remote, homes } = twoMachines();
-  const [laptop = ""] = homes;
+  const [laptop = "", lapdog = ""] = homes;
   const before = `db.run(\`INSERT INTO threads (owner, repo, task, folder, branch, status)
   VALUES ('simon', 'app', '2', 'app-2', 'skelcrew/2-old', 'working'),
-    ('simon', 'app', 'wr4', 'app-wr4', 'skelcrew/wr4-older', 'done')\`);
+    ('simon', 'app', 'wr4', 'app-wr4', 'skelcrew/wr4-older', 'done'),
+    ('simon', 'app', 'jott-12', 'app-jott-12', 'skelcrew/jott-12-oldest', 'done')\`);
 db.run(\`INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', '2', 'Old'),
-  ('simon', 'app', 'wr4', 'Older')\`);`;
+  ('simon', 'app', 'wr4', 'Older'), ('simon', 'app', 'jott-12', 'Oldest')\`);`;
   const run = startOn(laptop, remote, ["New"], before);
   const out = await new Response(run.stdout).text();
   expect(await new Response(run.stderr).text()).toBe("");
   expect(out.trim().split("\n")).toEqual([
     "renamed APP-2 to APP-1, its number",
     "renamed APP-WR4 to APP-2, its number",
-    '["APP-3"]',
+    "renamed APP-JOTT-12 to APP-3, its number",
+    '["APP-4"]',
   ]);
+  // Another machine that holds the same task named after issue #2 gives it the same number.
+  const same = `db.run(\`INSERT INTO threads (owner, repo, task, folder, branch, status)
+  VALUES ('simon', 'app', '2', 'app-2', 'skelcrew/2-old', 'done')\`);
+db.run("INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', '2', 'Old')");`;
+  const other = startOn(lapdog, remote, ["Newer"], same);
+  const otherOut = await new Response(other.stdout).text();
+  expect(await new Response(other.stderr).text()).toBe("");
+  expect(otherOut.trim().split("\n")).toEqual(["renamed APP-2 to APP-1, its number", '["APP-5"]']);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread, resolveTask, threadName } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 const named = (typed) => {
-  const { folder, branch, issue, alias } = readThread(db, db.query("SELECT folder FROM task_threads WHERE task = ?").get(resolveTask(db, "app", typed)).folder);
+  const { folder, branch, issue, alias } = readThread(db, db.query("SELECT folder FROM task_threads WHERE task = ?").get(resolveTask(db, "app", typed).task).folder);
   return { typed, name: threadName(db, readThread(db, folder)), folder, branch, issue, alias };
 };
-console.log(JSON.stringify(["t1", "2", "#2", "wr4", "3"].map(named)));`;
+const split = (repository, typed) => resolveTask(db, repository, typed);
+console.log(JSON.stringify({ named: ["t1", "2", "#2", "wr4", "4"].map(named),
+  split: [split("APP-JOTT", "12"), split("app", "jott-12")] }));`;
   const shown = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: laptop },
     stdout: "pipe",
@@ -772,20 +785,27 @@ console.log(JSON.stringify(["t1", "2", "#2", "wr4", "3"].map(named)));`;
   expect(shown.stderr.toString()).toBe("");
   const old = { folder: "app-2", branch: "skelcrew/2-old", issue: "2", alias: "2" };
   const older = { folder: "app-wr4", branch: "skelcrew/wr4-older", issue: null, alias: "wr4" };
-  expect(JSON.parse(shown.stdout.toString())).toEqual([
-    { typed: "t1", name: "APP-1", ...old },
-    { typed: "2", name: "APP-2", ...older },
-    { typed: "#2", name: "APP-1", ...old },
-    { typed: "wr4", name: "APP-2", ...older },
-    {
-      typed: "3",
-      name: "APP-3",
-      folder: "app-3",
-      branch: "skelcrew/3-new",
-      issue: null,
-      alias: null,
-    },
-  ]);
+  expect(JSON.parse(shown.stdout.toString())).toEqual({
+    named: [
+      { typed: "t1", name: "APP-1", ...old },
+      { typed: "2", name: "APP-2", ...older },
+      { typed: "#2", name: "APP-1", ...old },
+      { typed: "wr4", name: "APP-2", ...older },
+      {
+        typed: "4",
+        name: "APP-4",
+        folder: "app-4",
+        branch: "skelcrew/4-new",
+        issue: null,
+        alias: null,
+      },
+    ],
+    // APP-JOTT-12 splits at its last dash, as every name does, and still reaches its task.
+    split: [
+      { repository: "APP", task: "t3" },
+      { repository: "app", task: "t3" },
+    ],
+  });
   // Each number is claimed on the remote, so no other machine takes it.
   const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/names/*"]);
   expect(
@@ -795,7 +815,7 @@ console.log(JSON.stringify(["t1", "2", "#2", "wr4", "3"].map(named)));`;
       .split("\n")
       .map((line) => line.split("/").at(-1))
       .sort(),
-  ).toEqual(["last", "t1", "t2", "t3"]);
+  ).toEqual(["last", "t1", "t2", "t3", "t4", "t5"]);
 }, 60_000);
 
 // A screen of the release before 2026-11-18 keeps running while a newer release opens its

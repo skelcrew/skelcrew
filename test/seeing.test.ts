@@ -400,7 +400,7 @@ UPDATE tasks SET merged = 1 WHERE task = 't12'`);
         stage: "working",
         title: "Send people back to the page they came from after signing in",
         short: null,
-        issue: null,
+        issue: "#9",
         thread: { status: "failed", needsYou: false, needsYouFor: null, queued: false },
         pr: null,
         checks: null,
@@ -590,12 +590,13 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "t3" })).c
   });
 
   // A task's issue is a link beside it, written as its tracker writes it, whatever the tracker:
-  // here one whose IDs are like ENG-7. The task keeps its own number, and the issue reaches it.
-  test("shows a task's issue as its tracker writes it, as a link, and the issue reaches the task", async () => {
+  // here one whose IDs are opaque, written as ENG-7. The task keeps its own number, and the issue,
+  // as the tracker writes it, reaches it. It still shows so once the issue closed and left the copy.
+  test("shows a task's issue as its tracker writes it, as a link, after it closed too", async () => {
     const link = "https://linear.app/simon/issue/ENG-7";
     const item = {
       kind: "task",
-      id: "ENG-7",
+      id: "a1b2c3",
       ref: "ENG-7",
       title: "Add search",
       body: "Find notes.",
@@ -608,8 +609,8 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "t3" })).c
       closes: "Fixes ENG-7",
     };
     sql(`INSERT INTO items (owner, repo, kind, id, state, created, item)
-  VALUES ('simon', 'app', 'task', 'ENG-7', 'open', '${item.created}', '${JSON.stringify(item)}');
-${threadSql({ task: "t20", status: "stopped", issue: "ENG-7", issue_link: link, title: "Add search", body: "Find notes." })}`);
+  VALUES ('simon', 'app', 'task', 'a1b2c3', 'open', '${item.created}', '${JSON.stringify(item)}');
+${threadSql({ task: "t20", status: "stopped", issue: "a1b2c3", issue_ref: "ENG-7", issue_link: link, title: "Add search", body: "Find notes." })}`);
     serve();
     await untilAnswers();
     const shown = await skel(["show", "app-20"]);
@@ -618,10 +619,15 @@ ${threadSql({ task: "t20", status: "stopped", issue: "ENG-7", issue_link: link, 
       `APP-20  Add search\nStage   working\nIssue   ENG-7  ${link}\nThread  APP-20/builder  stopped\n`,
     );
     expect((await skel(["show", "app#eng-7"])).out).toBe(shown.out);
-    const listed = JSON.parse((await skel(["ls", "app", "--json"])).out);
-    expect(listed).toContainEqual(
-      expect.objectContaining({ task: "APP-20", issue: "ENG-7", title: "Add search" }),
-    );
+    expect((await skel(["show", "app#a1b2c3"])).out).toBe(shown.out);
+    const issueOf = async () =>
+      JSON.parse((await skel(["ls", "app", "--json"])).out).find(
+        (row: { task: string }) => row.task === "APP-20",
+      )?.issue;
+    expect(await issueOf()).toBe("ENG-7");
+    sql("DELETE FROM items WHERE id = 'a1b2c3'");
+    expect((await skel(["show", "app-20"])).out).toContain(`\nIssue   ENG-7  ${link}\n`);
+    expect(await issueOf()).toBe("ENG-7");
   });
 
   test("shows a task as JSON for tools", async () => {

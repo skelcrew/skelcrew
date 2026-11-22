@@ -229,7 +229,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
 }
 
 // A task as sc ls shows it: its name, such as app-12, its title and the short title the lead
-// gave it, its stage, its issue while that is open in Skelcrew's copy, such as #12, and how its
+// gave it, its stage, its issue as its tracker writes it, such as #12, and how its
 // builder stands, or null with no thread. `pr` and `checks` are as sc ps gives them for its thread, and
 // null with none. `review` is where Skelcrew's review stands, with a forge or without one, and
 // null with no thread.
@@ -282,7 +282,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         stage: taskStage(thread, issue !== undefined),
         title: removeControlCodes(latest ?? thread.title ?? issue?.title ?? ""),
         short: row.short,
-        issue: issue ? issueRef(issue) : null,
+        issue: thread.issue === null ? null : issueRef(thread.issue, issue, thread.issue_ref),
         thread: {
           status: row.status,
           needsYou: row.needsYou,
@@ -305,7 +305,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
           stage: "issue",
           title: removeControlCodes(item.title),
           short: null,
-          issue: issueRef(item),
+          issue: issueRef(item.id, item),
           thread: null,
           pr: null,
           checks: null,
@@ -499,7 +499,7 @@ export function readTask(db: Database, which: Which): TaskView {
       issueId === null
         ? null
         : {
-            id: issueRef(issue ?? { id: issueId }),
+            id: issueRef(issueId, issue, thread?.issue_ref),
             link: thread?.issue_link ?? issue?.link ?? null,
           },
     threads: row

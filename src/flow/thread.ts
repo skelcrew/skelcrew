@@ -269,6 +269,8 @@ export const Thread = z.object({
   // The name the task had before every task took a number, such as 12 or wr4, which still
   // reaches it, or null.
   alias: z.string().nullable(),
+  // The issue as its tracker wrote it as the task started, such as #12, or null.
+  issue_ref: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -567,13 +569,43 @@ export const taskName = (repository: string, task: string) =>
 // names the repository.
 export const taskLabel = (task: string) => task.replace(/^t(?=\d+$)/i, "").toUpperCase();
 
-// Returns the task a name typed in the repository stands for, as Skelcrew stores it. A number
-// is the task of that number, such as t158 for APP-158, else the task that had it as its old
-// name, such as APP-483 from when tasks were named after their issues, else the issue of that ID
-// in Skelcrew's copy of the tracker. A # and an ID is the task on that issue, else the issue
-// itself, as #12. A word that names none of them comes back as Skelcrew stores it, so the
-// caller says there is no such task.
-export function resolveTask(db: Database, repository: string, typed: string): string {
+// Returns the repository and task a name typed as a repository and a task stands for, the task
+// as Skelcrew stores it. A number is the task of that number, such as t158 for APP-158, else the
+// task that had it as its old name, such as APP-483 from when tasks were named after their
+// issues, else the issue of that ID in Skelcrew's copy of the tracker. A # and an ID is the task
+// on that issue, else the issue itself, as #12, by the tracker's ID or as the tracker writes it,
+// such as #ENG-7. A name splits at its last dash, so an old name whose issue's ID held one, such
+// as APP-JOTT-12, comes with a repository that ends in part of it: it is split at an earlier dash
+// when that names a repository that has the task. A word that names none of them comes back as
+// Skelcrew would store it, so the caller says there is no such task. Throws when Skelcrew has no
+// such repository.
+export function resolveTask(
+  db: Database,
+  repository: string,
+  typed: string,
+): { repository: string; task: string } {
+  try {
+    const known = knownTask(db, repository, typed);
+    const stored = typed.startsWith("#") || !/^\d+$/.test(typed) ? typed : `t${typed}`;
+    return { repository, task: known ?? stored };
+  } catch (error) {
+    const parts = repository.split("-");
+    for (let at = parts.length - 1; at > 0; at--) {
+      const shorter = parts.slice(0, at).join("-");
+      const old = `${parts.slice(at).join("-")}-${typed}`.toLowerCase();
+      let known: string | null = null;
+      try {
+        known = knownTask(db, shorter, old);
+      } catch {}
+      if (known !== null) return { repository: shorter, task: known };
+    }
+    throw error;
+  }
+}
+
+// Returns the task, or issue as #12, that a name typed in the repository stands for, as
+// resolveTask says, or null when nothing has that name.
+function knownTask(db: Database, repository: string, typed: string): string | null {
   const { owner, repo } = findRepository(db, repository);
   const found = (sql: string, ...args: string[]) =>
     z
@@ -581,35 +613,33 @@ export function resolveTask(db: Database, repository: string, typed: string): st
       .nullable()
       .parse(db.query(sql).get(owner, repo, ...args))?.task ?? null;
   const where = "WHERE owner = ? AND repo = ?";
-  const own = `t${typed}`;
-  const issue = (id: string) =>
-    found(
-      `SELECT task FROM task_threads ${where} AND lower(issue) = lower(?) ORDER BY rowid DESC`,
-      id,
-    ) ??
-    found(
-      `SELECT '#' || id AS task FROM items ${where} AND kind = 'task' AND lower(id) = lower(?)`,
-      id,
-    ) ??
-    `#${id}`;
+  const items = `SELECT '#' || id AS task FROM items ${where} AND kind = 'task'`;
+  const issue = (id: string) => {
+    const written = `#${id}`;
+    const refOf = "lower(json_extract(item, '$.ref'))";
+    return (
+      found(
+        `SELECT task FROM task_threads ${where} AND lower(issue) = lower(?) ORDER BY rowid DESC`,
+        id,
+      ) ??
+      found(`${items} AND lower(id) = lower(?)`, id) ??
+      found(
+        `SELECT task FROM task_threads ${where} AND lower(issue_ref) IN (lower(?), lower(?)) ORDER BY rowid DESC`,
+        id,
+        written,
+      ) ??
+      found(`${items} AND json_valid(item) AND ${refOf} IN (lower(?), lower(?))`, id, written)
+    );
+  };
   if (typed.startsWith("#")) return issue(typed.slice(1));
-  const numbered = /^\d+$/.test(typed);
-  if (
-    numbered &&
-    (found(`SELECT task FROM task_threads ${where} AND task = ?`, own) ??
-      found(`SELECT task FROM backlog ${where} AND task = ?`, own))
-  )
-    return own;
-  const kept =
+  const own = /^\d+$/.test(typed) ? `t${typed}` : typed;
+  return (
+    found(`SELECT task FROM task_threads ${where} AND task = ?`, own) ??
+    found(`SELECT task FROM backlog ${where} AND task = ?`, own) ??
     found(`SELECT task FROM task_threads ${where} AND alias = ?`, typed) ??
-    found(`SELECT task FROM task_threads ${where} AND CAST(task AS TEXT) = ?`, typed);
-  if (kept !== null) return kept;
-  if (
-    numbered &&
-    found(`SELECT id AS task FROM items ${where} AND kind = 'task' AND id = ?`, typed)
-  )
-    return issue(typed);
-  return numbered ? own : typed;
+    found(`SELECT task FROM task_threads ${where} AND CAST(task AS TEXT) = ?`, typed) ??
+    (found(`${items} AND lower(id) = lower(?)`, typed) && issue(typed))
+  );
 }
 
 // Returns the thread's name, such as APP-12, for replies. It uses the repository's name

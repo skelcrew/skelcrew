@@ -155,10 +155,14 @@ const parseItems = (rows: unknown[]) =>
       readJson("items.item", z.object({ item: z.string() }).parse(row).item, Item, null) ?? [],
   );
 
-// Returns an issue as its tracker writes it, such as #12 or JOTT-12. An older plugin doesn't say,
-// and GitHub's wrote a number alone, as #12.
-export const issueRef = (issue: { id: string; ref?: string | undefined }) =>
-  issue.ref ?? (/^\d+$/.test(issue.id) ? `#${issue.id}` : issue.id);
+// Returns an issue as its tracker writes it, such as #12 or JOTT-12: as the copy has it, else as
+// the task saved it as it started, as a closed issue leaves the copy. An older plugin doesn't
+// say, and GitHub's wrote a number alone, as #12.
+export const issueRef = (
+  id: string,
+  inCopy?: { ref?: string | undefined },
+  saved?: string | null,
+) => inCopy?.ref ?? saved ?? (/^\d+$/.test(id) ? `#${id}` : id);
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
 // sc show. Throws when the copy doesn't have it.

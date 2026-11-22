@@ -63,7 +63,8 @@ export async function attachToThread(
   task: string,
 ): Promise<void> {
   const db = openDb();
-  const thread = findThread(db, repository, resolveTask(db, repository, task));
+  const named = resolveTask(db, repository, task);
+  const thread = findThread(db, named.repository, named.task);
   const { host, id } = await builderSession(db, sessions, thread);
   if (!(await agentRuns(host, id)))
     throw new Error(
