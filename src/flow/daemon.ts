@@ -102,7 +102,7 @@ import {
   repositoryNamed,
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
-import { killReviewers, reviewerRuns } from "./reviewer.ts";
+import { killReviewers, reviewOn } from "./reviewer.ts";
 import {
   endRound,
   goOn,
@@ -1106,12 +1106,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       if (!repository) throw new Error("run sc check in a checkout of a repository Skelcrew has");
       const holder =
         thread === null ? "you" : `${threadName(db, thread)}/${reviewer ? "reviewer" : "builder"}`;
-      const live = db.query(
-        "SELECT 1 FROM task_threads WHERE folder = ? AND status IN ('working', 'waiting')",
-      );
-      const runs = () =>
-        thread === null ||
-        (reviewer ? reviewerRuns(reviewSocket(thread.folder)) : live.get(thread.folder) !== null);
+      const review = reviewer ? reviewOn(reviewSocket(reviewer.folder)) : null;
+      const runs = async () => {
+        if (thread === null) return true;
+        if (reviewer) return review !== null && reviewOn(reviewSocket(reviewer.folder)) === review;
+        const live = db
+          .query("SELECT 1 FROM task_threads WHERE folder = ? AND status IN ('working', 'waiting')")
+          .get(thread.folder);
+        const now = readThread(db, thread.folder);
+        if (live === null || now.host === null) return false;
+        const { host, id } = await builderSession(db, sessions, now);
+        return agentRuns(host, id);
+      };
       holdCheckSlot(connection, repositoryCommands(repository).test, {
         holder,
         repository: `${repository.owner}/${repository.repo}`,

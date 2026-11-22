@@ -235,11 +235,13 @@ export function reviewerPrompt(
 // sandbox started can have lost the daemon as an ancestor by then, and still be in its group.
 const reviewerGroups = new Set<number>();
 
-const reviewing = new Set<string>();
+const reviewing = new Map<string, number>();
+let reviewsStarted = 0;
 
-// Returns whether a review runs now with the given reviewer socket, so a check slot taken on it
-// is given back once the review has ended.
-export const reviewerRuns = (socket: string) => reviewing.has(socket);
+// Returns which review runs now with the given reviewer socket, by a number of its own, or null
+// when none does. So a check slot taken during one review is given back once that review has
+// ended, even when the next round's review runs on the same socket.
+export const reviewOn = (socket: string) => reviewing.get(socket) ?? null;
 
 // Kills every reviewer that runs now, with whatever it started, for the daemon's stop, and
 // returns once none of them runs. Waiting matters: a next daemon would otherwise run the review
@@ -610,10 +612,11 @@ export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review |
       reset: limit.reset,
     });
   const { socket } = given;
-  if (socket) reviewing.add(socket);
+  const started = ++reviewsStarted;
+  if (socket) reviewing.set(socket, started);
   return reviewNow(given)
     .catch((error): Review => ({ verdict: "failed", body: errorText(error) }))
     .finally(() => {
-      if (socket) reviewing.delete(socket);
+      if (socket && reviewing.get(socket) === started) reviewing.delete(socket);
     });
 }

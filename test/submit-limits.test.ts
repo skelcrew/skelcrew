@@ -25,6 +25,7 @@ import {
   running,
   setUp,
   skel,
+  socket,
   startApp12,
   statuses,
   tearDown,
@@ -391,6 +392,9 @@ done`,
     expect((await skel(["stop", "app-12"])).err).toBe("");
     await waitFor(async () => !(await holds("APP-12/reviewer")), { timeout: 30_000 });
     expect(check.exitCode).toBeNull();
+    expect(read(join(home, "daemon.log"))).toContain(
+      "APP-12/reviewer gave back a check slot in simon/app: its review has ended",
+    );
   }, 90_000);
 
   test("a builder's check slot is given back once its thread is stopped, though its sc check runs on", async () => {
@@ -405,6 +409,27 @@ done`,
     expect((await skel(["stop", "app-12"])).err).toBe("");
     await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
     expect(check.exitCode).toBeNull();
+    expect(read(join(home, "daemon.log"))).toContain(
+      "APP-12/builder gave back a check slot in simon/app: its builder has ended",
+    );
+  }, 90_000);
+
+  test("a builder killed while its sc check runs on gives its check slot back", async () => {
+    addApp();
+    config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    await startApp12();
+    await until(() => thread().status === "waiting", 30_000);
+    const check = checkOn(builderSocket());
+    await waitFor(() => holds("APP-12/builder"), { timeout: 30_000 });
+    // Its session ends with no word to Skelcrew, and the thread still waits.
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
+    expect(check.exitCode).toBeNull();
+    expect(read(join(home, "daemon.log"))).toContain(
+      "APP-12/builder gave back a check slot in simon/app: its builder has ended",
+    );
   }, 90_000);
 
   test("a review that times out twice needs you, and the lead hears why", async () => {

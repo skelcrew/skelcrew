@@ -32,7 +32,7 @@ const held = new Map<Socket, Holder & { since: number }>();
 export function holdCheckSlot(
   connection: Socket,
   test: string[] | undefined,
-  holder: Holder & { runs: () => boolean },
+  holder: Holder & { runs: () => boolean | Promise<boolean> },
 ): void {
   const send = (line: object) => connection.write(`${JSON.stringify(line)}\n`);
   if (test === undefined) {
@@ -46,8 +46,16 @@ export function holdCheckSlot(
     return;
   }
   const closed = new AbortController();
-  const looking = setInterval(() => {
-    if (!holder.runs()) connection.destroy();
+  let why = "its check ended";
+  let asking = false;
+  const looking = setInterval(async () => {
+    if (asking) return;
+    asking = true;
+    const runs = await Promise.resolve(holder.runs()).catch(() => true);
+    asking = false;
+    if (runs) return;
+    why = `${holder.holder.endsWith("/reviewer") ? "its review" : "its builder"} has ended`;
+    connection.destroy();
   }, holderLooked);
   connection.on("close", () => {
     clearInterval(looking);
@@ -74,10 +82,12 @@ export function holdCheckSlot(
         since: Date.now(),
       });
       send({ test });
+      console.log(`${holder.holder} took a check slot in ${holder.repository}`);
       try {
         await heldUntilClosed();
       } finally {
         held.delete(connection);
+        console.log(`${holder.holder} gave back a check slot in ${holder.repository}: ${why}`);
       }
     })
     .catch(() => {});
