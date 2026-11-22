@@ -88,7 +88,7 @@ The builder opens a pull request. A reviewer agent reviews it, and the builder f
 
 It doesn't go on forever. After 3 rounds of changes, by default, the task stops and waits for you under Needs you. [How a task goes](how-a-task-goes.md#6-the-round-limit) says what to do then.
 
-Once it is approved and CI passes, the task shows under Ready. Merge it on GitHub as you always do.
+Once it is approved and CI passes, the task waits for you to merge it. It shows under Needs you, at the top of the sidebar, and its row says `ready to merge`. Merge it on GitHub as you always do.
 
 Or, in the sidebar, go to the task's row and press `m`. It asks before it merges:
 

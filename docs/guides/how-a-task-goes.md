@@ -85,7 +85,7 @@ Your own comments on the pull request always reach the builder, even past the li
 
 ## 7. CI
 
-Once the review approves, the task waits for CI under Checks. When every check passes, it moves to Ready.
+Once the review approves, the task waits for CI under Checks. When every check passes, it is ready to merge. It then waits for you under Needs you, as `ready to merge`. One with a merge armed shows under Ready, and merges by itself.
 
 A task on a flow with no review waits for CI the same way. Once CI passes, its row says `ready to merge, not reviewed`.
 

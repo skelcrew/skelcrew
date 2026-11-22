@@ -25,10 +25,10 @@ The lead is the first row. Below it, tasks are grouped in sections:
 | Building | A builder is working on it. |
 | Reviewing | A reviewer is reviewing its latest round. |
 | Checks | Waiting for CI, once the review approved it. |
-| Ready | Approved and green. It waits for you to merge. |
+| Ready | Approved and green, with a merge already armed. |
 | Done | Merged or closed lately. |
 
-Each task shows once, in one section. Its row has a short word that says what is happening, such as `working` or `ready to merge`.
+Each task shows once, in one section. A task that is approved and green, and waits for you to merge it, shows under Needs you, as `ready to merge`. Its row has a short word that says what is happening, such as `working` or `ready to merge`.
 
 ## Moving around
 
@@ -41,7 +41,7 @@ Press Ctrl+\ to bring your typing to the sidebar. Then:
 | Enter | Open the row you are on |
 | Shift+Enter, or `a` | Open the row's agent full screen |
 | `s` | Start a task from the Backlog |
-| `m` | Merge a task under Ready |
+| `m` | Merge a task that is `ready to merge` |
 | Shift+R | Restart the row's agent, keeping its conversation |
 
 Each key asks before it starts, merges or restarts anything.
@@ -67,7 +67,7 @@ Enter on the lead's row gives your typing to the lead.
 Enter on a task opens it:
 
 - A task at work attaches you to its builder, on the right side. You type to it as you would in Claude Code or Codex.
-- A task under Ready or Done opens its pull request.
+- A task that is ready to merge, or under Ready or Done, opens its pull request.
 - A task in the Backlog asks whether to start it.
 
 Moving to a task without pressing Enter shows its details on the right: its stage, CI, review and recent events, with its agent live beside them. Nothing you type there reaches the agent.
