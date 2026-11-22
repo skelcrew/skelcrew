@@ -10,16 +10,17 @@ import {
   startedShared,
 } from "./codex-login.ts";
 import { sweepLogins, sweepReviewLogins } from "./login-copies.ts";
+import { pi } from "./pi.ts";
 
 // A harness's name, as your config and Skelcrew's database write it.
-export const HarnessName = z.enum(["claude", "codex"]);
+export const HarnessName = z.enum(["claude", "codex", "pi"]);
 export type HarnessName = z.infer<typeof HarnessName>;
 
-const harnesses = { claude, codex } satisfies Record<HarnessName, { name: HarnessName }>;
+const harnesses = { claude, codex, pi } satisfies Record<HarnessName, { name: HarnessName }>;
 
 // The harnesses whose agents get a copy of Skelcrew's login, each with how it renews it.
 // Claude Code's agents log in with a token that never renews, so it has none.
-const withCopies = [codex];
+const withCopies = [codex, pi];
 
 // Returns the harness your config names, such as "claude", with how to start it and what its
 // screen shows. The type follows the name, so a caller sees exactly what that harness offers.

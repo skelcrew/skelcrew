@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { dataDir } from "../paths.ts";
 
 // The harnesses whose agents get a copy of Skelcrew's login.
-export type CopiedHarness = "codex";
+export type CopiedHarness = "codex" | "pi";
 
 // The folders of a harness's copies: one per start of a lead or builder session, named by the
 // session's name, a + and an ID, and one per review.
