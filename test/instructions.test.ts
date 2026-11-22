@@ -28,17 +28,24 @@ beforeEach(() => {
   // Claude Code's builder needs Skelcrew's login token for agents to start.
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
+  // And Pi's, Skelcrew's own Pi login.
+  const pi = join(home, ".local", "share", "skelcrew", "pi");
+  mkdirSync(pi, { recursive: true });
+  writeFileSync(join(pi, "auth.json"), '{"openai":{"type":"api_key","key":"sk-test"}}');
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
 // Returns the instructions a harness's start left for its agent, from the file it points the
-// harness at: Claude Code's --append-system-prompt-file, or the profile Codex is started with.
+// harness at: Claude Code's --append-system-prompt-file, Pi's --append-system-prompt, or the
+// profile Codex is started with.
 function toldIn(started: { argv: string[]; env: Record<string, string> }): string {
   const { argv, env } = started;
   const flag = argv.indexOf("--append-system-prompt-file");
   if (flag > -1) return readFileSync(argv[flag + 1] ?? "", "utf8");
+  const appended = argv.indexOf("--append-system-prompt");
+  if (appended > -1) return readFileSync(argv[appended + 1] ?? "", "utf8");
   const profile = argv[argv.indexOf("-p") + 1];
   if (!profile || !env.CODEX_HOME) throw new Error("the harness was given no instructions file");
   const setting = readFileSync(join(env.CODEX_HOME, `${profile}.config.toml`), "utf8");

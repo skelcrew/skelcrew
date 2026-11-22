@@ -109,7 +109,8 @@ function piInUse(): boolean {
 export function setUpPiForRoles(): void {
   if (!piInUse()) return;
   const env = Bun.which("pi") ? process.env : { ...process.env, PATH: loginPath() };
-  stopForTools([], [], missingHarness(env));
+  const pi = harnessNamed("pi");
+  if (!Bun.which(pi.program, { PATH: env.PATH ?? "" })) stopForTools([], [], [pi.install]);
   if (hasPiLogin(homedir())) return;
   console.log("");
   logInPi(env, "Sign in to Pi for the roles that run on it.");
