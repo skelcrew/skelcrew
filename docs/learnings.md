@@ -224,6 +224,10 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
 - **Pi can fail before any event of the extension's.** For a model it doesn't know it prints
   `Error: Model "nosuch/m" not found. ...` and exits with 1. No command has run then, so until
   the extension's `agent_start` line, everything on stderr is Pi's own.
+- **Pi's list of provider keys is in pi-ai's `env-api-keys.js`, not in its docs.** The docs'
+  table leaves some out, such as `CLOUDFLARE_API_KEY`, `TYPESAFE_API_KEY` and the Qwen token-plan
+  keys. Cloudflare and Azure need more than a key, such as an account ID or a base URL. Vertex
+  and Bedrock can sign in from files in your home folder, which the sandbox hides.
 - **`pi -p` reads its prompt from stdin, whole.** Run with stdin open and nothing written, it
   waits forever.
 - **Pi has no setting that holds an answer to a shape.** The reviewer gets a tool from

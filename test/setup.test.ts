@@ -1064,6 +1064,21 @@ test("Pi needs no sign-in when a key it reads is set, and a failed one finishes 
   expect(keyed.out).not.toContain("Sign in to Pi");
 });
 
+test("Pi needs no sign-in when Skelcrew's models.json has a provider of your own", async () => {
+  unlinkSync(join(bin, "claude"));
+  fakePi("exit 1");
+  const folder = join(home, ".local", "share", "skelcrew", "pi");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(
+    join(folder, "models.json"),
+    '{"providers":{"ollama":{"baseUrl":"http://localhost:11434/v1","apiKey":"local"}}}',
+  );
+  const run = await skel();
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("Sign in to Pi");
+  expect(calls()).not.toContain("pi auth login");
+});
+
 // Reviews on your own harness save nothing, so only the first run's end shows the question was
 // answered. Here your harness has its login before the question is asked.
 test("asks about reviews again after a first run stopped at that question", async () => {

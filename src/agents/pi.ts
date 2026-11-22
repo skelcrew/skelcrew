@@ -73,19 +73,27 @@ function shareLogin(home: string, folder = piHome(home)): string {
   return login;
 }
 
-// Reports whether Pi's agents have a login: a provider saved in Skelcrew's Pi login, or one of
-// the API keys Pi reads in `env`. Only the file is read, never a link or a pipe an agent left,
-// and no pi runs: an agent could put a command in auth.json for Pi to run as a key.
+// Reports whether Pi's agents have a login: a provider saved in Skelcrew's Pi login, one of the
+// keys or tokens Pi reads in `env`, or a provider of your own in Skelcrew's models.json, such as a
+// model you run yourself. Only the files are read, never a link or a pipe an agent left, and no pi
+// runs: an agent could put a command in auth.json for Pi to run as a key.
 export function piLoggedIn(home: string, env: Record<string, string | undefined>): boolean {
-  if (pi.keys.some((key) => env[key])) return true;
-  for (const file of [join(loginFolder(home), "auth.json"), join(piHome(home), "auth.json")]) {
-    if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) continue;
+  if (pi.keys.some((key) => /KEY|TOKEN/.test(key) && env[key])) return true;
+  const saved = (file: string, shape: z.ZodType<Record<string, unknown>>) => {
+    if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) return false;
     try {
-      const saved = z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(file, "utf8")));
-      if (Object.keys(saved).length > 0) return true;
-    } catch {}
-  }
-  return false;
+      return Object.keys(shape.parse(JSON.parse(readFileSync(file, "utf8")))).length > 0;
+    } catch {
+      return false;
+    }
+  };
+  const logins = z.record(z.string(), z.unknown());
+  const models = z.object({ providers: logins }).transform((read) => read.providers);
+  return (
+    saved(join(loginFolder(home), "auth.json"), logins) ||
+    saved(join(piHome(home), "auth.json"), logins) ||
+    saved(join(piHome(home), "models.json"), models)
+  );
 }
 
 // Readies Skelcrew's own Pi folder for pi auth login, outside the sandbox, so the login lands in
@@ -386,9 +394,13 @@ function inputStart(screen: string[]): number | null {
 
 // Pi as Skelcrew knows it, with the marks its extension draws: one line while a turn runs, which
 // counts seconds, and another while Pi waits with nothing typed. A failed review says only the
-// error the extension printed, as any other line Pi printed may be a command's. `keys` are the API key variables
-// of the providers Pi reads from the environment, let into the sandbox for those who use a key
-// rather than a login. Copilot's is a GitHub token, which no agent may see, so it stays out. The
+// error reportedError finds, never a line that may be a command's. `keys` are the variables of
+// the providers Pi reads from the environment, let into the sandbox for those who use a key
+// rather than a login: every key and token pi-ai's env-api-keys.js reads, and what some of those
+// providers need beside it, none of it secret. Copilot's is a GitHub token, which no agent may
+// see, so it stays out.
+// Bedrock gets only its own bearer token: AWS's own keys would open the whole account to agents,
+// and Vertex's and AWS's login files live in your home folder, which the sandbox hides. The
 // first run looks for `program` and, when it is missing, prints the line that installs it: the
 // version Skelcrew was tested with, which needs Node 22.19 or newer.
 export const pi = {
@@ -398,35 +410,59 @@ export const pi = {
   install: "npm install -g @earendil-works/pi-coding-agent@1.6.0",
   marks: { busy: busyMark, prompt: readyMark },
   keys: [
-    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
     "ANT_LING_API_KEY",
+    "QWEN_TOKEN_PLAN_TEAM_API_KEY",
+    "QWEN_TOKEN_PLAN_API_KEY",
+    "QWEN_TOKEN_PLAN_TEAM_CN_API_KEY",
+    "QWEN_TOKEN_PLAN_CN_API_KEY",
+    "QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY",
+    "QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY",
     "OPENAI_API_KEY",
     "AZURE_OPENAI_API_KEY",
-    "DEEPSEEK_API_KEY",
     "NVIDIA_API_KEY",
+    "DEEPSEEK_API_KEY",
     "GEMINI_API_KEY",
     "GOOGLE_CLOUD_API_KEY",
-    "MISTRAL_API_KEY",
     "GROQ_API_KEY",
     "CEREBRAS_API_KEY",
     "XAI_API_KEY",
+    "TYPESAFE_API_KEY",
+    "RADIUS_API_KEY",
     "OPENROUTER_API_KEY",
     "AI_GATEWAY_API_KEY",
     "ZAI_API_KEY",
     "ZAI_CODING_CN_API_KEY",
-    "OPENCODE_API_KEY",
-    "RADIUS_API_KEY",
+    "MISTRAL_API_KEY",
+    "MINIMAX_API_KEY",
+    "MINIMAX_CN_API_KEY",
+    "MOONSHOT_API_KEY",
     "HF_TOKEN",
     "FIREWORKS_API_KEY",
     "TOGETHER_API_KEY",
     "BASETEN_API_KEY",
+    "OPENCODE_API_KEY",
     "KIMI_API_KEY",
     "META_API_KEY",
-    "MINIMAX_API_KEY",
-    "MINIMAX_CN_API_KEY",
-    "MOONSHOT_API_KEY",
+    "CLOUDFLARE_API_KEY",
     "XIAOMI_API_KEY",
+    "XIAOMI_TOKEN_PLAN_CN_API_KEY",
+    "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+    "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_GATEWAY_ID",
+    "AZURE_OPENAI_BASE_URL",
+    "AZURE_OPENAI_RESOURCE_NAME",
+    "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+    "AZURE_OPENAI_API_VERSION",
+    "GOOGLE_CLOUD_PROJECT",
+    "GCLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
   ],
   start: startCommand,
   saved: savedConversation,

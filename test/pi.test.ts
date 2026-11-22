@@ -457,6 +457,10 @@ describe("starting a lead or a builder", () => {
     OPENROUTER_API_KEY: "openrouter-secret",
     GH_TOKEN: "github-secret",
     COPILOT_GITHUB_TOKEN: "copilot-secret",
+    CLOUDFLARE_API_KEY: "cf-secret",
+    CLOUDFLARE_ACCOUNT_ID: "cf-account",
+    AWS_BEARER_TOKEN_BEDROCK: "bedrock-secret",
+    AWS_SECRET_ACCESS_KEY: "aws-secret",
   });
   const start = (more: { resume?: string; sessionId?: string; model?: string } = {}) =>
     pi.start({
@@ -523,8 +527,13 @@ describe("starting a lead or a builder", () => {
     const { argv, env: given } = await start();
     expect(given.GEMINI_API_KEY).toBe("gemini-secret");
     expect(given.OPENROUTER_API_KEY).toBe("openrouter-secret");
+    expect(given.CLOUDFLARE_API_KEY).toBe("cf-secret");
+    expect(given.CLOUDFLARE_ACCOUNT_ID).toBe("cf-account");
+    expect(given.AWS_BEARER_TOKEN_BEDROCK).toBe("bedrock-secret");
     expect(given.GH_TOKEN).toBeUndefined();
     expect(given.COPILOT_GITHUB_TOKEN).toBeUndefined();
+    // AWS's own keys would open the whole account to agents.
+    expect(given.AWS_SECRET_ACCESS_KEY).toBeUndefined();
     for (const secret of ["gemini-secret", "openrouter-secret", "github-secret", "copilot-secret"])
       expect(argv.join(" ")).not.toContain(secret);
   });
@@ -608,8 +617,24 @@ describe("a review", () => {
   });
 });
 
+test("a provider of your own in Skelcrew's models.json is a login, as Pi needs no other", () => {
+  mkdirSync(join(data(), "pi"), { recursive: true });
+  const models = join(data(), "pi", "models.json");
+  writeFileSync(models, '{"providers":{}}');
+  expect(piLoggedIn(home, {})).toBe(false);
+  writeFileSync(
+    models,
+    '{"providers":{"ollama":{"baseUrl":"http://localhost:11434/v1","apiKey":"local"}}}',
+  );
+  expect(piLoggedIn(home, {})).toBe(true);
+});
+
 test("Pi has a login once a provider is saved or a key it reads is set", () => {
   expect(piLoggedIn(home, {})).toBe(false);
+  for (const key of ["TYPESAFE_API_KEY", "CLOUDFLARE_API_KEY", "QWEN_TOKEN_PLAN_TEAM_API_KEY"])
+    expect(piLoggedIn(home, { [key]: "k" })).toBe(true);
+  // A region or an account ID alone is no key.
+  expect(piLoggedIn(home, { AWS_REGION: "us-east-1", CLOUDFLARE_ACCOUNT_ID: "a" })).toBe(false);
   mkdirSync(join(data(), "pi-login"), { recursive: true });
   writeFileSync(login(), "{}");
   expect(piLoggedIn(home, {})).toBe(false);

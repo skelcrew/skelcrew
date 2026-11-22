@@ -42,7 +42,7 @@ harness: pi
 model: google/gemini-4-argon
 ```
 
-Skelcrew's Pi agents never read your own `~/.pi`. For a provider Pi doesn't have, such as a model you run yourself, write its `models.json` in `~/.local/share/skelcrew/pi/`, and each agent gets a copy as it starts. Keep real keys out of it: a model you run yourself takes any key, such as `"apiKey": "local"`.
+Skelcrew's Pi agents never read your own `~/.pi`. For a provider Pi doesn't have, such as a model you run yourself, write its `models.json` in `~/.local/share/skelcrew/pi/`, and each agent gets a copy as it starts. Setup then asks for no sign-in. Keep real keys out of it: a model you run yourself takes any key, such as `"apiKey": "local"`.
 
 ### 2. Set up a repository
 
