@@ -92,7 +92,7 @@ console.log(JSON.stringify({ prompt: text.replace(/\\x1b\\[20[01]~/g, "") }));' 
 done <&3 &
 echo "❯"
 for i in $(seq 3000); do
-  test -e "$CLAUDE_CONFIG_DIR/ask" && { rm "$CLAUDE_CONFIG_DIR/ask"; hook PreToolUse AskUserQuestion; }
+  test -e "$CLAUDE_CONFIG_DIR/ask" && { said=$(cat "$CLAUDE_CONFIG_DIR/ask"); rm "$CLAUDE_CONFIG_DIR/ask"; hook PreToolUse AskUserQuestion "$said"; }
   test -e "$CLAUDE_CONFIG_DIR/answer" && { rm "$CLAUDE_CONFIG_DIR/answer"; hook PostToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/talk" && { said=$(cat "$CLAUDE_CONFIG_DIR/talk"); rm "$CLAUDE_CONFIG_DIR/talk"; hook UserPromptSubmit "" "$said"; }
   test -e "$CLAUDE_CONFIG_DIR/fail" && { rm "$CLAUDE_CONFIG_DIR/fail"; hook StopFailure authentication_failed; }

@@ -56,14 +56,27 @@ export async function askCommand(args: string[]): Promise<void> {
   }
   const [text, ...flags] = rest;
   const options: string[] = [];
-  for (let at = 0; at < flags.length; at += 2) {
+  let title: string | undefined;
+  for (let at = 0; at < flags.length; at += 1) {
+    const flag = flags[at];
+    if (flag === "--yes-no") {
+      options.push("yes", "no");
+      continue;
+    }
     const value = flags[at + 1];
-    if (flags[at] !== "--option" || value === undefined) usage(command);
-    options.push(value);
+    at += 1;
+    if (value === undefined) usage(command);
+    if (flag === "--option") options.push(value);
+    else if (flag === "--title" && title === undefined) title = value;
+    else usage(command);
   }
   if (!first || !text?.trim()) usage(command);
   const [repository, task] = splitTaskName(first) ?? [first, undefined];
-  const about = await postItem(repository, task, { text, options });
+  const about = await postItem(repository, task, {
+    ...(title === undefined ? {} : { title }),
+    text,
+    options,
+  });
   console.log(`Asked the human about ${about}. Their answer comes back to you as a note.`);
 }
 

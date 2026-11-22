@@ -26,8 +26,8 @@ import {
   canOpenLinks,
   itemFooter,
   itemKey,
-  itemKeys,
   openPr,
+  picked,
   type Reply,
   replyLine,
   stillOffered,
@@ -94,7 +94,7 @@ const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte
 // from anywhere, to bring your typing here, and Shift-Enter as CSI-u, only while your typing is
 // here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
-// Enter, except on a row with the lead's item, where it picks option a. Alt-W and plain w ask whether to close or remove the open repository.
+// Enter, except on an item you opened, where it picks option a. Alt-W and plain w ask whether to close or remove the open repository.
 const keyNames: Record<string, string> = {
   "\x1c": "to sidebar",
   "\x1bw": "close",
@@ -135,14 +135,13 @@ function sidebarFooter(row: Row, restarts: boolean): string {
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const now = row.startNow ? "  f start now" : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
-  const answers = row.ask ? `  ${itemKeys(row)}` : "";
-  const full = row.ask ? "⇧⏎ full screen" : "⇧⏎/a full screen";
+  const full = "⇧⏎/a full screen";
   const enter = row.ask
     ? `⏎ open item  ${full}`
     : enterAttaches(row)
       ? `⏎ attach  ${full}`
       : "⏎ open";
-  return `${first}${answers}  ${enter}${scroll}  0-6 sections${reorder}${start}${now}${merge}${end}`;
+  return `${first}  ${enter}${scroll}  0-6 sections${reorder}${start}${now}${merge}${end}`;
 }
 
 // The question the close key asks about the open repository, by the step it is at: which of
@@ -808,9 +807,25 @@ export async function runSidebar(
   };
   // Acts on what a key or a tap on an item's line picks: an option, which answers it, or a reply,
   // which you then type.
+  // An option of Skelcrew's own item does what it says, as picked says.
   const pickOn = (row: Row, pick: Pick) => {
-    if (pick === "reply") replying = { row, text: "" };
-    else void answerRow(row, { pick });
+    const does = picked(row, pick, `${open.owner}/${open.repo}`);
+    if (does === null) return;
+    if (does === "reply") replying = { row, text: "" };
+    else if (does === "open") enter();
+    else {
+      item = null;
+      if (does === "merge") mergeRow(row);
+      else if ("answer" in does) void answerRow(row, { pick: does.answer });
+      else if ("run" in does) void goAhead(does.run);
+      else asking = { question: does.confirm, row: row.name, offer: "pick" };
+    }
+  };
+  // Asks whether to merge a task ready for review, as m does, or says why it can't.
+  const mergeRow = (row: Row) => {
+    if (row.merge && "refused" in row.merge) said = row.merge.refused;
+    else if (row.merge) asking = { question: row.merge, row: row.name, offer: "merge" };
+    else said = openPr(db, open, row, canOpen, (text) => process.stdout.write(text));
   };
   // Acts on a key while you type a reply, which takes every key but Ctrl-\.
   const typeInReply = (reply: Reply, key: string) => {
@@ -996,8 +1011,7 @@ export async function runSidebar(
     else if (key === "f" && row?.startNow)
       asking = { question: row.startNow, row: row.name, offer: "startNow" };
     else if (key === "m" && row?.merge) {
-      if ("refused" in row.merge) said = row.merge.refused;
-      else asking = { question: row.merge, row: row.name, offer: "merge" };
+      mergeRow(row);
     } else if (key === "m" && row?.part === "ready")
       said = row.needsYou
         ? `${row.name}'s builder needs you first: press Enter to reach it`

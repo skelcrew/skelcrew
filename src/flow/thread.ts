@@ -228,6 +228,12 @@ export const Thread = z.object({
   // The instruction to bring back the builder's missing session host plugin, which only you can
   // follow, as hostMissing gives it. Null otherwise.
   needs_you_for: z.string().nullable(),
+  // What the builder last said for what Skelcrew marked itself: its question, its last message
+  // or its harness's error. Null when it said nothing.
+  said: z.string().nullable(),
+  // Skelcrew's own item you handed to the lead, by its title and text, which then no longer
+  // shows. Null when none was.
+  handed: z.string().nullable(),
   // Whether you decided about the round limit, with sc start or a merge, so the thread no longer
   // needs you for it. The next review asks again.
   limit_decided: z.coerce.boolean(),

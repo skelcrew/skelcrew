@@ -1,8 +1,9 @@
 // What the list's keys do on a row that isn't an agent's, for sc --list and the screen's sidebar
-// alike: opening a task's PR, going ahead with a start or a merge you said yes to, and answering
-// the lead's item in Needs you.
+// alike: opening a task's PR, going ahead with a start or a merge you said yes to, answering the
+// lead's item in Needs you, and picking an option of Skelcrew's own item there.
 import type { Database } from "bun:sqlite";
-import { letters } from "../flow/requests.ts";
+import { type Letter, letters } from "../flow/requests.ts";
+import { typedTask } from "../flow/thread.ts";
 import { enterAttaches, type Pick, type Target } from "./layout.ts";
 import { hasForge, type Open, type Question, type Row } from "./rows.ts";
 
@@ -51,8 +52,13 @@ export function openPr(
 }
 
 // A question open on the bottom line: what it asks, the row it is about by name, and which of
-// the row's offers it is: a start, a start now over limits.threads, or a merge.
-export type Asking = { question: Question; row: string; offer: "start" | "startNow" | "merge" };
+// the row's offers it is: a start, a start now over limits.threads, a merge, or a pick on
+// Skelcrew's own item.
+export type Asking = {
+  question: Question;
+  row: string;
+  offer: "start" | "startNow" | "merge" | "pick";
+};
 
 // Returns the start or merge to go ahead with once you said yes, given the rows read again just
 // now, or what the bottom line says instead. The task can change while the question is open: CI
@@ -60,12 +66,66 @@ export type Asking = { question: Question; row: string; offer: "start" | "startN
 // the row still offers the very same request.
 export function stillOffered(asking: Asking, rows: Row[]): Question | string {
   const row = rows.find((candidate) => candidate.name === asking.row);
+  const changed = `${asking.row} changed while you were asked, so nothing was done`;
+  if (asking.offer === "pick") {
+    const { request } = asking.question;
+    const again = row && request.command === "pick" && ownPick(row, request.pick, request.repo);
+    return again && Bun.deepEquals(again.request, request) ? again : changed;
+  }
   const offer = row?.[asking.offer];
   if (offer && "ask" in offer && Bun.deepEquals(offer.request, asking.question.request))
     return offer;
-  return offer && "refused" in offer
-    ? offer.refused
-    : `${asking.row} changed while you were asked, so nothing was done`;
+  return offer && "refused" in offer ? offer.refused : changed;
+}
+
+// What a pick on a row's item does: answers the lead's item, starts a reply, opens the builder,
+// merges as m does, or does what an option of Skelcrew's own item does, which a merge without
+// approval first asks y/n of, as every merge does.
+export type Picked =
+  | { answer: Letter }
+  | "reply"
+  | "open"
+  | "merge"
+  | { confirm: Question }
+  | { run: Question };
+
+// Returns what a pick on the item of `row`, in the repository `repo` names, does, or null when the
+// row has no such option.
+export function picked(row: Row, pick: Pick, repo: string): Picked | null {
+  if (pick === "reply") return row.ask?.acts === null ? "reply" : null;
+  if (!row.ask) return null;
+  if (row.ask.acts === null) return { answer: pick };
+  const act = row.ask.acts[letters.indexOf(pick)];
+  if (act === "open" || act === "merge") return act;
+  const question = ownPick(row, pick, repo);
+  if (question === null) return null;
+  return act === "skip review" ? { confirm: question } : { run: question };
+}
+
+// Returns what a pick on Skelcrew's own item on `row` asks the daemon, with what the bottom line
+// asks first, for a merge without approval, and says meanwhile, or null with no such option.
+function ownPick(row: Row, pick: Letter, repo: string): Question | null {
+  if (!row.ask || row.ask.acts === null || row.task === null) return null;
+  const at = letters.indexOf(pick);
+  const label = row.ask.options[at];
+  const act = row.ask.acts[at];
+  if (label === undefined || act === undefined) return null;
+  const pr = row.pr || row.name;
+  return {
+    ask:
+      act === "skip review"
+        ? `Merge ${pr} (${row.name}) without Skelcrew's approval? CI must still pass. y/n`
+        : "",
+    working: `${label}…`,
+    request: {
+      command: "pick",
+      repo,
+      task: typedTask(row.task),
+      seen: { title: row.ask.title, text: row.ask.text },
+      pick,
+    },
+    queues: false,
+  };
 }
 
 // Returns what a key does on the row at `here`, when it has the lead's item: a letter picks that
@@ -87,10 +147,11 @@ export function itemKey(
 }
 
 // Returns the keys that answer a row's item, for the bottom line, such as `a/b answer  r reply`.
+// Skelcrew's own item takes no reply, as its options act.
 export function itemKeys(row: Row): string {
   if (!row.ask) return "";
-  const picks = letters.slice(0, row.ask.options.length).join("/");
-  return picks ? `${picks} answer  r reply` : "r reply";
+  const picks = `${letters.slice(0, row.ask.options.length).join("/")} answer`;
+  return row.ask.acts === null ? `${picks}  r reply` : picks;
 }
 
 // Returns what the bottom line says while the lead's item on `row` is open full-size, or null on

@@ -299,6 +299,8 @@ async function recordThread(
       merge_followup: null,
       not_blocking_task: null,
       needs_you_for: null,
+      said: null,
+      handed: null,
       agents,
       flow,
       queued_since: queued ? joinTime(db) : null,

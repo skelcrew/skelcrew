@@ -53,7 +53,7 @@ import { issueRef, openTasks, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
 import { beingRemoved, removalEnded, removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
-import { answerItem, clearItem, postItem } from "./inbox.ts";
+import { answerItem, clearItem, pickOwnItem, postItem } from "./inbox.ts";
 import {
   closeExitedLeads,
   closeTabAndEndLead,
@@ -88,6 +88,7 @@ import {
   noteForLead,
   typeLeadNotes,
 } from "./messages.ts";
+import type { Act } from "./own-items.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -460,6 +461,50 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const { repository, task } = resolveTask(db, request.repo, request.task);
     return { ...request, repo: repository, task };
   };
+  // Restarts a running builder, keeping its conversation, and returns what to say.
+  const restartThread = async (thread: Thread): Promise<string> => {
+    const name = threadName(db, thread);
+    const { host, id } = await builderSession(db, sessions, thread);
+    const live = thread.status === "working" || thread.status === "waiting";
+    if (!live || !(await agentRuns(host, id)))
+      throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+    const restarted = await restartBuilder(db, sessions, thread);
+    if (restarted === "refused") throw new Error(`${name} is being stopped, so it isn't restarted`);
+    if (restarted === "stays ended")
+      return `${name} was stopped or removed meanwhile, so its builder stays ended.`;
+    if ("failed" in restarted) {
+      failThread(db, sessions, thread, restarted.failed);
+      return `${name}'s builder couldn't start again: ${errorText(restarted.failed)}`;
+    }
+    return restarted.gone === null
+      ? `Restarted ${name}'s builder.`
+      : `Skelcrew can't tell whether its builder runs, as ${restarted.gone}.`;
+  };
+  // Does what an option of Skelcrew's own item on a thread does, as its command would for you,
+  // and returns what to say. A builder whose session host is gone starts again on the current
+  // one, by a stop and a start, as only those move it.
+  const runPick = async (act: Act, thread: Thread, repo: string, task: string) => {
+    const name = threadName(db, thread);
+    switch (act) {
+      case "go on":
+        return (await startTask({ command: "start", repo, task })).started;
+      case "stop":
+        await stopThread(db, sessions, thread);
+        return `Stopped ${name}.`;
+      case "skip review": {
+        const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
+        if (thread.pr === null || pr === null) throw new Error(`${name} has no PR to merge`);
+        const seen = { pr: thread.pr, started: thread.started, head: pr.head ?? undefined };
+        return armMerge(db, sessions, thread, { seen }, true);
+      }
+      case "restart":
+        if (thread.needs_you_for === null) return restartThread(thread);
+        await stopThread(db, sessions, thread);
+        return (await startTask({ command: "start", repo, task })).started;
+      default:
+        throw new Error(`${name}'s ${act} is done on the screen`);
+    }
+  };
   const setUpAndStart = async (thread: Thread) => {
     try {
       await endEarlierBuilder(db, sessions, thread);
@@ -824,26 +869,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           typeLeadNotes(db, sessions);
           return { said: `Restarted ${repository.name}'s lead.` };
         }
-        const thread = findThread(db, request.repo, request.task);
-        const name = threadName(db, thread);
-        const { host, id } = await builderSession(db, sessions, thread);
-        const live = thread.status === "working" || thread.status === "waiting";
-        if (!live || !(await agentRuns(host, id)))
-          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        const restarted = await restartBuilder(db, sessions, thread);
-        if (restarted === "refused")
-          throw new Error(`${name} is being stopped, so it isn't restarted`);
-        if (restarted === "stays ended")
-          return { said: `${name} was stopped or removed meanwhile, so its builder stays ended.` };
-        if ("failed" in restarted) {
-          failThread(db, sessions, thread, restarted.failed);
-          return { said: `${name}'s builder couldn't start again: ${errorText(restarted.failed)}` };
-        }
-        const said =
-          restarted.gone === null
-            ? `Restarted ${name}'s builder.`
-            : `Skelcrew can't tell whether its builder runs, as ${restarted.gone}.`;
-        return { said };
+        return { said: await restartThread(findThread(db, request.repo, request.task)) };
       }
       case "queue move":
         return { said: moveInQueue(db, findThread(db, request.repo, request.task), request.by) };
@@ -996,7 +1022,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "ask": {
         const task = request.task ?? null;
         if (request.clear) return { cleared: clearItem(db, request.repo, task) };
-        return { asked: postItem(db, request.repo, task, request.text, request.options) };
+        return { asked: postItem(db, request.repo, task, request) };
+      }
+      case "pick": {
+        const { repo, task } = request;
+        const run = (act: Act, thread: Thread) => runPick(act, thread, repo, task);
+        return {
+          said: await pickOwnItem(db, sessions, repo, task, request.seen, request.pick, run),
+        };
       }
       case "answer": {
         const answer =
@@ -1052,7 +1085,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { submitted: threadName(db, thread) };
       }
       case "question asked":
-        questionAsked(db, sessions, callingThread(caller).folder);
+        questionAsked(db, sessions, callingThread(caller).folder, request.question);
         return { asking: true };
       case "turn ended":
         turnEnded(db, sessions, callingThread(caller).folder, request);

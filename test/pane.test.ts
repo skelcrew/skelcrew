@@ -37,8 +37,25 @@ const row: Row = {
   more: 0,
   place: null,
   waits: "",
-  ask: null,
+  ask: {
+    title: "Its builder asked a question",
+    text: "Should the limit count per user or per key?",
+    options: ["Open the builder", "Let the lead handle it"],
+    acts: ["open", "lead"],
+  },
 };
+
+// The box its item shows in, 50 columns wide, without its colours.
+const box = [
+  `┌${"─".repeat(48)}┐`,
+  `│ ${"Its builder asked a question".padEnd(46)} │`,
+  `│ ${"".padEnd(46)} │`,
+  `│ ${"Should the limit count per user or per key?".padEnd(46)} │`,
+  `│ ${"".padEnd(46)} │`,
+  `│ ${"a) Open the builder".padEnd(46)} │`,
+  `│ ${"b) Let the lead handle it".padEnd(46)} │`,
+  `└${"─".repeat(48)}┘`,
+];
 
 // Its details, as sc show reads them from Skelcrew's copy, with its review's findings and events.
 const details: Details = {
@@ -100,8 +117,7 @@ test("the pane shows a summary card, then the task, then what happened, and the 
   expect(plain(lines)).toEqual([
     "app-12  Rate limit the API                Building",
     "─".repeat(50),
-    "Needs you: question",
-    "the lead is looking at this",
+    ...box,
     "",
     "Now      question · 2m ago",
     "Issue    #42",
@@ -127,7 +143,7 @@ test("the pane shows a summary card, then the task, then what happened, and the 
     "40m ago  submitted",
     "28m ago  review round 2: changes asked",
     "18m ago  submitted",
-    ...Array(7).fill(""),
+    ...Array(1).fill(""),
     "─".repeat(50),
     "I am app-12",
     "›",
@@ -152,7 +168,10 @@ test("the details take the list's look: bold title, stage and verdicts in colour
   expect(lines[0]).toBe(
     `${esc}[1mapp-12  Rate limit the API${esc}[22;39m${" ".repeat(16)}${yellow}Building${esc}[22;39m`,
   );
-  expect(line("Needs you: question")).toBe(`${esc}[1;38;5;136mNeeds you: question${esc}[22;39m`);
+  // The item is in a box drawn in the colour of the screen's other edges, its title bold.
+  expect(line(box[0] ?? "")).toBe(`${esc}[90m${box[0]}${esc}[22;39m`);
+  expect(line(box[1] ?? "")).toContain(`${esc}[1mIts builder asked a question${esc}[22;39m`);
+  expect(line(box[5] ?? "")).toContain(`${esc}[38;5;136ma) Open the builder${esc}[22;39m`);
   // Each label is dim, and each link is a terminal link to itself.
   const pr = "https://github.com/acme/app/pull/43";
   expect(line(`PR       #43  ${pr}`)).toBe(
@@ -171,7 +190,12 @@ test("the details take the list's look: bold title, stage and verdicts in colour
 });
 
 test("a working builder's stage has a spinner, and a task that needs nothing has no callout", () => {
-  const working: Row = { ...row, section: "building", mark: { sign: "○", colour: "bright" } };
+  const working: Row = {
+    ...row,
+    section: "building",
+    mark: { sign: "○", colour: "bright" },
+    ask: null,
+  };
   const busy: Details = {
     ...details,
     spinner: "⠙",
@@ -191,7 +215,7 @@ test("a working builder's stage has a spinner, and a task that needs nothing has
   const lines = drawPane(working, busy, null, 50, 40).lines;
   expect(plain(lines)[0]).toBe("app-12  Rate limit the API              ⠙ Building");
   expect(lines[0]).toContain("\x1b[1m⠙ Building");
-  expect(plain(lines)).not.toContain("Needs you: question");
+  expect(plain(lines)).not.toContain(box[0]);
   expect(plain(lines)[2]).toStartWith("Now ");
 });
 
@@ -205,6 +229,7 @@ test("the card shows only the lines a task has something for", () => {
     says: "",
     step: "",
     needsYou: false,
+    ask: null,
   };
   const fresh: Details = {
     ...details,
@@ -418,8 +443,8 @@ test("with the agent's whole screen, the details take half the pane, and the scr
     events: [],
     view: { ...details.view, body: "", issue: null, pr: null, prPage: null, review: null },
   };
-  const short = plain(drawPane(row, brief, { screen }, 50, 22, true).lines);
-  expect(short.slice(5, 9)).toEqual([
+  const short = plain(drawPane({ ...row, ask: null }, brief, { screen }, 50, 22, true).lines);
+  expect(short.slice(2, 6)).toEqual([
     "Now      question · 2m ago",
     "Started  3h ago · default flow",
     "",
@@ -442,13 +467,13 @@ test("a long title and long links show whole, and every check shows however many
       prPage: { ...page, checks, link },
     },
   };
-  const lines = plain(drawPane(row, long, null, 40, 40).lines);
+  const lines = plain(drawPane({ ...row, ask: null }, long, null, 40, 40).lines);
   expect(lines.slice(0, 3)).toEqual([
     "app-12  Rate limit the public   Building",
     "API per user, so one client can never",
     "starve all the others",
   ]);
-  expect(lines.slice(8, 18)).toEqual([
+  expect(lines.slice(5, 15)).toEqual([
     "Issue    #42",
     "         https://github.com/acme/app/iss",
     "         ues/42",
@@ -757,7 +782,7 @@ test("a task list keeps its boxes, and an image shows its alt text and address",
 
 // A task approved and green waits on you to merge it, though its thread needs you for nothing
 // else.
-test("a task ready to merge says so in the callout", () => {
+test("a task ready to merge says so in its box, with what each option does", () => {
   const ready: Row = {
     ...row,
     part: "ready",
@@ -766,23 +791,58 @@ test("a task ready to merge says so in the callout", () => {
     says: "ready to merge",
     colour: "green",
     needsYou: false,
-  };
-  const approved: Details = {
-    ...details,
-    view: {
-      ...details.view,
-      threads: [
-        { thread: "app-12/builder", status: "waiting", needsYou: false, needsYouFor: null },
-      ],
+    ask: {
+      title: "Ready to merge",
+      text: "#43 is ready at abcdef1 and its checks passed.",
+      options: ["Merge it", "Not yet"],
+      acts: ["merge", "lead"],
     },
   };
-  const lines = plain(drawPane(ready, approved, null, 50, 40).lines);
-  expect(lines.slice(2, 4)).toEqual(["Needs you: ready to merge", "the lead is looking at this"]);
+  const lines = plain(drawPane(ready, details, null, 50, 40).lines);
+  expect(lines.slice(2, 10)).toEqual([
+    `┌${"─".repeat(48)}┐`,
+    `│ ${"Ready to merge".padEnd(46)} │`,
+    `│ ${"".padEnd(46)} │`,
+    `│ ${"#43 is ready at abcdef1 and its checks passed.".padEnd(46)} │`,
+    `│ ${"".padEnd(46)} │`,
+    `│ ${"a) Merge it".padEnd(46)} │`,
+    `│ ${"b) Not yet".padEnd(46)} │`,
+    `└${"─".repeat(48)}┘`,
+  ]);
   // A task ready and waiting on nothing of yours, such as one whose merge is armed, has none.
-  const armed: Row = { ...ready, section: "ready", says: "merges when ready" };
-  expect(plain(drawPane(armed, approved, null, 50, 40).lines)).not.toContain(
-    "Needs you: merges when ready",
+  const armed: Row = { ...ready, section: "ready", says: "merges when ready", ask: null };
+  expect(plain(drawPane(armed, details, null, 50, 40).lines)[2]).toStartWith("Now ");
+});
+
+// An item's whole text and options wrap inside its box on a narrow pane, never cut and never past
+// its edge.
+test("an item's text and options wrap inside its box", () => {
+  const long: Row = {
+    ...row,
+    ask: {
+      title: "Pi sign-ins expire",
+      text: "Pi's sign-in lasts a day, so a builder on Pi stops each morning until someone signs in again.",
+      options: ["Sign in again each morning (recommended)", "Move the Pi builders to Claude"],
+      acts: null,
+    },
+  };
+  const lines = plain(drawPane(long, details, null, 30, 40).lines);
+  const top = lines.indexOf(`┌${"─".repeat(28)}┐`);
+  const bottom = lines.indexOf(`└${"─".repeat(28)}┘`);
+  const inside = lines.slice(top + 1, bottom);
+  for (const line of inside) {
+    expect(Bun.stringWidth(line)).toBe(30);
+    expect(line).toStartWith("│ ");
+    expect(line).toEndWith(" │");
+  }
+  const text = inside.map((line) => line.slice(2, -2).trim());
+  expect(text.join(" ").replace(/\s+/g, " ")).toContain(
+    "Pi's sign-in lasts a day, so a builder on Pi stops each morning until someone signs in again.",
   );
+  expect(text).toContain("a) Sign in again each");
+  expect(text).toContain("morning (recommended)");
+  expect(text).toContain("b) Move the Pi builders to");
+  expect(text).toContain("r) reply");
 });
 
 // Returns the styles on at the first place `word` shows in a line: bold, italic, struck and dim,
