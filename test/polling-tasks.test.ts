@@ -503,9 +503,10 @@ echo "Not logged in"; exit 1`,
     // shows it.
     expect(listed()).toEqual([]);
     expect(listed("--all")).toMatchObject([{ task: "APP-12", issue: "#12", stage: "merged" }]);
+    // The issue closed stays beside the task, as the tracker wrote it, once the copy drops it.
     changes([taskItem("12", "Add export", { state: "closed", labels: ["skelcrew"] })]);
-    await until(() => listed("--all")[0]?.issue === null);
-    expect(listed("--all")).toMatchObject([{ task: "APP-12", stage: "merged" }]);
+    await morePolls();
+    expect(listed("--all")).toMatchObject([{ task: "APP-12", issue: "#12", stage: "merged" }]);
     expect(assigns()).toEqual([assignOn]);
   }, 60_000);
 
