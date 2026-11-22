@@ -221,6 +221,9 @@ export const Thread = z.object({
   // The issue a merge without approval filed what its review still asked for in, once filed, so
   // a poll after a restart never files a second one.
   merge_followup: z.string().nullable(),
+  // The backlog task, such as t104, a merge filed what its review found that didn't block as, so
+  // a poll after a restart never files a second one.
+  not_blocking_task: z.string().nullable(),
   // The instruction to bring back the builder's missing session host plugin, which only you can
   // follow, as hostMissing gives it. Null otherwise.
   needs_you_for: z.string().nullable(),

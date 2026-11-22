@@ -20,6 +20,7 @@ import {
 } from "../plugins/ask.ts";
 import { capture } from "../run.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
+import { fileNotBlocking } from "./backlog.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openPrs, openTasks, prOf, saveItems } from "./copy.ts";
 import {
@@ -322,9 +323,14 @@ async function actOnPr(
     if (pr.state === "closed") unassignIssue(db, folder);
     // A merge without approval the forge did before the daemon could finish it, such as across
     // a restart, still gets its record edited and its findings filed, with its own note.
-    const skipped = pr.state === "merged" ? await finishSkippedMerge(db, thread, pr) : null;
-    const note = skipped ?? decision.note;
-    await endThread(db, sessions, thread, decision.end, note, pr.state === "merged");
+    // A merge files what the latest review found that didn't block, so it isn't lost.
+    const merged = pr.state === "merged";
+    const skipped = merged ? await finishSkippedMerge(db, thread, pr) : null;
+    const filed = merged
+      ? await fileNotBlocking(db, readThread(db, folder), { name: `#${pr.id}`, link: pr.link })
+      : "";
+    const note = `${skipped ?? decision.note}${filed}`;
+    await endThread(db, sessions, thread, decision.end, note, merged);
   }
   // Left unhandled, so a stopped or queued thread's events reach its builder once it starts.
   else if (["stopped", "queued"].includes(thread.status) || tellingEvents.has(folder) || stale)
@@ -451,15 +457,18 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   const merged = await git("merge-tree", "--write-tree", ref("bases"), ref("remote"));
   const tree = await git("rev-parse", `${ref("bases")}^{tree}`);
   const done = merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim();
-  if (done && unchanged())
+  if (done && unchanged()) {
+    const branch = { name: `branch ${thread.branch}`, link: null };
+    const filed = await fileNotBlocking(db, readThread(db, thread.folder), branch);
     await endThread(
       db,
       sessions,
       thread,
       `its branch ${thread.branch} is merged into ${base}`,
-      `is done: its branch ${thread.branch} merged into ${base}`,
+      `is done: its branch ${thread.branch} merged into ${base}${filed}`,
       true,
     );
+  }
   // A branch still open may have moved on the remote without its builder, such as by someone
   // else's push, which the builder must merge.
   if (done) return;

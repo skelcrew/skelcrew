@@ -534,7 +534,7 @@ export function labeledToStart(threads: Thread[], labeled: Labeled[]): Labeled[]
 // what the reviewer said and found. The one comment is edited each round, so its first line says
 // which review it now holds. The forge adds the verdict above it.
 export function reviewComment(
-  review: { body: string; findings: string[] },
+  review: { body: string; findings: string[]; notBlocking?: string[] | undefined },
   round: number,
   commit: string,
 ): string {

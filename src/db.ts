@@ -148,6 +148,7 @@ function heardInLog(folder: string, round: number): string | null {
 // `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
 // `merge_record_id` that review's ID, so a restart never posts it twice. `merge_followup` is the
 // issue a merge without approval filed its review's open findings in, so it files one only.
+// `not_blocking_task` is the backlog task a merge filed its review's not-blocking findings as.
 // `needs_you_for` is the instruction to bring back the builder's missing session host plugin, or
 // null. `limit_decided` is whether you decided the round limit, so it stops needing you for it
 // until the next review. `review_failed` is whether the latest review or round failed, which the
@@ -194,6 +195,7 @@ const threadColumns = {
   ended_at: "INTEGER",
   ended_said: "TEXT",
   review_failed: "INTEGER NOT NULL DEFAULT 0",
+  not_blocking_task: "TEXT",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent

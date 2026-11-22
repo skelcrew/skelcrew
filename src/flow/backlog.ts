@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import type { Repository } from "../db.ts";
 import { errorText } from "../format.ts";
+import { cloneDir } from "../paths.ts";
 import {
   claimedAt,
   claimedNames,
@@ -16,7 +17,8 @@ import {
   remoteRef,
   startedRef,
 } from "./git.ts";
-import { taskName } from "./thread.ts";
+import { lastReviewed } from "./ledger.ts";
+import { record, repositoryOf, type Thread, taskName, threadName } from "./thread.ts";
 
 // A task in the backlog: its name, such as t104, its title and description, when it was filed,
 // as an ISO time so it sorts beside the tracker's issues, and by whom, such as simon or simon via
@@ -167,6 +169,47 @@ export function fileTask(
     for (const commit of tried) forget(commit);
     return { task, already: false };
   });
+}
+
+// Files what the thread's latest review found that didn't block as one task of the backlog, once
+// its work merged, so none is lost with the thread. `merged` names what merged, such as #7 and
+// its link. Returns what the lead's note adds about it, or nothing when the latest review found
+// none, as they were all fixed. It files once: the task's name is saved on the thread, and a task
+// filed but not yet saved is found again in the daemon's copy by its last line. A task that can't
+// be filed is said in the note instead, so the lead can file it.
+export async function fileNotBlocking(
+  db: Database,
+  thread: Thread,
+  merged: { name: string; link: string | null },
+): Promise<string> {
+  const repository = repositoryOf(db, thread);
+  const named = (task: string) => taskName(repository.name, task);
+  if (thread.not_blocking_task !== null)
+    return ` Its not-blocking findings are in ${named(thread.not_blocking_task)}.`;
+  const found = lastReviewed(thread)?.notBlocking ?? [];
+  if (found.length === 0) return "";
+  const listed = found.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
+  const from = `From ${merged.link ?? merged.name}, ${threadName(db, thread)}.`;
+  const title = `Not-blocking findings from ${merged.name}'s review`;
+  const body = `Skelcrew's reviewer found these in ${merged.name} and didn't let them block it, so they wait here:\n\n${listed}\n\n${from}`;
+  try {
+    const { owner, repo } = repository;
+    const filed =
+      backlogOf(db, owner, repo).find((task) => task.body.endsWith(from))?.task ??
+      (await fileTask(db, repository, cloneDir(owner, repo), { title, body, by: "skelcrew" })).task;
+    record(
+      db,
+      thread.folder,
+      { not_blocking_task: filed },
+      `filed its review's not-blocking findings as ${named(filed)}`,
+    );
+    return ` Its not-blocking findings are in ${named(filed)}.`;
+  } catch (error) {
+    console.log(
+      `${threadName(db, thread)}: couldn't file its not-blocking findings: ${errorText(error)}`,
+    );
+    return ` Its not-blocking findings couldn't be filed: ${errorText(error)}`;
+  }
 }
 
 // Writes tasks into the daemon's copy of the repository's backlog, over any of the same name.
