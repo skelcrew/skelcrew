@@ -36,9 +36,11 @@ function httpStatus(error: string): number | null {
 // a quota, or a 429 elsewhere, such as in a request ID, is no limit.
 export const isUsageLimit = (error: string): boolean => httpStatus(error) === 429;
 
-// Returns the credentials Pi may send: the key and headers it resolved for the model it runs, from
-// its login, a key it ran a command for or the environment, and every key or token in the
-// environment. Whatever can't be read is left out.
+// Returns the credentials Pi may send: the key and headers it resolves for the model it runs, from
+// its login, a key it runs a command for or the environment, and every key or token in the
+// environment. Whatever can't be read is left out. A command can give a new key each time, and no
+// event shows the one a request sent, as the provider's SDK adds it after before_provider_headers,
+// so withoutKeys also takes out whatever is shaped like one.
 async function credentials(ctx: Context): Promise<string[]> {
   const found = Object.entries(process.env).flatMap(([name, value]) =>
     value && /KEY|TOKEN|SECRET/.test(name) ? [value] : [],
@@ -58,9 +60,9 @@ async function credentials(ctx: Context): Promise<string[]> {
 
 // Returns Pi's error with every key taken out, as Skelcrew keeps it in the task's log: each of
 // the credentials Pi may send, wherever it stands, even inside a longer word, and anything shaped
-// like a key, such as sk-... or a Google key, which a provider can echo back. Only one of three
-// characters or fewer, which can be no real key, such as a local model's "x", is taken out just
-// where it stands as a word of its own, so it never cuts into every other word.
+// like a key, which a provider can echo back. Only one of three characters or fewer, which can be
+// no real key, such as a local model's "x", is taken out just where it stands as a word of its
+// own, so it never cuts into every other word.
 async function withoutKeys(error: string, ctx: Context): Promise<string> {
   let said = error;
   const longest = (await credentials(ctx)).sort((a, b) => b.length - a.length);
@@ -69,10 +71,18 @@ async function withoutKeys(error: string, ctx: Context): Promise<string> {
     const word = value.length < 4 ? `(?<![\\w-])${escaped}(?![\\w-])` : escaped;
     said = said.replace(new RegExp(word, "g"), "[key]");
   }
-  return said
+  return withoutKeyShapes(said);
+}
+
+// Returns text with whatever is shaped like a key or token taken out: a known kind, such as sk-...
+// or a Google key, a credential after Bearer or Basic, and any run of 20 letters, digits, dashes
+// or underscores that mixes letters and digits, as keys and tokens are random. Words, numbers and
+// a URL's parts are shorter, or have no digits.
+export function withoutKeyShapes(text: string): string {
+  return text
     .replace(/\b(sk|rk|pk)-[\w-]{8,}/g, "[key]")
-    .replace(/\bAIza[\w-]{20,}/g, "[key]")
-    .replace(/\b(Bearer|Basic) [\w.~+/=-]{8,}/gi, "$1 [key]");
+    .replace(/\b(Bearer|Basic) [\w.~+/=-]{8,}/gi, "$1 [key]")
+    .replace(/[\w-]{20,}/g, (run) => (/[a-z]/i.test(run) && /\d/.test(run) ? "[key]" : run));
 }
 
 // What Pi gives a handler besides its event, as far as this extension uses it.
@@ -159,6 +169,13 @@ export default function skelcrew(pi: Pi): void {
         writeFileSync(join(review, "answer.json"), JSON.stringify(given));
         return { content: [{ type: "text", text: "Skelcrew has your verdict." }], details: {} };
       },
+    });
+    // Once Pi is at work its commands can print anything, which a line with the mark tells
+    // Skelcrew. Before it, whatever Pi printed is its own.
+    let atWork = false;
+    pi.on("agent_start", () => {
+      if (!atWork) process.stderr.write(`\nskelcrew: Pi at work ${mark}\n`);
+      atWork = true;
     });
     // Pi's error goes on a line of its own, with the mark.
     pi.on("agent_settled", async (event, ctx) => {

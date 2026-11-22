@@ -324,19 +324,31 @@ const markSecret = crypto.randomUUID();
 const errorMark = (folder: string) =>
   new Bun.CryptoHasher("sha256").update(`${markSecret}:${folder}`).digest("hex");
 
-// Returns the start of the line Skelcrew's extension prints on stderr when the review in `folder`
-// ends on an error, with Pi's error after it.
-const failedLine = (folder: string) => `skelcrew: Pi failed ${errorMark(folder)}: `;
-
-// Returns the error the reviewer's pi in `folder` ended on, or null when it printed none. Pi prints
-// other lines on stderr too, such as warnings, and so can a command it runs, so only the line
-// with the review's mark counts.
+// Returns the error the reviewer's pi in `folder` ended on, or null when it printed none. Once
+// Pi is at work, which Skelcrew's extension says on stderr with the review's mark, a command it
+// runs can print anything there, so only the extension's own error line, with the mark, counts.
+// Before that, as when Pi fails to start or to read its prompt, every line is Pi's own, and its
+// last is the error. Anything shaped like a key is taken out of it, as the extension does.
 function reportedError(_out: string, err: string, folder: string): string | null {
-  const start = failedLine(folder);
-  const line = err.split("\n").findLast((text) => text.startsWith(start));
-  const said = line?.slice(start.length).trim() ?? "";
-  return said === "" ? null : said;
+  const lines = err.split("\n").map((line) => line.trim());
+  const failed = `skelcrew: Pi failed ${errorMark(folder)}: `;
+  const marked = lines
+    .findLast((line) => line.startsWith(failed))
+    ?.slice(failed.length)
+    .trim();
+  if (marked) return marked;
+  if (lines.includes(`skelcrew: Pi at work ${errorMark(folder)}`)) return null;
+  const own = lines.findLast((line) => line !== "");
+  return own ? withoutKeyShapes(own) : null;
 }
+
+// Returns text with whatever is shaped like a key or token taken out, as the extension's function
+// of that name does.
+const withoutKeyShapes = (text: string) =>
+  text
+    .replace(/\b(sk|rk|pk)-[\w-]{8,}/g, "[key]")
+    .replace(/\b(Bearer|Basic) [\w.~+/=-]{8,}/gi, "$1 [key]")
+    .replace(/[\w-]{20,}/g, (run) => (/[a-z]/i.test(run) && /\d/.test(run) ? "[key]" : run));
 
 // Returns whether Pi's error says a usage limit is reached, and when it resets, or null when it
 // says something else. Only a 429, where Pi's provider APIs put the status, is a limit. The reset

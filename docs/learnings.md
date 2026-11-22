@@ -208,7 +208,10 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
 - **A provider can echo a key in its error, and Skelcrew logs it.** So the extension takes keys
   out first. The key may be in no variable, as `pi auth login` saves it in `auth.json`, or a
   command gives it. `ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)` returns the key and
-  headers Pi sends for its model.
+  headers Pi resolves for its model, but a command in `models.json` runs again for each request
+  and can give another key. No event shows the key a request sent: `before_provider_headers`
+  holds no auth header, as the provider's SDK adds it after. So whatever is shaped like a key
+  goes too.
 - **`input` fires for the first message too.** The message on the command line comes as typed,
   with `source: "interactive"`. A long paste shows as "[paste #1 +40 lines]", but `input` gets
   its whole text.
@@ -218,6 +221,9 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
   carries a mark Skelcrew makes for each review. The extension deletes it from `process.env` as
   it loads, and Pi's `bash` tool starts commands with `process.env` as it is then, so they never
   see it. Checked by running `env` from the tool.
+- **Pi can fail before any event of the extension's.** For a model it doesn't know it prints
+  `Error: Model "nosuch/m" not found. ...` and exits with 1. No command has run then, so until
+  the extension's `agent_start` line, everything on stderr is Pi's own.
 - **`pi -p` reads its prompt from stdin, whole.** Run with stdin open and nothing written, it
   waits forever.
 - **Pi has no setting that holds an answer to a shape.** The reviewer gets a tool from

@@ -648,9 +648,21 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       verdict: "failed",
       body: "the reviewer answered outside the shape: it gave no answer",
     });
-    // Without Pi's own error line, a line a test printed last is never taken for it.
-    fakePi(["cat > /dev/null", "echo 'warning: a test is slow' >&2", "exit 1"]);
+    // Once Pi is at work, a line a test printed last is never taken for its error.
+    fakePi([
+      "cat > /dev/null",
+      `printf '\\nskelcrew: Pi at work %s\\n' "$SKELCREW_PI_ERROR_MARK" >&2`,
+      "echo 'warning: a test is slow' >&2",
+      "exit 1",
+    ]);
     expect(await start({ harness: "pi" })).toEqual({ verdict: "failed", body: "pi exited with 1" });
+    // Before it, as for a model Pi doesn't know, Pi's own last line says why.
+    const unknown = 'Error: Model "nosuch/m" not found. Use --list-models to see available models.';
+    fakePi(["cat > /dev/null", `echo '${unknown}' >&2`, "exit 1"]);
+    expect(await start({ harness: "pi" })).toEqual({
+      verdict: "failed",
+      body: `pi exited with 1: ${unknown}`,
+    });
   });
 
   // The file CI's result is in, as the reviewer's prompt names it.

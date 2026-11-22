@@ -22,6 +22,7 @@ import skelcrew, {
   isUsageLimit,
   readyMark,
   verdictTool,
+  withoutKeyShapes,
 } from "../src/agents/pi-extension.ts";
 import { quietSince } from "../src/agents/transport.ts";
 
@@ -218,6 +219,19 @@ describe("the extension in a lead or a builder", () => {
     );
   });
 
+  // The extension and Skelcrew both take out what is shaped like a key, by the same rule.
+  test("a key no variable or login names is taken out by its shape", async () => {
+    const { emit } = fakePi();
+    const made = "Zx81qWm3Lp0vRt7Yb2Nc5Kd";
+    const error = `401: {"message":"token ${made} expired, request req_011CQ9 at https://example.com/v1/messages"}`;
+    await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
+    await emit("agent_settled", { aborted: false });
+    const said = error.replace(made, "[key]");
+    expect(hooks()).toContain(JSON.stringify({ error: "error", error_details: said }));
+    for (const text of [error, "sk-ant-api03-abcdefghij", "Bearer abc.def.ghijk", "plain words"])
+      expect(pi.failure("", text, home)).toBe(withoutKeyShapes(text));
+  });
+
   test("an error that only mentions a quota is an error, not a usage limit", async () => {
     const { emit } = fakePi();
     const error = '403: {"message":"quota project not set"}';
@@ -307,6 +321,7 @@ describe("the extension in a review", () => {
     process.stderr.write = (chunk: string | Uint8Array) => printed.push(String(chunk)) > 0;
     try {
       await emit("input", { text: "review this", source: "interactive" });
+      await emit("agent_start");
       const error = '429: {"message":"Rate limited.\\nSlow down."}';
       await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }));
       await emit("agent_settled", { aborted: false });
@@ -318,18 +333,32 @@ describe("the extension in a review", () => {
     } finally {
       process.stderr.write = write;
     }
-    expect(pi.failure("", printed.at(-1) ?? "", home)).toBe("401: [key]");
+    const atWork = printed[0] ?? "";
+    expect(atWork).toContain("skelcrew: Pi at work ");
+    expect(pi.failure("", `${atWork}${printed.at(-1)}`, home)).toBe("401: [key]");
     printed.pop();
     expect(hooks()).toBe("");
     // Pi prints a warning and the commands' own lines around it, and an error a test logged.
-    const err = `Warning: tmux extended-keys is off\nERROR: rate limit in a test\n${printed.join("")}429: {"message":"Rate limited."}\nSlow down.\n`;
+    const err = `Warning: tmux extended-keys is off\n${printed.join("")}ERROR: rate limit in a test\n429: {"message":"Rate limited."}\nSlow down.\n`;
     expect(pi.failure("", err, home)).toBe('429: {"message":"Rate limited.\\nSlow down."}');
-    expect(pi.failure("", "Warning: something\nERROR: rate limit in a test\n", home)).toBeNull();
-    // The line without the review's mark, as a command could print it, is never Pi's error.
+    // Once Pi is at work, a line its commands print is never taken for its error.
+    expect(pi.failure("", `${atWork}ERROR: rate limit in a test\n`, home)).toBeNull();
+    // Nor is the line without the review's mark, as a command could print it.
     const forged = "skelcrew: Pi failed: 429: slow down\nskelcrew: Pi failed abc: 429: slow down\n";
-    expect(pi.failure("", forged, home)).toBeNull();
-    // Nor is the mark of another review.
-    expect(pi.failure("", printed.join(""), join(home, "other"))).toBeNull();
+    expect(pi.failure("", `${atWork}${forged}`, home)).toBeNull();
+    // Another review's line of being at work isn't this one's.
+    const other = pi.failure("", `${atWork}429: a test's line\n`, join(home, "other"));
+    expect(other).toBe("429: a test's line");
+  });
+
+  // Pi 1.6.0 prints this and exits with 1 for a model it doesn't know, before the extension's
+  // events.
+  test("before Pi is at work, its own last line is the error, without what looks like a key", () => {
+    const unknown = 'Error: Model "nosuch/m" not found. Use --list-models to see available models.';
+    expect(pi.failure("", `Warning: tmux extended-keys is off\n${unknown}\n`, home)).toBe(unknown);
+    const keyed = "Error: key AbCdEf0123456789xyzQWE refused";
+    expect(pi.failure("", keyed, home)).toBe("Error: key [key] refused");
+    expect(pi.failure("", "\n", home)).toBeNull();
   });
 
   test("takes the mark out of the environment as it loads, before any command runs", () => {
