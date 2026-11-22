@@ -23,11 +23,14 @@ export type Review =
 // resets, or null when the harness didn't say. The round holds it and tries again.
 export type Limited = { verdict: "limited"; body: string; reset: number | null };
 
+// A finding's severity: P and a number from 1 up, with no lowest one, as only P1 blocks.
+const severity = "^P[1-9][0-9]*$";
+
 // One problem the reviewer found: what it is, how bad, and whether it holds the PR back. Only a
 // P1 can block, and in the flow's strict rounds every P1 does.
 const Finding = z.strictObject({
   finding: z.string().trim().min(1, "a finding is blank"),
-  severity: z.string().regex(/^P[1-9]\d*$/, "a severity is P1, P2, P3 and so on"),
+  severity: z.string().regex(new RegExp(severity), "a severity is P1, P2, P3 and so on"),
   blocking: z.boolean(),
 });
 
@@ -84,7 +87,7 @@ const schema = JSON.stringify({
         type: "object",
         properties: {
           finding: { type: "string" },
-          severity: { type: "string" },
+          severity: { type: "string", pattern: severity },
           blocking: { type: "boolean" },
         },
         required: ["finding", "severity", "blocking"],

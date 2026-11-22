@@ -369,7 +369,7 @@ export async function mergeIfReady(
         const said =
           (await finishSkippedMerge(db, readThread(db, folder), pr)) ??
           `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`;
-        const note = `${said}${await fileNotBlocking(db, readThread(db, folder))}`;
+        const note = `${said}${await fileNotBlocking(db, sessions, readThread(db, folder))}`;
         await endThread(
           db,
           sessions,

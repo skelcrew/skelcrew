@@ -437,7 +437,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       type: "object",
       properties: {
         finding: { type: "string" },
-        severity: { type: "string" },
+        severity: { type: "string", pattern: "^P[1-9][0-9]*$" },
         blocking: { type: "boolean" },
       },
       required: ["finding", "severity", "blocking"],

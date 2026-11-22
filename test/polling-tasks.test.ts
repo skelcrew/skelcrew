@@ -102,8 +102,9 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
   }, 60_000);
 
-  // A remote that can't take the task as the thread ends loses nothing: each poll tries again.
-  test("not-blocking findings a merge couldn't file are filed by a later poll", async () => {
+  // A remote that can't take the task as the thread ends loses nothing: the lead gets each
+  // finding, to file by hand, and sc show still lists them.
+  test("not-blocking findings a merge couldn't file go to the lead, and stay on the task", async () => {
     script(
       "codex",
       `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
@@ -111,9 +112,8 @@ cat > /dev/null
 echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag better","severity":"P2","blocking":false}]}' > "$out"`,
     );
     await approvedApp12();
-    const refusing = join(home, "bin", "git");
     writeFileSync(
-      refusing,
+      join(home, "bin", "git"),
       `#!/bin/sh\ncase "$*" in *push*"refs/skelcrew/"*) echo refused >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
       { mode: 0o755 },
     );
@@ -122,20 +122,23 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
     await until(() =>
       leadTyped().includes(
-        "Its not-blocking findings couldn't be filed yet, and each poll tries again",
+        "Its not-blocking findings couldn't be filed: the note before lists them.",
       ),
     );
-    expect(thread().not_blocking_task).toBeNull();
-    rmSync(refusing);
-    const filedAs = /APP-12 merged earlier\. Its not-blocking findings are in APP-(\d+)\./;
-    await until(() => filedAs.test(leadTyped()));
-    const number = leadTyped().match(filedAs)?.[1];
-    const remote = join(home, "github", "simon", "app.git");
-    expect(git(remote, "log", "-1", "--format=%B", `refs/skelcrew/tasks/t${number}`)).toContain(
-      "1. P2: Name the flag better",
+    expect(leadTyped()).toContain(
+      "APP-12's not-blocking findings couldn't be filed in the backlog",
     );
-    await morePolls();
-    expect(leadTyped().split("merged earlier").length - 1).toBe(1);
+    expect(leadTyped()).toContain("File them with sc add: 1) P2: Name the flag better");
+    expect(thread().not_blocking_task).toBeNull();
+    const shown = Bun.spawnSync([process.execPath, main, "show", "app-12"], {
+      env: env(),
+      stdout: "pipe",
+    });
+    expect(shown.stdout.toString()).toContain(
+      "Not blocking, from the latest review\n1. P2: Name the flag better",
+    );
+    const remote = join(home, "github", "simon", "app.git");
+    expect(git(remote, "for-each-ref", "refs/skelcrew/tasks")).toBe("");
   }, 90_000);
 
   // m on the screen's list of PRs asks on your socket. The lead's and builders' sockets refuse it,
