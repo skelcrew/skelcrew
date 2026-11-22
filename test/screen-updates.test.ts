@@ -86,9 +86,18 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   expect(readFileSync(written, "utf8")).toBe("");
 });
 
+// What the screen wrote that shows on your terminal, without tmux's codes that move the cursor,
+// set colours and modes. A redraw of any cell shows here, however many codes came with it.
+function printed(sent: string): string {
+  const esc = "\x1b";
+  const codes = new RegExp(`${esc}(\\[[0-?]*[ -/]*[@-~]|[()][0-9A-Za-z]|[=>78M])`, "g");
+  return [...sent.replaceAll(codes, "")].filter((character) => character >= " ").join("");
+}
+
 // A spinner on the mark of an agent at work turns about four times a second, and each turn
-// rewrites its cell alone, so the screen sends your terminal little. Over sc --remote it stays
-// still, as each turn would cost a write over a slow link, and the screen then sends nothing.
+// rewrites its cell alone, so the screen shows nothing else, however busy the machine. Over
+// sc --remote it stays still, as each turn would cost a write over a slow link, and the screen
+// then sends nothing.
 test("the lead at work has a spinner that turns by its cell alone, and stays still over sc --remote", async () => {
   sql("UPDATE repositories SET lead_state = 'working'");
   sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
@@ -104,11 +113,9 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(1500);
   const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
-  // Each turn sends its cell and little else, however many turns fall in the time watched: about
-  // 175 bytes with tmux's own codes, where a redraw of the screen would send thousands.
   const turns = sent.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g)?.length ?? 0;
   expect(turns).toBeGreaterThan(0);
-  expect(sent.length / turns).toBeLessThan(250);
+  expect(printed(sent).replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "")).toBe("");
 });
 
 test("over sc --remote the lead at work shows a still mark, and the screen sends nothing", async () => {
