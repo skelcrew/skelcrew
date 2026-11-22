@@ -474,7 +474,9 @@ async function reviewRound(
           // the builder fetches: a builder that merged a newer main would show main's commits
           // as its own. That commit is in the commit's history, so the reviewer's copy of the
           // clone has it. A review with no current base to read fails and says why, rather
-          // than judging a diff that may hold someone else's commits.
+          // than judging a diff that may hold someone else's commits. From round 2 on, the
+          // last round asks the forge for the PR first, so the base comes from that answer too.
+          const last = await lastRound(db, thread, skelcrewClone, sha);
           const base = prBase(db, thread);
           const fetched = await fetchInto(db, repository, skelcrewClone, base, bases).then(
             () => null,
@@ -494,7 +496,7 @@ async function reviewRound(
           const result = await review({
             ...given,
             docsOnly,
-            last: await lastRound(db, thread, skelcrewClone, sha),
+            last,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
             base: from,

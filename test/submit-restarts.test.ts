@@ -305,6 +305,42 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     );
   }, 180_000);
 
+  // The forge shows the PR retargeted before Skelcrew's next poll does. Round 2 asks the forge
+  // for its description, and its base comes from that same answer.
+  test("a PR retargeted just before round 2 is reviewed against the base the forge shows now", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    const next = git(work, "rev-parse", "HEAD");
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Fine.");
+    fakeClaude(true, false);
+    serve();
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => finished("failure").length === 1, longWait);
+    await untilReviewSaved();
+    mergeMain(work);
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          base: "next",
+          body: "Retargeted to next.",
+        }),
+      ],
+      next: null,
+    });
+    expect((await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() })).err).toBe(
+      "",
+    );
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), longWait);
+    const prompt = read(join(codexHome(), "sessions", "prompt-2"));
+    expect(prompt).toContain(`git diff ${next}...HEAD`);
+    expect(prompt).toContain("the builder stated:\n\nRetargeted to next.");
+  }, 180_000);
+
   // Against next, which lacks main's new commit, the merge brings in more than its base.
   test("a PR retargeted while its merge waits for CI is reviewed, not kept approved", async () => {
     const work = addApp();
