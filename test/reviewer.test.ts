@@ -343,7 +343,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   // Each finding has a severity and says whether it blocks. Only what blocks asks for changes,
   // and an approval lists what doesn't, each with its severity.
   test("an approval lists the findings that don't block, and changes need one that does", async () => {
-    const minor = '{"finding":"The flag\'s name is long.","severity":"P2","blocking":false}';
+    const minor = '{"finding":"The flag name is long.","severity":"P2","blocking":false}';
     const bug = '{"finding":"The retry never stops.","severity":"P1","blocking":true}';
     const least = '{"finding":"Add a comma.","severity":"P10","blocking":false}';
     fakeCodex(`{"verdict":"approve","body":"Fine.","findings":[${minor},${least}]}`);
@@ -351,14 +351,14 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       verdict: "approve",
       body: "Fine.",
       findings: [],
-      notBlocking: ["P2: The flag's name is long.", "P10: Add a comma."],
+      notBlocking: ["P2: The flag name is long.", "P10: Add a comma."],
     });
     fakeCodex(`{"verdict":"changes","body":"One bug.","findings":[${bug},${minor}]}`);
     expect(await start()).toEqual({
       verdict: "changes",
       body: "One bug.",
       findings: ["The retry never stops."],
-      notBlocking: ["P2: The flag's name is long."],
+      notBlocking: ["P2: The flag name is long."],
     });
   });
 

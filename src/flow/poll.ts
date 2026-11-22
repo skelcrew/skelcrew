@@ -328,8 +328,8 @@ async function actOnPr(
     // A merge files what the latest review found that didn't block, so it isn't lost.
     const merged = pr.state === "merged";
     const skipped = merged ? await finishSkippedMerge(db, thread, pr) : null;
-    const filed = merged ? await fileNotBlocking(db, sessions, readThread(db, folder)) : "";
-    const note = `${skipped ?? decision.note}${filed}`;
+    const said = skipped ?? decision.note;
+    const note = merged ? await fileNotBlocking(db, sessions, readThread(db, folder), said) : said;
     await endThread(db, sessions, thread, decision.end, note, merged);
   }
   // Left unhandled, so a stopped or queued thread's events reach its builder once it starts.
@@ -458,13 +458,14 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   const tree = await git("rev-parse", `${ref("bases")}^{tree}`);
   const done = merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim();
   if (done && unchanged()) {
-    const filed = await fileNotBlocking(db, sessions, readThread(db, thread.folder));
+    const said = `is done: its branch ${thread.branch} merged into ${base}`;
+    const note = await fileNotBlocking(db, sessions, readThread(db, thread.folder), said);
     await endThread(
       db,
       sessions,
       thread,
       `its branch ${thread.branch} is merged into ${base}`,
-      `is done: its branch ${thread.branch} merged into ${base}${filed}`,
+      note,
       true,
     );
   }
