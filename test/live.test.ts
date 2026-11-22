@@ -252,6 +252,7 @@ test("what is left fills the live view from the bottom up", async () => {
       prPage: null,
       merge: null,
       filed: null,
+      notBlocking: [],
       item: null,
     },
     findings: [],

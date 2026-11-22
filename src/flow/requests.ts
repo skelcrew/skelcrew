@@ -198,6 +198,15 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     text: z.string().min(1),
     asked: z.string().regex(/\S/).optional(),
   }),
+  // A message the lead sends you because you asked, through the notifier `via` names, with
+  // `asked`, your words, exactly.
+  z.object({
+    command: z.literal("notify"),
+    via: z.string().min(1),
+    subject: z.string().regex(/\S/),
+    text: z.string().regex(/\S/),
+    asked: z.string().optional(),
+  }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   // `from` is the remote of the checkout you ran sc check in, which names the repository whose
   // test command it runs. An agent's own socket names its repository instead.
@@ -300,6 +309,7 @@ export const allowed = {
     "ask",
     "tell",
     "brief lead",
+    "notify",
     "question asked",
     "question answered",
     "question closed",

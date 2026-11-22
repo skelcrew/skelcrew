@@ -56,21 +56,13 @@ sc init
 
 It writes `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow. Say yes when it offers the GitHub plugin, `skelcrew/skelcrew-github`. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you.
 
-The files count once they are on the default branch, so commit and push them:
+Skelcrew reads these files only from the default branch. So `sc init` asks whether to commit and push them there. Say yes, and it opens the lead. If it can't do that safely, such as when other changes are staged, it prints the git commands to run yourself, then `sc`.
 
-```sh
-git add skelcrew.yaml skelcrew.lock .agents
-git commit -m "Set up Skelcrew"
-git push
-```
+### 3. Meet the lead
 
-### 3. Open the lead
+The lead opens beside a sidebar of the repository's tasks. Later, run `sc` in the checkout to open it again.
 
-```sh
-sc
-```
-
-The lead opens, with a sidebar of the repository's tasks. Its first proposal is a thread that finishes the setup. It reads what your CI runs and fills in `setup:` and `test:` in `skelcrew.yaml`, the commands every builder uses. Say yes. The thread opens a PR, and once it is reviewed, merge it.
+Its first proposal is a thread that finishes the setup. It reads what your CI runs and fills in `setup:` and `test:` in `skelcrew.yaml`, the commands every builder uses. Say yes. The thread opens a PR, and once it is reviewed, merge it.
 
 ### 4. Run a first task
 
@@ -80,17 +72,15 @@ Ask the lead in plain words, such as:
 
 It proposes a thread, with a title and a one-line summary, and starts it once you say yes. It files no issue unless you ask it to. Or add the `skelcrew` label to an issue on GitHub, and Skelcrew starts a thread on it within a minute or so.
 
-Watch it from another terminal:
+Every task gets a name, such as `APP-12`, with its issue beside it, such as `#483`. An issue no task has yet goes by `APP#483`. Use your task's name where this page says `APP-12`.
 
-```sh
-sc --list         # the repository as a list. Enter opens an agent, Ctrl+\ comes back
-sc ps             # the threads, with their status and which need you
-sc show APP-12    # one task: its threads, PR, checks and review
-```
+The task shows in the sidebar. Your typing starts in the lead, so press Ctrl+\ to bring it to the sidebar. Then move to the task's row with the arrow keys and press Enter, or click the row, to see its builder at work beside the sidebar. Ctrl+\ brings your typing back to the sidebar from there too. Alt+Q leaves the screen, and the agents run on.
 
-When a thread needs you, the lead asks in Needs you, at the top of the sidebar: a short question with lettered options and its recommendation. Pick the item and press a letter to answer, or `r` to type a reply. Your answer goes back to the lead.
+The builder submits each round, and a fresh reviewer reviews it. Only a P1 holds the PR back: a bug someone will hit, a security or data-loss problem, or the task not done. Smaller findings are listed on the PR, and filed in the backlog once it merges. After 3 rounds of changes, the task waits for you. `sc start APP-12` lets it go on.
 
-Use your task's name where these say `APP-12`. The lead and `sc ls` show it: every task gets a number of Skelcrew's, such as `APP-12`, with its issue beside it, such as `#483`. An issue no task has yet goes by `app#483`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
+When a thread needs you, the lead asks in Needs you, at the top of the sidebar: a short question with lettered options and its recommendation. Move to the item and press a letter to answer, or `r` to type a reply. Your answer goes back to the lead.
+
+When the PR is approved and green, merge it on GitHub, or with `m` on its row. Or arm it to merge once it is ready:
 
 ```sh
 sc merge --when-ready APP-12
@@ -107,7 +97,7 @@ sc --remote <host> install   # such as simon@workbox
 sc --remote <host>
 ```
 
-The install sends your settings, plugins and the agents' token there, puts Skelcrew there if it is missing, and runs `sc install` there. Then `sc --remote <host>` opens the server's lead over ssh. Skelcrew runs there as a background service, so it survives logging out and reboots. Run the install again whenever you change your settings or plugins.
+The install sends your settings, plugins and the agents' token there. It puts Skelcrew there if it is missing, after asking, and runs `sc install` there. Then `sc --remote <host>`, run in your checkout, opens that repository's lead on the server over ssh. It also starts Skelcrew there as a background service, so it survives logging out and reboots. Run the install again whenever you change your settings or plugins.
 
 ## How it works
 
@@ -130,6 +120,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | `sc rm <task>` | Ends the work on a task, closing its PR and its issue. `--keep-issue` keeps the issue open, to start over. |
 | `sc merge --when-ready <task>` | Merges the PR once it is approved and green. `--cancel` disarms it. |
 | `sc plugin add <owner/repo>` | Adds a plugin to this repository, after asking. `-g` adds one of your own. |
+| `sc notify --via <channel> "<subject>" "<text>"` | The lead's, to send you a message you asked for, such as by email or push, with your words in `--asked-file`. Your `notify:` in `~/.config/skelcrew/config.yaml` sends the daily digest and needs-you messages to notifier plugins too. |
 
 `sc --help` lists every command and key.
 

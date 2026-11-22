@@ -148,6 +148,7 @@ function heardInLog(folder: string, round: number): string | null {
 // `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
 // `merge_record_id` that review's ID, so a restart never posts it twice. `merge_followup` is the
 // issue a merge without approval filed its review's open findings in, so it files one only.
+// `not_blocking_task` is the backlog task a merge filed its review's not-blocking findings as.
 // `needs_you_for` is the instruction to bring back the builder's missing session host plugin, or
 // null. `limit_decided` is whether you decided the round limit, so it stops needing you for it
 // until the next review. `review_failed` is whether the latest review or round failed, which the
@@ -194,6 +195,7 @@ const threadColumns = {
   ended_at: "INTEGER",
   ended_said: "TEXT",
   review_failed: "INTEGER NOT NULL DEFAULT 0",
+  not_blocking_task: "TEXT",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent
@@ -977,6 +979,16 @@ function prepareTables(db: Database): void {
   // another version is installed. Null for one that may rename.
   if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'no_rename'").get())
     db.run("ALTER TABLE plugins ADD COLUMN no_rename TEXT");
+  db.run(`CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    queued INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'waiting',
+    via TEXT,
+    called INTEGER
+  )`);
+  db.run("CREATE TABLE IF NOT EXISTS notified (folder TEXT PRIMARY KEY, mark TEXT NOT NULL)");
 }
 
 // Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its

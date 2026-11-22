@@ -17,7 +17,7 @@ import {
   lockedAs,
   matchesLock,
   refuseOtherName,
-  refuseRuntime,
+  refusePersonal,
   removePlugin,
   type Shown,
   updatePlugin,
@@ -200,7 +200,7 @@ export function addRepositoryPlugin(given: string, shown: Shown = {}): string | 
   const plugin = installed();
   if (!plugin) throw new Error(`${given} isn't installed after all`);
   const manifest = readManifest(plugin.folder);
-  refuseRuntime(manifest, true);
+  refusePersonal(manifest, true);
   try {
     writeBoth(
       () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
@@ -342,7 +342,7 @@ export function installRepositoryPlugins(needs: Need[]): { changed: boolean; mis
       }
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
       if (here && matchesLock(here, locked)) {
-        refuseRuntime(readManifest(here.folder), true);
+        refusePersonal(readManifest(here.folder), true);
         refuseOtherName(readManifest(here.folder), locked.name);
         return;
       }

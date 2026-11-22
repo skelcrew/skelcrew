@@ -26,7 +26,8 @@ const stageRole = (own: string, other: string) =>
     )
     .optional();
 
-// What a flow file may hold: today's stages, the role each runs, and the round limit. Anything
+// What a flow file may hold: today's stages, the role each runs, the round limit, and the strict
+// rounds, up to which a P1 the base branch already has still blocks. Anything
 // else is refused rather than ignored, so a setting put there by mistake doesn't look as if it
 // counts.
 const Flow = z.strictObject({
@@ -35,6 +36,7 @@ const Flow = z.strictObject({
     .strictObject({
       role: stageRole("reviewer", "builder"),
       rounds: z.number().int().positive().optional(),
+      strict_until: z.number().int().nonnegative().optional(),
     })
     .nullish(),
 });
@@ -130,6 +132,24 @@ export function flowRoles(place: {
         );
     }
   return roles;
+}
+
+// Returns the last round in which any P1 blocks, from the task's flow file, or the built-in
+// default flow's when the flow names none. Past it, only a P1 the change itself brings blocks.
+// The file counts as for flowRoles, which has already refused one that isn't valid.
+export function strictRounds(place: {
+  owner: string;
+  repo: string;
+  agents?: string | null;
+  flow?: string;
+}): number {
+  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
+  const text =
+    tree === null ? null : agentsFile(place, tree, `flows/${place.flow ?? "default"}.yaml`);
+  const own = text === null ? undefined : readFlow(text, true).review?.strict_until;
+  const builtIn = readFlow(builtInFlowText).review?.strict_until;
+  if (builtIn === undefined) throw new Error("Skelcrew's built-in flow names no strict rounds");
+  return own ?? builtIn;
 }
 
 // Returns whether the task's flow, `default` when none is given, has a file of its own in the

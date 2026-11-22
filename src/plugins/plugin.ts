@@ -1,6 +1,6 @@
 // Installed plugins: reading a plugin's manifest, finding its folder, and running its commands.
-// Skelcrew runs a plugin's call to ask a tracker or forge something, and its git_credentials to
-// give git a forge's login.
+// Skelcrew runs a plugin's call to ask a tracker or forge something or have a notifier send you a
+// message, and its git_credentials to give git a forge's login.
 import type { Database } from "bun:sqlite";
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,12 +16,12 @@ const Command = z.array(z.string().min(1)).min(1);
 export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version such as 0.1.0");
 
 // What a plugin can provide, by its kind. An I/O plugin is where work comes from and where it
-// goes. A runtime plugin is about where agents run: the sessions they run in, the transport that
+// goes, a notifier among them, which delivers messages to you while you are away. A runtime plugin is about where agents run: the sessions they run in, the transport that
 // types into them, their status, the files you drop onto them in the host's apps, and machine,
 // how to reach a machine that runs Skelcrew. Skelcrew uses a plugin's transport, status and files
 // only for the sessions it hosts, so one that provides any of them without sessions is never used.
 const provided = {
-  io: ["tracker", "forge", "chat"],
+  io: ["tracker", "forge", "chat", "notifier"],
   runtime: ["sessions", "transport", "status", "files", "machine"],
 } as const;
 const Provided = z.enum([...provided.io, ...provided.runtime]);
@@ -35,6 +35,7 @@ const commandsFor = {
   tracker: ["call"],
   forge: ["call", "git_credentials"],
   chat: [],
+  notifier: ["call"],
   sessions: ["session", "attach"],
   transport: ["session"],
   status: ["session"],
@@ -76,6 +77,10 @@ export const Manifest = z
     push: Command.optional(),
     session: Command.optional(),
     attach: Command.optional(),
+    channel: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]*$/, "must be lowercase letters, digits and dashes")
+      .optional(),
   })
   // Old and new shapes are read into one: a kind and what it provides.
   .transform(({ kind, provides, jobs, ...rest }, context) => {

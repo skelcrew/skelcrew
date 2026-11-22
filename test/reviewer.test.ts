@@ -88,6 +88,7 @@ const given = () => ({
   commit,
   harness: "codex" as const,
   env: env(),
+  strict: true,
 });
 const start = (
   more: {
@@ -98,6 +99,7 @@ const start = (
     ci?: { has: () => boolean; read: () => Promise<string> };
     issue?: { title: string; body: string };
     last?: LastRound;
+    strict?: boolean;
   } = {},
 ) => review({ ...given(), ...more });
 
@@ -108,7 +110,7 @@ const ownNiceness = () => Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).std
 describe.skipIf(insideSandbox)("reviewer", () => {
   test("answers with Codex's verdict, given the task and the base branch", async () => {
     fakeCodex(
-      '{"verdict":"changes","body":"The retry has no test.","findings":["The retry has no test."]}',
+      `{"verdict":"changes","body":"The retry has no test.","findings":[{"finding":"The retry has no test.","severity":"P1","blocking":true}]}`,
     );
     expect(await start()).toEqual({
       verdict: "changes",
@@ -338,23 +340,83 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(kept("login")).toBe("renewed\n");
   });
 
+  // Each finding has a severity and says whether it blocks. Only what blocks asks for changes,
+  // and an approval lists what doesn't, each with its severity.
+  test("an approval lists the findings that don't block, and changes need one that does", async () => {
+    const minor = '{"finding":"The flag name is long.","severity":"P2","blocking":false}';
+    const bug = '{"finding":"The retry never stops.","severity":"P1","blocking":true}';
+    const least = '{"finding":"Add a comma.","severity":"P10","blocking":false}';
+    fakeCodex(`{"verdict":"approve","body":"Fine.","findings":[${minor},${least}]}`);
+    expect(await start()).toEqual({
+      verdict: "approve",
+      body: "Fine.",
+      findings: [],
+      notBlocking: ["P2: The flag name is long.", "P10: Add a comma."],
+    });
+    fakeCodex(`{"verdict":"changes","body":"One bug.","findings":[${bug},${minor}]}`);
+    expect(await start()).toEqual({
+      verdict: "changes",
+      body: "One bug.",
+      findings: ["The retry never stops."],
+      notBlocking: ["P2: The flag name is long."],
+    });
+  });
+
+  // Past the strict rounds, a P1 the base branch already has doesn't block.
+  test("past the strict rounds, a P1 can be listed as not blocking", async () => {
+    fakeCodex(
+      '{"verdict":"approve","body":"Fine.","findings":[{"finding":"Main loses the log.","severity":"P1","blocking":false}]}',
+    );
+    expect(await start({ strict: false })).toEqual({
+      verdict: "approve",
+      body: "Fine.",
+      findings: [],
+      notBlocking: ["P1: Main loses the log."],
+    });
+  });
+
   // An empty "changes requested" gives the builder nothing to fix, and an approval with
-  // findings passes over a problem. Skelcrew can't tell which half of such an answer is right,
-  // so the review fails, posts nothing and counts no round.
+  // findings that block passes over a problem. Skelcrew can't tell which half of such an answer
+  // is right, so the review fails, posts nothing and counts no round. Only a P1 can block.
   for (const [what, answer, why] of [
     [
       "changes with no findings",
       '{"verdict":"changes","body":"CI pending. I found no code problems.","findings":[]}',
-      "it asked for changes but named no finding",
+      "it asked for changes but named no blocking finding",
+    ],
+    [
+      "changes with no finding that blocks",
+      '{"verdict":"changes","body":"Nits.","findings":[{"finding":"Rename it.","severity":"P3","blocking":false}]}',
+      "it asked for changes but named no blocking finding",
     ],
     [
       "an approval with findings",
-      '{"verdict":"approve","body":"Fine.","findings":["The retry has no test."]}',
-      "it approved but named findings",
+      '{"verdict":"approve","body":"Fine.","findings":[{"finding":"The retry has no test.","severity":"P1","blocking":true}]}',
+      "it approved but named blocking findings",
+    ],
+    [
+      "a P2 that blocks",
+      '{"verdict":"changes","body":"Nits.","findings":[{"finding":"Rename it.","severity":"P2","blocking":true}]}',
+      "only a P1 finding can block",
+    ],
+    [
+      "a P1 that doesn't block in a strict round",
+      '{"verdict":"approve","body":"Fine.","findings":[{"finding":"The retry never stops.","severity":"P1","blocking":false}]}',
+      "a P1 finding must block until the flow's strict rounds are over",
+    ],
+    [
+      "a severity that isn't P and a number",
+      '{"verdict":"approve","body":"Fine.","findings":[{"finding":"Rename it.","severity":"low","blocking":false}]}',
+      "a severity is P1, P2, P3 and so on",
+    ],
+    [
+      "a finding as text alone",
+      '{"verdict":"changes","body":"See below.","findings":["The retry has no test."]}',
+      "shape",
     ],
     [
       "a blank finding",
-      '{"verdict":"changes","body":"See below.","findings":["  "]}',
+      '{"verdict":"changes","body":"See below.","findings":[{"finding":"  ","severity":"P1","blocking":true}]}',
       "a finding is blank",
     ],
   ]) {
@@ -371,7 +433,16 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     await start();
     const schema = JSON.parse(kept("schema"));
     expect(schema.required).toContain("findings");
-    expect(schema.properties.findings).toEqual({ type: "array", items: { type: "string" } });
+    expect(schema.properties.findings.items).toEqual({
+      type: "object",
+      properties: {
+        finding: { type: "string" },
+        severity: { type: "string", pattern: "^P[1-9][0-9]*$" },
+        blocking: { type: "boolean" },
+      },
+      required: ["finding", "severity", "blocking"],
+      additionalProperties: false,
+    });
   });
 
   for (const [what, answer] of [
@@ -546,7 +617,9 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   test("reviews on Claude Code when your config picks it, though Codex is installed", async () => {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
-    fakeCodex('{"verdict":"changes","body":"From Codex.","findings":["From Codex."]}');
+    fakeCodex(
+      `{"verdict":"changes","body":"From Codex.","findings":[{"finding":"From Codex.","severity":"P1","blocking":true}]}`,
+    );
     fakeClaude([
       'cat > /dev/null; echo \'{"type":"result","structured_output":{"verdict":"approve","body":"From Claude Code.","findings":[]}}\'',
     ]);
@@ -729,6 +802,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       round: 1,
       commit,
       findings: ["Add a test."],
+      notBlocking: [],
       description: null,
       since: { diff: "+test\n" },
     };
@@ -746,6 +820,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       round: 2,
       commit,
       findings: [],
+      notBlocking: [],
       description: null,
       since: "dropped" as const,
     };
@@ -923,7 +998,7 @@ describe("what the reviewer is told about the tests", () => {
   const named = ["bun install", "bun run check"];
   // CI runs the whole suite once per commit, so the reviewer runs it only where there is none.
   test("without CI, the reviewer runs the whole test suite itself", () => {
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", named);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", named, true);
     expect(prompt).toContain(
       "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun install && bun run check` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
@@ -934,17 +1009,24 @@ describe("what the reviewer is told about the tests", () => {
   test("with no test command configured, the reviewer reviews without running tests and says so", () => {
     const none =
       "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
-    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined)).toContain(
+    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true)).toContain(
       `No CI runs on this commit, so ${none}`,
     );
     expect(
-      reviewerPrompt(reviewerRole, issue, "origin/main", { ci: "/tmp/review/ci.md" }, undefined),
+      reviewerPrompt(
+        reviewerRole,
+        issue,
+        "origin/main",
+        { ci: "/tmp/review/ci.md" },
+        undefined,
+        true,
+      ),
     ).toContain(`such as only a deploy preview or a CLA check, ${none}`);
   });
 
   // An empty list says on purpose that the repository has no tests to run.
   test("with test configured as none, the reviewer runs no tests and says the repository has none", () => {
-    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", [])).toContain(
+    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", [], true)).toContain(
       "No CI runs on this commit, so don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.",
     );
   });
@@ -956,6 +1038,7 @@ describe("what the reviewer is told about the tests", () => {
       "origin/main",
       { ci: "/tmp/review/ci.md" },
       named,
+      true,
     );
     expect(prompt).not.toContain("run the repository's whole test suite");
     expect(prompt).toContain(
@@ -964,7 +1047,7 @@ describe("what the reviewer is told about the tests", () => {
     expect(prompt).toContain("CI's result for this commit is in /tmp/review/ci.md");
     expect(prompt).toContain("whether it passed, failed or is still running");
     expect(prompt).toContain("read it when you start and again just before you answer");
-    expect(prompt).toContain("When CI failed, list each failing test as a finding");
+    expect(prompt).toContain("When CI failed, list each failing test as a blocking P1 finding");
     expect(prompt).toContain('approve clean code, and say "CI pending" in the body');
   });
 
@@ -977,6 +1060,7 @@ describe("what the reviewer is told about the tests", () => {
       "origin/main",
       { ci: "/tmp/review/ci.md" },
       named,
+      true,
     );
     expect(prompt).toContain(
       "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself with `sc check`, which runs `bun install && bun run check` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
@@ -991,6 +1075,7 @@ describe("what the reviewer is told about the tests", () => {
       "origin/main",
       { ci: "/tmp/review/ci.md" },
       named,
+      true,
     );
     expect(prompt).toContain(
       'When CI hasn\'t reported yet, or is still running as you answer, review the code anyway: CI running is never a finding, as the PR is ready only once every check passes. Then approve clean code, and say "CI pending" in the body.',
@@ -999,7 +1084,7 @@ describe("what the reviewer is told about the tests", () => {
 
   // CI skips a change to docs and Markdown alone, and so does the reviewer: no code changed.
   test("on a change to docs and Markdown alone, the reviewer runs no tests and says so", () => {
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "docs only", named);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "docs only", named, true);
     expect(prompt).toContain(
       "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.",
     );
@@ -1008,23 +1093,50 @@ describe("what the reviewer is told about the tests", () => {
   });
 });
 
+describe("what the reviewer is told of which findings block", () => {
+  // A fresh reviewer always finds something small, so only a P1 holds the PR back.
+  test("only a P1 blocks, and P1 is defined plainly", () => {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true);
+    expect(prompt).toContain(
+      "P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done.",
+    );
+    expect(prompt).toContain(
+      "Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below: P2, P3 and so on.",
+    );
+    expect(prompt).toContain(
+      "Only a P1 can block. A P1 blocks whether the change brings it or the base branch already has it.",
+    );
+    expect(prompt).toContain('Answer "changes" when at least one finding blocks.');
+  });
+
+  // Past the flow's strict rounds, what the base branch already has no longer holds the PR back.
+  test("past the strict rounds, only a P1 the change brings blocks", () => {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, false);
+    expect(prompt).toContain(
+      "This round is past the flow's strict rounds, so a P1 blocks only when this change brings it. Mark a P1 the base branch already has as not blocking.",
+    );
+    expect(prompt).not.toContain("whether the change brings it or the base branch already has it");
+  });
+});
+
 describe("what the reviewer is told of the last round", () => {
   const last = {
     round: 1,
     commit: "4f9c2e1aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5",
     findings: ["Each agent needs its own login."],
+    notBlocking: [],
     description: "Moved the logins into one shared file, as each agent asked separately.",
     since: { diff: "diff --git a/login.ts b/login.ts\n" },
   };
   const file = "/tmp/review/since-last-round.diff";
 
   test("the first round is told of none", () => {
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true);
     expect(prompt).not.toContain("Since the last round");
   });
 
   test("from round 2 on, it gets the diff since the commit it reviewed and that round's findings", () => {
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true, {
       round: last,
       file,
     });
@@ -1047,18 +1159,18 @@ describe("what the reviewer is told of the last round", () => {
   // The builder writes the description, so it never fills a blank of the role.
   test("the PR's description reaches the reviewer as written, never as a blank", () => {
     const round = { ...last, findings: [], description: "Says {{title}} and $&" };
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true, {
       round,
       file,
     });
-    expect(prompt).toContain("It approved, with no findings.");
+    expect(prompt).toContain("It approved, with no blocking findings.");
     expect(prompt).toEndWith("Says {{title}} and $&");
   });
 
   // A description the forge couldn't give never excuses a trade-off.
   test("with no description to read, no trade-off counts as stated", () => {
     const round = { ...last, description: null };
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true, {
       round,
       file,
     });
@@ -1068,9 +1180,22 @@ describe("what the reviewer is told of the last round", () => {
   });
 
   // A review run again on the same commit has no new diff, but still checks what was asked.
+  // Only the latest review's findings that didn't block are filed at the merge, so each review
+  // lists again those that still stand.
+  test("it gets the last round's findings that didn't block, to list again those that stand", () => {
+    const round = { ...last, notBlocking: ["P2: The flag's name is long."] };
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true, {
+      round,
+      file,
+    });
+    expect(prompt).toContain(
+      "Check whether each is fixed.\n\nIt also found these, which didn't block:\n\n1. P2: The flag's name is long.\n\nList again each that still stands, as Skelcrew files only the latest review's for later.",
+    );
+  });
+
   test("a review of the same commit again gets the last round's findings, and no diff", () => {
     const round = { ...last, since: "same commit" as const };
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true, {
       round,
       file,
     });
@@ -1082,7 +1207,7 @@ describe("what the reviewer is told of the last round", () => {
 
   test("after a force push dropped the commit it reviewed, it reviews the whole diff only", () => {
     const round = { ...last, since: "dropped" as const };
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true, {
       round,
       file,
     });

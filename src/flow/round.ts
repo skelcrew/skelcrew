@@ -6,11 +6,12 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
-import { flowRoles } from "../flows.ts";
+import { flowRoles, strictRounds } from "../flows.ts";
 import { errorText } from "../format.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import {
   askWhatChanged,
+  editPr,
   editReview,
   failedLog,
   forgeOf,
@@ -40,6 +41,7 @@ import {
   checkSet,
   lastReviewed,
   letGoOn,
+  nextRound,
   notReviewed,
   reviewAsked,
   reviewOnPr,
@@ -47,6 +49,7 @@ import {
   roundFailed,
   roundOf,
   submitted,
+  submittedBefore,
   verdictPosted,
   verdictReached,
 } from "./ledger.ts";
@@ -70,7 +73,8 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 
 // Fetches the thread's branch from its clone into Skelcrew's clone and pushes the commit it got
 // to the thread's branch on the repository's remote, then, with a forge, opens the PR if there
-// is none yet, with the line that closes its task at the end of its body. Returns the commit.
+// is none yet, or else replaces its description, with the line that closes its task at the end
+// of its body. Returns the commit.
 // git never runs inside the thread's clone: the builder controls everything there, .git
 // included, and a planted setting would run with your rights. A push refused for changing a
 // workflow file, or because the branch moved on the forge without the builder, throws saying
@@ -150,19 +154,51 @@ async function push(
     return sha;
   }
   // The forge answers with the PR already open from the branch, such as one opened before the
-  // daemon stopped and could save it.
-  let { pr } = thread;
-  if (pr === null) {
-    const { title, closes } = threadTask(db, thread);
-    pr = await openPr(db, repository, {
-      branch: thread.branch,
-      base: baseOf(thread),
-      title,
-      body: closes ? `${summary}\n\n${closes}` : summary,
-    });
-  }
+  // daemon stopped and could save it. After an earlier submit, it may hold that one's summary.
+  const { title, closes } = threadTask(db, thread);
+  const body = closes ? `${summary}\n\n${closes}` : summary;
+  const known = thread.pr;
+  const pr =
+    known ??
+    (await openPr(db, repository, { branch: thread.branch, base: baseOf(thread), title, body }));
   record(db, folder, { pr }, `pushed ${sha} to ${thread.branch}, for #${pr}`);
+  if (known !== null || submittedBefore(thread))
+    await describePr(db, sessions, folder, pr, body, signal);
   return sha;
+}
+
+// Replaces the PR's description with the round's summary and the line that closes its task, so
+// the reviewer, who reads it as the review starts, and sc show see this round's. A forge that
+// can't keeps the one before, and the builder hears so, as its round goes on.
+async function describePr(
+  db: Database,
+  sessions: string,
+  folder: string,
+  pr: number,
+  body: string,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return;
+  const thread = readThread(db, folder);
+  const repository = repositoryOf(db, thread);
+  const edited = await editPr(db, repository, { pr, body }).catch(errorText);
+  // A newer submit's push waits for this one, so its own edit comes next and says what holds.
+  if (signal.aborted) return;
+  if (edited === true) {
+    const copied = prOf(db, thread.owner, thread.repo, pr);
+    if (copied) saveItems(db, thread.owner, thread.repo, [{ ...copied, body }], []);
+    record(db, folder, {}, `replaced PR #${pr}'s description`);
+    return;
+  }
+  const why = edited === false ? "the forge can't edit it" : edited;
+  const text = `Skelcrew couldn't replace PR #${pr}'s description with your new summary, so it still shows the one before: ${why}`;
+  record(db, folder, {}, text);
+  queueMessage(db, sessions, folder, {
+    sender: "skelcrew",
+    text,
+    said: `it couldn't replace PR #${pr}'s description`,
+    typed_in: [],
+  });
 }
 
 // How long a review waits for a first check when nothing says CI runs: no workflows and no CI
@@ -428,7 +464,8 @@ async function reviewRound(
     if (signal.aborted) return;
     if (still) {
       const body = `Approval kept: this commit only merges ${base} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. Every CI check on it passed.`;
-      const verdict: Review = { verdict: "approve", body, findings: [] };
+      const notBlocking = lastReviewed(thread)?.notBlocking ?? [];
+      const verdict: Review = { verdict: "approve", body, findings: [], notBlocking };
       const kept = { verdict, by: latest.reviewed_by ?? reviewer, kept: approved };
       await pending;
       await actOnVerdict(db, sessions, folder, sha, signal, kept, builderBack);
@@ -523,6 +560,7 @@ async function reviewRound(
       // The review stage's role, from the task's flow, and its instructions come from the
       // .agents/ the task started with.
       instructions: repositoryRole(flowRoles(thread).review ?? "reviewer", thread).instructions,
+      strict: nextRound(thread) <= strictRounds(thread),
       skills: thread,
       commit: sha,
       signal,
@@ -818,7 +856,7 @@ export async function retryPost(db: Database, sessions: string, folder: string):
 
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
 // the latest round rather than a review per round. It edits the review an earlier round posted.
-// When the forge can't edit it, it posts a new one only if the verdict or findings changed, so a
+// When the forge can't edit it, it posts a new one only if the verdict or any finding changed, so a
 // round that found the same again adds nothing, unless `noted`: the lead is to hear of this
 // round's review, so the PR must show it, not an older round's. One deleted from the PR is posted again. The rounds one by one stay in the thread's log.
 // What it posted is saved on the thread at once, so a later round edits it though this one is
@@ -830,12 +868,19 @@ async function postOrEdit(
   folder: string,
   pr: number,
   commit: string,
-  review: { verdict: "approve" | "changes"; body: string; findings: string[]; round: number },
+  review: {
+    verdict: "approve" | "changes";
+    body: string;
+    findings: string[];
+    notBlocking?: string[] | undefined;
+    round: number;
+  },
   noted: boolean,
 ): Promise<void> {
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const { verdict, findings, round } = review;
+  const notBlocking = review.notBlocking ?? [];
   // The body ends with a hidden marker naming the thread. The forge keeps HTML comments, and
   // gives them back unchanged, so Skelcrew can find its review in its copy of the PR.
   const marker = `<!-- skelcrew:review thread=${thread.folder} -->`;
@@ -858,7 +903,7 @@ async function postOrEdit(
       : [];
   const already = marked.find((posted) => posted.text.trim() === body.trim());
   if (already) {
-    const post = { pr, id: already.id, verdict, findings, round };
+    const post = { pr, id: already.id, verdict, findings, notBlocking, round };
     const saved = reviewOnPr(readThread(db, folder), post, Date.now());
     record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
     return;
@@ -878,14 +923,15 @@ async function postOrEdit(
   const same =
     earlier !== null &&
     earlier.verdict === verdict &&
-    JSON.stringify(earlier.findings) === JSON.stringify(findings);
+    JSON.stringify(earlier.findings) === JSON.stringify(findings) &&
+    JSON.stringify(earlier.notBlocking ?? []) === JSON.stringify(notBlocking);
   if (edit === "can't" && same && !noted) return;
   const id =
     edited && editing !== null
       ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
-  const post = { pr, id, verdict, findings, round };
+  const post = { pr, id, verdict, findings, notBlocking, round };
   record(db, folder, reviewOnPr(readThread(db, folder), post, Date.now()), `${how} on PR #${pr}`);
 }
 

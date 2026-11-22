@@ -37,6 +37,7 @@ import {
   question,
   read,
   running,
+  script,
   serve,
   setUp,
   skelReview,
@@ -440,6 +441,36 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
       expect(thread().no_ci).toBe(head);
       await until(() => thread().status === "done");
+    }, 90_000);
+
+    // A merge when ready ends its thread itself, and still files what the review found that
+    // didn't block.
+    test("a merge when ready files the review's not-blocking findings in the backlog", async () => {
+      script(
+        "codex",
+        `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+cat > /dev/null
+echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag better","severity":"P2","blocking":false}]}' > "$out"`,
+      );
+      await approvedApp12();
+      const head = pushed();
+      await arm();
+      const pr7 = prItem("7", "Add export", {
+        head,
+        reviews: [skelReview],
+        checks: [approved, check(5, "passed")],
+      });
+      changes([issue12(), pr7]);
+      await until(() => merges().length === 1, 30_000);
+      await until(() => thread().status === "done");
+      const filedAs =
+        /APP-12 is done: #7 merged into main when ready, as the human asked\. Its not-blocking findings are in APP-(\d+)\./;
+      await until(() => filedAs.test(leadTyped()));
+      const number = leadTyped().match(filedAs)?.[1];
+      const remote = join(home, "github", "simon", "app.git");
+      expect(git(remote, "log", "-1", "--format=%B", `refs/skelcrew/tasks/t${number}`)).toContain(
+        "1. P2: Name the flag better",
+      );
     }, 90_000);
 
     // Once the wait ended with no check, sc ps says "no CI" and the PR is ready. A check that

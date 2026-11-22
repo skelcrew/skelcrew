@@ -408,6 +408,58 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(read(join(data(), "threads", "app-12.log"))).toContain("1. The export has no test.");
   }, 60_000);
 
+  // The reviewer reads the PR's description to tell a trade-off the builder stated from one it
+  // hid, so each round's summary must reach the PR, with the line that closes the issue kept.
+  test("a second round's submit replaces the PR's description, keeping the line that closes the issue", async () => {
+    addApp();
+    const issue = taskItem("12", "Add export", { body: "As JSON" });
+    const pr = prItem("7", "Add export", {
+      branch: "skelcrew/12-add-export",
+      body: "Round 1\n\nCloses #12",
+    });
+    answer(plugin, "changed.once", { items: [issue, pr], next: "later" });
+    answer(plugin, "changed", { items: [issue], next: "later" });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => finished("success").length === 1, longWait);
+    expect(asked(plugin).filter((q) => q.ask === "edit pr")).toEqual([
+      { ask: "edit pr", repository: "simon/app", pr: 7, body: "Round 2\n\nCloses #12" },
+    ]);
+    // Skelcrew's copy has the new description too, so sc show shows it.
+    expect(JSON.parse(copiedPr()).body).toBe("Round 2\n\nCloses #12");
+    const show = await skel(["show", "app-12"]);
+    expect(show.out).toContain("PR description\nRound 2\n\nCloses #12");
+  }, 90_000);
+
+  // The builder answers the message with round 3, whose description the forge then takes.
+  test("a forge that can't edit the PR's description keeps the old one, and the builder hears so", async () => {
+    addApp();
+    answer(plugin, "edit pr.once", { edited: false });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(
+      () =>
+        asked(plugin).filter((q) => q.ask === "edit pr").length === 2 &&
+        pushedRound() === "3" &&
+        statuses().some((s) => s.sha === pushed() && s.state === "success"),
+      longWait,
+    );
+    expect(read(join(builder(), "typed"))).toContain(
+      "Skelcrew couldn't replace PR #7's description with your new summary, so it still shows the one before: the forge can't edit it",
+    );
+    const log = read(join(data(), "threads", "app-12.log"));
+    expect(log).toContain("couldn't replace PR #7's description");
+    expect(log).not.toContain("the round failed");
+    expect(
+      asked(plugin)
+        .filter((q) => q.ask === "edit pr")
+        .map((q) => q.body),
+    ).toEqual(["Round 2\n\nCloses #12", "Round 3\n\nCloses #12"]);
+  }, 120_000);
+
   // A forge that can't edit gets a new review only when what it says changed, so a round that
   // finds the same problems again adds nothing to the PR.
   test("a forge that can't edit gets no new review when the verdict and findings are the same", async () => {

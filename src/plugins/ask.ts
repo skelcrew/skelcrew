@@ -9,7 +9,7 @@ import { Item, type Task } from "../flow/copy.ts";
 import { callPlugin, installedPlugins, readManifest } from "./plugin.ts";
 
 // Returns the installed plugins that do the job.
-export function pluginsWithJob(db: Database, job: "tracker" | "forge"): string[] {
+export function pluginsWithJob(db: Database, job: "tracker" | "forge" | "notifier"): string[] {
   // A plugin whose manifest can't be read does no job, so one broken plugin stops nothing else.
   return installedPlugins(db)
     .filter((plugin) => {
@@ -255,6 +255,22 @@ export async function openPr(
     z.object({ number: z.number().int().positive() }),
   );
   return opened.number;
+}
+
+// Replaces the PR's description on the forge with `body`, for a submit after the first, and
+// returns whether the forge did. A plugin that answers nothing, such as an older one, can't.
+export async function editPr(
+  db: Database,
+  repository: Repository,
+  pr: { pr: number; body: string },
+): Promise<boolean> {
+  const answer = await callPlugin(
+    db,
+    requireForge(db, repository),
+    { ask: "edit pr", repository: repositoryKey(repository), ...pr },
+    z.object({ edited: z.boolean() }).nullable(),
+  );
+  return answer?.edited ?? false;
 }
 
 // Merges the PR on the forge, for m on the screen and a merge when ready, but only while its
