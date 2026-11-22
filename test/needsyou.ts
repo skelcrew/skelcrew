@@ -272,6 +272,15 @@ export function setColumn(column: "needs_you" | "submitted"): void {
   db.close();
 }
 
+// Runs SQL on Skelcrew's database while the daemon runs, such as to set a thread's round as a
+// review would have.
+export function sql(statements: string): void {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run(statements);
+  db.close();
+}
+
 // Stands in for a submit whose review is under way: Skelcrew's clone holds the commit app-12's
 // clone has checked out as the one it last pushed, and the thread reviews it.
 export function submittedAsReviewing(): void {

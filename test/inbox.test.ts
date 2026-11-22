@@ -20,6 +20,8 @@ import {
   serve,
   setUp,
   skel,
+  socket,
+  sql,
   startApp12,
   tearDown,
   thread,
@@ -847,7 +849,7 @@ console.log(await answerItem("simon/app", "12", seen, { pick: "a" }));`;
 
   // The builder's question shows as Skelcrew's own item, and its pick reaches the lead. An error
   // offers to start the builder again, which the pick does as the screen's restart would.
-  test("a pick on Skelcrew's own item hands a question to the lead, or starts the builder again", async () => {
+  test("each pick on Skelcrew's own item runs its command: a hand-off, start again, go on and stop", async () => {
     addApp();
     await startApp12();
     const pick = (title: string, text: string, letter: string) => {
@@ -886,5 +888,31 @@ console.log(await startOrMerge({ command: "pick", repo: "simon/app", task: "12",
     await until(() =>
       read(join(lead(), "typed")).includes("You picked a (Start it again) on APP-12"),
     );
-  }, 60_000);
+    // A builder whose session ended on its error is started again too, by a stop and a start.
+    await hook("fail");
+    await until(() => thread().erred === 1);
+    const tmux = (...args: string[]) =>
+      Bun.spawnSync(["tmux", "-L", socket, ...args], { stdout: "pipe", stderr: "pipe" });
+    tmux("kill-session", "-t", "=app-12");
+    expect(pick("Its harness stopped on an error", error, "a")).toContain("Started APP-12 again");
+    await until(
+      () => thread().status === "working" && tmux("has-session", "-t", "=app-12").success,
+    );
+    // At the round limit, going on decides it, as sc start does, and stopping stops the builder,
+    // as sc stop does.
+    const atLimit = () =>
+      sql(`UPDATE tasks SET round_log = NULL, rounds = 3, verdict = 'changes', held = 'Fix it.', review_findings = NULL;
+UPDATE threads SET erred = 0, asking = 0, turn_ended = 0, needs_you = 1, limit_decided = 0, handed = NULL WHERE folder = 'app-12'`);
+    const limit = ["Review still wants changes after 3 rounds", "The latest review asks:"] as const;
+    atLimit();
+    expect((await skel(["show", "app-12"])).out).toContain(limit[0]);
+    expect(pick(...limit, "a")).toContain("APP-12 goes on past the round limit.");
+    await until(() => thread().limit_decided === 1);
+    atLimit();
+    expect(pick(...limit, "c")).toContain("Stopped APP-12.");
+    await until(() => thread().status === "stopped");
+    await until(() =>
+      read(join(lead(), "typed")).includes("You picked c (Stop the builder) on APP-12"),
+    );
+  }, 90_000);
 });
