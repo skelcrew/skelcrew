@@ -315,7 +315,10 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       needs_you: 0,
       review_failed: 1,
     });
-    expect(read(join(data(), "threads", "app-12.log"))).toContain("Base branch was modified");
+    // The log is written just after the database, so it is waited for.
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes("Base branch was modified"),
+    );
     expect(statuses()).toEqual([]);
   }, 90_000);
 

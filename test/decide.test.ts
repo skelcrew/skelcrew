@@ -99,8 +99,6 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_followup: null,
     needs_you_for: null,
     limit_decided: false,
-    ended_at: null,
-    ended_said: null,
     review_failed: false,
     agents: null,
     flow: "default",

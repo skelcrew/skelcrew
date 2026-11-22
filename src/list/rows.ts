@@ -10,6 +10,7 @@ import { threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
+import { itemOf, itemsOf } from "../flow/inbox.ts";
 import { leadOf } from "../flow/lead.ts";
 import { limitOf, nextRound, passedReviewStage, roundOf } from "../flow/ledger.ts";
 import {
@@ -57,8 +58,17 @@ export const sections: Section[] = [
 // Needs you has no key, as it never closes.
 export const numbered = sections.filter((section) => section !== "needs you");
 
-// One row of the list. `part` is where it is: the lead, the stage of its task, or a section's
-// heading, which you can stand on too, so Enter there opens or closes it. `section` is the section
+// What a row under Needs you shows of a mark Skelcrew set itself, until the lead posts an item.
+export const leadLooks = "the lead is looking at this";
+
+// The lead's item a row shows under Needs you: its text and its options, in letter order.
+export type Ask = { text: string; options: string[] };
+
+// The mark of a row with the lead's item, which waits on your answer, whatever else it shows.
+const answerMark: Mark = { sign: "●", colour: "yellow" };
+
+// One row of the list. `part` is where it is: the lead, the stage of its task, the lead's item on
+// the repository, or a section's heading, which you can stand on too, so Enter there opens or closes it. `section` is the section
 // it shows under: Needs you while the task waits on you, Task queue while it is queued or paused,
 // its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in,
 // `label` is the name the row shows, such as T139, without the repository its tab already names,
@@ -80,9 +90,10 @@ export const numbered = sections.filter((section) => section !== "needs you");
 // such as 12, which the details pane reads it by, or null on a row that isn't a task. `place` is a
 // queued task's place in its repository's queue, 1 for the one that starts next, or null. `waits`
 // says what a queued or paused task waits on, such as `3rd in line: 4 of 4 builders busy`, for the
-// details pane, and is empty on every other row.
+// details pane, and is empty on every other row. `ask` is the lead's item on it, which a letter or a
+// reply answers, or null with none.
 export type Row = {
-  part: "lead" | "heading" | ListStage;
+  part: "lead" | "heading" | "ask" | ListStage;
   section: "lead" | Section;
   name: string;
   label: string;
@@ -110,6 +121,7 @@ export type Row = {
   more: number;
   place: number | null;
   waits: string;
+  ask: Ask | null;
 };
 
 // What a task's CI says, by its checks as the last poll saved them.
@@ -226,7 +238,8 @@ function taskRow(
   const name = taskName(repoName, thread.task);
   const shown = shownOf(thread, limitOf(thread), now);
   const ended = stage === "done";
-  const mark: Mark = ended ? { sign: "○", colour: "dim" } : shown.mark;
+  const item = ended ? null : itemOf(db, open.owner, open.repo, thread.task);
+  const mark: Mark = ended ? { sign: "○", colour: "dim" } : item ? answerMark : shown.mark;
   const unreviewed = shown.word === "not reviewed" ? ", not reviewed" : "";
   const live = readyToMerge(mark) ? `ready to merge${unreviewed}` : shown.word;
   const word = ended ? (thread.merged ? "merged" : "closed") : live;
@@ -284,7 +297,7 @@ function taskRow(
   return {
     part: stage,
     section:
-      mark.sign === "●"
+      mark.sign === "●" || item !== null
         ? "needs you"
         : thread.status === "queued" || thread.status === "stopped"
           ? "task queue"
@@ -319,6 +332,7 @@ function taskRow(
     more: 0,
     place: null,
     waits: "",
+    ask: item && { text: item.text, options: item.options },
   };
 }
 
@@ -474,9 +488,10 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   const notStarted = (task: string, title: string, changed: number): Row => {
     const name = taskName(repository.name, task);
     const after = builders.queued > 0 ? ` after the ${builders.queued} queued` : "";
+    const item = itemOf(db, open.owner, open.repo, task);
     return {
       part: "backlog",
-      section: "backlog",
+      section: item === null ? "backlog" : "needs you",
       name,
       label: task.toUpperCase(),
       task,
@@ -514,6 +529,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       more: 0,
       place: null,
       waits: "",
+      ask: item && { text: item.text, options: item.options },
     };
   };
   // The open issues no thread works on, and the tasks filed in the backlog, newest first.
@@ -559,11 +575,32 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         (a.place ?? Number.POSITIVE_INFINITY) - (b.place ?? Number.POSITIVE_INFINITY) ||
         startedOf(b) - startedOf(a),
     );
+  // The lead's item on the repository itself, apart from any task.
+  const aboutRepository = itemsOf(db, open.owner, open.repo).flatMap((item): Row[] =>
+    item.task === ""
+      ? [
+          {
+            ...emptyRow,
+            part: "ask",
+            section: "needs you",
+            name: "ask",
+            label: repository.name,
+            title: "about the repository",
+            mark: answerMark,
+            colour: "yellow",
+            needsYou: true,
+            ask: { text: item.text, options: item.options },
+          },
+        ]
+      : [],
+  );
   return [
     leadRow(db, open, now),
+    ...aboutRepository,
     ...live("needs you"),
+    ...waiting.filter((row) => row.section === "needs you"),
     ...upNext,
-    ...waiting,
+    ...waiting.filter((row) => row.section === "backlog"),
     ...live("building"),
     ...live("reviewing"),
     ...live("checks"),
@@ -578,7 +615,7 @@ const backlogShown = 10;
 // Returns the rows with Backlog cut to its newest 10 issues and a `… more` row after them, which
 // stands for the rest, unless `whole` asks for every issue. A Backlog of 10 or fewer is whole.
 export function cutBacklog(rows: Row[], whole: boolean): Row[] {
-  const backlog = rows.filter((row) => row.part === "backlog");
+  const backlog = rows.filter((row) => row.section === "backlog");
   const rest = backlog.length - backlogShown;
   if (whole || rest <= 0) return rows;
   const hidden = new Set(backlog.slice(backlogShown));
@@ -627,6 +664,7 @@ const emptyRow: Row = {
   more: 0,
   place: null,
   waits: "",
+  ask: null,
 };
 
 // Returns the rows the list shows, in the order it shows them: the lead's, then each section's
@@ -691,7 +729,8 @@ const TabRow = z.object({ name: z.string(), owner: z.string(), repo: z.string() 
 
 // Returns a tab for each repository, in name order, with its badge: how many of its threads
 // need you, and how many are ready to merge. The badges are how you hear of other repositories,
-// as one repository's lead never mentions another's threads. A repository whose lead you exited
+// as one repository's lead never mentions another's threads. Each of the lead's items needs you,
+// whether on a thread, a task not started or the repository. A repository whose lead you exited
 // has no tab until you open it again, except `keep`, the one the list shows, so the list never
 // loses what it shows. The screen's sidebar keeps none: a tab that goes there is how it learns
 // to move to another repository.
@@ -702,15 +741,19 @@ export function repositoryTabs(db: Database, keep: Open | null): Tab[] {
     .all(keep?.owner ?? null, keep?.repo ?? null)
     .map((row) => TabRow.parse(row));
   // Each thread that isn't done gets the mark its row would have.
-  const marked = db
+  const threads = db
     .query("SELECT * FROM task_threads WHERE status != 'done'")
     .all()
-    .map((row) => {
-      const thread = Thread.parse(row);
-      return { thread, mark: shownOf(thread, limitOf(thread)).mark };
-    });
+    .map((row) => Thread.parse(row));
   return repositories.map(({ name, owner, repo }) => {
-    const ours = marked.filter((m) => m.thread.owner === owner && m.thread.repo === repo);
-    return { name, fullName: `${owner}/${repo}`, ...badgeOf(ours.map((m) => m.mark)) };
+    const ours = threads.filter((thread) => thread.owner === owner && thread.repo === repo);
+    const items = itemsOf(db, owner, repo);
+    const has = (thread: Thread) => items.some((item) => item.task === thread.task);
+    const marks = ours.map((thread) =>
+      has(thread) ? answerMark : shownOf(thread, limitOf(thread)).mark,
+    );
+    const apart = items.filter((item) => !ours.some((thread) => thread.task === item.task));
+    const badge = badgeOf([...marks, ...apart.map(() => answerMark)]);
+    return { name, fullName: `${owner}/${repo}`, ...badge };
   });
 }

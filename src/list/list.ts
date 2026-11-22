@@ -7,7 +7,7 @@
 // arrow reorders that queue.
 import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
-import { moveQueued, openRepository, startOrMerge } from "../client.ts";
+import { answerItem, moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadSession } from "../flow/lead.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
@@ -17,12 +17,23 @@ import { attachOnHost, type Host } from "../plugins/runtime.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { versionLabels } from "../version.ts";
-import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
+import {
+  type Asking,
+  canOpenLinks,
+  itemFooter,
+  itemKey,
+  openPr,
+  type Reply,
+  replyLine,
+  stillOffered,
+  typeReply,
+} from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
   type Frame,
   keysFor,
+  type Pick,
   paneEdge,
   paneWidth,
   type Target,
@@ -150,6 +161,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   let asking: Asking | null = null;
   let working = false;
   let attached = false;
+  // The reply you are typing to the lead's item on a row, which takes every key until it is sent
+  // or dropped, and how far the item you opened full-size with Enter is scrolled, or null.
+  let replying: Reply | null = null;
+  let item: number | null = null;
   // The details of the row you are on, by its name, read again with the rows each second, and
   // the last screen read of its agent, by the name of the row it was read for.
   let details: { name: string; read: Details | null } | null = null;
@@ -228,7 +243,9 @@ export async function runList(agents: string, repository: string): Promise<void>
     const bottom = (tabs: number) =>
       removeControlCodes(
         said ??
+          (replying && replyLine(replying)) ??
           asking?.question.ask ??
+          (item !== null ? itemFooter(rows[here]) : null) ??
           keysFor(rows[here], tabs, paneWidth(process.stdout.columns || 80) > 0),
       );
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
@@ -240,8 +257,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       frameWith(bottom, load),
       size,
       paneFor(size),
+      item,
     );
     top = drawn.top;
+    item = drawn.item;
     targets = drawn.targets;
     const text = `\x1b[H${drawn.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
     if (text === lastFrame) return;
@@ -371,9 +390,39 @@ export async function runList(agents: string, repository: string): Promise<void>
     refresh();
   };
 
+  // Takes your answer to the lead's item on a row to the daemon, which tells the lead, and says
+  // what the daemon answered, or why it refused, such as for an item the lead replaced meanwhile.
+  const answerRow = async (
+    row: Row,
+    given: { pick: Exclude<Pick, "reply"> } | { reply: string },
+  ) => {
+    if (!row.ask) return draw();
+    working = true;
+    item = null;
+    try {
+      said = await answerItem(`${open.owner}/${open.repo}`, row.task, row.ask, given);
+    } catch (error) {
+      said = errorText(error);
+    }
+    working = false;
+    refresh();
+  };
+  // Acts on what a key or a click on an item's line picks: an option, which answers it, or a
+  // reply, which you then type.
+  const pickOn = (row: Row, pick: Pick) => {
+    if (pick !== "reply") return answerRow(row, { pick });
+    replying = { row, text: "" };
+    return draw();
+  };
+
   const openRow = async (row: Row) => {
     if (row.part === "heading" && row.section !== "lead") return toggleSection(row.section);
-    if (row.part === "lead" && row.session) {
+    if (row.ask && item === null) {
+      item = 0;
+      return draw();
+    }
+    item = null;
+    if ((row.part === "lead" && row.session) || row.part === "ask") {
       if (!row.running) say("Starting the lead…");
       const failed = await openRepository(`${open.owner}/${open.repo}`, false);
       said = null;
@@ -493,6 +542,10 @@ export async function runList(agents: string, repository: string): Promise<void>
     const overPane = beside > 0 && Number(column) > width - 1 - beside - paneEdge.length;
     if ((button === "64" || button === "65") && overPane)
       return scrollPane(button === "64" ? -3 : 3);
+    if ((button === "64" || button === "65") && item !== null) {
+      item += button === "64" ? -1 : 1;
+      return draw();
+    }
     if (button === "64") return move(-1);
     if (button === "65") return move(1);
     if (button !== "0") return draw();
@@ -514,8 +567,13 @@ export async function runList(agents: string, repository: string): Promise<void>
       const pinned = target.pinned.find((span) => span.from <= at && at <= span.to);
       return pinned ? toggleSection(pinned.section) : draw();
     }
+    if ("scroll" in target) {
+      if (item !== null) item += target.scroll;
+      return draw();
+    }
     const row = rows[target.row];
     if (!row) return draw();
+    if (target.pick && target.row === here) return pickOn(row, target.pick);
     if (target.row === here || row.part === "lead") {
       here = target.row;
       return openRow(row);
@@ -546,6 +604,23 @@ export async function runList(agents: string, repository: string): Promise<void>
   let left = false;
   const press = async (key: string) => {
     if (working || left || key === "back") return;
+    if (replying) {
+      const reply = replying;
+      const typed = typeReply(reply, key);
+      replying = typeof typed === "string" ? null : typed;
+      return typed === "send" ? answerRow(reply.row, { reply: reply.text }) : draw();
+    }
+    if (item !== null && !asking) {
+      const by = { up: -1, down: 1, "page up": -10, "page down": 10 }[key];
+      if (by !== undefined) {
+        item += by;
+        return draw();
+      }
+      if (key === "escape") {
+        item = null;
+        return draw();
+      }
+    }
     if (key === "q" || (key === "escape" && !asking)) return leave();
     if (asking) {
       const action = asking;
@@ -557,6 +632,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     said = null;
     const row = rows[here];
+    const pick = itemKey(row, here, targets, key);
+    if (pick && row) return pickOn(row, pick);
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if ((key === "earlier" || key === "later") && row)
       return reorder(row, key === "earlier" ? -1 : 1);

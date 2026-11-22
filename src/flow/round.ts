@@ -55,16 +55,7 @@ import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
 import { needsYou as neededYou } from "./status.ts";
 import { supervisor } from "./supervisor.ts";
-import {
-  cloneOf,
-  hostMissing,
-  markBeforeHost,
-  readThread,
-  record,
-  repositoryOf,
-  Thread,
-  threadName,
-} from "./thread.ts";
+import { cloneOf, readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails. Never with maintenance in the background, which a fetch could otherwise start.
@@ -1104,15 +1095,11 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     {
       status: "waiting",
       ...submitted(thread, summary, Date.now(), unreviewed),
-      // A new submit is the thing a mark for you is most often about, such as a fix, so it
-      // clears the mark. The lead marks it again if you still need to act.
-      needs_you_for: null,
       // A turn that ends after this waits on the review, not on you. An earlier turn that
       // ended without a submit no longer does either: the builder can go on with nothing
       // typed in, such as when a command it left running finishes.
       submitted: true,
       turn_ended: false,
-      ended_at: null,
       // A review of the older commit that waited for a place no longer does.
       queued: null,
       ...notHeld,
@@ -1399,15 +1386,8 @@ export function resumeRound(
 // but the next review that asks for changes reaches it again and needs a new decision.
 export function goOn(db: Database, sessions: string, folder: string): void {
   const thread = readThread(db, folder);
-  const { host, needs_you_for } = thread;
   const { held } = roundOf(thread);
-  // Letting it go on is your or the lead's decision, so it ends a mark for you too. But not the
-  // instruction to bring back a missing host plugin, which only you can do.
-  const hostGone = host !== null && markBeforeHost(host, needs_you_for) !== undefined;
-  const change = {
-    ...letGoOn(thread, roundLimit(thread), Date.now()),
-    needs_you_for: hostGone ? hostMissing(host) : null,
-  };
+  const change = letGoOn(thread, roundLimit(thread), Date.now());
   record(
     db,
     folder,

@@ -105,8 +105,9 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes ORDER BY id").all().
 });
 
 // A builder asks the lead, not the human in its own session. Its turn then ends waiting on the
-// lead's answer, which isn't the human's to give unless the lead brings it to them.
-test("a builder's question reaches the lead, and the turn that ends on it doesn't need you", () => {
+// lead's answer. It shows under Needs you while the lead reads it, but the lead hears it once,
+// as the builder's own message, with no note that it needs you.
+test("a builder's question reaches the lead once, and the turn that ends on it shows under Needs you", () => {
   const seen = JSON.parse(
     run(`
 messageLead(db, tmux, readThread(db, "app-12"), "Should the export be JSON or CSV? I recommend JSON.");
@@ -120,7 +121,7 @@ console.log(JSON.stringify({
   expect(seen.notes).toEqual([
     '<skelcrew from="APP-12" reply="sc tell APP-12">\nShould the export be JSON or CSV? I recommend JSON.\n</skelcrew>',
   ]);
-  expect(seen.needsYou).toBe(false);
+  expect(seen.needsYou).toBe(true);
 });
 
 // A paste while the human reads further up would throw them back to the bottom. Back at the

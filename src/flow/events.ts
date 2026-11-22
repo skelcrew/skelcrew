@@ -259,7 +259,6 @@ async function stopNow(
         needs_you: false,
         asking: false,
         turn_ended: false,
-        ended_at: null,
         erred: false,
         limited: false,
         limit_reset: null,
@@ -322,7 +321,6 @@ export async function endThread(
       status: "done" as const,
       needs_you: false,
       needs_you_for: null,
-      ended_at: null,
       merged,
       merge_plan: null,
     };

@@ -27,9 +27,12 @@ test("a review that failed or timed out is red and hollow", () => {
 
 test("a hollow mark is bright while the builder works, and dim while the thread waits", () => {
   expect(markOf("working", "working")).toEqual({ sign: "○", colour: "bright" });
-  // A turn that ended without a submit waits on the lead, which got the builder's last message.
-  for (const word of ["checks", "changes", "limit · 13:59", "turn ended", "stopped"])
+  for (const word of ["checks", "changes", "limit · 13:59", "stopped"])
     expect(markOf("idle", word)).toEqual({ sign: "○", colour: "dim" });
+});
+
+test("a turn that ended without a submit shows under Needs you at once, while the lead reads it", () => {
+  expect(markOf("needs you", "turn ended")).toEqual({ sign: "●", colour: "yellow" });
 });
 
 test("a review under way or held on a usage limit is dim even while the builder works", () => {

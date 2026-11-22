@@ -1,5 +1,6 @@
 // When a round or a review can't go on, against a running daemon: the round limit, a review that
 // fails, a push refused, Codex's usage limit, and a review past its time limit.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -116,30 +117,9 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(posted).toEqual(["1", "2", "3", "4"]);
   }, 240_000);
 
-  // Clearing it is the lead's or your decision that you have nothing to do. A review after it
-  // asks again, as its changes are held anew.
-  test("past the round limit, clearing its mark stops it needing you, until the next review", async () => {
-    addApp();
-    config("max_rounds: 1\n");
-    verdict(1, "changes", "First problem.");
-    verdict(2, "changes", "Second problem.");
-    verdict(3, "changes", "Third problem.");
-    await startApp12();
-    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
-    const ps = async () => JSON.parse((await skel(["ps", "--json"])).out)[0];
-    expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
-    expect((await skel(["needs-you", "--clear", "app-12"])).err).toBe("");
-    expect(await ps()).toMatchObject({ needsYou: false, needsYouFor: null });
-    expect(thread()).toMatchObject({ needs_you: 1, limit_decided: 1 });
-    expect((await skel(["review", "app-12"])).err).toBe("");
-    await until(() => finished("failure").length === 3, 30_000);
-    await until(() => thread().limit_decided === 0);
-    expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
-  }, 90_000);
-
-  // A thread that needs you for something else, here your mark, already needs you as the next
-  // review reaches the limit. The lead still hears of the limit, each time.
-  test("a review reaching the round limit tells the lead though the thread already needs you", async () => {
+  // The lead's item on the thread already asks you about it as the next review reaches the
+  // limit. A new review is news all the same, so the lead still hears of the limit, each time.
+  test("a review reaching the round limit tells the lead though its item on the thread is open", async () => {
     addApp();
     config("max_rounds: 1\n");
     verdict(1, "changes", "First problem.");
@@ -149,7 +129,12 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
     const reached = "APP-12 needs you: changes asked for after 1 rounds of changes";
     await until(() => read(join(lead(), "typed")).includes(reached));
-    expect((await skel(["needs-you", "app-12", "check the export format"])).err).toBe("");
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run(
+      "INSERT INTO asks (owner, repo, task, text, options, posted) VALUES ('simon', 'app', '12', 'Go on past the limit?', '[\"yes\",\"no\"]', 0)",
+    );
+    db.close();
     expect((await skel(["review", "app-12"])).err).toBe("");
     await until(() => finished("failure").length === 3, 30_000);
     await until(() => read(join(lead(), "typed")).split(reached).length - 1 === 2, 30_000);

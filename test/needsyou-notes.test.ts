@@ -183,7 +183,7 @@ exec "${tmux}" "$@"`,
     serve();
     await Bun.sleep(1500);
     expect(thread().turn_ended).toBe(1);
-    expect(await needsYou()).toBe(false);
+    expect(await needsYou()).toBe(true);
     expect(notes()).toBe(1);
   }, 90_000);
 
