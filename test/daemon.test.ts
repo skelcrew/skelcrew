@@ -1042,6 +1042,23 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(claudeLines()).toHaveLength(1);
   });
 
+  test("a tab left closed while its lead still runs, as a daemon stopped mid-close leaves it, opens again as the daemon starts", async () => {
+    setUp();
+    addRepository("app");
+    addRepository("web");
+    const first = serve();
+    await untilAnswers();
+    await open("app");
+    await stop(first);
+    onDb((db) => db.run("UPDATE repositories SET tab_closed = 1"));
+    serve();
+    await untilAnswers();
+    expect(tabClosed("app")).toBe(false);
+    expect(hasLead()).toBe(true);
+    // A tab whose lead doesn't run stays closed.
+    expect(tabClosed("web")).toBe(true);
+  });
+
   test("a lead that exited while the daemon was down has its tab closed, and isn't brought back", async () => {
     setUp();
     addRepository("app");

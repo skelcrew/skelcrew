@@ -21,6 +21,7 @@ import { capture } from "../run.ts";
 import {
   answeredFolder,
   type Drop,
+  type Dropped,
   dropAnswerOption,
   dropCommand,
   dropPath,
@@ -328,15 +329,15 @@ function dropOnServer(machine: Machine, screen: string): Drop {
     const asked = await capture(quiet(`sh -c ${quoted(wait)}`));
     return asked.ok ? answeredFolder(asked.out.trim()) : null;
   };
-  const put = (folder: string, files: string[]) =>
+  const put = (folder: string, files: Dropped[]) =>
     Promise.all(
       files.map(async (file) => {
         // The same shell as on one machine, so a link the agent made never leads the copy
         // outside its folder.
-        const copy = dropPath(folder, file);
+        const copy = dropPath(folder, file.path);
         const line = dropCommand(copy).map(quoted).join(" ");
         const sent = Bun.spawn(quiet(line), {
-          stdin: Bun.file(file),
+          stdin: Bun.file(file.snapshot),
           stdout: "ignore",
           stderr: "ignore",
         });

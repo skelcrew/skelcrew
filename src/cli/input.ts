@@ -51,7 +51,7 @@ const commands = [
   "attach",
   "peek",
   "interrupt",
-  "needs-you",
+  "ask",
   "review",
   "submit",
   "hook",
@@ -71,6 +71,8 @@ function usageMessage(command: string, word?: string): string {
     return "sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install.";
   if (command === "issue" || command === "pr")
     return 'issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc add <repo> "<title>" "<body>" --issue opens an issue.';
+  if (command === "needs-you")
+    return 'sc needs-you is gone: as the lead, ask the human with sc ask <task> "<text>" --option "<choice>", which shows in Needs you.';
   if (command === "task")
     return 'sc task is gone: sc show <task> shows one, and sc add <repo> "<title>" "<body>" adds one.';
   if (["remove", "update", "setup", "plugins"].includes(command))

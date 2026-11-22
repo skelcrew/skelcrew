@@ -1,4 +1,4 @@
-// Messages to you through notifier plugins: routing by type, a needs-you message once per mark,
+// Messages to you through notifier plugins: routing by type, a needs-you message per item and new need,
 // the rate limits, the lead's message refused without your words, and the daily digest.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
@@ -31,7 +31,7 @@ const messages = (settings: string) => asked(settings).filter((q) => q.ask === "
 function run(body: string): string {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
-import { markNeedsYou } from ${JSON.stringify(source("flow/status.ts"))};
+import { postItem } from ${JSON.stringify(source("flow/inbox.ts"))};
 import * as notify from ${JSON.stringify(source("flow/notify.ts"))};
 const db = openDb();
 db.run(\`INSERT OR IGNORE INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
@@ -95,14 +95,31 @@ await notify.sendNotifications(db);`);
   expect(messages(push).map((m) => m.body)).toEqual(["approve the design"]);
 });
 
-test("the lead or you marking a thread again sends again, even in the same words", () => {
+test("each item the lead posts sends, even in the same words, on a thread or its repository", () => {
   const push = fakePlugin(home, "push", ["notifier"]);
   config("notify:\n  needs-you: push\n");
-  run(`const sessions = "skel-notify-test-none";
-markNeedsYou(db, sessions, readThread(db, "app-12"), "approve the design", "lead");
-markNeedsYou(db, sessions, readThread(db, "app-12"), "approve the design", "lead");
+  run(`postItem(db, "app", "12", "approve the design", ["yes", "no"]);
+postItem(db, "app", "12", "approve the design", []);
+postItem(db, "app", null, "rotate the deploy key", []);
 await notify.sendNotifications(db);`);
-  expect(messages(push).map((m) => m.body)).toEqual(["approve the design", "approve the design"]);
+  expect(messages(push).map((m) => [m.title, m.body])).toEqual([
+    ["APP-12 needs you", "approve the design"],
+    ["APP-12 needs you", "approve the design"],
+    ["app needs you", "rotate the deploy key"],
+  ]);
+});
+
+test("the digest lists the lead's open items under what waits on you", () => {
+  const email = fakePlugin(home, "email", ["notifier"]);
+  config("notify:\n  digest: email\n  digest_at: '00:00'\n");
+  run(`postItem(db, "app", "12", "approve the design", []);
+postItem(db, "app", null, "rotate the deploy key", []);
+notify.queueDigest(db);
+await notify.sendNotifications(db);`);
+  expect(messages(email)[0]?.body).toBe(`app (simon/app)
+Waits on you:
+  app · rotate the deploy key
+  APP-12 · approve the design`);
 });
 
 test("the lead picks a notifier by its name or by the channel its manifest gives", () => {

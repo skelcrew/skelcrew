@@ -10,32 +10,17 @@ import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { errorText } from "../format.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
 import { waitsOnFirstCheck } from "./decide.ts";
+import { itemOpen } from "./inbox.ts";
 import { leadOf } from "./lead.ts";
-import {
-  atRoundLimit,
-  limitDecided,
-  limitOf,
-  limitWasDecided,
-  passedReviewStage,
-  roundOf,
-} from "./ledger.ts";
+import { atRoundLimit, limitOf, limitWasDecided, passedReviewStage, roundOf } from "./ledger.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
-import {
-  messageLead,
-  noteForLead,
-  stopDelivering,
-  typedBySkelcrew,
-  typeLeadNotes,
-} from "./messages.ts";
-import { forgetMark } from "./notify.ts";
+import { messageLead, stopDelivering, typeLeadNotes } from "./messages.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { lastPushed } from "./round.ts";
 import {
   AgentState,
   builderHarness,
-  hostMissing,
   liveThreads,
-  markBeforeHost,
   queuedForReview,
   readThread,
   record,
@@ -46,18 +31,17 @@ import {
 // The status a host shows for a thread's builder.
 export type Status = "working" | "idle" | "needs you" | "ready" | "error";
 
-// Returns whether the thread needs you, which means you must act to unblock it: the lead, you
-// or the safety net marked it with what to do, its builder asked with its harness's question
-// tool, its harness stopped on an error, or its flag is up, such as for an approval with green
-// checks or the round limit. A merge you armed decides an approval, and arming it, sc start, or
-// the lead or you marking or clearing the thread decides the latest review's round limit, so
-// neither needs you then. A usage limit isn't one, as the
-// builder is woken once it resets. Nor is a review that failed, which the lead can run again,
-// nor a builder that stopped without submitting: the lead hears of both, and marks the thread
-// when only you can unblock it.
+// Returns whether Skelcrew sees itself that the thread needs you: its builder's host plugin is
+// missing, its builder asked with its harness's question tool, stopped without submitting, or its
+// harness stopped on an error, or its flag is up, such as for an approval with green checks or the
+// round limit. A merge you armed decides an approval, and arming one or sc start decides the
+// latest review's round limit, so neither needs you then. A usage limit isn't one, as the builder
+// is woken once it resets. Nor is a review that failed, which the lead can run again. The lead's
+// items are apart, in the inbox.
 export const needsYou = (thread: Thread) =>
   thread.needs_you_for !== null ||
   thread.asking ||
+  (thread.turn_ended && (thread.status === "working" || thread.status === "waiting")) ||
   (thread.erred && !thread.limited) ||
   (thread.needs_you && !decided(thread));
 
@@ -73,7 +57,7 @@ export function needsYouFor(thread: Thread): string | null {
 // word `approved`, beside the green mark that says the rest.
 const reasonOf = (word: string) => (word === "approved" ? "ready to merge" : word);
 
-// Returns whether the lead or you decided what the thread's flag waits on: the round limit was
+// Returns whether you decided what the thread's flag waits on: the round limit was
 // decided since its latest review, or a merge is armed on a thread ready to merge, which then
 // merges by itself. An armed merge alone never decides the round limit, as its plan outlives the
 // review it was armed after: a later review reaching the limit, such as after sc start, would
@@ -111,12 +95,6 @@ const submitStands = (thread: Thread) =>
     thread.checks !== "failing" &&
     thread.conflicts === null &&
     roundOf(thread).telling === null);
-
-// Returns whether the thread's last submit is still on its way without its builder, for the safety
-// net: being pushed, reviewed, or approved and waiting on CI. A round that failed is no longer on
-// its way, though it keeps its submit or review saved.
-const inFlight = (thread: Thread) =>
-  !roundOf(thread).review_failed && (roundOf(thread).submitting !== null || submitStands(thread));
 
 // Returns whether the thread waits for you to merge it: Skelcrew's reviewer approved its latest
 // round, or its flow has no review stage, with no newer one under way, and the latest poll found every check on its PR green,
@@ -307,7 +285,8 @@ const reporting = new Map<string, Promise<void>>();
 
 // Reports the builder's status to its host, when the host is a plugin that provides status and
 // the status changed since it last heard: working, idle, needs you, ready or error, with the
-// thread's word as the reason, such as question or round limit. Every change to a thread goes
+// thread's word as the reason, such as question or round limit. While the lead's item on it is
+// open, it needs you, as the item asks you. Every change to a thread goes
 // through record or keepState, which call this, so the host hears each one, from a hook, the
 // screen check, CI or a review alike. It doesn't wait for the host, so the daemon never does.
 // tmux shows no status, so its builders are left out, and Skelcrew's own list shows theirs.
@@ -320,7 +299,9 @@ export function reportStatus(db: Database, thread: Thread): void {
     const maxRounds = limitOf(thread);
     const status = statusOf(thread, maxRounds);
     const word = threadWord(thread, maxRounds);
-    said = { status, reason: status === "ready" ? reasonOf(word) : word };
+    said = itemOpen(db, thread)
+      ? { status: "needs you", reason: "asks you" }
+      : { status, reason: status === "ready" ? reasonOf(word) : word };
   } catch (error) {
     console.log(`couldn't work out ${threadName(db, thread)}'s status: ${errorText(error)}`);
     return;
@@ -472,9 +453,10 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (roundOf(thread).review_failed && verdict === "timed out" && !underWay)
     return "review timed out";
   if (roundOf(thread).review_failed) return "review failed";
-  if (needsYou(thread)) return "needs you";
-  // Not needing you: a builder that stopped without submitting waits on the lead, who got its
-  // last message. Its word doesn't claim a question, as it may be only a reply.
+  // A builder that stopped without submitting needs you while the lead reads its last message,
+  // but anything else it needs you for says so first. Its word doesn't claim a question, as it
+  // may be only a reply.
+  if (needsYou({ ...thread, turn_ended: false })) return "needs you";
   if (thread.turn_ended) return "turn ended";
   // Not needing you: a builder or a review waiting out a usage limit says until when.
   const limitWord = (reset: number | null) =>
@@ -524,11 +506,10 @@ export function turnEnded(
   },
 ): void {
   const thread = readThread(db, folder);
-  // The builder still works, so it shows working, the lead hears nothing yet, and the safety
-  // net doesn't wait on it. The turn after the job ends is the one judged.
+  // The builder still works, so it shows working and the lead hears nothing yet. The turn after
+  // the job ends is the one judged.
   if (ended.background) {
-    const working = { turn_ended: false, ended_at: null, ended_said: null, told_lead: false };
-    record(db, folder, working);
+    record(db, folder, { turn_ended: false, told_lead: false });
     return;
   }
   // The lead reads the builder's own words, as a message from it, so a question need not end
@@ -541,147 +522,23 @@ export function turnEnded(
   if (readThread(db, folder).told_lead) record(db, folder, { told_lead: false });
   if (!endedWithoutSubmit(thread)) return;
   const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
-  // The safety net's wait starts here, and it marks the thread with what the builder said if
-  // nobody acts on it. While the last submit is still pushed, reviewed or waits on CI, the wait
-  // only starts once that is over, as the safety net keeps putting its start off meanwhile.
-  const timed =
-    thread.ended_at === null ? { ended_at: Date.now(), ended_said: ended.message ?? null } : {};
   if (waitsOnSubmit(thread, unchanged)) {
     // A comment on an approved PR set the thread working. The builder only answered it, so the
     // thread waits on its approved submit again, and the next poll can find it ready to merge.
     // A review under way sets the status itself once it ends.
     const replied = "its builder only replied, so it waits on CI";
     if (thread.status === "working" && roundOf(thread).reviewing === null)
-      record(db, folder, { status: "waiting", ...timed }, replied);
-    else record(db, folder, timed);
+      record(db, folder, { status: "waiting" }, replied);
     return;
   }
+  // The lead has the builder's own words already, so it gets no note that the thread needs you.
   if (!thread.turn_ended)
-    record(db, folder, { turn_ended: true, ...timed }, "its builder stopped without submitting");
-}
-
-// How long the safety net holds off after the lead told a builder something. The builder's
-// reply ends a turn without a submit, often to wait as the lead said, such as for another thread
-// to land. The lead has the reply, so the net only catches one it forgot after this long.
-const leadHold = 30 * 60_000;
-
-// How much of a builder's last message the safety net keeps as the reason the thread needs you,
-// so the word stays one line.
-const saidLength = 200;
-
-// The safety net: marks each thread whose builder ended its turn without submitting, and that
-// nobody acted on for `graceMinutes` with nothing in flight, as needing you, with what the
-// builder said last as the reason. Waiting on a submit being pushed, reviewed or on CI never needs
-// you, so meanwhile the wait's start is put off to now, and it counts from once that is over.
-// The lead hears of it when the builder stops, but may be busy or miss it, and nothing should
-// wait unseen. Typing to the builder, a new submit, or the lead marking or clearing the thread
-// is acting on it. A builder the lead told something waits at least `leadHold` from that
-// message. The lead gets a note, as for any thread that starts needing you. The daemon runs it
-// every few seconds.
-export function markForgotten(
-  db: Database,
-  sessions: string,
-  graceMinutes: number,
-  now = Date.now(),
-): void {
-  const since = now - graceMinutes * 60_000;
-  const rows = db
-    .query(
-      "SELECT * FROM task_threads WHERE ended_at IS NOT NULL AND needs_you_for IS NULL AND status IN ('working', 'waiting')",
-    )
-    .all();
-  const threads = rows.map((row) => Thread.parse(row));
-  // A thread that already needs you, such as one ready to merge, is seen already. Its wait ends,
-  // so a builder's reply doesn't mark it once that need is over.
-  for (const thread of threads.filter(needsYou))
-    record(db, thread.folder, { ended_at: null, ended_said: null });
-  // Not logged, as it changes every few seconds while the submit is on its way.
-  const waiting = threads.filter((thread) => !needsYou(thread));
-  for (const thread of waiting.filter(inFlight))
-    db.run("UPDATE threads SET ended_at = ? WHERE folder = ?", [now, thread.folder]);
-  // The lead's messages that went in are kept in order, so the last one is the newest. One still
-  // waiting to go in counts from when the lead sent it too: the builder can stop before it goes in.
-  const waitingFromLead = db.query(
-    "SELECT MAX(at) AS at FROM messages WHERE folder = ? AND sender = 'lead'",
-  );
-  const lastTold = (thread: Thread) =>
-    Math.max(
-      thread.updates.at(-1)?.at ?? 0,
-      z.object({ at: z.number().nullable() }).parse(waitingFromLead.get(thread.folder)).at ?? 0,
+    record(
+      db,
+      folder,
+      { turn_ended: true, noting: thread.noting },
+      "its builder stopped without submitting",
     );
-  const leadHeld = (thread: Thread) => lastTold(thread) > now - leadHold;
-  const forgotten = waiting.filter(
-    (thread) => !inFlight(thread) && (thread.ended_at ?? now) <= since && !leadHeld(thread),
-  );
-  for (const thread of forgotten) {
-    const said = oneLine(thread.ended_said ?? "");
-    const reason = said === "" ? "its builder stopped" : cut(said, saidLength);
-    const minutes = `${graceMinutes} minute${graceMinutes === 1 ? "" : "s"}`;
-    const why = `nobody acted on its stopped builder for ${minutes}: ${reason}`;
-    record(db, thread.folder, { needs_you_for: reason, ended_at: null, ended_said: null }, why);
-  }
-  if (forgotten.length > 0) typeLeadNotes(db, sessions);
-}
-
-// Returns text from an agent as one line, safe to show as a thread's word: line breaks and
-// control codes, which would break the list's rows or reach your terminal, become spaces.
-const oneLine = (text: string) => text.replace(/[\s\p{Cc}]+/gu, " ").trim();
-
-// Returns text cut to `most` characters, with … where it was cut.
-const cut = (text: string, most: number) =>
-  text.length <= most ? text : `${text.slice(0, most - 1)}…`;
-
-// Marks a thread as needing you with `reason`, the action you must take, written for you, or
-// clears its mark with null, for sc needs-you. `by` says who did, for the thread's log. Clearing
-// is also the lead's or your decision about the round limit, when that is why the thread needs
-// you, so it no longer does until the next review. Either way somebody acted, so the safety net
-// stops waiting on a builder that stopped. The lead isn't told of a mark it set itself. Returns
-// the thread as it now is.
-export function markNeedsYou(
-  db: Database,
-  sessions: string,
-  thread: Thread,
-  reason: string | null,
-  by: "lead" | "you",
-): Thread {
-  const who = by === "lead" ? "the lead" : "you";
-  if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
-  const acted = { ended_at: null, ended_said: null };
-  // Marking or clearing a thread past its round limit is a decision about it.
-  const decision = limitDecided(thread, Date.now());
-  // While the builder's host plugin is still missing, only you can bring it back, so its
-  // instruction stays first, whatever the mark becomes.
-  const host = thread.host;
-  const hostStillGone =
-    host !== null &&
-    markBeforeHost(host, thread.needs_you_for) !== undefined &&
-    hostNamed(db, sessions, host) === null;
-  if (reason !== null) {
-    const said = oneLine(reason);
-    if (said === "") throw new Error("say what the human must do to unblock the thread");
-    const action = hostStillGone ? hostMissing(host, said) : said;
-    // The lead set it, so it needs no note. Yours always brings the lead one, even when the thread
-    // needed you already, such as at its round limit, so the note that it starts needing you is
-    // left out rather than said twice.
-    const quiet = needsYou(thread) ? {} : { noting: null };
-    const change = { needs_you_for: action, ...acted, ...decision, ...quiet };
-    forgetMark(db, thread.folder);
-    const marked = record(db, thread.folder, change, `${who} marked it: ${action}`);
-    if (by === "you") {
-      const line = `${threadName(db, marked)} needs you: you marked it: ${action}`;
-      noteForLead(db, sessions, marked, line, null, true);
-    }
-    typeLeadNotes(db, sessions);
-    return marked;
-  }
-  const change = {
-    needs_you_for: hostStillGone ? hostMissing(host) : null,
-    ...acted,
-    ...decision,
-  };
-  const what =
-    thread.needs_you_for ?? ("limit_decided" in decision ? "the round limit" : "nothing");
-  return record(db, thread.folder, change, `${who} cleared its needs you: ${what}`);
 }
 
 // The builder's turn ended on an error, from Claude Code's StopFailure hook, with the kind of
@@ -724,16 +581,9 @@ export function questionClosed(db: Database, folder: string): void {
 
 // Something was typed into the builder, from its harness's UserPromptSubmit hook: a review's
 // changes, a message from the lead, or your answer. It starts a new turn, and ends whatever the
-// builder was waiting on you for. `prompt` is what was typed, when the harness says: text that
-// Skelcrew didn't type is yours, and clears the thread's mark, as you acted on it. Without it,
-// the mark stays, as a message from the lead must not clear it.
-export function questionAnswered(db: Database, folder: string, prompt?: string): void {
+// builder was waiting on you for.
+export function questionAnswered(db: Database, folder: string): void {
   const thread = readThread(db, folder);
-  // Each text Skelcrew typed is matched to its own hook as it comes, mark or not, so one left
-  // over from long ago never makes the same words, typed by you, count as Skelcrew's.
-  const yours = prompt !== undefined && !typedBySkelcrew(folder, prompt);
-  if (thread.needs_you_for !== null && yours)
-    record(db, folder, { needs_you_for: null }, "you typed to its builder");
   // The new stretch of work is timed by the sidebar. Not logged, as only the sidebar shows it.
   db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
   // Run before every message typed into the builder, so only a question or an error that
@@ -745,8 +595,6 @@ export function questionAnswered(db: Database, folder: string, prompt?: string):
   const over = {
     asking: false,
     turn_ended: false,
-    ended_at: null,
-    ended_said: null,
     erred: false,
     submitted: false,
     told_lead: false,
@@ -759,8 +607,7 @@ export function questionAnswered(db: Database, folder: string, prompt?: string):
   endWake(folder);
   if (thread.asking) record(db, folder, over, "its builder's question is over");
   else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-  else if (thread.submitted || thread.told_lead || thread.turn_ended || thread.ended_at !== null)
-    record(db, folder, over);
+  else if (thread.submitted || thread.told_lead || thread.turn_ended) record(db, folder, over);
 }
 
 // Returns what a thread's row in the list of threads says of its armed merge, when ready or over

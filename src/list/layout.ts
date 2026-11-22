@@ -2,7 +2,7 @@
 // lead's block that heads the repository, each section's heading in its colour with the rows of
 // those that are open, and the bottom line with the keys and the machine's load. It reads
 // nothing, so what you see can be tested without a terminal.
-import { ListStage } from "../flow/stage.ts";
+import { letters } from "../flow/requests.ts";
 import {
   amber,
   blue,
@@ -22,7 +22,16 @@ import {
   white,
   yellow,
 } from "../screen/look.ts";
-import type { Ci, Heading, Row, Section, Tab } from "./rows.ts";
+import { itemKeys } from "./actions.ts";
+import {
+  type Ci,
+  type Heading,
+  leadLooks,
+  numbered,
+  type Row,
+  type Section,
+  type Tab,
+} from "./rows.ts";
 
 // What the list shows besides its rows: the names of the version of Skelcrew running here, longest
 // first, such as v0.4.2 or 6f1c2ab (checkout), where it runs on a remote, or empty on this machine,
@@ -84,11 +93,13 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
   const heading = row?.part === "heading";
   const enter = row?.more
     ? "⏎ show all"
-    : heading
-      ? "⏎ open/close"
-      : row && enterAttaches(row)
-        ? `⏎ attach${back}`
-        : "⏎ open";
+    : row?.ask
+      ? "⏎ open item"
+      : heading
+        ? "⏎ open/close"
+        : row && enterAttaches(row)
+          ? `⏎ attach${back}`
+          : "⏎ open";
   const open =
     pane && row?.task
       ? [`${enter} · o output · pgup/pgdn scroll`]
@@ -96,12 +107,14 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
         ? []
         : [enter];
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
+  const answers = row?.ask ? [itemKeys(row)] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const now = row?.startNow ? ["f start now"] : [];
   const reorder = row?.section === "task queue" && row.place !== null ? ["shift+↑↓ reorder"] : [];
   const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   return [
     "↑↓ move",
+    ...answers,
     ...open,
     "0-6 sections",
     ...reorder,
@@ -113,11 +126,12 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
   ].join("  ");
 }
 
-// Returns whether Enter on a row attaches to its agent: the lead, or a task's builder while it is
+// Returns whether Enter on a row attaches to its agent: the lead, on its row or on its item about
+// the repository, or a task's builder while it is
 // at work, or once it is ready but needs you. On Backlog it starts the task, in the task queue it
 // says what the task waits on, as no builder runs for it yet, and on Ready or Done it opens the PR.
 export function enterAttaches(row: Row): boolean {
-  if (row.part === "lead") return true;
+  if (row.part === "lead" || row.part === "ask") return true;
   if (row.section === "task queue") return false;
   const atWork = row.part !== "ready" && row.part !== "done";
   return (atWork || row.needsYou) && row.session !== null;
@@ -143,15 +157,10 @@ const still = spinner.slice(0, 1);
 // The widest section name, so every heading's count starts in the same column.
 const sectionNameWidth = Math.max(...Object.values(sectionNames).map((name) => name.length));
 
-// Returns the number key that opens and closes a section, as its heading shows it: 0 for the
-// task queue, then 1 to 6 for the stages in order. Needs you has none, as it never closes, since
-// it is where you must look, so its key's place is blank.
+// Returns the number key that opens and closes a section, as its heading shows it. Needs you has
+// none, as it never closes, since it is where you must look, so its key's place is blank.
 const keyOf = (section: Section) =>
-  section === "needs you"
-    ? " "
-    : section === "task queue"
-      ? "0"
-      : String(ListStage.options.indexOf(section) + 1);
+  section === "needs you" ? " " : String(numbered.indexOf(section));
 
 // Returns a section's heading as a line: the number key that opens and closes it, dim, then its
 // name in its section's colour, bold while open, or bright while open and dim while closed for a
@@ -247,8 +256,107 @@ export function tabAt(frame: Frame, width: number, column: number): string | nul
 type Columns = { name: number; title: number; when: number };
 
 // Returns whether a row takes two lines: the lead's, and a task's in Building, Reviewing, Checks
-// or Ready. Backlog and Done take one.
-const tall = (row: Row) => row.part !== "backlog" && row.part !== "done";
+// or Ready, or under Needs you. Backlog and Done take one.
+const tall = (row: Row) =>
+  row.section === "needs you" || (row.part !== "backlog" && row.part !== "done");
+
+// What a line of an item answers when tapped: one of its options, or a reply in your own words.
+export type Pick = (typeof letters)[number] | "reply";
+
+// Returns the lines under a row that show the lead's item: its text cut at words, then each option
+// by its letter, then the line for a reply, each line with what tapping it answers. They line up
+// under the row's name, and are shaded with it on the row you are on. `most` is how many lines
+// they may take: a text too long for them is cut short with …, so the options always show, as
+// the details pane and sc show give the text whole.
+function askLines(
+  row: Row,
+  here: boolean,
+  width: number,
+  most = Number.POSITIVE_INFINITY,
+): { text: string; pick: Pick | null }[] {
+  if (row.ask === null) return [];
+  const indent = " ".repeat(Bun.stringWidth(`${pointer(here)}${row.mark.sign} `));
+  const room = Math.max(width - indent.length, 1);
+  const wrapped = (text: string) => Bun.wrapAnsi(text, room, { hard: true }).split("\n");
+  const whole = wrapped(row.ask.text);
+  const choices = row.ask.options.flatMap((option) => wrapped(option)).length + 1;
+  const fits = Math.max(most - choices, 1);
+  const cut =
+    whole.length <= fits
+      ? whole
+      : [...whole.slice(0, fits - 1), fitted(`${whole[fits - 1] ?? ""}…`, room)];
+  const text = cut.map((line) => ({
+    text: `${indent}${tinted(here, bright, line)}`,
+    pick: null,
+  }));
+  const options = row.ask.options.flatMap((option, at) => {
+    const letter = letters[at];
+    if (letter === undefined) return [];
+    return wrapped(`${letter}) ${option}`).map((line) => ({
+      text: `${indent}${tinted(here, yellow, line)}`,
+      pick: letter,
+    }));
+  });
+  const reply = {
+    text: `${indent}${tinted(here, grey, fitted("r) reply", room))}`,
+    pick: "reply" as const,
+  };
+  return [...text, ...options, reply].map((line) => ({
+    ...line,
+    text: here ? shaded(line.text, width) : line.text,
+  }));
+}
+
+// What an item opened full-size says on a screen too short to show it.
+export const tooShort = "make the screen taller to read this item";
+
+// Returns the lead's item on `row`, the row at `here`, opened full-size in a place `width` columns
+// wide and `height` tall, scrolled `scroll` lines down: what it is about, then its whole text, its
+// options and the reply line, with what tapping each line answers. However long the item and
+// however short the screen, scrolling reaches every line: by the keys or the wheel, or by a tap on
+// the `↑ more` or `↓ more` line at its top or bottom edge, which scrolls a page, for a screen with
+// taps alone. A screen under 3 lines tall has no room for those, so it says only to make the
+// screen taller, and nothing on it answers. Gives the scroll as far as it can go, for the next
+// draw.
+export function drawItem(
+  row: Row,
+  here: number,
+  width: number,
+  height: number,
+  scroll: number,
+): { lines: string[]; targets: Target[]; scroll: number } {
+  const about = fitted(`${row.label}  ${row.title}`.trimEnd(), Math.max(width - 3, 1));
+  const all = [
+    { text: `   ${paint(bright, about)}`, pick: null },
+    { text: "", pick: null },
+    ...askLines(row, false, width),
+  ];
+  if (height < 3) {
+    const lines = [`   ${fitted(tooShort, Math.max(width - 3, 1))}`, ""].slice(0, height);
+    return { lines, targets: lines.map((): Target => null), scroll: 0 };
+  }
+  const edges = all.length > height;
+  const view = edges ? height - 2 : height;
+  const at = Math.min(Math.max(scroll, 0), Math.max(all.length - view, 0));
+  const shown = all.slice(at, at + view);
+  const edge = (more: boolean, sign: string, by: number) =>
+    more
+      ? { text: `   ${paint(grey, `${sign} more`)}`, target: { scroll: by } }
+      : { text: "", target: null };
+  const above = edges ? [edge(at > 0, "↑", -view)] : [];
+  const below = edges ? [edge(at + view < all.length, "↓", view)] : [];
+  const body = shown.map((line) => ({
+    text: line.text,
+    target: line.pick === null ? null : { row: here, pick: line.pick },
+  }));
+  const blank = Array.from({ length: view - shown.length }, () => ({ text: "", target: null }));
+  const drawn: { text: string; target: Target }[] = [...above, ...body, ...blank, ...below];
+  return {
+    lines: drawn.map((line) => line.text),
+    targets: drawn.map((line) => line.target),
+    scroll: at,
+  };
+}
 
 // Returns the row you are on as `lines`, shaded across the width, or as they are on another row.
 const marked = (lines: string[], here: boolean, width: number) =>
@@ -336,8 +444,10 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   // step its builder is on then comes first, in the word's colour, as what is happening beyond
   // the stage. Under Needs you or Task queue the word is what the row is there for, so it stays.
   const repeats = row.section === row.part && stageWords[row.part] === row.says;
+  const looks = row.section === "needs you" && row.ask === null && row.part !== "lead";
   const groups = [
     [{ sign: repeats ? "" : row.says, code: markColours[row.colour] }],
+    [{ sign: looks ? leadLooks : "", code: grey }],
     [{ sign: row.step, code: repeats ? markColours[row.colour] : grey }],
     pr,
     [{ sign: row.when, code: grey }],
@@ -364,11 +474,18 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
 }
 
 // What a click on a line of the list reaches: a row, by its place in the rows, which is the
-// lead's or a task's, a section's heading, or nothing, such as on a blank line or an edge.
+// lead's or a task's, with `pick` on a line of its item that answers it, a section's heading, a
+// number of lines to scroll an item open full-size by, or nothing, such as on a blank line or an
+// edge.
 // On an edge line, a click reaches the heading pinned at its column: `pinned` has each one's
 // columns, counted from 1 as your terminal counts a click.
 export type Pinned = { from: number; to: number; section: Section };
-export type Target = { row: number } | { section: Section } | { pinned: Pinned[] } | null;
+export type Target =
+  | { row: number; pick?: Pick }
+  | { section: Section }
+  | { pinned: Pinned[] }
+  | { scroll: number }
+  | null;
 
 // One line of the sections' part of the list: its text, the row it belongs to, by its place in
 // the rows, or null for a heading or a blank line, and what a click on it reaches.
@@ -497,7 +614,6 @@ function leadBlock(
   const running = headings.reduce((sum, heading) => sum + heading.working, 0);
   const parts = [
     { count: running, word: "running", code: "" },
-    { count: count("task queue"), word: "queued", code: grey },
     { count: count("ready") + merges, word: "ready", code: green },
     { count: count("needs you") - merges, word: "needs you", code: yellow },
   ].filter((part) => part.count > 0);
@@ -540,12 +656,25 @@ export function drawRows(
     title: widest((row) => row.title),
     when: widest((row) => row.when),
   };
-  const linesOf = (i: number) => {
+  const linesOf = (i: number): { text: string; pick: Pick | null }[] => {
     const row = rows[i];
     if (!row) return [];
     const on = i === here;
-    if (tall(row)) return tallLines(row, on, columns.name, width);
-    return marked([shortLine(row, on, columns, width)], on, width);
+    const plain = (lines: string[]) => lines.map((text) => ({ text, pick: null }));
+    // The row you are on fits between the edge lines, so its item's options can be read and
+    // tapped.
+    const left = (above: number) => (on ? Math.max(room - 2 - above, 1) : undefined);
+    if (row.part === "ask")
+      return [
+        ...plain(tallLines(row, on, columns.name, width).slice(0, 1)),
+        ...askLines(row, on, width, left(1)),
+      ];
+    if (tall(row))
+      return [
+        ...plain(tallLines(row, on, columns.name, width)),
+        ...askLines(row, on, width, left(2)),
+      ];
+    return plain(marked([shortLine(row, on, columns, width)], on, width));
   };
   const onHeading = rows[here]?.part === "heading" ? rows[here]?.section : undefined;
   const countWidth = Math.max(...headings.map((heading) => String(heading.count).length), 1);
@@ -560,11 +689,14 @@ export function drawRows(
     headings.flatMap((heading) => {
       const ours = rows.flatMap((row, i) =>
         row.section === heading.section && row.part !== "heading"
-          ? linesOf(i).map((text) => ({ text, row: i, target: { row: i } }))
+          ? linesOf(i).map(({ text, pick }) => ({
+              text,
+              row: i,
+              target: pick === null ? { row: i } : { row: i, pick },
+            }))
           : [],
       );
-      const queue = heading.section === "task queue";
-      const after = queue || (parted && ours.length > 0) ? [blankLine] : [];
+      const after = parted && ours.length > 0 ? [blankLine] : [];
       const plain = headingLine(heading, countWidth, width);
       const text = onHeading === heading.section ? shaded(plain, width) : plain;
       const line = { text, row: null, target: { section: heading.section } };
@@ -656,7 +788,9 @@ export function drawRows(
 // lines, which show on the right, beside every line but the top line and the bottom two, when
 // the terminal is wide enough. The rows then take the columns left of it, and the top and bottom
 // lines the whole width. The pane takes the same room on every row, so the list never moves as
-// you do.
+// you do. With `item`, the scroll of the lead's item you opened on the row at `here`, that item
+// shows full-size in place of the lead and the sections, as drawItem lays it out, and `item` comes
+// back as far as it could scroll.
 export function drawList(
   rows: Row[],
   headings: Heading[],
@@ -665,13 +799,19 @@ export function drawList(
   frame: Frame,
   size: Size,
   pane: string[] | null = null,
-): { lines: string[]; targets: Target[]; top: number } {
+  item: number | null = null,
+): { lines: string[]; targets: Target[]; top: number; item: number | null } {
   const whole = size.width - 1;
   const beside = pane === null ? 0 : paneWidth(size.width);
   const width = beside > 0 ? whole - beside - paneEdge.length : whole;
   const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, width))] : [];
   const head = [topParts(frame, whole).line, ...notice, ""];
-  const drawn = drawRows(rows, headings, here, top, width, size.height - head.length - 2);
+  const room = size.height - head.length - 2;
+  const opened = rows[here];
+  const read = item !== null && opened?.ask ? drawItem(opened, here, width, room, item) : null;
+  const drawn = read
+    ? { lines: read.lines, targets: read.targets, top }
+    : drawRows(rows, headings, here, top, width, room);
   // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
   // way first.
   const bottom = fitted(` ${frame.bottom}`, whole);
@@ -688,5 +828,5 @@ export function drawList(
   const lines = [head[0] ?? "", ...middle, last];
   // The head and the bottom two reach nothing.
   const targets: Target[] = [...head.map(() => null), ...drawn.targets, null, null];
-  return { lines, targets, top: drawn.top };
+  return { lines, targets, top: drawn.top, item: read?.scroll ?? null };
 }

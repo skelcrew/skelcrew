@@ -42,9 +42,11 @@ describe.skipIf(insideSandbox)("needs you", () => {
     const typed = read(join(lead(), "typed"));
     expect(typed).toContain('<skelcrew from="APP-12" reply="sc tell APP-12">');
     expect(typed).toContain(`My turn ended without a submit, saying:\n\n${said}`);
+    // The lead has the builder's words, so it gets no note that the thread needs you, though
+    // sc ps says it does.
     expect(typed).not.toContain("needs you");
     expect(thread().turn_ended).toBe(1);
-    expect(await needsYou()).toBe(false);
+    expect(await needsYou()).toBe(true);
     // You answer it in the sidebar, which ends turn ended.
     await hook("talk");
     await until(() => thread().turn_ended === 0);
@@ -54,7 +56,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await until(() => notes() === 2);
     expect(read(join(lead(), "typed"))).toContain("My turn ended without a submit.");
     expect(thread().turn_ended).toBe(1);
-    expect(await needsYou()).toBe(false);
+    expect(await needsYou()).toBe(true);
   }, 60_000);
 
   // Claude Code's Stop hook lists the background jobs still running. The builder goes on once
@@ -147,7 +149,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
     await until(() => thread().turn_ended === 1);
     await until(() => read(join(lead(), "typed")).includes("Started on the export."));
-    expect(await needsYou()).toBe(false);
+    expect(await needsYou()).toBe(true);
   }, 60_000);
 
   // The clone's own settings could hide a new file from git status, and with it the work.

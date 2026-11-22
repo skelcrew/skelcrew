@@ -1450,7 +1450,11 @@ test("an agent can't set up a machine", () => {
 // line, as an agent would, once it knows the name the laptop gave it. The server's sidebar
 // answers that the screen shows the agent whose folder is ~/agent, with a mark that changes at
 // each answer.
-async function dropOnServer(shot: string, cut = 0): Promise<{ got: string; screen: string }> {
+async function dropOnServer(
+  shot: string,
+  cut = 0,
+  asked = "",
+): Promise<{ got: string; screen: string }> {
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
   writeFileSync(
     join(home, "server", ".local", "bin", "sc"),
@@ -1459,7 +1463,7 @@ async function dropOnServer(shot: string, cut = 0): Promise<{ got: string; scree
   );
   writeFileSync(
     join(home, "serverbin", "tmux"),
-    `#!/bin/sh\necho "tmux $*" >> "${join(home, "calls")}"\nn=$(($(cat n 2>/dev/null || echo 0) + 1)); echo $n > n\necho "$n $HOME/agent"\n`,
+    `#!/bin/sh\necho "tmux $*" >> "${join(home, "calls")}"\n${asked}\nn=$(($(cat n 2>/dev/null || echo 0) + 1)); echo $n > n\necho "$n $HOME/agent"\n`,
     { mode: 0o755 },
   );
   const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox"], {
@@ -1497,6 +1501,14 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
   expect(readFileSync(copy, "utf8")).toBe("pixels");
   // Git never sees the copy, so a builder doesn't commit it.
   expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
+});
+
+test("a file dropped onto the server's screen is read at once, so one deleted while the server answers still arrives", async () => {
+  const shot = join(home, "shot.png");
+  writeFileSync(shot, "pixels");
+  const { got } = await dropOnServer(shot, 0, `rm -f ${quoted(shot)}`);
+  const copy = got.slice(got.indexOf("\x1b[200~") + "\x1b[200~".length, -"\x1b[201~".length);
+  expect(readFileSync(copy, "utf8")).toBe("pixels");
 });
 
 test("a file dropped onto the server's screen is sent though its paste's start comes in two pieces", async () => {

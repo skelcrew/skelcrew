@@ -235,10 +235,11 @@ console.log(JSON.stringify({ kept, third }));`;
 });
 
 // A turn that ended without a submit once needed you, and never sent the lead the builder's
-// last message. After the upgrade it waits on the lead, so the lead must hear of it once. A new
+// last message. After the upgrade the lead must hear of it once. It still shows under Needs you
+// while the lead reads it. A new
 // screen opens the database first, while the earlier release's daemon still runs and changes its
 // threads, so only the new daemon, once it holds its lock, moves them.
-test("a thread whose turn ended before the upgrade has its lead told once, and no longer needs you", () => {
+test("a thread whose turn ended before the upgrade has its lead told once, and shows under Needs you", () => {
   const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
   const old = new Database(join(data, "skelcrew.db"));
@@ -287,9 +288,9 @@ console.log(JSON.stringify({ threads, notes }));`;
   expect(run.stderr.toString()).toBe("");
   const { threads, notes } = JSON.parse(run.stdout.toString());
   expect(threads).toEqual([
-    { folder: "app-12", turn_ended: true, noting: null, needsYou: false },
-    { folder: "app-13", turn_ended: true, noting: null, needsYou: false },
-    { folder: "app-15", turn_ended: true, noting: null, needsYou: false },
+    { folder: "app-12", turn_ended: true, noting: null, needsYou: true },
+    { folder: "app-13", turn_ended: true, noting: null, needsYou: true },
+    { folder: "app-15", turn_ended: true, noting: null, needsYou: true },
     { folder: "app-16", turn_ended: false, noting: null, needsYou: false },
   ]);
   expect(notes).toEqual(

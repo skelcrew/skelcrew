@@ -47,7 +47,7 @@ import { builtInRole } from "../roles.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
-import { endLeadOfClosedTab, leadOf } from "./lead.ts";
+import { closeTabAndEndLead, leadOf } from "./lead.ts";
 import { taskName } from "./thread.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
@@ -874,7 +874,7 @@ export async function closeRepo(fullName: string, sessions: string): Promise<str
   const db = openDb();
   const found = repositories(db).find((r) => fullNameIs(r, fullName));
   if (!found) throw new Error(`Skelcrew no longer has ${fullName}`);
-  await closeTabAndEndLead(db, sessions, found, "close");
+  await closeThroughDaemon(db, sessions, found, "close");
   return `Closed ${found.name}'s tab. Its tasks keep running.`;
 }
 
@@ -895,29 +895,68 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
   const fullName = `${found.owner}/${found.repo}`;
   const { folder } = leadOf(db, found.owner, found.repo);
-  await closeTabAndEndLead(db, sessions, found, "remove");
-  rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
-  rmSync(join(folder, dropsFolder), { recursive: true, force: true });
-  db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
+  await closeThroughDaemon(db, sessions, found, "remove");
+  const aside = `.removing-${Date.now()}`;
+  const moved: string[] = [];
+  db.run("BEGIN IMMEDIATE");
+  try {
+    const removed = db.run(
+      "DELETE FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1",
+      [found.owner, found.repo],
+    );
+    if (removed.changes === 0)
+      throw new Error(`${name} was opened again meanwhile, so it isn't removed`);
+    for (const place of [cloneDir(found.owner, found.repo), join(folder, dropsFolder)]) {
+      if (!existsSync(place)) continue;
+      renameSync(place, `${place}${aside}`);
+      moved.push(place);
+    }
+    db.run("COMMIT");
+  } catch (error) {
+    try {
+      for (const place of moved) renameSync(`${place}${aside}`, place);
+    } finally {
+      if (db.inTransaction) db.run("ROLLBACK");
+    }
+    throw error;
+  }
   forgetAgents(found);
   nameRepositories(db);
   await renameBuilders();
   const trusted = trustLines().filter((line) => line !== "" && line !== fullName);
   if (existsSync(trustFile()))
     writeFileSync(trustFile(), trusted.map((line) => `${line}\n`).join(""));
+  const left = moved.filter((place) => {
+    try {
+      rmSync(`${place}${aside}`, { recursive: true, force: true });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  if (left.length > 0)
+    return `Removed ${name}, but Skelcrew couldn't delete ${left.map((place) => `${place}${aside}`).join(" and ")}. Delete it yourself.`;
   return `Removed ${name} and Skelcrew's clone of it.`;
 }
 
-// Closes a repository's tab, then ends its lead and waits for it, for closing and removing a
-// repository, which `verb` names for what it says when it fails. The daemon ends the lead in the
-// lead's own turn, so a start asked for meanwhile comes after it. With no daemon, nothing else
-// starts the lead, so it is ended here. When the lead can't be ended, its tab goes back as it
-// was and this throws, rather than hiding a repository whose lead still runs. A repository you
-// open again before its lead ends keeps its lead, and this throws too. A lead on a plugin no
-// longer installed may still run there, so the repository waits until that host is back. The tab
-// closes first, so an open screen moves on at once, and a lead the daemon is starting meanwhile
-// sees it closed once its session is there, and ends it.
-async function closeTabAndEndLead(
+// How long to wait for the daemon to end a lead, in milliseconds. Tests set
+// SKELCREW_END_LEAD_WAIT_MS shorter, so they don't each wait a minute.
+const endLeadWait = z.coerce
+  .number()
+  .min(0)
+  .catch(60_000)
+  .parse(process.env.SKELCREW_END_LEAD_WAIT_MS ?? 60_000);
+
+// Has the daemon close a repository's tab and end its lead, and waits for it, for closing and
+// removing a repository, which `verb` names for what it says when it fails. The daemon ends the
+// lead in the lead's own turn, so a start asked for meanwhile comes after it, and puts the tab back
+// when the lead can't be ended, rather than hiding a repository whose lead still runs. With no
+// daemon, nothing else starts the lead, so this does all that itself. A daemon that took the
+// request but gave no reply may still be at it, so this changes nothing and throws, as acting here
+// too could end a lead opened again meanwhile. A repository you open again before its lead ends
+// keeps its lead, and this throws too. A lead on a plugin no longer installed may still run there,
+// so the repository waits until that host is back.
+async function closeThroughDaemon(
   db: Database,
   sessions: string,
   found: Repository,
@@ -929,27 +968,21 @@ async function closeTabAndEndLead(
     throw new Error(
       `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then ${verb} ${name}.`,
     );
-  const where = "WHERE owner = ? AND repo = ?";
-  const tab = z
-    .object({ tab_closed: z.number() })
-    .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(found.owner, found.repo));
-  db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
-  let ended: boolean;
-  try {
-    const { ask } = await import("../client.ts");
-    const fullName = `${found.owner}/${found.repo}`;
-    const reply = await ask({ command: "end lead", repo: fullName, verb }, 60_000);
-    const Reply = z.union([z.object({ ended: z.boolean() }), z.object({ error: z.string() })]);
-    const answer = reply === null ? null : Reply.parse(reply);
-    if (answer !== null && "error" in answer) throw new Error(answer.error);
-    ended = answer?.ended ?? (await endLeadOfClosedTab(db, sessions, found, verb));
-  } catch (error) {
-    db.run(`UPDATE repositories SET tab_closed = ? ${where}`, [
-      tab.tab_closed,
-      found.owner,
-      found.repo,
-    ]);
-    throw error;
-  }
+  const { askInTime } = await import("../client.ts");
+  const fullName = `${found.owner}/${found.repo}`;
+  const reply = await askInTime({ command: "end lead", repo: fullName, verb }, endLeadWait);
+  if (reply === "unanswered")
+    throw new Error(
+      verb === "close"
+        ? `the daemon didn't answer, so ${name}'s lead may still run. If its tab is still open, close it again.`
+        : `the daemon didn't answer, so ${name} isn't removed. Remove it again in a moment.`,
+    );
+  const Reply = z.union([z.object({ ended: z.boolean() }), z.object({ error: z.string() })]);
+  const read = reply === "absent" ? null : Reply.safeParse(reply.reply);
+  if (read !== null && !read.success)
+    throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
+  const answer = read === null ? null : read.data;
+  if (answer !== null && "error" in answer) throw new Error(answer.error);
+  const ended = answer?.ended ?? (await closeTabAndEndLead(db, sessions, found, verb));
   if (!ended) throw new Error(`${name} was opened again meanwhile, so it isn't ${verb}d`);
 }

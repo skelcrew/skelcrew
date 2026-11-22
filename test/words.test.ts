@@ -81,8 +81,6 @@ const state: Thread = {
   merge_followup: null,
   needs_you_for: null,
   limit_decided: false,
-  ended_at: null,
-  ended_said: null,
   review_failed: false,
   agents: null,
   flow: "default",
@@ -212,8 +210,8 @@ describe("the tabs' badges", () => {
   test("each repository's tab counts what needs you and what is ready apart", () => {
     // app has a red mark, for its harness error, site and docs only yellow ones, and web an
     // approved thread, which is ready rather than needing you. Threads working, stopped, failed
-    // or done count for neither, nor does one whose turn ended, as each waits on the lead. old's
-    // lead was exited, which closed its tab.
+    // or done count for neither. One whose turn ended counts, as it shows under Needs you while
+    // the lead reads its words. old's lead was exited, which closed its tab.
     const threads = [
       { repo: "site", task: "1", status: "waiting", needs_you: 1 },
       { repo: "site", task: "2", asking: 1 },
@@ -244,7 +242,7 @@ console.log(JSON.stringify(repositoryTabs(db, null)));`;
     });
     expect(run.stderr.toString()).toBe("");
     expect(JSON.parse(run.stdout.toString())).toEqual([
-      { name: "app", fullName: "simon/app", needYou: 1, colour: "red", ready: 0 },
+      { name: "app", fullName: "simon/app", needYou: 2, colour: "red", ready: 0 },
       { name: "docs", fullName: "simon/docs", needYou: 1, colour: "yellow", ready: 0 },
       { name: "site", fullName: "simon/site", needYou: 2, colour: "yellow", ready: 0 },
       { name: "web", fullName: "simon/web", needYou: 0, colour: "yellow", ready: 1 },

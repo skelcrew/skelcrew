@@ -1,5 +1,5 @@
-// Messages to you while you are away: a needs-you note once per mark, the daily digest, and what
-// the lead sends when you ask, each through the notifier plugin your config routes its type to.
+// Messages to you while you are away: a needs-you note for each item and each thread that starts
+// needing you, the daily digest, and what the lead sends when you ask, each through a notifier.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { notifySettings } from "../config.ts";
@@ -9,6 +9,7 @@ import { callPlugin, installedPlugins, readManifest } from "../plugins/plugin.ts
 import { removeControlCodes } from "../screen/look.ts";
 import { backlogOf } from "./backlog.ts";
 import { openTasks, prOf } from "./copy.ts";
+import { itemOf } from "./inbox.ts";
 import { repositories } from "./repo.ts";
 import { needsYouFor } from "./status.ts";
 import { Thread, taskName, threadName } from "./thread.ts";
@@ -146,8 +147,14 @@ async function deliver(db: Database, id: number): Promise<string | null> {
   }
 }
 
-export function forgetMark(db: Database, folder: string): void {
-  db.run("DELETE FROM notified WHERE folder = ?", [folder]);
+export function noticeItem(db: Database, about: string, text: string, thread: Thread | null): void {
+  const pr =
+    thread === null || thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
+  queueNotification(db, "needs-you", {
+    title: `${about} needs you`,
+    body: text,
+    links: pr === null ? [] : [{ name: `${about} #${pr.id}`, url: pr.link }],
+  });
 }
 
 export function noticeNeedsYou(db: Database, thread: Thread): void {
@@ -271,11 +278,16 @@ export function digestOf(db: Database, since: number): Message {
       .filter((t) => t.status === "done" && t.merged && (t.changed ?? 0) >= since)
       .map((t) => named(t, "merged"));
     const live = threads.filter((t) => t.status !== "done");
-    const waits = live.flatMap((t) => {
-      const mark = needsYouFor(t);
-      return mark === null ? [] : [named(t, mark.slice(0, 80))];
-    });
-    const underWay = live.filter((t) => needsYouFor(t) === null).map((t) => named(t, t.status));
+    const waitsFor = (t: Thread) => itemOf(db, r.owner, r.repo, t.task)?.text ?? needsYouFor(t);
+    const repoItem = itemOf(db, r.owner, r.repo, "");
+    const waits = [
+      ...(repoItem === null ? [] : [`${r.name} · ${repoItem.text.slice(0, 80)}`]),
+      ...live.flatMap((t) => {
+        const mark = waitsFor(t);
+        return mark === null ? [] : [named(t, mark.slice(0, 80))];
+      }),
+    ];
+    const underWay = live.filter((t) => waitsFor(t) === null).map((t) => named(t, t.status));
     const issues = open
       .filter((item) => !live.some((t) => t.task === item.id))
       .map((item) => {

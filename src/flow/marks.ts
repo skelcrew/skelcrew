@@ -10,8 +10,8 @@ export type Mark = { sign: "●" | "○"; colour: Colour };
 // What a list shows of a thread's state: its word, its status as a host shows it, and its mark.
 export type Shown = { word: string; status: Status; mark: Mark };
 
-// Returns the mark for a thread's status and word. The shape says whether the thread needs you,
-// and the colour what kind of state it is in. Red is wrong: its harness stopped on an error,
+// Returns the mark for a thread's status and word. The shape says whether the thread shows under
+// Needs you, and the colour what kind of state it is in. Red is wrong: its harness stopped on an error,
 // which needs you, or the thread failed or its review, submit or check couldn't run, which the
 // lead can start or run again, so those marks are hollow. Green is approved and ready to merge, and
 // yellow any other reason it needs you. Of the hollow ones, a working builder is bright and
@@ -19,12 +19,7 @@ export type Shown = { word: string; status: Status; mark: Mark };
 // shows as waiting even while the builder works too, as the word then says what the thread
 // waits on.
 export function markOf(status: Status, word: string): Mark {
-  // A thread that failed is the lead's to start again, so it doesn't need you unless marked, and
-  // then its word is the mark. A review, submit or check that failed is the lead's to run again.
   if (status === "error") return { sign: word === "failed" ? "○" : "●", colour: "red" };
-  // Needing you comes before the words below, as a mark from the lead or you can read like one
-  // of them, such as "review failed", and is still an action for you. Without a mark, none of
-  // those words comes with needing you.
   if (status === "needs you") return { sign: "●", colour: "yellow" };
   const failed = ["review failed", "review timed out", "submit failed", "check failed"];
   if (failed.includes(word)) return { sign: "○", colour: "red" };

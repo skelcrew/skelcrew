@@ -259,12 +259,30 @@ Bring such a question, and any you can't answer, to the human in this chat, nami
 const namesInLowercase = (text: string) =>
   text.replace(/\bAPP-T?\d+\b/g, (name) => name.toLowerCase());
 
+// What the lead's file says since needs you became an inbox the lead writes to with sc ask, each
+// with what it said before: the lead posts an item rather than marking a thread or asking in its
+// chat.
+const inbox = [
+  [
+    '"Needs you" means the human must act to unblock a thread. When only the human can unblock one, such as a change only a person can push, mark it with sc needs-you APP-12 "<the action, written for the human>", such as sc needs-you APP-12 "apply the check.yml split in PR #463". Never mark one you can unblock yourself, or one that only waits on its review, CI or the queue. Skelcrew marks the facts it sees itself: a question asked in the builder\'s session, a harness error, the round limit before anyone decided, an approved thread with no merge armed, and a builder whose session host plugin is missing. A review or round that failed, or a builder that isn\'t running while messages wait for it, comes to you as a note instead: run the review again with sc review APP-12, or bring the builder back with sc stop APP-12 and sc start APP-12. Once the human has acted, or you have decided it doesn\'t need them, run sc needs-you --clear APP-12. Clearing a thread past its round limit is your decision that the human needn\'t decide it: run sc start APP-12 instead when it should go on. A mark also clears when the human types to the builder, when it submits again, and when its PR merges or closes.\n\nA builder that stopped without submitting, and that nobody acts on for a few minutes, needs the human by itself, with its last message as the mark, so nothing waits unseen while you are busy. Answering it with sc tell, or marking or clearing it, is acting on it.\n\nWhen a thread starts needing the human, Skelcrew types a one line note into this session, such as "APP-12 needs you: its builder asked a question". It comes from Skelcrew, not the human, and doesn\'t come for a mark you set yourself. Tell the human plainly what the thread needs. They answer a builder\'s question by picking APP-12 in the sidebar beside you, or, if they opened you from sc --list, by leaving you with Ctrl-\\ and pressing Enter on APP-12 in the list.\n\n',
+    'Where to ask: what you propose while talking with the human, such as the threads to start ("Start these?") or the setup commands, stays in this chat, as the human is right there. Needs you is for decisions a thread raises while the human may be away, such as a builder\'s question or a round limit: those go there as items, never in this chat.\n\nWhen a thread needs the human, ask them in Needs you, the inbox in the sidebar beside you: sc ask APP-12 "<the question>" --option "<first choice> (recommended)" --option "<second choice>". It posts an item for the thread, with up to four options, which the human answers with a letter. An item without --option takes a typed reply. For something about the whole repository, name the repository instead, such as sc ask <repo> "<the question>". When a thread\'s decision is whether to start work, such as starting APP-T3 again, post an item with yes and no, such as sc ask APP-T3 "Start APP-T3, Dark mode?" --option yes --option no. On a yes, run sc start APP-T3 yourself. One item per thread: asking again replaces it, and sc ask --clear APP-12 takes it off, such as once the human answered in this chat. Don\'t also ask in this chat: tell the human in one line that an item waits, such as "APP-12 waits on you in Needs you." Never ask about a thread you can unblock yourself, or one that only waits on its review, CI or the queue.\n\nSkelcrew marks a thread by itself for what it sees: a question asked in the builder\'s session, a harness error, the round limit before anyone decided, an approved thread with no merge armed, a builder that stopped without submitting, and a builder whose session host plugin is missing. It then shows in Needs you as "the lead is looking at this", and you get a note, such as "APP-12 needs you: its builder asked a question". It comes from Skelcrew, not the human. Decide whether it needs the human: if it does, post an item, which then shows in its place. While your item is open, Skelcrew doesn\'t repeat the same note, but a real change, such as a new review round, still reaches you. A review or round that failed, or a builder that isn\'t running while messages wait for it, comes to you as a note instead: run the review again with sc review APP-12, or bring the builder back with sc stop APP-12 and sc start APP-12. The human answers a builder\'s question by picking APP-12 in the sidebar beside you, or, if they opened you from sc --list, by leaving you with Ctrl-\\ and pressing Enter on APP-12 in the list.\n\nThe human\'s answer comes back to you as a note, such as "You picked a (force merge) on APP-12: <the item>". It counts as the human\'s words, for exactly the option they picked and nothing more. Its note names a file holding those words: give it as --asked-file to what you run on the answer.\n\n',
+  ],
+  [
+    "Bring such a question, and any you can't answer, to the human in this chat, naming the thread,",
+    "Bring such a question, and any you can't answer, to the human as an item in Needs you, with sc ask,",
+  ],
+].map((pair) => pair.map(namesInLowercase));
+
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // Their examples name tasks in uppercase, as people read them.
   expect(builtInRole("lead").instructions).not.toMatch(/\bapp-t?\d+\b/);
   expect(builtInRole("builder").instructions).not.toMatch(/\bapp-t?\d+\b/);
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   let lead = namesInLowercase(builtInRole("lead").instructions);
+  for (const [before = "", now = ""] of inbox) {
+    expect(lead).toContain(now);
+    lead = lead.replace(now, before);
+  }
   expect(lead).toContain(noReviewFlows);
   lead = lead.replace(noReviewFlows, "");
   expect(lead).toContain(waiting);

@@ -1181,22 +1181,18 @@ c.on("data", (d) => process.stdout.write(d));`;
     await untilCloned();
     await skel("start", "app-12");
     await until(() => thread().host_id === "fake-app-12");
-    // The lead had marked it, which stays owed through the plugin's absence.
-    expect((await skel("needs-you", "app-12", "check the design")).err).toBe("");
     await stop(first);
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
     db.run("DELETE FROM plugins WHERE name = 'fake'");
     db.close();
     const second = serve();
-    // Only you can bring the plugin back, so its mark says what to do first.
+    // Only you can bring the plugin back, so its mark says what to do.
     await until(
-      () =>
-        thread().needs_you_for ===
-        "run sc install: its session host fake is missing, then check the design",
+      () => thread().needs_you_for === "run sc install: its session host fake is missing",
     );
-    // It needed you already, for your mark, so the log says why it changed. The log is written
-    // just after the database, so it is waited for.
+    // The log says why it changed. The log is written just after the database, so it is waited
+    // for.
     const log = () => read(join(data(), "threads", "app-12.log"));
     await until(() => log().includes("session host fake isn't installed any more"));
     expect(thread().host).toBe("fake");
@@ -1205,7 +1201,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     await stop(second);
     fakeHost("sessions");
     serve();
-    await until(() => thread().needs_you_for === "check the design");
+    await until(() => thread().needs_you_for === null);
     await until(() => log().includes("its session host fake is back"));
   }, 60_000);
 
@@ -1756,6 +1752,7 @@ describe("the backlog", () => {
       pr: null,
       checks: null,
       review: null,
+      asks: false,
     });
     const shown = await skel("show", "APP-T2");
     expect(shown.err).toBe("");

@@ -2,29 +2,46 @@
 import { createConnection } from "node:net";
 import { z } from "zod";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
-import { type DaemonRequest, parseJson } from "./flow/requests.ts";
+import { type DaemonRequest, type letters, parseJson } from "./flow/requests.ts";
+
+// One of the letters an item's options go by.
+type Letter = (typeof letters)[number];
+
 import { cliSocket } from "./paths.ts";
 import { capture } from "./run.ts";
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
-export function ask(request: DaemonRequest, timeout: number): Promise<unknown> {
+export async function ask(request: DaemonRequest, timeout: number): Promise<unknown> {
+  const answer = await askInTime(request, timeout);
+  return answer === "absent" || answer === "unanswered" ? null : answer.reply;
+}
+
+// Sends a request to the daemon, as ask does, but tells a daemon that isn't there, which is
+// absent, from one that took the request and gave no reply, in time or at all, which is
+// unanswered. An unanswered request may still be under way in the daemon.
+export function askInTime(
+  request: DaemonRequest,
+  timeout: number,
+): Promise<{ reply: unknown } | "absent" | "unanswered"> {
   return new Promise((done) => {
     const connection = createConnection(cliSocket());
-    // A daemon that doesn't answer in time is treated as one that isn't there.
     const timer = setTimeout(() => connection.destroy(), timeout);
-    // A request and its reply are one JSON line each, so the reply is complete at its line end.
+    let taken = false;
     let reply = "";
-    connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
+    connection.on("connect", () => {
+      taken = true;
+      connection.write(`${JSON.stringify(request)}\n`);
+    });
     connection.on("data", (data) => {
       reply += data.toString();
       if (reply.includes("\n")) connection.end();
     });
-    // A refused or broken connection is followed by close, which answers null.
     connection.on("error", () => {});
     connection.on("close", () => {
       clearTimeout(timer);
-      done(reply ? parseJson(reply) : null);
+      if (reply) done({ reply: parseJson(reply) });
+      else done(taken ? "unanswered" : "absent");
     });
   });
 }
@@ -239,12 +256,33 @@ export async function stopOn(repository: string, task: string): Promise<string> 
   return checkReply(z.object({ stopped: z.string() }), reply).stopped;
 }
 
-// Has the daemon mark a thread as needing you with `reason`, the action you must take, or clear
-// its mark with null, for sc needs-you. Returns the thread's name and whether it still needs you,
-// as Skelcrew can see other reasons itself, such as a question.
-export async function markNeedsYou(repository: string, task: string, reason: string | null) {
-  const reply = await request({ command: "needs you", repo: repository, task, reason });
-  return checkReply(z.object({ thread: z.string(), needsYou: z.boolean() }), reply);
+// Has the daemon post the lead's item, for sc ask, about a task or, with no task, the repository,
+// or take it off with `clear`. Returns what the item is about, such as APP-12.
+export async function postItem(
+  repository: string,
+  task: string | undefined,
+  item: { text: string; options: string[] } | "clear",
+): Promise<string> {
+  const which = { repo: repository, ...(task === undefined ? {} : { task }) };
+  if (item === "clear") {
+    const reply = await request({ command: "ask", ...which, text: "", options: [], clear: true });
+    return checkReply(z.object({ cleared: z.string() }), reply).cleared;
+  }
+  const reply = await request({ command: "ask", ...which, ...item, clear: false });
+  return checkReply(z.object({ asked: z.string() }), reply).asked;
+}
+
+// Has the daemon take your answer to an item, an option's letter or a reply, to the lead. `seen`
+// is the item as you saw it, its text and options. Returns what the list says then.
+export async function answerItem(
+  repository: string,
+  task: string | null,
+  seen: { text: string; options: string[] },
+  answer: { pick: Letter } | { reply: string },
+): Promise<string> {
+  const which = { repo: repository, seen, ...(task === null ? {} : { task }) };
+  const reply = await request({ command: "answer", ...which, ...answer });
+  return checkReply(z.object({ said: z.string() }), reply).said;
 }
 
 // Asks the daemon what a thread's builder shows now, for sc peek, and returns the thread's
