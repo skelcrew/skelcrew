@@ -783,7 +783,7 @@ export async function runSidebar(
     if (!row.ask) return;
     working = true;
     try {
-      said = await answerItem(`${open.owner}/${open.repo}`, row.task, row.ask.text, given);
+      said = await answerItem(`${open.owner}/${open.repo}`, row.task, row.ask, given);
     } catch (error) {
       said = errorText(error);
     }

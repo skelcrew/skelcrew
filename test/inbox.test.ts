@@ -30,8 +30,8 @@ afterEach(tearDown);
 
 // Runs the code in a process of its own, with HOME set to the test's. The database is open as
 // `db`, with simon/app and its thread app-12 working in it, and `thread()` reads app-12 back.
-// `row(name)` is that row of app's list, `lines()` the list as drawn, without colours, and
-// `notes()` what waits for the lead. Returns what the code printed last, as JSON.
+// `row(name)` is that row of app's list, `lines()` the list as drawn, without colours,
+// `notes()` what waits for the lead, and `asSeen(task)` that task's item as the list shows it. Returns what the code printed last, as JSON.
 function inProcess(body: string): Record<string, unknown> {
   const code = `import { openDb, marksToItems } from ${JSON.stringify(source("db.ts"))};
 import { answerItem, clearItem, itemOf, postItem } from ${JSON.stringify(source("flow/inbox.ts"))};
@@ -55,6 +55,7 @@ const drawn = () => {
 };
 const lines = () => drawn().lines.map((line) => Bun.stripANSI(line).trimEnd());
 const notes = () => db.query("SELECT text FROM notes ORDER BY id").all().map((n) => n.text);
+const asSeen = (task) => { const { text, options } = itemOf(db, "simon", "app", task); return { text, options }; };
 ${body}
 process.exit(0);`;
   const done = Bun.spawnSync([process.execPath, "-e", code], {
@@ -109,26 +110,49 @@ console.log(JSON.stringify({ picks }));`);
 test("your pick goes back to the lead as your words, and its file holds that option alone", async () => {
   const seen = inProcess(`
 postItem(db, "app", "12", ${JSON.stringify(asked)}, ${options});
-const said = answerItem(db, "none", "app", "12", ${JSON.stringify(asked)}, { pick: "b" });
+const said = answerItem(db, "none", "app", "12", asSeen("12"), { pick: "b" });
 console.log(JSON.stringify({ said, notes: notes(), item: itemOf(db, "simon", "app", "12"), section: row("APP-12").section }));`);
   expect(seen.said).toBe("Told the lead your answer on APP-12.");
   expect(seen.item).toBe(null);
   expect(seen.section).toBe("building");
   const words = `You picked b (keep going) on APP-12: ${asked}`;
-  const file = join(data(), "leads", "simon", "app", "answers", "app-12.txt");
-  expect(seen.notes).toEqual([
+  const notes = seen.notes as string[];
+  expect(notes).toHaveLength(1);
+  const file = /--asked-file (\S+) /.exec(notes[0] ?? "")?.[1] ?? "";
+  expect(file.startsWith(join(data(), "leads", "simon", "app", "answers", "app-12-"))).toBe(true);
+  expect(notes[0]).toBe(
     `${words}\n\nThese words are the human's: give --asked-file ${file} to what you run on this answer.`,
-  ]);
+  );
   // The file lets the lead do only what you picked: the option you didn't pick isn't in it.
   const text = await Bun.file(file).text();
   expect(text).toBe(`${words}\n`);
   expect(text).not.toContain("force merge");
 });
 
+// The lead may still be about to act on the first answer when the second comes, so the second
+// never changes the words the first note points to.
+test("each answer keeps its own file, so a later one never changes an earlier one's words", async () => {
+  const seen = inProcess(`
+postItem(db, "app", "12", "Merge it now?", ["yes", "no"]);
+answerItem(db, "none", "app", "12", asSeen("12"), { pick: "a" });
+await Bun.sleep(5);
+postItem(db, "app", "12", "Drop the old exports?", ["yes", "no"]);
+answerItem(db, "none", "app", "12", asSeen("12"), { pick: "b" });
+console.log(JSON.stringify({ notes: notes() }));`);
+  const files = (seen.notes as string[]).map((note) => /--asked-file (\S+) /.exec(note)?.[1] ?? "");
+  expect(new Set(files).size).toBe(2);
+  expect(await Bun.file(files[0] ?? "").text()).toBe(
+    "You picked a (yes) on APP-12: Merge it now?\n",
+  );
+  expect(await Bun.file(files[1] ?? "").text()).toBe(
+    "You picked b (no) on APP-12: Drop the old exports?\n",
+  );
+});
+
 test("an item without options takes a reply in your own words", () => {
   const seen = inProcess(`
 postItem(db, "app", "12", "Which export format do you want?", []);
-answerItem(db, "none", "app", "12", "Which export format do you want?", { reply: "CSV, with a header row" });
+answerItem(db, "none", "app", "12", asSeen("12"), { reply: "CSV, with a header row" });
 console.log(JSON.stringify({ notes: notes() }));`);
   expect(seen.notes).toEqual([
     expect.stringContaining(
@@ -137,17 +161,24 @@ console.log(JSON.stringify({ notes: notes() }));`);
   ]);
 });
 
+// A letter picks what it showed beside it, so an item replaced with the same text but other
+// options, or the same ones in another order, is refused too.
 test("an answer is refused for a letter the item lacks, or for an item the lead replaced", () => {
   const seen = inProcess(`
 postItem(db, "app", "12", ${JSON.stringify(asked)}, ${options});
+const before = asSeen("12");
 const tried = (seen, answer) => { try { answerItem(db, "none", "app", "12", seen, answer); return "answered"; } catch (error) { return error.message; } };
-const letter = tried(${JSON.stringify(asked)}, { pick: "c" });
+const letter = tried(before, { pick: "c" });
+postItem(db, "app", "12", ${JSON.stringify(asked)}, ["keep going", "force merge (recommended)"]);
+const reordered = tried(before, { pick: "a" });
 postItem(db, "app", "12", "Merge it now?", ["yes", "no"]);
-const replaced = tried(${JSON.stringify(asked)}, { pick: "a" });
-console.log(JSON.stringify({ letter, replaced, notes: notes(), item: itemOf(db, "simon", "app", "12").text }));`);
+const replaced = tried(before, { pick: "a" });
+console.log(JSON.stringify({ letter, reordered, replaced, notes: notes(), item: itemOf(db, "simon", "app", "12").text }));`);
+  const changed = "the lead changed its item on APP-12 as you answered, so read it again";
   expect(seen).toEqual({
     letter: "APP-12's item has no option c",
-    replaced: "the lead changed its item on APP-12 as you answered, so read it again",
+    reordered: changed,
+    replaced: changed,
     notes: [],
     item: "Merge it now?",
   });
@@ -219,7 +250,7 @@ postItem(db, "app", "t3", "Start APP-T3, Dark mode?", ["yes", "no"]);
 postItem(db, "app", null, "Add simon/web, which the export calls?", ["yes", "no"]);
 const task = row("APP-T3");
 const repository = row("ask");
-answerItem(db, "none", "app", "t3", "Start APP-T3, Dark mode?", { pick: "a" });
+answerItem(db, "none", "app", "t3", asSeen("t3"), { pick: "a" });
 console.log(JSON.stringify({
   task: { section: task.section, part: task.part, ask: task.ask, starts: task.start !== null },
   repository: { section: repository.section, label: repository.label, ask: repository.ask },
@@ -333,7 +364,8 @@ describe.skipIf(insideSandbox)("the inbox, with a running daemon", () => {
     expect(await needsYouFor()).toBe("item waits");
     expect((await skel(["show", "app-12"])).out).toContain("a) force merge");
     const code = `import { answerItem } from ${JSON.stringify(source("client.ts"))};
-console.log(await answerItem("simon/app", "12", ${JSON.stringify(asked)}, { pick: "a" }));`;
+const seen = { text: ${JSON.stringify(asked)}, options: ["force merge", "keep going"] };
+console.log(await answerItem("simon/app", "12", seen, { pick: "a" }));`;
     const answered = Bun.spawnSync([process.execPath, "-e", code], {
       env: env(),
       stdout: "pipe",

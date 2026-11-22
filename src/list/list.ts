@@ -393,7 +393,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (!row.ask) return draw();
     working = true;
     try {
-      said = await answerItem(`${open.owner}/${open.repo}`, row.task, row.ask.text, given);
+      said = await answerItem(`${open.owner}/${open.repo}`, row.task, row.ask, given);
     } catch (error) {
       said = errorText(error);
     }
