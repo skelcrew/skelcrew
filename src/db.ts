@@ -982,6 +982,16 @@ function prepareTables(db: Database): void {
   // another version is installed. Null for one that may rename.
   if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'no_rename'").get())
     db.run("ALTER TABLE plugins ADD COLUMN no_rename TEXT");
+  db.run(`CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    queued INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'waiting',
+    via TEXT,
+    called INTEGER
+  )`);
+  db.run("CREATE TABLE IF NOT EXISTS notified (folder TEXT PRIMARY KEY, mark TEXT NOT NULL)");
 }
 
 // Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its

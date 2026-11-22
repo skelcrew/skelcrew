@@ -115,6 +115,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | `sc rm <task>` | Ends the work on a task, closing its PR and its issue. `--keep-issue` keeps the issue open, to start over. |
 | `sc merge --when-ready <task>` | Merges the PR once it is approved and green. `--cancel` disarms it. |
 | `sc plugin add <owner/repo>` | Adds a plugin to this repository, after asking. `-g` adds one of your own. |
+| `sc notify --via <channel> "<subject>" "<text>"` | The lead's, to send you a message you asked for, such as by email or push, with your words in `--asked-file`. Your `notify:` in `~/.config/skelcrew/config.yaml` sends the daily digest and needs-you messages to notifier plugins too. |
 
 `sc --help` lists every command and key.
 

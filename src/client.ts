@@ -48,9 +48,8 @@ export function askInTime(
 
 // Asks the daemon on behalf of a Skelcrew command, and returns its answer. Throws with the
 // daemon's error, or when nothing answers.
-async function request(asked: DaemonRequest): Promise<unknown> {
-  // A minute, as some requests wait on the daemon's own work, such as stopping a builder.
-  const reply = await ask(asked, 60_000);
+async function request(asked: DaemonRequest, timeout = 60_000): Promise<unknown> {
+  const reply = await ask(asked, timeout);
   if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
   const failed = z.object({ error: z.string() }).safeParse(reply);
   if (failed.success) throw new Error(failed.data.error);
@@ -430,6 +429,14 @@ export async function keepTrueOn(
   items: string[],
 ): Promise<string> {
   const reply = await request({ command: "keep true", repo: repository, task, items });
+  return checkReply(z.object({ said: z.string() }), reply).said;
+}
+
+export async function notifyTheHuman(
+  message: { via: string; subject: string; text: string },
+  asked: string,
+): Promise<string> {
+  const reply = await request({ command: "notify", ...message, asked }, 90_000);
   return checkReply(z.object({ said: z.string() }), reply).said;
 }
 

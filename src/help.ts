@@ -79,6 +79,10 @@ const sections: [string, [string, string][]][] = [
         'keep <task> "<property>" ...',
         "Set the 2 to 4 things the change must keep true, as the lead",
       ],
+      [
+        'notify --via <channel> "<subject>" "<text>"',
+        "Send the human what they asked for, with --asked-file",
+      ],
     ],
   ],
   [

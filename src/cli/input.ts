@@ -61,6 +61,7 @@ const commands = [
   "tell",
   "decide",
   "keep",
+  "notify",
   "install",
   "plugin",
 ];
