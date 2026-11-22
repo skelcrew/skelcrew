@@ -30,6 +30,7 @@ import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { openTasks, threadTask } from "./copy.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
 import { freshRounds, pastRoundLimit, roundOf } from "./ledger.ts";
+import { takeSharedLoginWhenFree } from "./logins.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus, needsYou } from "./status.ts";
@@ -544,7 +545,8 @@ async function startOnConfiguredHost(
   if (!restarting)
     db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
   const files = filesFor(host);
-  const { argv, env } = await harness.start({
+  await takeSharedLoginWhenFree(db, sessions, thread.folder);
+  const started = await harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
     model: role.harness === harness.name ? role.model : undefined,
@@ -560,8 +562,11 @@ async function startOnConfiguredHost(
     files,
     ...start,
   });
+  const { argv, env } = started;
   const on = { host, name: hostName };
-  await startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
+  // The harness may need to write something as the session starts, such as a login.
+  const run = () => startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
+  await ("launch" in started ? started.launch(run) : run());
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
 }
 

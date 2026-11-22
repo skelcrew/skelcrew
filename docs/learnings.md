@@ -142,14 +142,14 @@ that covers the code you are about to write.
   them read-only, and only the login and session files writable.
 - **Never mount `auth.json` on its own.** From 0.167 Codex renews its login by writing a new
   file and renaming it over the old one, and a file mounted on its own can't be renamed over
-  ("Device or resource busy"). By then the old refresh token is spent, so Skelcrew's login goes
-  stale for every session and review. Codex follows a link to the file and renames beside
-  its target, so link `auth.json` to a writable folder that holds only the login. Up to
-  0.163 it rewrote the file in place.
-- **Share `auth.lock` with the login.** From 0.167 Codex locks `auth.lock` in its own
-  `CODEX_HOME` while it renews. Folders of their own each get a lock of their own, so two
-  sessions could renew at once, and one spends the token the other is using. Link it beside
-  `auth.json`.
+  ("Device or resource busy"). Codex follows a link to the file and renames beside its
+  target, so link `auth.json` to a writable folder that holds only the login. Up to 0.163 it
+  rewrote the file in place.
+- **Never give an agent the refresh token.** A renewal spends it, so an agent that renews, or
+  just sends it once, leaves Skelcrew's login and every other copy dead. One shared, writable
+  login is worse: any agent can sign every other into another account. Each agent gets its own
+  copy without the refresh token, and Skelcrew renews its login outside the sandbox, well before
+  Codex would, then writes the renewal into each copy.
 - **Mark the folder trusted, or the session waits.** Without `trust_level = "trusted"` for
   the folder under `projects`, Codex asks first. `"untrusted"` asks too.
 - **Hooks wait for a person to trust them.** Codex shows "Hooks need review" at start for

@@ -299,45 +299,56 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(kept("seen")).toBe("f\n");
   });
 
-  test("keeps Codex's instructions as they were, and its login and sessions writable", async () => {
+  test("keeps Codex's instructions as they were, and its sessions writable", async () => {
     mkdirSync(join(codexHome(), "rules"), { recursive: true });
-    for (const file of ["config.toml", "AGENTS.md", "rules/default.rules", "auth.json"])
+    for (const file of ["config.toml", "AGENTS.md", "rules/default.rules"])
       writeFileSync(join(codexHome(), file), "mine\n");
     mkdirSync(join(home, ".codex"));
     writeFileSync(join(home, ".codex", "auth.json"), "yours\n");
     fakeCodex(approve, [
       'cd "$CODEX_HOME"; echo evil >> config.toml; echo evil > AGENTS.md; echo evil > rules/default.rules',
       "mkdir prompts; echo evil > prompts/review.md",
-      "echo renewed > auth.json; echo transcript > sessions/rollout.jsonl",
+      "echo transcript > sessions/rollout.jsonl",
       'test -e "$HOME/.codex/auth.json" || echo hidden > sessions/yours',
     ]);
     await start();
     for (const file of ["config.toml", "AGENTS.md", "rules/default.rules"])
       expect(readFileSync(join(codexHome(), file), "utf8")).toBe("mine\n");
     expect(existsSync(join(codexHome(), "prompts"))).toBe(false);
-    // Codex up to 0.163 rewrites its login in place, and a renewal reaches Skelcrew's copy.
-    expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
     expect(kept("rollout.jsonl")).toBe("transcript\n");
     expect(kept("yours")).toBe("hidden\n");
   });
 
-  test("keeps a renewal Codex renames over its login, and its lock, for the next review", async () => {
+  test("a review logs in with a copy of its own, which nothing it writes gets out of", async () => {
     mkdirSync(codexHome(), { recursive: true });
-    writeFileSync(join(codexHome(), "auth.json"), "mine\n");
-    // As Codex does from 0.167: it follows a link to the login, writes the renewal beside it
-    // and renames it over the old one, holding auth.lock in its own folder meanwhile.
+    const login = JSON.stringify({
+      tokens: { id_token: "id", access_token: "access", refresh_token: "refresh", account_id: "a" },
+      last_refresh: new Date().toISOString(),
+    });
+    writeFileSync(join(codexHome(), "auth.json"), login);
+    // It renews as Codex does from 0.167: it follows the link to its login, writes the renewal
+    // beside it and renames it over the old one, holding auth.lock in its own folder meanwhile.
+    // Then it writes where Skelcrew keeps its own login.
+    const own = join(home, ".local", "share", "skelcrew", "codex-own-login");
     fakeCodex(approve, [
+      'cat "$CODEX_HOME/auth.json" > "$CODEX_HOME/sessions/login"',
       'login=$(readlink -f "$CODEX_HOME/auth.json"); next="$(dirname "$login")/.auth-next"',
       'echo renewed > "$next" && mv "$next" "$login"',
       'echo held > "$CODEX_HOME/auth.lock"',
+      `echo evil > ${own}/auth.json; echo evil > ${own}/auth.lock`,
     ]);
     await start();
-    expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
-    expect(readFileSync(join(codexHome(), "auth.lock"), "utf8")).toBe("held\n");
-    // The next review starts from the renewed login.
+    const given = JSON.parse(kept("login"));
+    expect(given.tokens).toEqual({ ...JSON.parse(login).tokens, refresh_token: "" });
+    expect(readFileSync(join(own, "auth.json"), "utf8")).toBe(login);
+    expect(existsSync(join(own, "auth.lock"))).toBe(false);
+    // The copy goes with the review, and the next review gets a copy of Skelcrew's login.
+    expect(readdirSync(join(home, ".local", "share", "skelcrew", "codex-review-logins"))).toEqual(
+      [],
+    );
     fakeCodex(approve, ['cat "$CODEX_HOME/auth.json" > "$CODEX_HOME/sessions/login"']);
     await start();
-    expect(kept("login")).toBe("renewed\n");
+    expect(JSON.parse(kept("login"))).toEqual(given);
   });
 
   // Each finding has a severity and says whether it blocks. Only what blocks asks for changes,

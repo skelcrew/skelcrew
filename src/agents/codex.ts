@@ -1,6 +1,6 @@
 // How Codex runs inside the sandbox: as the lead or a builder, in a tmux session with a
-// CODEX_HOME of its own, and as the reviewer, once per review. All of them share Skelcrew's own
-// login.
+// CODEX_HOME of its own, and as the reviewer, once per review. Each gets its own copy of
+// Skelcrew's login.
 import {
   closeSync,
   constants,
@@ -9,9 +9,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   readSync,
-  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -21,6 +19,16 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { copySkills, type SkillsFrom } from "../skills.ts";
+import {
+  copyLogin,
+  dropLogin,
+  dropSessionLogins,
+  hasLogin,
+  ownLogin,
+  renewLogin,
+  reviewLogin,
+  sessionLogin,
+} from "./codex-login.ts";
 import { editing, type Progress, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
 import {
@@ -37,31 +45,6 @@ import {
 // login of Skelcrew's own, apart from yours in ~/.codex, so a renewal on either side never breaks
 // the other. A caller that was handed an environment passes its HOME, as for dataDir.
 export const codexHome = (home = homedir()) => join(dataDir(home), "codex");
-
-// Puts Skelcrew's Codex login in a folder of its own, holding only auth.json and auth.lock, and
-// links them from `folder`, a CODEX_HOME: Skelcrew's own unless another is named. Returns the
-// login folder, which every Codex sandbox gets writable. From 0.167 Codex renews its login by
-// renaming a new auth.json over the old one, beside the file a link leads to. A file mounted
-// on its own can't be renamed over, and by then the old refresh token is spent, which would
-// leave Skelcrew's login stale. Its lock is shared the same way, so two renewals take turns.
-function shareLogin(home: string, folder = codexHome(home)): string {
-  const login = join(dataDir(home), "codex-login");
-  // Both folders are yours alone, as they hold a login.
-  mkdirSync(folder, { recursive: true, mode: 0o700 });
-  mkdirSync(login, { recursive: true, mode: 0o700 });
-  for (const file of ["auth.json", "auth.lock"]) {
-    const at = join(folder, file);
-    // A link already leading to the shared login is left as it is.
-    const found = lstatSync(at, { throwIfNoEntry: false });
-    if (found?.isSymbolicLink() && readlinkSync(at) === join(login, file)) continue;
-    // The first run's codex login writes a plain auth.json in Skelcrew's own folder. Anywhere
-    // else the agent can write what is there, so it is never taken for Skelcrew's login.
-    if (found?.isFile() && folder === codexHome(home)) renameSync(at, join(login, file));
-    else rmSync(at, { force: true });
-    symlinkSync(join(login, file), at);
-  }
-  return login;
-}
 
 // The first line of a Codex conversation file: its ID, the folder it ran in, and what
 // started it, such as the interactive CLI or a review.
@@ -336,11 +319,12 @@ async function checkModel(home: string, model: string, env: Record<string, strin
     throw new Error(`Codex doesn't offer the model ${model}. It offers ${models.join(", ")}`);
 }
 
-// Prepares a session's own CODEX_HOME and returns its sandbox command and environment, for the
-// lead or a builder. It starts afresh with the first message in `prompt`, or brings back a
+// Prepares a session's own CODEX_HOME and returns its sandbox command and environment, and
+// launch, which writes its copy of the login, then starts the session with what it is given,
+// for the lead or a builder. It starts afresh with the first message in `prompt`, or brings back a
 // saved conversation with `resume`. A builder, given its thread's clone, works there; a lead
 // works in its own `folder`. Each sees nothing else but `origin`, Skelcrew's clone of its
-// repository, read-only, the login it shares with every Codex session, and for a lead
+// repository, read-only, its own copy of Skelcrew's login, and for a lead
 // `repositories`, the folder of every repository's clone, read-only. `files` is the placeholder of
 // its dropped files, on a host that hands it some.
 //
@@ -364,7 +348,7 @@ async function startCommand(given: {
   skills?: SkillsFrom;
   files?: string | undefined;
   env?: Record<string, string | undefined>;
-}): Promise<{ argv: string[]; env: Record<string, string> }> {
+}) {
   const { name, socket, model, thread, folder, origin, repositories, prompt, system, resume } =
     given;
   const { skills, files } = given;
@@ -375,6 +359,9 @@ async function startCommand(given: {
   if (!home) throw new Error("HOME isn't set, so Skelcrew can't find its own folders");
   // The name becomes a folder, so it must not climb out of Skelcrew's.
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(name)) throw new Error(`"${name}" can't name a session`);
+  // A login due for renewal is renewed before Codex runs on it here, so Codex never renews it.
+  ownLogin(home, codexHome(home));
+  await renewLogin(home);
   if (model) await checkModel(home, model, env);
 
   // A folder of its own per session, never your ~/.codex: an agent could write instructions
@@ -393,16 +380,12 @@ async function startCommand(given: {
   // a start command past about 16 KB, and Linux an argument past 128 KB.
   if (system) writeFileSync(instructions, `developer_instructions = ${tomlString(system)}\n`);
   if (skills) copySkills(skills, join(sessionHome, "skills"), home);
-  // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
-  // folder before this session links to it.
-  shareLogin(home);
-  const login = shareLogin(home, sessionHome);
-  // The agent sees its own folder, its CODEX_HOME and the shared login, all writable, and
+  // The agent sees its own folder, its CODEX_HOME and its copy of the login, all writable, and
   // nothing else of yours.
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...rw(sessionHome), ...rw(login)];
+  const mounts = [...rw(cwd), ...rw(sessionHome)];
   // Read-only at the same path, as for Claude Code.
   if (origin) {
     refuseCredentials(origin);
@@ -433,6 +416,15 @@ async function startCommand(given: {
   const kept = filterEnv(env, codex.keys);
   kept.CODEX_HOME = sessionHome;
   const path = env.PATH ?? "";
+  // A login left from before, its own or a link to one shared, never stays. Codex renews by
+  // renaming a new file beside the one a link leads to, so the copy has a folder of its own.
+  // It is written by launch, as the session starts, and removed if anything there fails. The
+  // session removes it as it ends.
+  for (const file of ["auth.json", "auth.lock"])
+    rmSync(join(sessionHome, file), { recursive: true, force: true });
+  const login = sessionLogin(home, name);
+  const loggedIn = hasLogin(home);
+  if (loggedIn) mounts.push(...rw(login));
   // Codex starts through the step that turns off the skills in its folder's .agents/skills/,
   // put in after resume and --no-daemon. Only a builder has a thread. The lead is what you type
   // into, so it keeps its priority.
@@ -447,13 +439,44 @@ async function startCommand(given: {
     normalPriority: !thread,
     files,
   });
-  return { argv, env: kept };
+  if (!loggedIn) return { argv, env: kept, launch: <T>(start: () => Promise<T>) => start() };
+  const link = join(sessionHome, "auth.json");
+  const launch = async <T>(start: () => Promise<T>): Promise<T> => {
+    try {
+      dropSessionLogins(home, name);
+      if (!(await copyLogin(home, login)))
+        throw new Error("Skelcrew's Codex login went while the session started");
+      rmSync(link, { force: true });
+      symlinkSync(join(login, "auth.json"), link);
+      return await start();
+    } catch (error) {
+      dropLogin(login);
+      rmSync(link, { force: true });
+      throw error;
+    }
+  };
+  return { argv: removingOnEnd(login, argv), env: kept, launch };
 }
+
+// Returns `argv` run so that `folder` is removed once it ends, outside the sandbox, whether it
+// exits or its session is ended. It runs in the background, on the terminal's input, so a
+// signal that ends the session ends it at once, rather than once the agent exits, which it may
+// never do. A kill that leaves no time for it leaves the folder to the daemon's sweep.
+const removingOnEnd = (folder: string, argv: string[]): string[] => [
+  "/bin/sh",
+  "-c",
+  `trap 'rm -rf "$0"' EXIT; exec 3<&0; "$@" <&3 3<&- & agent=$!; exec 3<&-
+for s in HUP INT TERM; do trap "kill -TERM $agent 2> /dev/null; exit 1" $s; done
+wait $agent`,
+  folder,
+  ...argv,
+];
 
 // Returns Codex's review command, mounts and environment. The command reads the review's prompt
 // on stdin and the answer's shape from the review's folder. Every review shares Skelcrew's Codex
 // folder, which holds what Codex reads as instructions. So the reviewer sees a throwaway copy of
-// it, and only its sessions and the login folder reach the real ones. Its skills/ stays empty,
+// it, where only its sessions reach the real ones, and its own copy of the login stands in for
+// Skelcrew's. The copy is returned too, to remove once the review ends. Its skills/ stays empty,
 // as a copy there would steer every later review, so the repository's skills go into the
 // review's own folder and are returned for the prompt to list.
 // The command starts Codex through skillsOffStep, once the review's view is the submitted
@@ -468,12 +491,12 @@ async function reviewCommand(given: {
   skills?: SkillsFrom;
 }) {
   const { home, folder, model, signal } = given;
-  // Skelcrew's own CODEX_HOME, with its login shared out and a sessions folder to keep.
+  // Skelcrew's own CODEX_HOME, its own login and a sessions folder to keep.
   const skelcrewCodexHome = codexHome(home);
-  const login = shareLogin(home);
+  const own = ownLogin(home, skelcrewCodexHome);
   const sessions = join(skelcrewCodexHome, "sessions");
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
-  // The reviewer gets a throwaway copy of it, with the real sessions and login mounted in.
+  // The reviewer gets a throwaway copy of it, with the real sessions mounted in.
   const copy = join(folder, "codex");
   const { mounts, at } = await throwawayMounts({
     source: skelcrewCodexHome,
@@ -481,7 +504,7 @@ async function reviewCommand(given: {
     signal,
     kept: ["sessions"],
   });
-  mounts.push("--bind", sessions, sessions, "--bind", login, login);
+  mounts.push("--bind", sessions, sessions);
   // A copy at another path can't have the real one mounted into it, so it links to it.
   if (at !== skelcrewCodexHome) symlinkSync(sessions, join(at, "sessions"));
   // --no-daemon belongs to codex itself, not to exec: without it Codex may start a
@@ -494,7 +517,24 @@ async function reviewCommand(given: {
   options.push("-");
   const command = withSkillsOff(2, ["--no-daemon", "exec", ...options]);
   const skills = given.skills ? copySkills(given.skills, join(folder, "skills"), home) : [];
-  return { command, mounts, env: { CODEX_HOME: at }, skills };
+  // The links in Skelcrew's CODEX_HOME lead to its own login. In place, the review's copy is
+  // mounted there instead. A copy at another path links to the review's copy. It is made last,
+  // and removed if a step after it fails, so a review that never started leaves none behind.
+  const login = reviewLogin(home);
+  try {
+    if (await copyLogin(home, login)) {
+      if (at === skelcrewCodexHome) mounts.push("--bind", login, own);
+      else {
+        for (const file of ["auth.json", "auth.lock"]) rmSync(join(at, file), { force: true });
+        symlinkSync(join(login, "auth.json"), join(at, "auth.json"));
+        mounts.push(...rw(login));
+      }
+    }
+  } catch (error) {
+    dropLogin(login);
+    throw error;
+  }
+  return { command, mounts, env: { CODEX_HOME: at }, skills, login };
 }
 
 // Returns the reviewer's answer from the file Codex wrote it to, for the reviewer to check
