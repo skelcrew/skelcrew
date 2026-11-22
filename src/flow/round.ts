@@ -191,7 +191,8 @@ async function describePr(
   // A newer submit's push waits for this one, so its own edit comes next and says what holds.
   if (signal.aborted) return;
   if (edited === true) {
-    savePrDescription(db, thread.owner, thread.repo, pr, body, Date.now());
+    if (!savePrDescription(db, thread.owner, thread.repo, pr, body, Date.now()))
+      await refreshPr(db, repository, pr).catch(() => null);
     record(db, folder, {}, `replaced PR #${pr}'s description`);
     return;
   }

@@ -141,32 +141,35 @@ ${closes()}`),
 });
 
 // A poll under way as a submit replaced the PR's description brings the forge's answer from
-// before the edit. It never puts the older description back, though the copy hadn't the PR yet.
-test("the forge's answer from before Skelcrew replaced a PR's description keeps the new one", () => {
+// before the edit. It never puts the older description back, even after a newer answer came,
+// and a PR the copy hadn't yet takes the new one as it comes in.
+test("the forge's answers from before Skelcrew replaced a PR's description keep the new one", () => {
   const pr = (body: string) => JSON.stringify(prItem("7", "Add export", { body }));
   const bodies = run(`const body = () => prOf(db, "simon", "app", 7)?.body ?? null;
+const answer = (text, asked) =>
+  saveItems(db, "simon", "app", withDescriptions("simon", "app", [text], asked), []);
 const said = [];
-const asked = Date.now() - 1000;
-savePrDescription(db, "simon", "app", 7, "Round 2", Date.now() - 500);
+const old = Date.now() - 1000;
+said.push(savePrDescription(db, "simon", "app", 7, "Round 2", Date.now() - 500), body());
+answer(${pr("Round 1")}, old);
 said.push(body());
-saveItems(db, "simon", "app", withDescriptions("simon", "app", [${pr("Round 1")}], asked), []);
+answer(${pr("Round 2")}, Date.now() - 200);
+answer(${pr("Round 1")}, old);
 said.push(body());
-savePrDescription(db, "simon", "app", 7, "Round 3", Date.now() - 500);
+said.push(savePrDescription(db, "simon", "app", 7, "Round 3", Date.now() - 100), body());
+answer(${pr("Edited on GitHub")}, Date.now());
 said.push(body());
-saveItems(db, "simon", "app", withDescriptions("simon", "app", [${pr("Round 2")}], asked), []);
-said.push(body());
-const later = Date.now();
-saveItems(db, "simon", "app", withDescriptions("simon", "app", [${pr("Edited on GitHub")}], later), []);
-said.push(body());
-saveItems(db, "simon", "app", withDescriptions("simon", "app", [${pr("Edited again")}], asked), []);
+answer(${pr("Round 3")}, old);
 said.push(body());
 console.log(JSON.stringify(said));`);
   expect(bodies).toEqual([
+    false,
     null,
     "Round 2",
-    "Round 3",
+    "Round 2",
+    true,
     "Round 3",
     "Edited on GitHub",
-    "Edited again",
+    "Edited on GitHub",
   ]);
 });
