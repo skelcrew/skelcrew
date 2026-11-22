@@ -138,12 +138,12 @@ test("Ctrl-\\ in the sidebar leaves a question there open", async () => {
   open("lead");
   await ready("lead");
   press("M-1");
-  await until(() => / 31\b/.test(selected()) && onDetails(), "APP-31 in Backlog");
+  await until(() => / #31\b/.test(selected()) && onDetails(), "APP#31 in Backlog");
   type("s");
-  await until(() => footer().includes("Start APP-31? y/n"), "the question");
+  await until(() => footer().includes("Start APP#31? y/n"), "the question");
   press("C-\\");
   await Bun.sleep(300);
-  expect(footer()).toContain("Start APP-31? y/n");
+  expect(footer()).toContain("Start APP#31? y/n");
   expect(typingToSidebar()).toBe(true);
 });
 

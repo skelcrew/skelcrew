@@ -195,7 +195,7 @@ test("the agent's height stays as you switch", async () => {
 const aboveFooter = () => (seen().split("\n")[28] ?? "").trimEnd();
 
 test("the footer runs across the screen under the boxes' line, with where you type, move and quit, then what Esc stops", async () => {
-  sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
+  sql("UPDATE threads SET harness = 'codex' WHERE task = 't7'");
   open("lead");
   await ready("lead");
   const lead = "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude";

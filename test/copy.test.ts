@@ -47,7 +47,7 @@ ${code}`;
     stderr: "pipe",
   });
   if (!ran.success) throw new Error(ran.stderr.toString());
-  return JSON.parse(ran.stdout.toString());
+  return JSON.parse(ran.stdout.toString().trim().split("\n").at(-1) ?? "");
 }
 
 test("open tasks read newest first", () => {

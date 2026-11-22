@@ -38,7 +38,8 @@ export const Thread = z.object({
   owner: z.string(),
   // The repository's name on its forge, or its remote's path, without the owner.
   repo: z.string(),
-  // The task's ID in its tracker, such as 12, or, with no task there, Skelcrew's own, such as t1.
+  // The task's own ID, a t and its number, such as t1, or the name it had before every task took
+  // a number, such as 12 for issue #12, until the daemon renumbers it.
   task: z.coerce.string(),
   folder: z.string(),
   branch: z.string(),
@@ -263,6 +264,11 @@ export const Thread = z.object({
   // keeps and counts the rounds from. Null in a row from before Skelcrew kept it, and for one it
   // can't read, which the ledger reads from the row's own counts instead.
   round_log: savedJson("tasks.round_log", RoundEvent.array().nullable(), null),
+  // The tracker's ID of the task's issue, such as 12, or null for a task with no issue.
+  issue: z.string().nullable(),
+  // The name the task had before every task took a number, such as 12 or wr4, which still
+  // reaches it, or null.
+  alias: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -273,13 +279,20 @@ export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ??
 // finding a builder whose ID Skelcrew doesn't have. A host can still list an old one that
 // ended beside one that runs, so every match is given. The builder's
 // task label is its thread's name when it started: its repository's short name or, once another
-// repository shares that, its owner and name, then its task's ID. Either is matched whole, so
-// task 12 never takes the builder of task other-12. The case is ignored, as a label is lowercase
-// while a builder started before held its repository's name as it was.
+// repository shares that, its owner and name, then its task's number, such as 12, its ID, such
+// as t12, from before names dropped the t, or the old name it had then.
+// Either is matched whole, so task 12 never takes the builder of task other-12. The case is
+// ignored, as a label is lowercase while a builder started before held its repository's name as
+// it was.
 export async function labelledBuilders(host: PluginHost, thread: Thread) {
-  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`].map(
-    (name) => name.toLowerCase(),
-  );
+  const ids = [
+    thread.task,
+    taskLabel(thread.task),
+    ...(thread.alias === null ? [] : [thread.alias]),
+  ];
+  const names = ids
+    .flatMap((id) => [`${thread.repo}-${id}`, `${fullNameOf(thread)}-${id}`])
+    .map((name) => name.toLowerCase());
   return (await listSessions(host)).filter(
     ({ labels }) =>
       labels?.role === "builder" &&
@@ -542,10 +555,62 @@ export function sessionTitle(db: Database, thread: Thread): string {
 // The renames under way of each thread's builder, by its folder, each settling once it is over.
 const renaming = new Map<string, Promise<void>>();
 
-// Returns a task's name as people read it: its repository's name and its task's ID, in
-// uppercase as Linear shows its issues, such as APP-12 or APP-T103. Skelcrew stores and matches
-// names in lowercase, and a name is typed in any case, so only what people read changes.
-export const taskName = (repository: string, task: string) => `${repository}-${task}`.toUpperCase();
+// Returns a task's name as people read it: its repository's name and its task's number, in
+// uppercase, such as APP-103 for t103. An issue no task has yet goes by its tracker's ID after a
+// #, such as APP#12, and a task not yet renumbered by its old name, such as APP-12. Skelcrew
+// stores and matches names in lowercase, and a name is typed in any case, so only what people
+// read changes.
+export const taskName = (repository: string, task: string) =>
+  `${repository}${task.startsWith("#") ? "" : "-"}${taskLabel(task)}`.toUpperCase();
+
+// Returns a task's name without its repository, such as 103 for t103, for a list that already
+// names the repository.
+export const taskLabel = (task: string) => task.replace(/^t(?=\d+$)/i, "").toUpperCase();
+
+// Returns the task a name typed in the repository stands for, as Skelcrew stores it. A number
+// is the task of that number, such as t158 for APP-158, else the task that had it as its old
+// name, such as APP-483 from when tasks were named after their issues, else the issue of that ID
+// in Skelcrew's copy of the tracker. A # and an ID is the task on that issue, else the issue
+// itself, as #12. A word that names none of them comes back as Skelcrew stores it, so the
+// caller says there is no such task.
+export function resolveTask(db: Database, repository: string, typed: string): string {
+  const { owner, repo } = findRepository(db, repository);
+  const found = (sql: string, ...args: string[]) =>
+    z
+      .object({ task: z.coerce.string() })
+      .nullable()
+      .parse(db.query(sql).get(owner, repo, ...args))?.task ?? null;
+  const where = "WHERE owner = ? AND repo = ?";
+  const own = `t${typed}`;
+  const issue = (id: string) =>
+    found(
+      `SELECT task FROM task_threads ${where} AND lower(issue) = lower(?) ORDER BY rowid DESC`,
+      id,
+    ) ??
+    found(
+      `SELECT '#' || id AS task FROM items ${where} AND kind = 'task' AND lower(id) = lower(?)`,
+      id,
+    ) ??
+    `#${id}`;
+  if (typed.startsWith("#")) return issue(typed.slice(1));
+  const numbered = /^\d+$/.test(typed);
+  if (
+    numbered &&
+    (found(`SELECT task FROM task_threads ${where} AND task = ?`, own) ??
+      found(`SELECT task FROM backlog ${where} AND task = ?`, own))
+  )
+    return own;
+  const kept =
+    found(`SELECT task FROM task_threads ${where} AND alias = ?`, typed) ??
+    found(`SELECT task FROM task_threads ${where} AND CAST(task AS TEXT) = ?`, typed);
+  if (kept !== null) return kept;
+  if (
+    numbered &&
+    found(`SELECT id AS task FROM items ${where} AND kind = 'task' AND id = ?`, typed)
+  )
+    return issue(typed);
+  return numbered ? own : typed;
+}
 
 // Returns the thread's name, such as APP-12, for replies. It uses the repository's name
 // now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer

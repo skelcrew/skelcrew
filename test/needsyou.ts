@@ -14,6 +14,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  numberedBefore,
   read,
   runSkel,
   source,
@@ -170,6 +171,8 @@ export function addApp(name = "app"): void {
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", `${name}.git`));
+  // Its task on issue #12 is APP-12.
+  numberedBefore(join(home, "github", "simon", `${name}.git`), 11);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo, lead_session) VALUES (?, 'simon', ?, ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}, crypto.randomUUID()]);
 openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'");`;

@@ -73,7 +73,7 @@ sc ps             # the threads, with their status and which need you
 sc show APP-12    # one task: its threads, PR, checks and review
 ```
 
-Use your task's name where these say `APP-12`. The lead and `sc ls` show it: a task from an issue is named after it, such as `APP-12`, and one you asked the lead for is named like `APP-T100`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
+Use your task's name where these say `APP-12`. The lead and `sc ls` show it: every task gets a number of Skelcrew's, such as `APP-12`, with its issue beside it, such as `#483`. An issue no task has yet goes by `app#483`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
 
 ```sh
 sc merge --when-ready APP-12

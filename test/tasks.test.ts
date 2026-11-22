@@ -61,6 +61,7 @@ function run(code: string, ...args: string[]): string {
 const showAll = `import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
 const list = await import(${JSON.stringify(source("flow/list.ts"))});
 const { repositoryTabs } = await import(${JSON.stringify(source("list/rows.ts"))});
+const { resolveTask } = await import(${JSON.stringify(source("flow/thread.ts"))});
 const db = openDb();
 if (process.argv.includes("move")) moveToTasks(db);
 const tasks = ["app-12", "app-13", "app-14", "app-15", "app-16", "app-17", "app-t1", "notes-t1", "notes-t2"];
@@ -72,7 +73,7 @@ const shown = {
   show: await Promise.all(
     tasks.map((name) => {
       const [repo, task] = name.split("-");
-      return list.showTask(db, { repo, task }).catch(String);
+      return list.showTask(db, { repo, task: resolveTask(db, repo, task) }).catch(String);
     }),
   ),
   tabs: repositoryTabs(db, null),
@@ -103,13 +104,15 @@ function failedWaits(saved: ReturnType<typeof shownBefore>): void {
   saved.tabs[0] = { ...saved.tabs[0], needYou: 1, colour: "yellow" };
 }
 
-// Changes the names of tasks the release before tasks showed, such as app-12, to how Skelcrew
-// shows them now, in uppercase. A session is named by its thread's folder, which stays
-// lowercase.
+// Changes the names of tasks the release before tasks showed, such as app-12 and app-t1, to how
+// Skelcrew shows them now, in uppercase and without the t, such as APP-12 and APP-1. A session is
+// named by its thread's folder, which stays lowercase.
 function namesInUppercase(saved: ReturnType<typeof shownBefore>): ReturnType<typeof shownBefore> {
   return JSON.parse(JSON.stringify(saved), (key, value) =>
     typeof value === "string" && key !== "session"
-      ? value.replace(/\b(?:app|notes)-t?\d+\b/g, (name) => name.toUpperCase())
+      ? value.replace(/\b(?:app|notes)-t?\d+\b/g, (name) =>
+          name.toUpperCase().replace(/-T(?=\d)/, "-"),
+        )
       : value,
   );
 }
@@ -163,10 +166,12 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
   expect(tables(dbFile())).not.toContain("tasks");
   // After the move, it shows them just the same.
   expect(JSON.parse(run(showAll, "move"))).toEqual(before);
-  // sc ls lists each open issue sc issue ls listed, with its title and its thread's status.
+  // sc ls lists each open issue sc issue ls listed, with its title and its thread's status. An
+  // issue no task has yet, such as app-17, goes by its issue, as APP#17.
   type Task = { task: string };
+  const nowNamed = (name: string) => (name === "APP-17" ? "APP#17" : name);
   for (const row of issues)
-    expect(ls.find((task: Task) => task.task === row.issue)).toMatchObject({
+    expect(ls.find((task: Task) => task.task === nowNamed(row.issue))).toMatchObject({
       title: row.title,
       thread: row.thread,
     });
@@ -175,7 +180,7 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
   const named = (name: string) =>
     shown.find((task: Task | string) => typeof task !== "string" && task.task === name);
   for (const task of show.filter((task: unknown) => typeof task !== "string"))
-    expect(named(task.issue)).toMatchObject({
+    expect(named(nowNamed(task.issue))).toMatchObject({
       title: task.title,
       body: task.body,
       threads: task.thread ? [task.thread] : [],
@@ -191,10 +196,10 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
     "APP-14": "working",
     "APP-15": "working",
     "APP-16": "closed",
-    "APP-17": "issue",
-    "APP-T1": "working",
-    "NOTES-T1": "working",
-    "NOTES-T2": "working",
+    "APP#17": "issue",
+    "APP-1": "working",
+    "NOTES-1": "working",
+    "NOTES-2": "working",
   };
   expect(
     Object.fromEntries(ls.map((row: Task & { stage: string }) => [row.task, row.stage])),

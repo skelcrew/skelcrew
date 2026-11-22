@@ -209,7 +209,7 @@ exec ${Bun.which("git") ?? "git"} "$@"`,
   expect(claims()).toEqual([]);
   expect(thread()).toEqual({});
   git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
-  await until(() => thread().task === 12);
+  await until(() => thread().issue === "12");
   expect(claims()).toEqual([claim12]);
 });
 
@@ -251,7 +251,7 @@ test("a repository emptied after Skelcrew cloned it starts no thread until its n
   expect(read(daemonLog())).not.toContain("moved its default branch");
   expect(git(skelcrewClone, "symbolic-ref", "--short", "HEAD").trim()).toBe("develop");
   expect(git(skelcrewClone, "rev-parse", "HEAD").trim()).toBe(first);
-  await until(() => thread().task === 12);
+  await until(() => thread().issue === "12");
   expect(claims()).toEqual([claim12]);
 });
 

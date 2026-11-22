@@ -3,7 +3,6 @@
 import type { Database } from "bun:sqlite";
 import { errorText } from "../format.ts";
 import { assignTask, claimTask, trackerOf } from "../plugins/ask.ts";
-import { ownTask } from "./copy.ts";
 import { readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
 
 // The last claim, assignment or removal asked for each thread, by its folder. Each waits for
@@ -28,20 +27,21 @@ function inOrder(folder: string, failed: string, work: () => Promise<void>): voi
 
 // Claims the thread's issue, when `claim` says to, and assigns it to you, then saves that
 // Skelcrew assigned you, when it did. sc start claims as a labeled start does, so the issue shows
-// Skelcrew took it, but starts the thread whatever the answer. A thread with no issue, such as
-// app-t1, or in a repository with no tracker, has nothing to assign.
+// Skelcrew took it, but starts the thread whatever the answer. A thread with no issue, or in a
+// repository with no tracker, has nothing to assign.
 export function assignIssue(db: Database, thread: Thread, claim: boolean): void {
   inOrder(thread.folder, `couldn't assign you ${threadName(db, thread)}'s issue`, async () => {
     const repository = repositoryOf(db, thread);
-    if (ownTask(thread.task) || trackerOf(db, repository) === null) return;
+    const { issue } = thread;
+    if (issue === null || trackerOf(db, repository) === null) return;
     const name = threadName(db, thread);
     if (claim)
-      await claimTask(db, repository, thread.task).catch((error) =>
+      await claimTask(db, repository, issue).catch((error) =>
         console.log(`couldn't claim ${name}'s issue: ${errorText(error)}`),
       );
     // A false answer leaves what the thread had: you were assigned already, which may be
     // Skelcrew's own doing before the thread failed and started over.
-    if (await assignTask(db, repository, thread.task, true))
+    if (await assignTask(db, repository, issue, true))
       record(db, thread.folder, { assigned: true }, "assigned you its issue");
   });
 }
@@ -54,8 +54,8 @@ export function unassignIssue(db: Database, folder: string): void {
   const name = threadName(db, readThread(db, folder));
   inOrder(folder, `couldn't take you off ${name}'s issue`, async () => {
     const thread = readThread(db, folder);
-    if (!thread.assigned) return;
-    await assignTask(db, repositoryOf(db, thread), thread.task, false);
+    if (!thread.assigned || thread.issue === null) return;
+    await assignTask(db, repositoryOf(db, thread), thread.issue, false);
     record(db, folder, { assigned: false }, "took you off its issue");
   });
 }

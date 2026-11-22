@@ -2,7 +2,6 @@
 // commands that ask it both go by these.
 import { z } from "zod";
 import { FlowName } from "../flows.ts";
-import { TaskId } from "./copy.ts";
 import type { Thread } from "./thread.ts";
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
@@ -15,6 +14,13 @@ const TaskBody = z.string().regex(/\S/);
 
 // A thread's short title for the sidebar, which says nothing when blank, so one is refused.
 const ShortTitle = z.string().trim().min(1);
+
+// A task as a command names it, after its repository: its number, such as 158, an old name,
+// such as t158 or 483, or a # and its issue's ID in the tracker, such as #483.
+const TaskId = z
+  .string()
+  .max(65)
+  .regex(/^#?[A-Za-z0-9][\w-]*$/);
 
 // A request's `repo` names a repository the way a command does: by its name in Skelcrew or its
 // owner/name. It keeps that word because clients on other machines send it.

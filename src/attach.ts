@@ -6,7 +6,7 @@ import { askAboutAgents } from "./approved-agents.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
-import { builderSession, findThread, taskName } from "./flow/thread.ts";
+import { builderSession, findThread, resolveTask, threadName } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { ensureDaemon } from "./machine/service.ts";
 import { attachOnHost } from "./plugins/runtime.ts";
@@ -63,11 +63,11 @@ export async function attachToThread(
   task: string,
 ): Promise<void> {
   const db = openDb();
-  const thread = findThread(db, repository, task);
+  const thread = findThread(db, repository, resolveTask(db, repository, task));
   const { host, id } = await builderSession(db, sessions, thread);
   if (!(await agentRuns(host, id)))
     throw new Error(
-      `${taskName(repository, task)}'s builder isn't running: the thread is ${thread.status}`,
+      `${threadName(db, thread)}'s builder isn't running: the thread is ${thread.status}`,
     );
   await ensureDaemon();
   if (typeof host !== "string") return attachOnHost(host, id);

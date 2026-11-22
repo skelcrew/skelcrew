@@ -520,14 +520,14 @@ export function decideBranch(
   };
 }
 
-// A task labeled to start, by its ID and title.
+// An issue labeled to start, by its ID and title.
 type Labeled = { id: string; title: string };
 
-// Returns the tasks labeled to start that get a thread: those with no thread at all. A thread
+// Returns the issues labeled to start that get a thread: those no task has. A thread
 // that failed, was stopped or is done keeps its row, so its label never starts it again;
 // only sc start does.
 export function labeledToStart(threads: Thread[], labeled: Labeled[]): Labeled[] {
-  return labeled.filter((task) => !threads.some((t) => t.task === task.id));
+  return labeled.filter((issue) => !threads.some((t) => t.issue === issue.id));
 }
 
 // Returns the body of Skelcrew's review comment on a PR: which round and commit it covers, then

@@ -63,6 +63,8 @@ const state: Thread = {
   host_id: null,
   merged: false,
   issue_link: null,
+  issue: null,
+  alias: null,
   closes: null,
   merge_plan: null,
   merge_id: null,

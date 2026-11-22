@@ -117,7 +117,9 @@ console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, $
 function shown(task: string): string {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { printTask, showTask } from ${JSON.stringify(source("flow/list.ts"))};
-printTask(await showTask(openDb(), { repo: "app", task: ${JSON.stringify(task)} }), false);`;
+import { resolveTask } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+printTask(await showTask(db, { repo: "app", task: resolveTask(db, "app", ${JSON.stringify(task)}) }), false);`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!run.success) throw new Error(run.stderr.toString());
   return run.stdout.toString();
@@ -143,7 +145,7 @@ test("the lead comes first, then what needs you, then what is in the task queue,
     ["needs you", "building", "APP-12", "Rate limit the API", "question", "", "2m"],
     ["needs you", "ready", "APP-14", "Fix the export header", "ready to merge", "#41", ""],
     ["task queue", "building", "APP-9", "Old work", "paused", "", "1m"],
-    ["backlog", "backlog", "APP-31", "Export as CSV", "", "", "14d"],
+    ["backlog", "backlog", "APP#31", "Export as CSV", "", "", "14d"],
     ["building", "building", "APP-7", "Login redirect", "working", "", "5m"],
   ]);
 });
@@ -184,7 +186,7 @@ test("an approved task with a merge armed shows under Ready, not Needs you", () 
 // reviewed, while it waits on CI and once it is ready, and m merges the commit last submitted.
 test("a task on a flow with no review shows not reviewed, and merges at its last submit", () => {
   sql(
-    "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview' WHERE task = '14';",
+    "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview' WHERE task = 't14';",
   );
   const row = rows().find((candidate) => candidate.name === "APP-14");
   // It waits on you to merge it, so it is under Needs you, saying so and that nobody reviewed it.
@@ -208,7 +210,7 @@ test("a task on a flow with no review shows not reviewed, and merges at its last
   });
   // Waiting on CI, it is under Checks.
   sql(`UPDATE threads SET needs_you = 0 WHERE folder = 'app-14';
-UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
+UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = 't14';`);
   expect(rows().find((candidate) => candidate.name === "APP-14")).toMatchObject({
     part: "checks",
     says: "checks",
@@ -221,7 +223,7 @@ UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
 test("a failed submit on a flow with no review shows as not reviewed, never a failed round", () => {
   sql(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE folder = 'app-14';
 UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview',
-  submitting = 'Round 2' WHERE task = '14';`);
+  submitting = 'Round 2' WHERE task = 't14';`);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { listTasks, listThreads, printTasks, printThreads } from ${JSON.stringify(source("flow/list.ts"))};
 const db = openDb();
@@ -261,7 +263,7 @@ console.log(JSON.stringify(listThreads(openDb(), "site")));`;
 // The default flow gives 3 rounds of changes, so 4 is past the limit. A review run again after it
 // approved, so the task is ready to merge, and the round limit no longer needs you.
 test("a task approved past the round limit waits on you to merge, not on the limit", () => {
-  sql("UPDATE tasks SET rounds = 4 WHERE task = '14';");
+  sql("UPDATE tasks SET rounds = 4 WHERE task = 't14';");
   const row = rows().find((candidate) => candidate.name === "APP-14");
   expect(row).toMatchObject({ section: "needs you", says: "ready to merge", needsYou: false });
 });
@@ -316,11 +318,11 @@ test("a claim the tracker hasn't taken yet is what the queue waits on, with buil
     ["APP-21", "Starts next: APP-21 waits for its issue's claim to reach the tracker"],
     ["APP-20", "2nd in line: APP-21 waits for its issue's claim to reach the tracker"],
   ]);
-  expect(all.find((row) => row.name === "APP-31")?.start?.ask).toBe(
-    "Queue APP-31? APP-21 waits for its issue's claim to reach the tracker, so it starts after the 2 queued. y/n",
+  expect(all.find((row) => row.name === "APP#31")?.start?.ask).toBe(
+    "Queue APP#31? APP-21 waits for its issue's claim to reach the tracker, so it starts after the 2 queued. y/n",
   );
   // A builder's place is free, so a task on Backlog isn't offered a start over the limit.
-  expect(all.find((row) => row.name === "APP-31")?.startNow).toBeNull();
+  expect(all.find((row) => row.name === "APP#31")?.startNow).toBeNull();
 });
 
 // A paused thread's last change can come from a poll, such as its CI, so the newest task comes
@@ -376,10 +378,10 @@ console.log(buildersNote(openDb(), { owner: "simon", repo: "app" }));`;
   expect(drawn.map((line) => Bun.stripANSI(line).trimEnd())).toContain(
     " 0 Task queue 3  Building 3/3 · 2 queued",
   );
-  expect(all.find((row) => row.name === "APP-31")?.start).toEqual({
-    ask: "Queue APP-31? 3 of 3 builders busy, so it starts after the 2 queued. y/n",
-    working: "Queueing APP-31…",
-    request: { command: "start", repo: "simon/app", task: "31" },
+  expect(all.find((row) => row.name === "APP#31")?.start).toEqual({
+    ask: "Queue APP#31? 3 of 3 builders busy, so it starts after the 2 queued. y/n",
+    working: "Queueing APP#31…",
+    request: { command: "start", repo: "simon/app", task: "#31" },
     queues: true,
   });
   // Only a queued task in the task queue can be moved in the queue, and only it offers the key.
@@ -393,7 +395,7 @@ console.log(buildersNote(openDb(), { owner: "simon", repo: "app" }));`;
   ).not.toContain("reorder");
   expect(
     keysFor(
-      all.find((row) => row.name === "APP-31"),
+      all.find((row) => row.name === "APP#31"),
       1,
     ),
   ).toContain("s queue");
@@ -405,13 +407,13 @@ import { buildersNote } from ${JSON.stringify(source("list/rows.ts"))};
 console.log(JSON.stringify(buildersNote(openDb(), { owner: "simon", repo: "app" })));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stdout.toString().trim()).toBe('""');
-  expect(rows().find((row) => row.name === "APP-31")?.start?.queues).toBe(false);
+  expect(rows().find((row) => row.name === "APP#31")?.start?.queues).toBe(false);
 });
 
 // The copy of the forge drops a closed PR once its thread is done, so the task keeps the link.
 test("a merged task keeps its PR's link after the copy of the forge drops the PR", () => {
   sql(
-    "UPDATE threads SET status = 'done' WHERE folder = 'app-14'; UPDATE tasks SET merged = 1 WHERE task = '14';",
+    "UPDATE threads SET status = 'done' WHERE folder = 'app-14'; UPDATE tasks SET merged = 1 WHERE task = 't14';",
   );
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { prOf, saveItems } from ${JSON.stringify(source("flow/copy.ts"))};
@@ -431,7 +433,7 @@ console.log(prOf(db, "simon", "app", 41) === null ? "dropped" : "kept");`;
 // stand in for the new attempt's, which has none yet.
 test("a task with no PR this attempt opens no saved link from an earlier one", () => {
   sql(
-    `UPDATE tasks SET pr = NULL, pr_link = 'https://github.com/simon/app/pull/1' WHERE task = '14';`,
+    `UPDATE tasks SET pr = NULL, pr_link = 'https://github.com/simon/app/pull/1' WHERE task = 't14';`,
   );
   expect(rows().find((row) => row.name === "APP-14")?.link).toBeNull();
 });
@@ -546,7 +548,7 @@ test("a task's details say when it last changed, by the clock and how long ago",
 test("a task in Backlog has the same time in its details as on its row", () => {
   // An issue never started: when it was last updated.
   const updated = changedAt(Date.parse("2026-11-05T10:00:00Z"), now);
-  expect(rowAndDetails("APP-31")).toEqual({
+  expect(rowAndDetails("APP#31")).toEqual({
     when: "14d",
     section: "backlog",
     changed: `last change ${updated}, 14d ago`,
@@ -555,7 +557,7 @@ test("a task in Backlog has the same time in its details as on its row", () => {
   sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
   VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
   const filed = changedAt(Date.parse("2026-11-07T10:00:00Z"), now);
-  expect(rowAndDetails("APP-T5")).toEqual({
+  expect(rowAndDetails("APP-5")).toEqual({
     when: "12d",
     section: "backlog",
     changed: `last change ${filed}, 12d ago`,
@@ -585,7 +587,7 @@ test("an issue whose work ended is back under Backlog, to start again", () => {
     rows()
       .filter((row) => row.part === "backlog")
       .map((row) => row.name),
-  ).toEqual(["APP-31", "APP-7"]);
+  ).toEqual(["APP#31", "APP-7"]);
 });
 
 // A task filed in Skelcrew's backlog waits beside the issues, by when it was filed, and Enter asks
@@ -596,13 +598,13 @@ test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest
     ('simon', 'app', 't6', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
   const backlog = rows().filter((row) => row.part === "backlog");
   expect(backlog.map((row) => [row.name, row.title, row.when])).toEqual([
-    ["APP-T5", "Add export", "12d"],
-    ["APP-31", "Export as CSV", "14d"],
-    ["APP-T6", "Add import", "18d"],
+    ["APP-5", "Add export", "12d"],
+    ["APP#31", "Export as CSV", "14d"],
+    ["APP-6", "Add import", "18d"],
   ]);
   expect(backlog[0]?.start).toEqual({
-    ask: "Start APP-T5? y/n",
-    working: "Starting APP-T5…",
+    ask: "Start APP-5? y/n",
+    working: "Starting APP-5…",
     request: { command: "start", repo: "simon/app", task: "t5" },
     queues: false,
   });
@@ -627,7 +629,7 @@ test("Backlog shows its newest ten issues, then a row for the rest, and every on
   const all = rows();
   const cut = cutBacklog(all, false).filter((row) => row.part === "backlog");
   expect(cut.map((row) => row.name)).toEqual([
-    ...Array.from({ length: 10 }, (_, i) => `APP-${100 + i}`),
+    ...Array.from({ length: 10 }, (_, i) => `APP#${100 + i}`),
     "3 more",
   ]);
   expect(cut.at(-1)).toMatchObject({ more: 3, start: null, session: null });
@@ -636,7 +638,7 @@ test("Backlog shows its newest ten issues, then a row for the rest, and every on
   expect(sectionHeadings(all, new Set())[2]).toMatchObject({ section: "backlog", count: 13 });
   // Asked for, Backlog is whole. One of ten or fewer always is.
   expect(cutBacklog(all, true)).toEqual(all);
-  const few = all.filter((row) => row.part !== "backlog" || row.name < "APP-105");
+  const few = all.filter((row) => row.part !== "backlog" || row.name < "APP#105");
   expect(cutBacklog(few, false)).toEqual(few);
   // It takes one line, under the issues.
   const shown = cutBacklog(all, false).filter((row) => ["lead", "backlog"].includes(row.part));
@@ -648,9 +650,9 @@ test("Backlog shows its newest ten issues, then a row for the rest, and every on
 test("Enter asks to start an issue, and m to merge a ready task at the commit you saw", () => {
   const [issue] = rows().filter((row) => row.part === "backlog");
   expect(issue?.start).toEqual({
-    ask: "Start APP-31? y/n",
-    working: "Starting APP-31…",
-    request: { command: "start", repo: "simon/app", task: "31" },
+    ask: "Start APP#31? y/n",
+    working: "Starting APP#31…",
+    request: { command: "start", repo: "simon/app", task: "#31" },
     queues: false,
   });
   const [ready] = rows().filter((row) => row.part === "ready");
@@ -708,7 +710,7 @@ ${itemSql("app", "pr", task + 100, `PR ${task}`, "2026-11-06T10:00:00Z", { head:
 
 // An approval from before Skelcrew saved its commit can't say which commit it stands for.
 test("an approval with no saved commit can't be merged here, and says so", () => {
-  sql("UPDATE tasks SET reviewed_commit = NULL WHERE task = '14';");
+  sql("UPDATE tasks SET reviewed_commit = NULL WHERE task = 't14';");
   const merge = rows().find((row) => row.name === "APP-14")?.merge;
   expect(merge).toEqual({
     refused:
@@ -748,18 +750,18 @@ test("a ready task whose approved head has no checks yet can't be merged, unless
   expect(row()?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
-  sql("UPDATE tasks SET checks = NULL WHERE task = '14';");
+  sql("UPDATE tasks SET checks = NULL WHERE task = 't14';");
   expect(row()?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
   expect(row()?.ci).toBeNull();
   // A wait that ended with no CI on another commit says nothing of this one.
-  sql("UPDATE tasks SET no_ci = 'f00d' WHERE task = '14';");
+  sql("UPDATE tasks SET no_ci = 'f00d' WHERE task = 't14';");
   expect(row()?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
   // Once the wait for CI's first check on the approved head ended with none, it merges.
-  sql(`UPDATE tasks SET no_ci = '${approved}' WHERE task = '14';`);
+  sql(`UPDATE tasks SET no_ci = '${approved}' WHERE task = 't14';`);
   const merge = row()?.merge;
   expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main? y/n");
   // No CI runs there, so the row shows no CI mark.
@@ -824,7 +826,7 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
 // Ctrl-\ comes back only from tmux, so the list offers it only where Enter attaches there.
 test("a row knows whether Enter attaches to its agent on tmux", () => {
   const onTmux = () => Object.fromEntries(rows().map((row) => [row.name, row.tmux]));
-  expect(onTmux()).toMatchObject({ lead: true, "APP-7": true, "APP-14": false, "APP-31": false });
+  expect(onTmux()).toMatchObject({ lead: true, "APP-7": true, "APP-14": false, "APP#31": false });
   sql("UPDATE threads SET host = 'fake' WHERE folder = 'app-7';");
   expect(onTmux()["APP-7"]).toBe(false);
 });
@@ -854,16 +856,16 @@ test("the list printed without a terminal has every task, however many are at wo
 await runList("skel-test-${process.pid}-none", "simon/app");`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   const printed = run.stdout.toString();
-  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`${task}  Task ${task}`);
-  expect(printed).toContain("14  Fix the export header");
-  expect(printed).toContain("31  Export as CSV");
+  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`${task}   Task ${task}`);
+  expect(printed).toContain("14   Fix the export header");
+  expect(printed).toContain("#31  Export as CSV");
 });
 
 // The list reads no settings file, so it knows a thread is past its round limit from the changes
 // the review held back for you.
 test("a task past its round limit says so, from the changes its review held", () => {
   sql(
-    "UPDATE tasks SET rounds = 4, held = 'Rename it.' WHERE task = '7'; UPDATE threads SET needs_you = 1, status = 'waiting' WHERE folder = 'app-7';",
+    "UPDATE tasks SET rounds = 4, held = 'Rename it.' WHERE task = 't7'; UPDATE threads SET needs_you = 1, status = 'waiting' WHERE folder = 'app-7';",
   );
   expect(rows().find((row) => row.name === "APP-7")?.says).toBe("round limit");
 });
@@ -1030,7 +1032,7 @@ test("an open section shows its rows, and its heading is bright while a closed o
     " 0 Task queue 1",
     "",
     " 1 Backlog    1",
-    " ▸ ○ 31  Export as CSV  14d",
+    " ▸ ○ #31  Export as CSV  14d",
     "",
     " 2 Building   1",
     " 3 Reviewing  0",
@@ -1434,18 +1436,19 @@ test("a row leaves out the word its stage already says, and its builder's step t
   expect(drawn(1, 26).map((line) => line.trimEnd())).toContain("     5m");
 });
 
-// The tab names the repository, so a row needs only its task's ID. Everything else, such as
-// what Enter and the keys act on, still goes by the whole name.
-test("a task's row shows its ID without the repository, which its tab names", () => {
+// The tab names the repository, so a row needs only its task's number, or an issue no task has
+// yet as its tracker writes it. Everything else, such as what Enter and the keys act on, still
+// goes by the whole name.
+test("a task's row shows its number without the repository, which its tab names", () => {
   sql(threadSql({ task: "t5", title: "From the backlog", changed: now - 400_000 }));
   const all = rows();
   expect(all.find((row) => row.name === "APP-12")?.label).toBe("12");
-  expect(all.find((row) => row.name === "APP-31")?.label).toBe("31");
-  expect(all.find((row) => row.name === "APP-T5")?.label).toBe("T5");
+  expect(all.find((row) => row.name === "APP#31")?.label).toBe("#31");
+  expect(all.find((row) => row.name === "APP-5")?.label).toBe("5");
   expect(all.find((row) => row.name === "lead")?.label).toBe("lead");
   const lines = drawn(1, 30).map((line) => line.trimEnd());
   expect(lines).toContain(" ▸ ● 12  Rate limit the API");
-  expect(lines).toContain("   ○ T5  From the backlog");
+  expect(lines).toContain("   ○ 5   From the backlog");
   expect(lines.join("\n")).not.toContain("APP-");
 });
 
@@ -1480,7 +1483,7 @@ ${threadSql({ task: "17", title: "Failed review", status: "waiting", review_fail
 // A wide terminal used to lose the last letter of whatever reached its right edge.
 test("a row as wide as the terminal stops short of its last column, cutting only its title", () => {
   const long = "A title long enough to run past the right edge of any terminal we test here";
-  sql(`UPDATE tasks SET title = '${long}' WHERE task = '7';`);
+  sql(`UPDATE tasks SET title = '${long}' WHERE task = 't7';`);
   for (const width of [60, 61, 80]) {
     const lines = drawnWith(1, frame, { width, height: 24 }).map((line) => Bun.stripANSI(line));
     const row = lines.find((line) => line.includes("○ 7 ")) ?? "";
@@ -1630,11 +1633,11 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   expect(top.slice(7, 16)).toEqual([
     " ↑ 3 more   Needs you 2   Task queue 1",
     " 1 Backlog    1",
-    "   ○ 31  Export as CSV  14d",
+    "   ○ #31  Export as CSV  14d",
     " 2 Building   7",
-    " ▸ ○ 7   Login redirect",
+    " ▸ ○ 7    Login redirect",
     "     5m",
-    "   ○ 50  Task 50",
+    "   ○ 50   Task 50",
     "     10m",
     " ↓ 8 more   Reviewing 1   Checks 2   Ready 0   Done 0",
   ]);
@@ -1643,12 +1646,12 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   const bottom = at(18, 14);
   expect(bottom.slice(7, 16)).toEqual([
     " ↑ 11 more   Needs you 2   Task queue 1   Backlog 1   Building 7   Reviewing 1",
-    "   ○ 15  Under review",
+    "   ○ 15   Under review",
     "     #45 r1",
     " 4 Checks     2",
-    "   ○ 17  Approved too",
+    "   ○ 17   Approved too",
     "     #47 ●",
-    " ▸ ○ 16  Approved",
+    " ▸ ○ 16   Approved",
     "     #46 ●",
     " ↓ Ready 0   Done 0",
   ]);
@@ -1756,7 +1759,7 @@ function daemon(): void {
           : command === "start"
             ? { started: "Started." }
             : command === "queue move"
-              ? { said: `APP-${task} starts next` }
+              ? { said: `APP-${task.replace(/^t/, "")} starts next` }
               : mergeAnswer;
       connection.end(`${JSON.stringify(said)}\n`);
     }),
@@ -1947,9 +1950,9 @@ for (const [key, name] of [
   test(`${name} leaves the list while a question is open, and answers nothing`, async () => {
     await open();
     type("1");
-    await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
+    await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
     press("Enter");
-    await until(() => seen().includes("Start APP-31? y/n"), "the question");
+    await until(() => seen().includes("Start APP#31? y/n"), "the question");
     type(key);
     await until(() => read(join(home, "left")) === "left", "the list to leave");
     expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
@@ -2053,14 +2056,14 @@ test("Ctrl-\\ in every form, Alt-Q and Ctrl-Q do nothing on the list", async () 
 test("Ctrl-\\ in every form leaves a question open, and y then answers it", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
+  await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
   press("Enter");
-  await until(() => seen().includes("Start APP-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP#31? y/n"), "the question");
   for (const bytes of Object.values(back)) await sendBytes(bytes, true);
   await Bun.sleep(300);
-  expect(seen()).toContain("Start APP-31? y/n");
+  expect(seen()).toContain("Start APP#31? y/n");
   type("y");
-  await until(() => asked.includes("start simon/app 31"), "the start");
+  await until(() => asked.includes("start simon/app #31"), "the start");
 });
 
 // s starts a task not started yet as Enter does there, and the bottom line offers it, then says
@@ -2070,10 +2073,10 @@ test("s asks to start a task in Backlog, and y starts it", async () => {
   VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ T5 "), "the backlog task's row");
+  await until(() => here().startsWith("▸ ○ 5 "), "the backlog task's row");
   expect(seen()).toContain("s start");
   type("s");
-  await until(() => seen().includes("Start APP-T5? y/n"), "the question");
+  await until(() => seen().includes("Start APP-5? y/n"), "the question");
   type("y");
   await until(() => asked.includes("start simon/app t5"), "the start");
   // The line says what the daemon did, as the task could have been queued meanwhile.
@@ -2088,7 +2091,7 @@ test("shift+up on a queued task moves it earlier in the queue, and the line says
   await arrowTo("▸ ○ 20 ");
   expect(seen()).toContain("shift+↑↓ reorder");
   press("S-Up");
-  await until(() => asked.includes("queue move simon/app 20 -1"), "the move");
+  await until(() => asked.includes("queue move simon/app t20 -1"), "the move");
   await until(() => seen().includes("APP-20 starts next"), "its place");
   press("Down");
   await until(() => here().startsWith("▸ ○ 9 "), "the paused row");
@@ -2107,19 +2110,19 @@ test("f on a queued task, or on Backlog with every builder busy, asks to start i
   type("f");
   await until(() => seen().includes("Start APP-20 now, over the limit of 3? y/n"), "the question");
   type("y");
-  await until(() => asked.includes("start simon/app 20 now"), "the start");
+  await until(() => asked.includes("start simon/app t20 now"), "the start");
   await until(() => seen().includes("Started."), "the daemon's answer");
   press("Down");
   await until(() => here().startsWith("▸ ○ 9 "), "the paused row");
   expect(seen()).not.toContain("f start now");
   type("1");
-  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
+  await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
   expect(seen()).toContain("f start now");
   type("f");
-  await until(() => seen().includes("Start APP-31 now, over the limit of 3? y/n"), "the question");
+  await until(() => seen().includes("Start APP#31 now, over the limit of 3? y/n"), "the question");
   type("n");
   await Bun.sleep(300);
-  expect(asked.filter((line) => line.startsWith("start"))).toEqual(["start simon/app 20 now"]);
+  expect(asked.filter((line) => line.startsWith("start"))).toEqual(["start simon/app t20 now"]);
 });
 
 // With every builder busy, s on Backlog asks to queue the task, and once queued the line keeps
@@ -2128,12 +2131,12 @@ test("s on Backlog with every builder busy asks to queue it, and says what the d
   queueTwo();
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
+  await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
   expect(seen()).toContain("s queue");
   type("s");
-  await until(() => seen().includes("Queue APP-31? 3 of 3 builders busy"), "the question");
+  await until(() => seen().includes("Queue APP#31? 3 of 3 builders busy"), "the question");
   type("y");
-  await until(() => asked.includes("start simon/app 31"), "the start");
+  await until(() => asked.includes("start simon/app #31"), "the start");
   await until(() => seen().includes("Started."), "the daemon's answer");
 });
 
@@ -2248,14 +2251,14 @@ test("keys the list doesn't read, and a terminal's answers, never leave it", asy
 test("Esc with a question open answers no and stays, and a second Esc leaves", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
+  await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
   press("Enter");
-  await until(() => seen().includes("Start APP-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP#31? y/n"), "the question");
   type("\x1b");
   await until(() => !seen().includes("y/n"), "the question to close");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
-  expect(here()).toStartWith("▸ ○ 31 ");
+  expect(here()).toStartWith("▸ ○ #31 ");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   type("\x1b");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
@@ -2303,7 +2306,7 @@ ${threadSql({ task: "18", title: "Shipped", status: "done", changed: now })}`);
   await until(() => seen().includes("○ 16 "), "Checks' rows");
   expect(seen()).toContain("○ 7 ");
   expect(seen()).toContain("○ 15 ");
-  expect(seen()).not.toContain("○ 31 ");
+  expect(seen()).not.toContain("○ #31 ");
   expect(seen()).not.toContain("○ 18 ");
   // They stay toggles: 3 closes Reviewing and opens it again.
   type("3");
@@ -2315,20 +2318,20 @@ ${threadSql({ task: "18", title: "Shipped", status: "done", changed: now })}`);
 
 test("the number keys open and close the stages, which stay so in another repository", async () => {
   await open();
-  expect(seen()).not.toContain("○ 31 ");
+  expect(seen()).not.toContain("○ #31 ");
   type("1");
-  await until(() => seen().includes("○ 31 "), "Backlog's rows");
+  await until(() => seen().includes("○ #31 "), "Backlog's rows");
   // Opening a stage moves you to its first row, so it shows wherever the list had scrolled.
-  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
+  await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
   type("2");
   await until(() => !seen().includes("○ 7 "), "Building closed");
-  expect(seen()).toContain("○ 31 ");
+  expect(seen()).toContain("○ #31 ");
   press("Tab");
   // The open repository's tab has no badge, so another's shows only while it is open.
   await until(() => seen().includes(" app •"), "site's list");
   press("Tab");
   await until(() => seen().includes(" site •1"), "app's list again");
-  expect(seen()).toContain("○ 31 ");
+  expect(seen()).toContain("○ #31 ");
   expect(seen()).not.toContain("○ 7 ");
 });
 
@@ -2336,14 +2339,14 @@ test("the number keys open and close the stages, which stay so in another reposi
 test("Enter on a stage's heading closes it, keeping you there, and opens it on its first row", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ 31 "), "Backlog's first row");
+  await until(() => here().startsWith("▸ ○ #31 "), "Backlog's first row");
   press("Up");
   await until(() => seen().includes("⏎ open/close"), "Backlog's heading");
   press("Enter");
-  await until(() => !seen().includes("○ 31 "), "Backlog to close");
+  await until(() => !seen().includes("○ #31 "), "Backlog to close");
   expect(seen()).toContain("⏎ open/close");
   press("Enter");
-  await until(() => here().startsWith("▸ ○ 31 "), "Backlog to open, on its first row");
+  await until(() => here().startsWith("▸ ○ #31 "), "Backlog to open, on its first row");
 });
 
 test("a forge's refusal shows as words, its control codes never reaching your terminal", async () => {
@@ -2382,7 +2385,7 @@ test("Enter on a lead that can't start says why, and attaches to nothing", async
 // A task that ended before Skelcrew saved PR links has none once its PR leaves the forge's copy.
 test("Enter on a done task with a PR but no saved link names its PR", async () => {
   sql(`UPDATE threads SET status = 'done' WHERE folder = 'app-14';
-UPDATE tasks SET merged = 1 WHERE task = '14';
+UPDATE tasks SET merged = 1 WHERE task = 't14';
 DELETE FROM items WHERE kind = 'pr';`);
   await open();
   type("6");
@@ -2453,31 +2456,31 @@ test("Enter on a paused task says how to bring it back, and attaches to nothing"
 test("Enter on an issue asks first: any key but y starts nothing, and y starts it", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
+  await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
   press("Enter");
-  await until(() => seen().includes("Start APP-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP#31? y/n"), "the question");
   type("n");
   await until(() => seen().includes("q/esc quit"), "the keys again");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   press("Enter");
-  await until(() => seen().includes("Start APP-31? y/n"), "the question again");
+  await until(() => seen().includes("Start APP#31? y/n"), "the question again");
   type("y");
-  await until(() => asked.includes("start simon/app 31"), "the start");
+  await until(() => asked.includes("start simon/app #31"), "the start");
 });
 
 // A y typed with Enter, before the question showed, must never answer it.
 test("keys that come with Enter on an issue are dropped, so they can't answer its question", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ 31 "), "the issue's row");
+  await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
   type("\ryq");
-  await until(() => seen().includes("Start APP-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP#31? y/n"), "the question");
   await Bun.sleep(300);
-  expect(seen()).toContain("Start APP-31? y/n");
+  expect(seen()).toContain("Start APP#31? y/n");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   expect(read(join(home, "left"))).toBe("");
   type("y");
-  await until(() => asked.includes("start simon/app 31"), "the start");
+  await until(() => asked.includes("start simon/app #31"), "the start");
 });
 
 test("a y that comes with m in one read can't answer the merge question", async () => {
@@ -2570,15 +2573,15 @@ test("Enter on Backlog's last row shows every issue", async () => {
   sql(issuesSql(12));
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ 100 "), "Backlog's first issue");
+  await until(() => here().startsWith("▸ ○ #100 "), "Backlog's first issue");
   for (const _ of Array.from({ length: 10 })) press("Down");
   await until(() => here().startsWith("▸ … 3 more"), "the row for the rest");
   press("Enter");
-  await until(() => seen().includes("○ 110 "), "every issue");
+  await until(() => seen().includes("○ #110 "), "every issue");
   expect(seen()).not.toContain("… 3 more");
   // The last issue is a row further down, which moving there scrolls into view.
   press("Down");
-  await until(() => here().startsWith("▸ ○ 111 "), "the last issue");
+  await until(() => here().startsWith("▸ ○ #111 "), "the last issue");
 });
 
 // Opening a stage shows its rows, however far the list had scrolled.
@@ -2637,15 +2640,15 @@ test("a click on a task selects it, and a second click opens it, as Enter does",
 test("a click that asks a question isn't answered by its button's release", async () => {
   await open();
   clickOn(lineOf("Backlog"));
-  await until(() => here().startsWith("▸ ○ 31 "), "Backlog open, on its issue");
-  const line = lineOf("○ 31 ");
+  await until(() => here().startsWith("▸ ○ #31 "), "Backlog open, on its issue");
+  const line = lineOf("○ #31 ");
   type(`\x1b[<0;10;${line}M`);
-  await until(() => seen().includes("Start APP-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP#31? y/n"), "the question");
   type(`\x1b[<0;10;${line}m`);
   await Bun.sleep(300);
-  expect(seen()).toContain("Start APP-31? y/n");
+  expect(seen()).toContain("Start APP#31? y/n");
   type("y");
-  await until(() => asked.includes("start simon/app 31"), "the start");
+  await until(() => asked.includes("start simon/app #31"), "the start");
 });
 
 // The rest of the click that attaches, and any mouse report after it in the same read, are the
@@ -2699,7 +2702,7 @@ test("a click on a stage's heading opens or closes it, and the wheel moves a row
   clickOn(lineOf("Task queue"));
   await until(() => seen().includes("○ 9 "), "the task queue open again");
   clickOn(lineOf("Backlog"));
-  await until(() => here().startsWith("▸ ○ 31 "), "Backlog open, on its issue");
+  await until(() => here().startsWith("▸ ○ #31 "), "Backlog open, on its issue");
   clickOn(lineOf("Building"));
   await until(() => !seen().includes("○ 7 "), "Building closed");
   clickOn(lineOf("Building"));
@@ -2766,8 +2769,8 @@ const titled = (title: string) => paneSeen()[0]?.startsWith(title) ?? false;
 // app-12 asks a question and has an issue's link. app-14's PR has a check that failed, whose log
 // sc show would ask the forge for, and Skelcrew's review on it found two things.
 test("the pane follows the row you are on, is empty on the lead's, and never asks the forge", async () => {
-  sql(`UPDATE tasks SET issue_link = 'https://github.com/simon/app/issues/12', body = 'Limit each client.' WHERE task = '12';
-UPDATE tasks SET review_post = '{"pr":41,"id":"9","verdict":"approve","findings":["Name the limit","Test the header"]}' WHERE task = '14';
+  sql(`UPDATE tasks SET issue_link = 'https://github.com/simon/app/issues/12', body = 'Limit each client.' WHERE task = 't12';
+UPDATE tasks SET review_post = '{"pr":41,"id":"9","verdict":"approve","findings":["Name the limit","Test the header"]}' WHERE task = 't14';
 ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved, checks: [...passed, { name: "build", id: "2", state: "failed" }] })}`);
   await open({ width: wide });
   expect(here()).toStartWith("▸ ● 12 ");
@@ -2811,7 +2814,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
 // and its findings are still the task's.
 test("the pane shows the latest review's findings though it was never posted", async () => {
   sql(`UPDATE tasks SET review_round = 1, verdict = 'changes',
-  review_findings = '["Name the limit","Test the header"]' WHERE task = '12'`);
+  review_findings = '["Name the limit","Test the header"]' WHERE task = 't12'`);
   await open({ width: wide });
   await until(() => titled("APP-12  Rate limit the API"), "app-12's details");
   expect(paneSeen()).toContain("Review   r1 · changes asked");
@@ -2853,7 +2856,7 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
 const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}.`).join("\n\n");
 
 test("a long description scrolls in the pane by Page Down, Page Up and the wheel, the strip staying put", async () => {
-  sql(`UPDATE tasks SET body = '${paragraphs}' WHERE task = '12'`);
+  sql(`UPDATE tasks SET body = '${paragraphs}' WHERE task = 't12'`);
   await open({ width: wide, says: "step one\\nstep two\\n" });
   await until(() => titled("APP-12  Rate limit the API"), "app-12's details");
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
@@ -2946,7 +2949,7 @@ test("the pane's events come from the thread's log: started, submitted, verdicts
   );
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
-console.log(JSON.stringify(readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now}, null)?.events));`;
+console.log(JSON.stringify(readDetails(openDb(), { owner: "simon", repo: "app" }, "t12", ${now}, null)?.events));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toEqual([
@@ -2967,11 +2970,11 @@ test("the pane's details keep the lead's updates out of the description, each wi
     { from: "lead", at: now - 4 * 60_000, text: "Keep it per repository." },
   ];
   sql(
-    `UPDATE tasks SET body = 'Limit each client.', updates = '${JSON.stringify(updates)}' WHERE task = '12'`,
+    `UPDATE tasks SET body = 'Limit each client.', updates = '${JSON.stringify(updates)}' WHERE task = 't12'`,
   );
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
-const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now}, null);
+const details = readDetails(openDb(), { owner: "simon", repo: "app" }, "t12", ${now}, null);
 console.log(JSON.stringify({ body: details?.view.body, updates: details?.updates }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");

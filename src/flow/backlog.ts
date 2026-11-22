@@ -3,7 +3,7 @@
 // shows the same backlog, and the daemon keeps a copy in its database for the list to read.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import type { Repository } from "../db.ts";
+import { fillIssues, type Repository } from "../db.ts";
 import { errorText } from "../format.ts";
 import {
   claimedAt,
@@ -97,6 +97,32 @@ async function claimOldNames(db: Database, repository: Repository, folder: strin
         `claimed ${taskName(repository.name, name)}, a name from before Skelcrew claimed names`,
       );
     }
+  }
+}
+
+// Gives each task this machine holds under a name from before every task took a number of
+// Skelcrew's, such as 12, named after its issue, or wr4, a number claimed on the remote, as any new
+// task gets. It keeps its old name as its alias, which still reaches it, and its folder, branch
+// and session, which go by the folder. Every change to a thread goes by its folder, so work under
+// way carries on. Each refresh runs it, and it asks the remote nothing once every task has one.
+async function renumberTasks(db: Database, repository: Repository, folder: string) {
+  const { owner, repo } = repository;
+  const where = "WHERE owner = ? AND repo = ? AND task = ?";
+  const old = db
+    .query("SELECT task FROM tasks WHERE owner = ? AND repo = ?")
+    .all(owner, repo)
+    .map((row) => z.object({ task: z.coerce.string() }).parse(row).task)
+    .filter((id) => !/^t\d+$/.test(id));
+  for (const alias of old) {
+    const task = await claimOwnName(db, repository, folder);
+    db.transaction(() => {
+      fillIssues(db);
+      db.run(`UPDATE tasks SET task = ?, alias = ? ${where}`, [task, alias, owner, repo, alias]);
+      db.run(`UPDATE threads SET task = ? ${where}`, [task, owner, repo, alias]);
+    })();
+    console.log(
+      `renamed ${taskName(repository.name, alias)} to ${taskName(repository.name, task)}, its number`,
+    );
   }
 }
 
@@ -217,6 +243,9 @@ async function refreshInTurn(db: Database, repository: Repository, folder: strin
   // A failed claim of an old name stops nothing else, and is tried again at the next refresh.
   await claimOldNames(db, repository, folder).catch((error) =>
     console.log(`couldn't claim ${repository.name}'s old task names: ${errorText(error)}`),
+  );
+  await renumberTasks(db, repository, folder).catch((error) =>
+    console.log(`couldn't renumber ${repository.name}'s tasks: ${errorText(error)}`),
   );
   const { filed, started } = await fetchBacklog(db, repository, folder);
   const tasks = filed.flatMap(({ name, commit, text }) => {

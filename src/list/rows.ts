@@ -8,7 +8,7 @@ import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
-import { openTasks, prOf } from "../flow/copy.ts";
+import { issueRef, openTasks, prOf } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { limitOf, nextRound, passedReviewStage, roundOf } from "../flow/ledger.ts";
@@ -26,7 +26,7 @@ import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
 import { counted, ordinal } from "../flow/task-queue.ts";
-import { Thread, taskName } from "../flow/thread.ts";
+import { Thread, taskLabel, taskName } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { agentProgress, builderProgress } from "../screen/progress.ts";
@@ -49,8 +49,9 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // heading, which you can stand on too, so Enter there opens or closes it. `section` is the section
 // it shows under: Needs you while the task waits on you, Task queue while it is queued or paused,
 // its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in,
-// `label` is the name the row shows, such as T139, without the repository its tab already names,
-// while `name`, such as APP-T139, is what everything else goes by. `says` is its short word, in
+// `label` is the name the row shows, such as 139, without the repository its tab already names,
+// or an issue no task has yet as its tracker writes it, such as #12, while `name`, such as
+// APP-139 or APP#12, is what everything else goes by. `says` is its short word, in
 // `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then its PR, such as
 // `#41`, what its CI says, its review's round and the colour of where that review stands, and how
 // long ago it last changed, such as `4m`. Each is empty or null where it has none. `changed` is
@@ -65,7 +66,7 @@ export const sections: Section[] = ["needs you", "task queue", ...ListStage.opti
 // which Enter opens, and `branch` the branch a task that is ready without a forge waits on. Each is
 // null where it doesn't apply. `more` is how many issues the row stands for on the `… more` row at
 // the end of a cut Backlog, which Enter shows, and 0 on every other row. `task` is the task's ID,
-// such as 12, which the details pane reads it by, or null on a row that isn't a task. `place` is a
+// such as t12, which the details pane reads it by, or null on a row that isn't a task. `place` is a
 // queued task's place in its repository's queue, 1 for the one that starts next, or null. `waits`
 // says what a queued or paused task waits on, such as `3rd in line: 4 of 4 builders busy`, for the
 // details pane, and is empty on every other row.
@@ -278,7 +279,7 @@ function taskRow(
           ? "task queue"
           : stage,
     name,
-    label: thread.task.toUpperCase(),
+    label: taskLabel(thread.task),
     task: thread.task,
     title: removeControlCodes(thread.short ?? thread.title ?? ""),
     mark,
@@ -386,7 +387,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   const tasks = threads.flatMap(({ saved, thread }) => {
     const stage = listStage(
       thread,
-      issues.some((issue) => issue.id === thread.task),
+      issues.some((issue) => issue.id === thread.issue),
     );
     return stage === "backlog"
       ? []
@@ -411,7 +412,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       .all(open.owner, open.repo)
       .map((row) => z.object({ task: z.string() }).parse(row).task),
   );
-  const held = queue.findIndex((thread) => claimed.has(thread.task));
+  const held = queue.findIndex((thread) => thread.issue !== null && claimed.has(thread.issue));
   const holder = queue[held];
   const claim = holder
     ? `${taskName(repository.name, holder.task)} waits for its issue's claim to reach the tracker`
@@ -459,14 +460,14 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // the limit.
   const noPlace = builders.limit !== null && builders.running >= builders.limit;
   // Returns the row of a task not started yet, which Enter asks to start, as sc start does.
-  const notStarted = (task: string, title: string, changed: number): Row => {
+  const notStarted = (task: string, label: string, title: string, changed: number): Row => {
     const name = taskName(repository.name, task);
     const after = builders.queued > 0 ? ` after the ${builders.queued} queued` : "";
     return {
       part: "backlog",
       section: "backlog",
       name,
-      label: task.toUpperCase(),
+      label,
       task,
       title: removeControlCodes(title),
       mark: { sign: "○", colour: "dim" },
@@ -504,17 +505,28 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       waits: "",
     };
   };
-  // The open issues no thread works on, and the tasks filed in the backlog, newest first.
+  // The open issues no thread works on, and the tasks filed in the backlog, newest first. An
+  // issue whose task is back in Backlog goes by that task.
   const waiting = [
     ...issues
-      .filter((issue) => !tasks.some((row) => row.name === taskName(repository.name, issue.id)))
-      .map((issue) => ({
-        created: issue.created,
-        row: notStarted(issue.id, issue.title, Date.parse(issue.updated)),
-      })),
+      .filter(
+        (issue) =>
+          !threads.some(
+            ({ thread }) => thread.issue === issue.id && listStage(thread, true) !== "backlog",
+          ),
+      )
+      .map((issue) => {
+        const task = threads.find(({ thread }) => thread.issue === issue.id)?.thread.task;
+        const label = task === undefined ? issueRef(issue) : taskLabel(task);
+        const changed = Date.parse(issue.updated);
+        return {
+          created: issue.created,
+          row: notStarted(task ?? `#${issue.id}`, label, issue.title, changed),
+        };
+      }),
     ...backlogOf(db, open.owner, open.repo).map((t) => ({
       created: t.created,
-      row: notStarted(t.task, t.title, Date.parse(t.created)),
+      row: notStarted(t.task, taskLabel(t.task), t.title, Date.parse(t.created)),
     })),
   ]
     .sort((a, b) => b.created.localeCompare(a.created))

@@ -188,7 +188,7 @@ test("an upgrade moves a failed review off needing you, but not one past the rou
 db.run(\`${threadSql({ task: "13", status: "waiting" })}\`);
 db.run("UPDATE threads SET needs_you = 1");
 db.run("UPDATE tasks SET verdict = 'failed'");
-db.run("UPDATE tasks SET held = 'Fix it.' WHERE task = '13'");
+db.run("UPDATE tasks SET held = 'Fix it.' WHERE task = 't13'");
 db.run("DROP VIEW task_threads");
 db.run("ALTER TABLE threads DROP COLUMN review_failed");
 const upgraded = openDb();

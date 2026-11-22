@@ -887,7 +887,7 @@ export async function removeRepo(given: string, sessions: string): Promise<strin
   const { name } = found;
   const live = db
     .query(
-      "SELECT task FROM threads WHERE owner = ? AND repo = ? AND status IN ('queued', 'working', 'waiting') ORDER BY task",
+      "SELECT task FROM threads WHERE owner = ? AND repo = ? AND status IN ('queued', 'working', 'waiting') ORDER BY length(task), task",
     )
     .all(found.owner, found.repo)
     .map((row) => taskName(name, z.object({ task: z.coerce.string() }).parse(row).task));
