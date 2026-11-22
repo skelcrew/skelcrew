@@ -213,7 +213,7 @@ const tellingFromStdin =
 
 // What the lead's file added after that: a message to the human, sent only when they ask.
 const notifying =
-  '\n- sc notify --via email "<subject>" "<text>" sends the human a message through the notifier they asked for, such as email or push. Send the human a message with sc notify only when they ask for one in this conversation, with their exact words in --asked-file, such as "email me where things stand tonight". Write their words to a file in your own folder, such as asked.txt, with your file-writing tool, never with the shell. Without them, Skelcrew refuses it. For a long text, give - and the text on stdin.';
+  '\n- sc notify --via email "<subject>" "<text>" sends the human a message by the channel they asked for, such as email or push, or through a notifier named. Send the human a message with sc notify only when they ask for one in this conversation, with their exact words in --asked-file, such as "email me where things stand tonight". Write their words to a file in your own folder, such as asked.txt, with your file-writing tool, never with the shell. Without them, Skelcrew refuses it. For a long text, give - and the text on stdin.';
 
 // What the builder's file added after that: it never answers the lead only to say it got a
 // message, which would fill the lead's chat with acknowledgements.

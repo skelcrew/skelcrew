@@ -27,6 +27,7 @@ import {
   typedBySkelcrew,
   typeLeadNotes,
 } from "./messages.ts";
+import { forgetMark } from "./notify.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { lastPushed } from "./round.ts";
 import {
@@ -664,6 +665,7 @@ export function markNeedsYou(
     // left out rather than said twice.
     const quiet = needsYou(thread) ? {} : { noting: null };
     const change = { needs_you_for: action, ...acted, ...decision, ...quiet };
+    forgetMark(db, thread.folder);
     const marked = record(db, thread.folder, change, `${who} marked it: ${action}`);
     if (by === "you") {
       const line = `${threadName(db, marked)} needs you: you marked it: ${action}`;

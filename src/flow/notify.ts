@@ -5,7 +5,7 @@ import { z } from "zod";
 import { notifySettings } from "../config.ts";
 import { errorText } from "../format.ts";
 import { pluginsWithJob } from "../plugins/ask.ts";
-import { callPlugin, installedPlugins } from "../plugins/plugin.ts";
+import { callPlugin, installedPlugins, readManifest } from "../plugins/plugin.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { backlogOf } from "./backlog.ts";
 import { openTasks, prOf } from "./copy.ts";
@@ -27,7 +27,11 @@ const perHour: Record<MessageType, number> = { "needs-you": 10, asked: 5, digest
 
 const hour = 60 * 60 * 1000;
 const kept = 2 * 24 * hour;
-const bodyLimit: Record<MessageType, number> = { "needs-you": 4000, asked: 4000, digest: 100_000 };
+const bodyLimit: Record<MessageType, number> = {
+  "needs-you": 4000,
+  asked: 4000,
+  digest: Number.POSITIVE_INFINITY,
+};
 
 function routeOf(type: MessageType): string | null {
   if (type === "asked") return null;
@@ -140,6 +144,10 @@ async function deliver(db: Database, id: number): Promise<string | null> {
   }
 }
 
+export function forgetMark(db: Database, folder: string): void {
+  db.run("DELETE FROM notified WHERE folder = ?", [folder]);
+}
+
 export function noticeNeedsYou(db: Database, thread: Thread): void {
   let reason: string | null;
   try {
@@ -167,6 +175,34 @@ export function noticeNeedsYou(db: Database, thread: Thread): void {
   });
 }
 
+function notifierFor(db: Database, via: string): string {
+  const notifiers = installedPlugins(db).flatMap((plugin) => {
+    try {
+      const manifest = readManifest(plugin.folder);
+      return manifest.provides.includes("notifier")
+        ? [{ name: plugin.name, channel: manifest.channel }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  if (notifiers.some((notifier) => notifier.name === via)) return via;
+  const matching = notifiers.filter((notifier) => notifier.channel === via);
+  const [only] = matching;
+  if (only && matching.length === 1) return only.name;
+  if (matching.length > 1)
+    throw new Error(
+      `${matching.map((n) => n.name).join(" and ")} both send by ${via}: give one by its name with --via`,
+    );
+  const have =
+    notifiers.length === 0
+      ? "none is installed"
+      : `the installed ones are ${notifiers.map((n) => (n.channel ? `${n.name} (${n.channel})` : n.name)).join(", ")}`;
+  throw new Error(
+    `no installed notifier sends by ${via}, so it can't reach the human: ${have}. The human adds one with sc plugin add -g`,
+  );
+}
+
 export async function sendAsked(
   db: Database,
   asked: { subject: string; text: string; words: string | undefined; via: string },
@@ -175,25 +211,16 @@ export async function sendAsked(
     throw new Error(
       "sc notify sends the human a message only when they ask for one: write their words exactly to a file with your file-writing tool and add --asked-file <file>",
     );
-  const notifiers = pluginsWithJob(db, "notifier");
-  if (!notifiers.includes(asked.via)) {
-    const have =
-      notifiers.length === 0
-        ? "none is installed"
-        : `the installed ones are ${notifiers.join(", ")}`;
-    throw new Error(
-      `${asked.via} isn't an installed notifier, so it can't reach the human: ${have}. The human adds one with sc plugin add -g`,
-    );
-  }
+  const via = notifierFor(db, asked.via);
   if (asked.text.length > bodyLimit.asked)
     throw new Error(
       `the message is ${asked.text.length} characters, and one holds at most ${bodyLimit.asked}: shorten it`,
     );
   const message = { title: asked.subject, body: asked.text, links: [] };
-  const id = save(db, "asked", message, asked.via, "sending", Date.now());
+  const id = save(db, "asked", message, via, "sending", Date.now());
   const error = await deliver(db, id);
-  if (error !== null) throw new Error(`${asked.via} didn't send it: ${error}`);
-  return `Sent "${removeControlCodes(asked.subject).trim()}" to the human through ${asked.via}.`;
+  if (error !== null) throw new Error(`${via} didn't send it: ${error}`);
+  return `Sent "${removeControlCodes(asked.subject).trim()}" to the human through ${via}.`;
 }
 
 export function digestDue(now: Date, at: string, last: number | null): boolean {

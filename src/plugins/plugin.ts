@@ -77,6 +77,10 @@ export const Manifest = z
     push: Command.optional(),
     session: Command.optional(),
     attach: Command.optional(),
+    channel: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]*$/, "must be lowercase letters, digits and dashes")
+      .optional(),
   })
   // Old and new shapes are read into one: a kind and what it provides.
   .transform(({ kind, provides, jobs, ...rest }, context) => {

@@ -1,7 +1,14 @@
 // Messages to you through notifier plugins: routing by type, a needs-you message once per mark,
 // the rate limits, the lead's message refused without your words, and the daily digest.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { digestDue } from "../src/flow/notify.ts";
@@ -24,6 +31,7 @@ const messages = (settings: string) => asked(settings).filter((q) => q.ask === "
 function run(body: string): string {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
+import { markNeedsYou } from ${JSON.stringify(source("flow/status.ts"))};
 import * as notify from ${JSON.stringify(source("flow/notify.ts"))};
 const db = openDb();
 db.run(\`INSERT OR IGNORE INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
@@ -65,7 +73,7 @@ test("a needs-you message goes once per mark, not again while the mark stays", (
   config("notify:\n  needs-you: push\n");
   run(`record(db, "app-12", { needs_you_for: "approve the design" }, "marked");
 record(db, "app-12", { short: "Login" }, "given a short title");
-record(db, "app-12", { needs_you_for: "approve the design" }, "marked again");
+record(db, "app-12", { needs_you_for: "approve the design" }, "saved again");
 record(db, "app-12", { needs_you_for: "push the workflow" }, "marked");
 record(db, "app-12", { needs_you_for: null }, "cleared");
 record(db, "app-12", { needs_you_for: "approve the design" }, "marked");
@@ -85,6 +93,41 @@ record(db, "app-12", { asking: true }, "asked a question");
 record(db, "app-12", { asking: false }, "question answered");
 await notify.sendNotifications(db);`);
   expect(messages(push).map((m) => m.body)).toEqual(["approve the design"]);
+});
+
+test("the lead or you marking a thread again sends again, even in the same words", () => {
+  const push = fakePlugin(home, "push", ["notifier"]);
+  config("notify:\n  needs-you: push\n");
+  run(`const sessions = "skel-notify-test-none";
+markNeedsYou(db, sessions, readThread(db, "app-12"), "approve the design", "lead");
+markNeedsYou(db, sessions, readThread(db, "app-12"), "approve the design", "lead");
+await notify.sendNotifications(db);`);
+  expect(messages(push).map((m) => m.body)).toEqual(["approve the design", "approve the design"]);
+});
+
+test("the lead picks a notifier by its name or by the channel its manifest gives", () => {
+  const smtp = fakePlugin(home, "smtp", ["notifier"]);
+  const ntfy = fakePlugin(home, "ntfy", ["notifier"]);
+  const other = fakePlugin(home, "other-mail", ["notifier"]);
+  const channel = (name: string, via: string) =>
+    appendFileSync(join(home, `plugin-${name}`, "skelcrew-plugin.yaml"), `channel: ${via}\n`);
+  channel("smtp", "email");
+  channel("ntfy", "push");
+  const out = run(`const send = (via) =>
+  notify.sendAsked(db, { subject: via, text: "t", words: "email me", via }).catch((error) => console.log(error.message));
+await send("email");
+await send("ntfy");
+await send("sms");`);
+  expect(messages(smtp).map((m) => m.title)).toEqual(["email"]);
+  expect(messages(ntfy).map((m) => m.title)).toEqual(["ntfy"]);
+  expect(out).toContain("no installed notifier sends by sms");
+  expect(out).toContain("ntfy (push)");
+  channel("other-mail", "email");
+  const both = run(
+    `await notify.sendAsked(db, { subject: "s", text: "t", words: "w", via: "email" }).catch((error) => console.log(error.message));`,
+  );
+  expect(both).toContain("other-mail and smtp both send by email: give one by its name with --via");
+  expect(messages(other)).toEqual([]);
 });
 
 test("a need that changes its reason sends nothing more, while a new mark does", () => {
@@ -146,7 +189,7 @@ try {
 await notify.sendNotifications(db);`);
   expect(out).toContain("sc notify sends the human a message only when they ask for one");
   expect(out).toContain(
-    "push isn't an installed notifier, so it can't reach the human: the installed ones are email.",
+    "no installed notifier sends by push, so it can't reach the human: the installed ones are email.",
   );
   expect(messages(email)).toEqual([]);
   const env = { ...homeEnv(home), SKELCREW_SANDBOX: "1" };
