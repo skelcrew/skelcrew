@@ -51,7 +51,7 @@ ${itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z")}`);
     () => isOpen("2 Building") && isOpen("3 Reviewing") && isOpen("4 Checks"),
     "the stages",
   );
-  expect(isOpen("1 Backlog")).toBe(false);
+  expect(isOpen("0 Backlog")).toBe(false);
   expect(isOpen("5 Ready")).toBe(false);
   expect(isOpen("6 Done")).toBe(false);
   // They stay toggles: Reviewing closes and opens again, and Checks stays open meanwhile.
@@ -77,19 +77,19 @@ test("Alt-1 to Alt-6 open and close the stages from the lead's row, and the lead
   expect(read("lead.typed")).toBe("");
 });
 
-// The task queue is no stage, but opens and closes as one does, by 0, with Alt or without.
-test("Alt-0 and plain 0 open and close the task queue, and the lead gets neither", async () => {
+// The task queue is a stage, opened and closed by 1, with Alt or without.
+test("Alt-1 and plain 1 open and close the task queue, and the lead gets neither", async () => {
   sql(threadSql({ task: "9", title: "Old work", status: "stopped" }));
   open("lead");
   await ready("lead");
-  await until(() => isOpen("0 Task queue"), "the task queue open at the start");
-  press("M-0");
-  await until(() => !isOpen("0 Task queue"), "the task queue to close");
-  press("M-0");
-  await until(() => isOpen("0 Task queue") && / 9\b/.test(selected()), "it to open on APP-9");
+  await until(() => isOpen("1 Task queue"), "the task queue open at the start");
+  press("M-1");
+  await until(() => !isOpen("1 Task queue"), "the task queue to close");
+  press("M-1");
+  await until(() => isOpen("1 Task queue") && / 9\b/.test(selected()), "it to open on APP-9");
   await until(onDetails, "app-9's details");
-  type("0");
-  await until(() => !isOpen("0 Task queue"), "plain 0 to close it");
+  type("1");
+  await until(() => !isOpen("1 Task queue"), "plain 1 to close it");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
   expect(read("app-9.typed")).toBe("");
@@ -166,7 +166,7 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   sql(itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z"));
   open("lead");
   await ready("lead");
-  press("M-1");
+  press("M-0");
   await until(() => / #31\b/.test(selected()), "APP#31 in Backlog");
   await until(onDetails, "app#31's details");
   type("s");

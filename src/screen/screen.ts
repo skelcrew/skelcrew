@@ -160,7 +160,7 @@ const config = [
   // first: a paste start that layer lets go of unfinished is never one tmux still reads as a paste.
   ["set", "-s", "escape-time", String(escapeTime)],
   // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-0 to
-  // Alt-6, which open and close the task queue and the stages, go to the sidebar, in its own pane,
+  // Alt-6, which open and close the stages, go to the sidebar, in its own pane,
   // without moving your typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as
   // they move a word in its prompt, and so do Alt-B and Alt-F, which is how tmux reads the Esc b
   // and Esc f a Mac terminal often sends for Option-Left and Option-Right.

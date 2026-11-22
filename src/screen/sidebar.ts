@@ -18,7 +18,6 @@ import { moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import { closeRepo, removeRepo } from "../flow/repo.ts";
-import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { cloneOf, liveThreads, typedTask } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
@@ -34,6 +33,7 @@ import {
 import {
   buildersNote,
   listRows,
+  numbered,
   type Question,
   type Row,
   repositoryTabs,
@@ -78,7 +78,7 @@ const altPattern = new RegExp(`^${esc}(\\[1;3[AB]|\\[1;4[A-D]|[0-6w]|\\[<|\\])`)
 const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // The keys the sidebar acts on, by what they do. The Alt ones come from the screen's tmux, from
 // anywhere. The plain ones come only while your typing goes to the sidebar. Alt with a digit and
-// the digit alone open or close the task queue or a stage. The screen's tmux sends Ctrl-\'s byte
+// the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte
 // from anywhere, to bring your typing here, and Shift-Enter as CSI-u, only while your typing is
 // here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
 // Enter. Alt-W and plain w ask whether to close or remove the open repository.
@@ -896,9 +896,8 @@ export async function runSidebar(
     }
     if (button && column && line) return click(button, Number(column), Number(line));
     const bare = key.startsWith(esc) ? key.slice(1) : key;
-    if (bare === "0") return toggle("task queue");
-    const stage = /^[1-6]$/.test(bare) ? ListStage.options[Number(bare) - 1] : undefined;
-    if (stage) return toggle(stage);
+    const section = /^\d$/.test(bare) ? numbered[Number(bare)] : undefined;
+    if (section) return toggle(section);
     if (name === "enter" || name === "full screen") return enter(name === "full screen");
     if ((name === "page up" || name === "page down") && row?.task && isDetails(shown)) {
       screenTmux(agents, ["send-keys", "-t", rightPane, name === "page up" ? "PPage" : "NPage"]);

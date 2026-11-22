@@ -137,7 +137,7 @@ test("Ctrl-\\ in the sidebar leaves a question there open", async () => {
   sql(itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z"));
   open("lead");
   await ready("lead");
-  press("M-1");
+  press("M-0");
   await until(() => / #31\b/.test(selected()) && onDetails(), "APP#31 in Backlog");
   type("s");
   await until(() => footer().includes("Start APP#31? y/n"), "the question");
