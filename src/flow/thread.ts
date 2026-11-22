@@ -575,32 +575,31 @@ export const taskLabel = (task: string) => task.replace(/^t(?=\d+$)/i, "").toUpp
 // issues, else the issue of that ID in Skelcrew's copy of the tracker. A # and an ID is the task
 // on that issue, else the issue itself, as #12, by the tracker's ID or as the tracker writes it,
 // such as #ENG-7. A name splits at its last dash, so an old name whose issue's ID held one, such
-// as APP-JOTT-12, comes with a repository that ends in part of it: it is split at an earlier dash
-// when that names a repository that has the task. A word that names none of them comes back as
-// Skelcrew would store it, so the caller says there is no such task. Throws when Skelcrew has no
-// such repository.
+// as APP-JOTT-12, comes with a repository that ends in part of it. So the repository as typed is
+// tried first, then each shorter one, split at an earlier dash, and the first that has the task
+// gives it, whether or not the longer repository exists. A word that names none of them comes
+// back as Skelcrew would store it in the repository as typed, so the caller says there is no
+// such task. Throws when Skelcrew has no such repository.
 export function resolveTask(
   db: Database,
   repository: string,
   typed: string,
 ): { repository: string; task: string } {
-  try {
-    const known = knownTask(db, repository, typed);
-    const stored = typed.startsWith("#") || !/^\d+$/.test(typed) ? typed : `t${typed}`;
-    return { repository, task: known ?? stored };
-  } catch (error) {
-    const parts = repository.split("-");
-    for (let at = parts.length - 1; at > 0; at--) {
-      const shorter = parts.slice(0, at).join("-");
-      const old = `${parts.slice(at).join("-")}-${typed}`.toLowerCase();
-      let known: string | null = null;
-      try {
-        known = knownTask(db, shorter, old);
-      } catch {}
-      if (known !== null) return { repository: shorter, task: known };
-    }
-    throw error;
+  const parts = repository.split("-");
+  const splits = parts.map((_, at) => ({
+    repository: parts.slice(0, parts.length - at).join("-"),
+    typed: [...parts.slice(parts.length - at), typed].join("-").toLowerCase(),
+  }));
+  for (const split of splits) {
+    let known: string | null = null;
+    try {
+      known = knownTask(db, split.repository, split.typed);
+    } catch {}
+    if (known !== null) return { repository: split.repository, task: known };
   }
+  findRepository(db, repository);
+  const stored = typed.startsWith("#") || !/^\d+$/.test(typed) ? typed : `t${typed}`;
+  return { repository, task: stored };
 }
 
 // Returns the task, or issue as #12, that a name typed in the repository stands for, as

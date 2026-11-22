@@ -831,6 +831,73 @@ console.log(JSON.stringify({ named: ["t1", "2", "#2", "wr4", "abc123", "5"].map(
   ).toEqual(["last", "t1", "t2", "t3", "t4", "t5", "t6"]);
 }, 60_000);
 
+// A number from before Skelcrew claimed names, such as t1, lived on one machine only. Another
+// machine may give that number to a task it renamed from an old name first. The task held under
+// the number is then another task, so it is renumbered as well, and no two tasks share a name.
+test("a task held under a number another machine gave a renamed task takes a number of its own", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  const issueTask = `db.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', '2', 'app-2', 'skelcrew/2-old', 'done')");
+db.run("INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', '2', 'Old')");`;
+  expect(await namesFrom(startOn(lapdog, remote, ["New"], issueTask))).toEqual(["APP-2"]);
+  // This machine holds its own t1 from before, and the same task on issue #2, which the other
+  // machine gave t1: its t1 moves out of the way first, and the task on issue #2 takes t1.
+  const heldT1 = `db.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', 't1', 'app-t1', 'skelcrew/t1-mine', 'done')");
+db.run("INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', 't1', 'Mine')");
+${issueTask}`;
+  const run = startOn(laptop, remote, ["Newer"], heldT1);
+  const out = await new Response(run.stdout).text();
+  expect(await new Response(run.stderr).text()).toBe("");
+  expect(out.trim().split("\n").slice(-3)).toEqual([
+    "renamed APP-1 to APP-3, its number",
+    "renamed APP-2 to APP-1, its number",
+    '["APP-4"]',
+  ]);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { resolveTask } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+console.log(JSON.stringify({ mine: db.query("SELECT task, alias, folder FROM task_threads WHERE title = 'Mine'").get(),
+  byOldName: resolveTask(db, "app", "t1").task }));`;
+  const shown = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: laptop },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(shown.stderr.toString()).toBe("");
+  expect(JSON.parse(shown.stdout.toString())).toEqual({
+    mine: { task: "t3", alias: "t1", folder: "app-t1" },
+    // t1 is the task on issue #2 now, and a number wins over an old name.
+    byOldName: "t1",
+  });
+}, 60_000);
+
+// An old name whose issue's ID held a dash, such as APP-JOTT-12, splits like any name, at its last
+// dash, as task 12 of a repository named APP-JOTT. When Skelcrew has both app and app-jott, the
+// name reaches the repository that has such a task, the one as typed first.
+test("an old name with a dash reaches the repository that has its task", () => {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { resolveTask } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app'), ('app-jott', 'simon', 'app-jott')");
+db.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', 't3', 'app-jott-12', 'b', 'done')");
+db.run("INSERT INTO tasks (owner, repo, task, alias) VALUES ('simon', 'app', 't3', 'jott-12')");
+const before = resolveTask(db, "app-jott", "12");
+db.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app-jott', 't12', 'app-jott-12-2', 'c', 'done')");
+db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app-jott', 't12')");
+console.log(JSON.stringify({ before, after: resolveTask(db, "app-jott", "12"), none: resolveTask(db, "app-jott", "13") }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    before: { repository: "app", task: "t3" },
+    after: { repository: "app-jott", task: "t12" },
+    none: { repository: "app-jott", task: "t13" },
+  });
+});
+
 // A screen of the release before 2026-11-18 keeps running while a newer release opens its
 // database, and it keeps the queries it prepared, with their column names. The database is one
 // that release made, saved in test/databases, with a thread whose events seen and updates are

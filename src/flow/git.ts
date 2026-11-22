@@ -304,6 +304,26 @@ export async function renamedTo(
   return claim?.[1]?.slice(claimRef("").length) ?? null;
 }
 
+// Returns each number the remote gave a task in place of an old name, with that old name, such as
+// t160 for 12. Throws when the remote can't be asked.
+export async function renames(db: Database, repository: Repository): Promise<Map<string, string>> {
+  const listed = await git(db, repository, [
+    "ls-remote",
+    repository.remote,
+    renamedRef("*"),
+    claimRef("t*"),
+  ]);
+  const lines = listed.split("\n").map((line) => line.split("\t"));
+  const named = new Map<string, string>();
+  for (const [commit, ref] of lines) {
+    if (!ref?.startsWith(renamedRef(""))) continue;
+    const claim = lines.find(([at, other]) => at === commit && other?.startsWith(claimRef("")));
+    const name = claim?.[1]?.slice(claimRef("").length);
+    if (name !== undefined) named.set(name, ref.slice(renamedRef("").length));
+  }
+  return named;
+}
+
 // What the remote holds of Skelcrew's own tasks' names: the names any machine claimed, such as
 // t104, those claimed as old names, such as t25, and the commit of the last claim, or "" before
 // any claim moved it. Only the remote is shared between machines, so it is what keeps their names
