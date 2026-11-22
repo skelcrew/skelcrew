@@ -539,13 +539,12 @@ async function reviewRound(
             bounds: async () => {
               const fresh = readThread(db, folder);
               const shown =
-                last?.description ??
-                (fresh.stay_true.length === 0 || fresh.pr === null
+                fresh.pr === null
                   ? null
                   : await refreshPr(db, repository, fresh.pr).then(
                       (pr) => pr?.body ?? null,
                       () => null,
-                    ));
+                    );
               return { decisions: fresh.decisions, stayTrue: fresh.stay_true, description: shown };
             },
             base: from,
@@ -1269,12 +1268,10 @@ function prBase(db: Database, thread: Thread): string {
 }
 
 // Returns what the reviewer gets of the last round the thread's reviewer finished: its findings,
-// the PR's description, and the diff from the commit it reviewed to this one, read in Skelcrew's
-// clone, which the builder can't change. The description is what the forge answers now, never
-// Skelcrew's copy, which can be a poll behind an edit or hold a PR the forge no longer shows. It
-// is null when there is no PR or the forge doesn't give it, so no trade-off counts as stated. A
-// commit no longer in this one's history, such as after a force push, gives no diff. Null on the
-// first round.
+// and the diff from the commit it reviewed to this one, read in Skelcrew's clone, which the
+// builder can't change. On a new commit it asks the forge for the PR first, so the review's base
+// comes from what the forge shows now, as a PR can be retargeted. A commit no longer in this one's
+// history, such as after a force push, gives no diff. Null on the first round.
 async function lastRound(
   db: Database,
   thread: Thread,
@@ -1283,17 +1280,15 @@ async function lastRound(
 ): Promise<LastRound | null> {
   const last = lastReviewed(thread);
   if (last === null) return null;
-  if (last.commit === sha) return { ...last, description: null, since: "same commit" };
+  if (last.commit === sha) return { ...last, since: "same commit" };
   const { pr } = thread;
-  const shown =
-    pr === null ? null : await refreshPr(db, repositoryOf(db, thread), pr).catch(() => null);
+  if (pr !== null) await refreshPr(db, repositoryOf(db, thread), pr).catch(() => null);
   const git = (...args: string[]) =>
     Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
   const kept = git("merge-base", "--is-ancestor", last.commit, sha).success;
   const diff = kept ? git("diff", last.commit, sha) : null;
   return {
     ...last,
-    description: shown?.body ?? null,
     since: diff?.success ? { diff: diff.stdout.toString() } : "dropped",
   };
 }

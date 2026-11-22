@@ -623,9 +623,10 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
       green();
       await until(() => thread().merge_waits === "the forge, which refused: Not yet");
       // A poll holds on the forge while a review runs and ends. The polls before it, and the
-      // merges they asked, are done once it holds, as one poll runs at a time.
+      // merges they asked, are done once it holds, as one poll runs at a time. Only the poll
+      // holds: the review asks the forge for the PR's description as its prompt is built.
       rmSync(join(plugin, "held-changed"), { force: true });
-      writeFileSync(join(plugin, "hold-changed"), "");
+      writeFileSync(join(plugin, "hold-changed-tracker-forge"), "");
       await until(() => existsSync(join(plugin, "held-changed")));
       const tried = merges().length;
       const heldPoll = polls();
@@ -636,8 +637,8 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
       });
       expect(sc.stderr.toString()).toBe("");
       await until(() => thread().reviewing === null && thread().review_at !== reviewedAt, 30_000);
-      // The poll is still held: no poll has asked since.
-      expect(polls()).toBe(heldPoll);
+      // The poll is still held: no poll has asked since, only the review, for the description.
+      expect(polls()).toBe(heldPoll + 1);
       // The held poll gets the PR green, as it was before the review. Every later poll gets
       // its new check still running, which the forge would show for the new round.
       green();
@@ -647,7 +648,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
       );
       pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
       answer(plugin, "merge pr", null);
-      rmSync(join(plugin, "hold-changed"));
+      rmSync(join(plugin, "hold-changed-tracker-forge"));
       await until(() => !existsSync(join(plugin, "changed.once.json")));
       await morePolls();
       expect(merges()).toHaveLength(tried);

@@ -8,7 +8,8 @@
 // as a plugin that needs its setup again does. While `hold-<question>`, or for a question with
 // a state, `hold-<question>-<state>`, is there, it waits before answering, saying so with
 // `held-<question>`. Taking you off an issue counts as the state false, so `hold-assign-false`
-// holds only that. It keeps whether you are assigned in a file `assigned`, as GitHub would:
+// holds only that. What changed has its jobs as its state, so `hold-changed-tracker-forge` holds a
+// poll but not a review asking the forge for its PR alone. It keeps whether you are assigned in a file `assigned`, as GitHub would:
 // assigning you says whether this call did, and taking you off answers nothing.
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,7 +18,10 @@ const dir = process.env.SKELCREW_PLUGIN_CONFIG ?? "";
 const question = JSON.parse(await Bun.stdin.text());
 appendFileSync(join(dir, "asked"), `${JSON.stringify(question)}\n`);
 const name = String(question.ask).replaceAll(" ", "-");
-const state = question.state ?? (question.on === false ? "false" : undefined);
+const state =
+  question.state ??
+  (question.on === false ? "false" : undefined) ??
+  (question.ask === "changed" ? question.jobs.join("-") : undefined);
 const holds = [join(dir, `hold-${name}`), join(dir, `hold-${name}-${state}`)];
 const hold = holds.find((file) => existsSync(file));
 if (hold) {
