@@ -1,6 +1,7 @@
 // A repository's plugins: plugins: in its skelcrew.yaml, each pinned at its exact version and
 // commit in its skelcrew.lock, which you commit. sc plugin add writes both in your checkout, and
 // sc install installs what they pin.
+import { Database } from "bun:sqlite";
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -24,7 +25,7 @@ import {
   updatePlugin,
 } from "./install.ts";
 import { type Lock, type Locked, readLockAt, writeBoth, yourLock, yourPlugins } from "./lock.ts";
-import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
+import { commitOf, installedPlugins, type Plugin, readManifest } from "./plugin.ts";
 
 // The GitHub plugin, the forge of every repository on github.com.
 export const githubPlugin = "skelcrew/skelcrew-github";
@@ -182,15 +183,29 @@ function nameAndPin(folder: string, source: string, locked: Locked): void {
   );
 }
 
+// Returns the installed plugins without changing Skelcrew's state: none on a machine where Skelcrew
+// never ran, and none when its state can't be read as it is, such as before an older Skelcrew
+// made its plugins table.
+function installedReadOnly(): Plugin[] {
+  const file = join(dataDir(), "skelcrew.db");
+  if (!existsSync(file)) return [];
+  try {
+    const db = new Database(file, { readonly: true });
+    try {
+      return installedPlugins(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
 // Names `source` in the skelcrew.yaml in `folder` and pins it in its skelcrew.lock, for sc init,
 // installing nothing: at the version installed here from the same source, or else at its newest.
-// A machine where Skelcrew never ran has no plugins, so its state is read only when it is there,
-// and sc init leaves nothing on the machine.
+// Skelcrew's state is only read, so sc init leaves nothing on the machine.
 export function pinRepositoryPlugin(folder: string, source: string): void {
-  const ran = existsSync(join(dataDir(), "skelcrew.db"));
-  const here = ran
-    ? installedPlugins(openDb()).find((plugin) => plugin.source === source)
-    : undefined;
+  const here = installedReadOnly().find((plugin) => plugin.source === source);
   const locked = here
     ? lockedAs(readManifest(here.folder), commitOf(here.folder))
     : newestLocked(source);

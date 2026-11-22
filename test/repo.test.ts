@@ -1092,6 +1092,28 @@ test("init pins the forge's plugin at its newest version, and installs nothing",
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "github"))).toBe(false);
 });
 
+// sc init only reads Skelcrew's state, so the plugin installed here is pinned and the database
+// stays byte for byte as it was, even one an older Skelcrew left, which preparing it would change.
+test("init on a machine with Skelcrew's state leaves that state as it was", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const commit = githubInstalledAsYours();
+  const data = join(home, ".local", "share", "skelcrew");
+  const db = new Database(join(data, "skelcrew.db"));
+  db.run("DROP VIEW task_threads");
+  db.close();
+  const state = () =>
+    readdirSync(data)
+      .filter((name) => name.startsWith("skelcrew.db"))
+      .map((name) => [name, Bun.hash(readFileSync(join(data, name))).toString()]);
+  const before = state();
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(parse(readFileSync(join(checkout, "skelcrew.lock"), "utf8"))).toEqual({
+    "skelcrew/skelcrew-github": { name: "github", version: "0.1.0", commit },
+  });
+  expect(state()).toEqual(before);
+});
+
 // sc init writes into the repository alone, so on a machine where Skelcrew never ran it leaves
 // no state of Skelcrew's behind, not even the clone it reads the plugin's pin from.
 test("init on a machine where Skelcrew never ran writes nothing outside the repository", async () => {
