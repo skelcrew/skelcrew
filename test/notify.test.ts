@@ -98,8 +98,8 @@ await notify.sendNotifications(db);`);
 test("each item the lead posts sends, even in the same words, on a thread or its repository", () => {
   const push = fakePlugin(home, "push", ["notifier"]);
   config("notify:\n  needs-you: push\n");
-  run(`postItem(db, "app", "12", "approve the design", ["yes", "no"]);
-postItem(db, "app", "12", "approve the design", []);
+  run(`postItem(db, "app", "t12", "approve the design", ["yes", "no"]);
+postItem(db, "app", "t12", "approve the design", []);
 postItem(db, "app", null, "rotate the deploy key", []);
 await notify.sendNotifications(db);`);
   expect(messages(push).map((m) => [m.title, m.body])).toEqual([
@@ -112,7 +112,7 @@ await notify.sendNotifications(db);`);
 test("the digest lists the lead's open items under what waits on you", () => {
   const email = fakePlugin(home, "email", ["notifier"]);
   config("notify:\n  digest: email\n  digest_at: '00:00'\n");
-  run(`postItem(db, "app", "12", "approve the design", []);
+  run(`postItem(db, "app", "t12", "approve the design", []);
 postItem(db, "app", null, "rotate the deploy key", []);
 notify.queueDigest(db);
 await notify.sendNotifications(db);`);
@@ -354,7 +354,7 @@ Under way:
   APP-12 · working
 Backlog:
   APP-15
-  APP-T104`);
+  APP-104`);
   expect(digest?.links).toEqual([
     { name: "APP-13 #7", url: "https://github.com/simon/app/pull/7" },
     { name: "APP-14", url: "https://github.com/simon/app/issues/14" },
