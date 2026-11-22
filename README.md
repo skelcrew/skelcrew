@@ -63,7 +63,7 @@ The task shows in the sidebar. Your typing starts in the lead, so press Ctrl+\ t
 
 The builder submits each round, and a fresh reviewer reviews it. Only a P1 holds the PR back: a bug someone will hit, a security or data-loss problem, or the task not done. Smaller findings are listed on the PR, and filed in the backlog once it merges. After 3 rounds of changes, the task waits for you. `sc start APP-12` lets it go on.
 
-When a thread needs you, the lead asks in Needs you, at the top of the sidebar: a short question with lettered options and its recommendation. Move to the item and press a letter to answer, or `r` to type a reply. Your answer goes back to the lead.
+When a thread needs you, the lead asks in Needs you, at the top of the sidebar: a short title, and how many options it has. Move to the item and press Enter to read it whole, then press a letter to answer, or `r` to type a reply. Your answer goes back to the lead.
 
 When the PR is approved and green, merge it on GitHub, or with `m` on its row. Or arm it to merge once it is ready:
 

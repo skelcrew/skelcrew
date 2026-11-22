@@ -98,9 +98,9 @@ await notify.sendNotifications(db);`);
 test("each item the lead posts sends, even in the same words, on a thread or its repository", () => {
   const push = fakePlugin(home, "push", ["notifier"]);
   config("notify:\n  needs-you: push\n");
-  run(`postItem(db, "app", "t12", "approve the design", ["yes", "no"]);
-postItem(db, "app", "t12", "approve the design", []);
-postItem(db, "app", null, "rotate the deploy key", []);
+  run(`postItem(db, "app", "t12", { text: "approve the design", options: ["yes", "no"] });
+postItem(db, "app", "t12", { text: "approve the design", options: ["yes", "no"] });
+postItem(db, "app", null, { text: "rotate the deploy key", options: ["yes", "no"] });
 await notify.sendNotifications(db);`);
   expect(messages(push).map((m) => [m.title, m.body])).toEqual([
     ["APP-12 needs you", "approve the design"],
@@ -112,8 +112,8 @@ await notify.sendNotifications(db);`);
 test("the digest lists the lead's open items under what waits on you", () => {
   const email = fakePlugin(home, "email", ["notifier"]);
   config("notify:\n  digest: email\n  digest_at: '00:00'\n");
-  run(`postItem(db, "app", "t12", "approve the design", []);
-postItem(db, "app", null, "rotate the deploy key", []);
+  run(`postItem(db, "app", "t12", { text: "approve the design", options: ["yes", "no"] });
+postItem(db, "app", null, { text: "rotate the deploy key", options: ["yes", "no"] });
 notify.queueDigest(db);
 await notify.sendNotifications(db);`);
   expect(messages(email)[0]?.body).toBe(`app (simon/app)

@@ -23,6 +23,7 @@ import {
   itemFooter,
   itemKey,
   openPr,
+  picked,
   type Reply,
   replyLine,
   stillOffered,
@@ -407,12 +408,42 @@ export async function runList(agents: string, repository: string): Promise<void>
     working = false;
     refresh();
   };
-  // Acts on what a key or a click on an item's line picks: an option, which answers it, or a
-  // reply, which you then type.
-  const pickOn = (row: Row, pick: Pick) => {
-    if (pick !== "reply") return answerRow(row, { pick });
-    replying = { row, text: "" };
+  // Acts on what a key or a click on an item's line picks: an option of the lead's item, which
+  // answers it, a reply, which you then type, or an option of Skelcrew's own, which does what it
+  // says, as picked says. Opening the builder attaches once the daemon told the lead.
+  const pickOn = async (row: Row, pick: Pick) => {
+    const does = picked(row, pick, `${open.owner}/${open.repo}`);
+    if (does === null) return draw();
+    if (does === "reply") {
+      replying = { row, text: "" };
+      return draw();
+    }
+    if ("refused" in does) return say(does.refused);
+    if ("open" in does) {
+      try {
+        await startOrMerge(does.open.request);
+      } catch (error) {
+        item = null;
+        return say(errorText(error));
+      }
+      return openRow(row);
+    }
+    item = null;
+    if ("answer" in does) return answerRow(row, { pick: does.answer });
+    if ("run" in does) return goAhead(does.run);
+    asking = { question: does.confirm, row: row.name, offer: "pick" };
     return draw();
+  };
+  // Asks whether to merge a task ready for review, as m does, or says why it can't.
+  const mergeRow = (row: Row) => {
+    if (row.merge && "refused" in row.merge) return say(row.merge.refused);
+    if (row.merge) {
+      asking = { question: row.merge, row: row.name, offer: "merge" };
+      return draw();
+    }
+    if (row.part === "ready" && row.needsYou)
+      return say(`${row.name}'s builder needs you first: press Enter to reach it`);
+    return say(openPr(db, open, row, canOpen, (text) => process.stdout.write(text)));
   };
 
   const openRow = async (row: Row) => {
@@ -657,11 +688,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       asking = { question: row.startNow, row: row.name, offer: "startNow" };
       return draw();
     }
-    if (key === "m" && row?.merge) {
-      if ("refused" in row.merge) return say(row.merge.refused);
-      asking = { question: row.merge, row: row.name, offer: "merge" };
-      return draw();
-    }
+    if (key === "m" && row?.merge) return mergeRow(row);
     if (key === "m" && row?.part === "ready" && row.needsYou)
       return say(`${row.name}'s builder needs you first: press Enter to reach it`);
     if (key === "m" && row?.part === "ready") return say(`${row.name} has no PR to merge here`);

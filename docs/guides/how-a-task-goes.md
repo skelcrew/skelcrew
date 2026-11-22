@@ -75,7 +75,7 @@ APP-12 needs you: changes asked for after 3 rounds of changes, so the round limi
 
 The repository's flow can set another limit. So can you, with `rounds:` in `~/.config/skelcrew/config.yaml`.
 
-You decide what happens next:
+Its item in Needs you, "Review still wants changes after 3 rounds", lists the latest findings, and its options do the first three below. You decide what happens next:
 
 - Let it go on, with `sc start APP-12`.
 - Merge it anyway, if what is left doesn't matter to you. `sc merge --skip-review APP-12` merges it once CI passes, without Skelcrew's approval.

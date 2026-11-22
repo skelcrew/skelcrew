@@ -10,7 +10,7 @@ import { threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
 import { issueRef, openTasks, prOf } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
-import { itemOf, itemsOf } from "../flow/inbox.ts";
+import { type Item, itemOf, itemsOf } from "../flow/inbox.ts";
 import { leadOf } from "../flow/lead.ts";
 import { limitOf, nextRound, passedReviewStage, roundOf } from "../flow/ledger.ts";
 import {
@@ -23,9 +23,11 @@ import {
   shownOf,
 } from "../flow/marks.ts";
 import { agentsSaid } from "../flow/merging.ts";
+import { type Act, type OwnItem, ownItem } from "../flow/own-items.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { type ListStage, listStage } from "../flow/stage.ts";
+import { stillAsks } from "../flow/status.ts";
 import { counted, ordinal } from "../flow/task-queue.ts";
 import { Thread, taskLabel, taskName, typedTask } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
@@ -58,11 +60,24 @@ export const sections: Section[] = [
 // Needs you has no key, as it never closes.
 export const numbered = sections.filter((section) => section !== "needs you");
 
-// What a row under Needs you shows of a mark Skelcrew set itself, until the lead posts an item.
-export const leadLooks = "the lead is looking at this";
+// The item a row shows under Needs you: its short title, its text and its options, in letter
+// order. `acts` is what each option of Skelcrew's own item does, and null on the lead's item,
+// whose pick goes to the lead. `merging` is the PR you saw, by its number, when its thread
+// started and its head as Skelcrew's copy had it, on an item that offers a merge without
+// approval, which merges only that PR at that commit. `skipping` is what that merge asks y/n of
+// first, as sc merge --skip-review does: what the review still asks, and whether it changes
+// .agents/.
+export type Ask = {
+  title: string;
+  text: string;
+  options: string[];
+  acts: Act[] | null;
+  merging?: Seen;
+  skipping?: string;
+};
 
-// The lead's item a row shows under Needs you: its text and its options, in letter order.
-export type Ask = { text: string; options: string[] };
+// A PR as you saw it, for a merge without approval.
+type Seen = { pr: number; started: number | null; head: string };
 
 // The mark of a row with the lead's item, which waits on your answer, whatever else it shows.
 const answerMark: Mark = { sign: "●", colour: "yellow" };
@@ -223,6 +238,24 @@ function leadRow(db: Database, open: Open, now: number): Row {
   };
 }
 
+// Returns the lead's item as a row shows it.
+const askOf = (item: Item): Ask => ({
+  title: item.title,
+  text: item.text,
+  options: item.options,
+  acts: null,
+});
+
+// Returns Skelcrew's own item as a row shows it, with the PR you see when it offers a merge
+// without approval.
+const ownAsk = (own: OwnItem, skip: { merging: Seen; skipping: string } | null): Ask => ({
+  title: own.title,
+  text: own.text,
+  options: own.options.map((option) => option.label),
+  acts: own.options.map((option) => option.act),
+  ...(skip !== null && own.options.some((option) => option.act === "skip review") ? skip : {}),
+});
+
 // What the list reads of a task beyond what Thread has: its PR's link, saved as the forge's copy
 // last had it, for a task whose PR has left the copy.
 const SavedLink = z.object({ pr_link: z.string().nullable() });
@@ -240,6 +273,7 @@ function taskRow(
   const shown = shownOf(thread, limitOf(thread), now);
   const ended = stage === "done";
   const item = ended ? null : itemOf(db, open.owner, open.repo, thread.task);
+  const own = ended ? null : ownItem(thread, item !== null);
   const mark: Mark = ended ? { sign: "○", colour: "dim" } : item ? answerMark : shown.mark;
   const unreviewed = shown.word === "not reviewed" ? ", not reviewed" : "";
   const live = readyToMerge(mark) ? `ready to merge${unreviewed}` : shown.word;
@@ -298,7 +332,7 @@ function taskRow(
   return {
     part: stage,
     section:
-      mark.sign === "●" || item !== null
+      item !== null || own !== null
         ? "needs you"
         : thread.status === "queued" || thread.status === "stopped"
           ? "task queue"
@@ -333,7 +367,25 @@ function taskRow(
     more: 0,
     place: null,
     waits: "",
-    ask: item && { text: item.text, options: item.options },
+    ask: item
+      ? askOf(item)
+      : own &&
+        ownAsk(
+          own,
+          thread.pr !== null && copy?.head
+            ? {
+                merging: { pr: thread.pr, started: thread.started, head: copy.head },
+                skipping: [
+                  `Merge #${thread.pr} (${name} ${removeControlCodes(thread.title ?? "")}) without Skelcrew's approval? CI must still pass.`,
+                  removeControlCodes(stillAsks(thread)),
+                  agentsSaid(db, open.owner, open.repo, copy, copy.head),
+                  "y/n",
+                ]
+                  .filter(Boolean)
+                  .join(" "),
+              }
+            : null,
+        ),
   };
 }
 
@@ -543,7 +595,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       more: 0,
       place: null,
       waits: "",
-      ask: item && { text: item.text, options: item.options },
+      ask: item && askOf(item),
     };
   };
   // The open issues no thread works on, and the tasks filed in the backlog, newest first. An
@@ -610,11 +662,11 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
             section: "needs you",
             name: "ask",
             label: repository.name,
-            title: "about the repository",
+            title: "",
             mark: answerMark,
             colour: "yellow",
             needsYou: true,
-            ask: { text: item.text, options: item.options },
+            ask: askOf(item),
           },
         ]
       : [],

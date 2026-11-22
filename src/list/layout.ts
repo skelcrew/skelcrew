@@ -2,6 +2,7 @@
 // lead's block that heads the repository, each section's heading in its colour with the rows of
 // those that are open, and the bottom line with the keys and the machine's load. It reads
 // nothing, so what you see can be tested without a terminal.
+import { yesNo } from "../flow/inbox.ts";
 import { letters } from "../flow/requests.ts";
 import {
   amber,
@@ -22,11 +23,10 @@ import {
   white,
   yellow,
 } from "../screen/look.ts";
-import { itemKeys } from "./actions.ts";
 import {
+  type Ask,
   type Ci,
   type Heading,
-  leadLooks,
   numbered,
   type Row,
   type Section,
@@ -107,14 +107,12 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
         ? []
         : [enter];
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
-  const answers = row?.ask ? [itemKeys(row)] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const now = row?.startNow ? ["f start now"] : [];
   const reorder = row?.section === "task queue" && row.place !== null ? ["shift+↑↓ reorder"] : [];
   const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   return [
     "↑↓ move",
-    ...answers,
     ...open,
     "0-6 sections",
     ...reorder,
@@ -263,48 +261,44 @@ const tall = (row: Row) =>
 // What a line of an item answers when tapped: one of its options, or a reply in your own words.
 export type Pick = (typeof letters)[number] | "reply";
 
-// Returns the lines under a row that show the lead's item: its text cut at words, then each option
-// by its letter, then the line for a reply, each line with what tapping it answers. They line up
-// under the row's name, and are shaded with it on the row you are on. `most` is how many lines
-// they may take: a text too long for them is cut short with …, so the options always show, as
-// the details pane and sc show give the text whole.
-function askLines(
-  row: Row,
-  here: boolean,
-  width: number,
-  most = Number.POSITIVE_INFINITY,
-): { text: string; pick: Pick | null }[] {
-  if (row.ask === null) return [];
-  const indent = " ".repeat(Bun.stringWidth(`${pointer(here)}${row.mark.sign} `));
-  const room = Math.max(width - indent.length, 1);
-  const wrapped = (text: string) => Bun.wrapAnsi(text, room, { hard: true }).split("\n");
-  const whole = wrapped(row.ask.text);
-  const choices = row.ask.options.flatMap((option) => wrapped(option)).length + 1;
-  const fits = Math.max(most - choices, 1);
-  const cut =
-    whole.length <= fits
-      ? whole
-      : [...whole.slice(0, fits - 1), fitted(`${whole[fits - 1] ?? ""}…`, room)];
-  const text = cut.map((line) => ({
-    text: `${indent}${tinted(here, bright, line)}`,
-    pick: null,
-  }));
-  const options = row.ask.options.flatMap((option, at) => {
+// Returns what a row's second line says of how its item is answered: y/n for a yes or no item,
+// or how many options it has.
+const answeredBy = (ask: Ask) =>
+  Bun.deepEquals(ask.options, yesNo) ? "y/n" : `${ask.options.length} options`;
+
+// Returns an item in a box `width` columns wide, drawn with box-drawing characters in the
+// colour of the screen's other edges: its short title, its whole text, then each option by its
+// letter, then the line for a reply on the lead's item, each wrapped to the box, never cut, with
+// what tapping each line answers. The details pane and an item opened full-size both show it.
+export function itemBox(ask: Ask, width: number): { text: string; pick: Pick | null }[] {
+  const room = Math.max(width - 4, 1);
+  const wrapped = (text: string) =>
+    text.split("\n").flatMap((part) => Bun.wrapAnsi(part, room, { hard: true }).split("\n"));
+  const inside = (code: string | null, line: string, pick: Pick | null = null) => ({
+    text: `${paint(grey, "│")} ${filled(code === null ? line : paint(code, line), room)} ${paint(grey, "│")}`,
+    pick,
+  });
+  const options = ask.options.flatMap((option, at) => {
     const letter = letters[at];
     if (letter === undefined) return [];
-    return wrapped(`${letter}) ${option}`).map((line) => ({
-      text: `${indent}${tinted(here, yellow, line)}`,
-      pick: letter,
-    }));
+    return wrapped(`${letter}) ${option}`).map((line) => inside(null, line, letter));
   });
-  const reply = {
-    text: `${indent}${tinted(here, grey, fitted("r) reply", room))}`,
-    pick: "reply" as const,
-  };
-  return [...text, ...options, reply].map((line) => ({
-    ...line,
-    text: here ? shaded(line.text, width) : line.text,
-  }));
+  const reply =
+    ask.acts === null ? wrapped("r) reply").map((line) => inside(grey, line, "reply")) : [];
+  const edge = (left: string, right: string) => ({
+    text: paint(grey, `${left}${"─".repeat(room + 2)}${right}`),
+    pick: null,
+  });
+  return [
+    edge("┌", "┐"),
+    ...wrapped(ask.title).map((line) => inside(bright, line)),
+    inside(null, ""),
+    ...wrapped(ask.text).map((line) => inside(null, line)),
+    inside(null, ""),
+    ...options,
+    ...reply,
+    edge("└", "┘"),
+  ];
 }
 
 // What an item opened full-size says on a screen too short to show it.
@@ -325,11 +319,16 @@ export function drawItem(
   height: number,
   scroll: number,
 ): { lines: string[]; targets: Target[]; scroll: number } {
+  if (row.ask === null) return { lines: [], targets: [], scroll: 0 };
   const about = fitted(`${row.label}  ${row.title}`.trimEnd(), Math.max(width - 3, 1));
+  const box = itemBox(row.ask, Math.max(width - 4, 5)).map((line) => ({
+    ...line,
+    text: `   ${line.text}`,
+  }));
   const all = [
     { text: `   ${paint(bright, about)}`, pick: null },
     { text: "", pick: null },
-    ...askLines(row, false, width),
+    ...box,
   ];
   if (height < 3) {
     const lines = [`   ${fitted(tooShort, Math.max(width - 3, 1))}`, ""].slice(0, height);
@@ -443,15 +442,20 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   // A word the stage's heading already says, such as working under Building, is left out. The
   // step its builder is on then comes first, in the word's colour, as what is happening beyond
   // the stage. Under Needs you or Task queue the word is what the row is there for, so it stays.
+  // A row with an item says instead the item's short title and how it is answered.
   const repeats = row.section === row.part && stageWords[row.part] === row.says;
-  const looks = row.section === "needs you" && row.ask === null && row.part !== "lead";
-  const groups = [
-    [{ sign: repeats ? "" : row.says, code: markColours[row.colour] }],
-    [{ sign: looks ? leadLooks : "", code: grey }],
-    [{ sign: row.step, code: repeats ? markColours[row.colour] : grey }],
-    pr,
-    [{ sign: row.when, code: grey }],
-  ].filter((group) => group.some((piece) => piece.sign));
+  const said = row.ask
+    ? [
+        [{ sign: row.ask.title, code: markColours[row.colour] }],
+        [{ sign: answeredBy(row.ask), code: grey }],
+      ]
+    : [
+        [{ sign: repeats ? "" : row.says, code: markColours[row.colour] }],
+        [{ sign: row.step, code: repeats ? markColours[row.colour] : grey }],
+        pr,
+        [{ sign: row.when, code: grey }],
+      ];
+  const groups = said.filter((group) => group.some((piece) => piece.sign));
   const pieces = groups.flatMap((group, at) =>
     at === 0 ? group : [{ sign: " · ", code: grey }, ...group],
   );
@@ -661,19 +665,7 @@ export function drawRows(
     if (!row) return [];
     const on = i === here;
     const plain = (lines: string[]) => lines.map((text) => ({ text, pick: null }));
-    // The row you are on fits between the edge lines, so its item's options can be read and
-    // tapped.
-    const left = (above: number) => (on ? Math.max(room - 2 - above, 1) : undefined);
-    if (row.part === "ask")
-      return [
-        ...plain(tallLines(row, on, columns.name, width).slice(0, 1)),
-        ...askLines(row, on, width, left(1)),
-      ];
-    if (tall(row))
-      return [
-        ...plain(tallLines(row, on, columns.name, width)),
-        ...askLines(row, on, width, left(2)),
-      ];
+    if (tall(row)) return plain(tallLines(row, on, columns.name, width));
     return plain(marked([shortLine(row, on, columns, width)], on, width));
   };
   const onHeading = rows[here]?.part === "heading" ? rows[here]?.section : undefined;

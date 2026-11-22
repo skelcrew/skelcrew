@@ -584,6 +584,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "t3" })).c
         "Issue   #7  https://github.com/simon/site/issues/7\n" +
         "Thread  SITE-7/builder  waiting, needs you\n" +
         "PR      none\n" +
+        "\nAsks you, in Needs you\nIts builder needs you\nSkelcrew couldn't go on with this thread without you.\na) Open the builder\nb) Let the lead handle it\n" +
         "\nDescription\nMake it calm.\n",
     );
     expect(read(join(home, "calls"))).not.toContain("issues");

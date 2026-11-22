@@ -17,6 +17,7 @@ import { reviewCheck } from "./decide.ts";
 import { itemOf } from "./inbox.ts";
 import { lastReviewed, nextRound, roundOf } from "./ledger.ts";
 import { messagesWaiting } from "./messages.ts";
+import { ownItem } from "./own-items.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { letters } from "./requests.ts";
 import { roundRunning } from "./round.ts";
@@ -382,7 +383,8 @@ export type PrPage = z.infer<typeof PrPage>;
 // it, as after a merge. `merge` is its armed merge with what it waits on, such as `merges without
 // approval · waiting on its checks`, or null with none, as the list's rows leave that out.
 // `filed` is who filed a task of the backlog and when, as an ISO time, or null for any other.
-// `item` is the lead's item on it in Needs you, with its options, or null with none.
+// `item` is its item in Needs you, the lead's or else Skelcrew's own, with its short title and its
+// options, or null with none.
 // `decisions` and `mustStayTrue` are what bounds its reviews, kept once its thread is done.
 export const TaskView = z.object({
   task: z.string(),
@@ -405,7 +407,7 @@ export const TaskView = z.object({
   filed: z.object({ by: z.string(), at: z.string() }).nullable().default(null),
   notBlocking: z.array(z.string()).default([]),
   item: z
-    .object({ text: z.string(), options: z.array(z.string()) })
+    .object({ title: z.string().default(""), text: z.string(), options: z.array(z.string()) })
     .nullable()
     .default(null),
   decisions: z.array(z.object({ by: z.enum(["lead", "human"]), text: z.string() })).default([]),
@@ -511,7 +513,9 @@ export function readTask(db: Database, which: Which): TaskView {
       : (filed ?? { title: issue?.title ?? "", body: issue?.body ?? "" });
   const row = thread && threadRow(db, thread, forge);
   const pr = row?.pr ?? null;
-  const item = itemOf(db, owner, repo, task);
+  const asked = itemOf(db, owner, repo, task);
+  const own = thread && ownItem(thread, asked !== null);
+  const item = asked ?? (own && { ...own, options: own.options.map((option) => option.label) });
   return {
     task: `${taskName(name, task)}`,
     stage: taskStage(thread, issue !== undefined || filed !== null),
@@ -542,7 +546,8 @@ export function readTask(db: Database, which: Which): TaskView {
     filed: filed && { by: removeControlCodes(filed.by), at: filed.created },
     notBlocking: (thread ? (lastReviewed(thread)?.notBlocking ?? []) : []).map(safeText),
     item: item && {
-      text: removeControlCodes(item.text),
+      title: removeControlCodes(item.title),
+      text: item.text.split("\n").map(removeControlCodes).join("\n"),
       options: item.options.map(removeControlCodes),
     },
     decisions: (thread?.decisions ?? []).map(({ by, text }) => ({ by, text: safeText(text) })),
@@ -813,7 +818,10 @@ export function printTask(task: TaskView, json: boolean): void {
   const latest = prPage?.review;
   const options = (task.item?.options ?? []).map((option, at) => `${letters[at]}) ${option}`);
   const texts: [string, string][] = [
-    ["Asks you, in Needs you", [task.item?.text ?? "", ...options].join("\n")],
+    [
+      "Asks you, in Needs you",
+      task.item ? [task.item.title, task.item.text, ...options].join("\n") : "",
+    ],
     ["Description", task.body],
     ["Decisions", task.decisions.map(({ by, text }) => `- ${text} (${by})`).join("\n")],
     ["Must stay true", task.mustStayTrue.map((item, n) => `${n + 1}. ${item}`).join("\n")],

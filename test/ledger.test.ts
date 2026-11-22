@@ -22,6 +22,7 @@ import {
   roundMoved,
   roundOf,
   submitted,
+  submittedBefore,
   verdictPosted,
   verdictReached,
 } from "../src/flow/ledger.ts";
@@ -106,6 +107,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_followup: null,
     not_blocking_task: null,
     needs_you_for: null,
+    said: null,
+    handed: null,
     limit_decided: false,
     review_failed: false,
     agents: null,
@@ -392,6 +395,22 @@ test("letting a thread go on types its held changes in and stops the round limit
   const on = { ...past, ...goOn };
   expect(atRoundLimit(on, 3)).toBe(false);
   expect(reach(on, changes).change).toMatchObject({ rounds: 4, needs_you: true });
+});
+
+// A PR the forge answered with on a later submit, such as one opened before the daemon stopped
+// and could save its number, may hold an older summary, so it is replaced.
+// A new thread's row has no record yet, so its first submit starts one from before, with nothing
+// submitted. A row from before the record that had submitted counts.
+test("a thread submitted before once its record holds two submits", () => {
+  for (const fresh of [thread({ round_log: [] }), thread({ round_log: null })]) {
+    const first = { ...fresh, ...submitted(fresh, "Add export", 1000, false) };
+    expect(submittedBefore(first)).toBe(false);
+    const second = { ...first, ...submitted(first, "Fix", 2000, false) };
+    expect(submittedBefore(second)).toBe(true);
+  }
+  // A row from before the record that had submitted, such as one whose PR number was never saved.
+  const migrated = thread({ round_log: null, rounds: 1, reviewed_commit: sha });
+  expect(submittedBefore({ ...migrated, ...submitted(migrated, "Fix", 2000, false) })).toBe(true);
 });
 
 // What the forge said while a round moved on is about the older round. Posting a verdict or

@@ -92,7 +92,7 @@ console.log(JSON.stringify({ prompt: text.replace(/\\x1b\\[20[01]~/g, "") }));' 
 done <&3 &
 echo "❯"
 for i in $(seq 3000); do
-  test -e "$CLAUDE_CONFIG_DIR/ask" && { rm "$CLAUDE_CONFIG_DIR/ask"; hook PreToolUse AskUserQuestion; }
+  test -e "$CLAUDE_CONFIG_DIR/ask" && { said=$(cat "$CLAUDE_CONFIG_DIR/ask"); rm "$CLAUDE_CONFIG_DIR/ask"; hook PreToolUse AskUserQuestion "$said"; }
   test -e "$CLAUDE_CONFIG_DIR/answer" && { rm "$CLAUDE_CONFIG_DIR/answer"; hook PostToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/talk" && { said=$(cat "$CLAUDE_CONFIG_DIR/talk"); rm "$CLAUDE_CONFIG_DIR/talk"; hook UserPromptSubmit "" "$said"; }
   test -e "$CLAUDE_CONFIG_DIR/fail" && { rm "$CLAUDE_CONFIG_DIR/fail"; hook StopFailure authentication_failed; }
@@ -269,6 +269,15 @@ export function setColumn(column: "needs_you" | "submitted"): void {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
   db.run(`UPDATE threads SET ${column} = 1`);
+  db.close();
+}
+
+// Runs SQL on Skelcrew's database while the daemon runs, such as to set a thread's round as a
+// review would have.
+export function sql(statements: string): void {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run(statements);
   db.close();
 }
 

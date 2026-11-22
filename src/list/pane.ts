@@ -2,7 +2,6 @@
 // task's details at the top and its agent at work, live, below them. It reads nothing, so what
 // it shows can be tested without a terminal.
 import type { TaskView } from "../flow/list.ts";
-import { letters } from "../flow/requests.ts";
 import {
   bright,
   fitted,
@@ -15,9 +14,9 @@ import {
   yellow,
 } from "../screen/look.ts";
 import type { Details } from "./details.ts";
-import { sectionNames } from "./layout.ts";
+import { itemBox, sectionNames } from "./layout.ts";
 import { markdownLines } from "./markdown.ts";
-import { leadLooks, type Row } from "./rows.ts";
+import type { Row } from "./rows.ts";
 
 // The live view's part of the pane: the agent's screen as its session host gave it, colours
 // included, or a short line saying why there is none, such as `Builder not running`.
@@ -174,21 +173,7 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     return `${shown}${gap}${paint(markColours[row.mark.colour], stage)}`;
   });
   const top = [...title, paint(grey, "─".repeat(width))];
-  const needed =
-    view.threads.find((thread) => thread.needsYouFor !== null)?.needsYouFor ??
-    (row.section === "needs you" ? row.says : null);
-  const options = (view.item?.options ?? []).map((option, at) => `${letters[at]}) ${option}`);
-  const asked = view.item
-    ? [`Asks you: ${view.item.text}`, ...options]
-    : needed
-      ? [`Needs you: ${needed}`]
-      : [];
-  const callout = [
-    ...asked.flatMap((said) =>
-      folded(said, width).map((line) => paint(`${bright};${yellow}`, line)),
-    ),
-    ...(needed && !view.item ? folded(leadLooks, width).map((line) => paint(grey, line)) : []),
-  ];
+  const callout = row.ask ? itemBox(row.ask, width).map((line) => line.text) : [];
   const word = row.waits || row.says;
   const rest = [row.step, details.changed].filter(Boolean).join(" · ");
   const nowPlain = [word, rest].filter(Boolean).join(" · ");

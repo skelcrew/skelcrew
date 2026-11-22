@@ -257,6 +257,22 @@ export async function openPr(
   return opened.number;
 }
 
+// Replaces the PR's description on the forge with `body`, for a submit after the first, and
+// returns whether the forge did. A plugin that answers nothing, such as an older one, can't.
+export async function editPr(
+  db: Database,
+  repository: Repository,
+  pr: { pr: number; body: string },
+): Promise<boolean> {
+  const answer = await callPlugin(
+    db,
+    requireForge(db, repository),
+    { ask: "edit pr", repository: repositoryKey(repository), ...pr },
+    z.object({ edited: z.boolean() }).nullable(),
+  );
+  return answer?.edited ?? false;
+}
+
 // Merges the PR on the forge, for m on the screen and a merge when ready, but only while its
 // head is still the commit you saw approved, so a push after you looked is never merged unseen.
 // Returns null once merged, or the forge's reason for refusing, such as a conflict or a rule on

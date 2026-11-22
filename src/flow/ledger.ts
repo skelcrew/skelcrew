@@ -456,6 +456,23 @@ export function reviewPending(thread: Thread): boolean {
   return submitting === null && reviewing !== null;
 }
 
+// Returns whether the builder submitted before its latest submit, so a PR may already hold an
+// older summary. A row from before the record submitted when its round says so. A new row has no
+// record either, so its first event starts one from before, with nothing submitted.
+export const submittedBefore = (thread: Recorded) => {
+  const events = recordOf(thread);
+  const submits = events.filter((event) => event.kind === "submitted").length;
+  const before = events.some(
+    (event) =>
+      event.kind === "before" &&
+      (event.round.rounds > 0 ||
+        event.round.submitting !== null ||
+        event.round.reviewing !== null ||
+        event.round.reviewed_commit !== null),
+  );
+  return submits > 1 || before;
+};
+
 // The builder submitted, which drops what the older review asked for. A flow with no review stage
 // saves its verdict as the submit starts, so the thread waits on checks from then on. A submit is
 // in flight until its review answers, and waiting on a review never needs you.

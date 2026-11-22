@@ -82,6 +82,8 @@ const working: Thread = {
   merge_followup: null,
   not_blocking_task: null,
   needs_you_for: null,
+  said: null,
+  handed: null,
   limit_decided: false,
   review_failed: false,
   agents: null,

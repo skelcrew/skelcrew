@@ -6,6 +6,7 @@ import type { Thread } from "./thread.ts";
 
 // The letters an item's options in the inbox go by, in order.
 export const letters = ["a", "b", "c", "d"] as const;
+export type Letter = (typeof letters)[number];
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
 // for something else.
@@ -185,26 +186,46 @@ export const DaemonRequest = z.discriminatedUnion("command", [
       .optional(),
     asked: z.string().optional(),
   }),
-  // The lead's item for a task, or with no task for its repository, with its options, or with
-  // `clear` taking its item off.
+  // The lead's item for a task, or with no task for its repository, with its short title and its
+  // options, or with `clear` taking its item off.
   z.object({
     command: z.literal("ask"),
     repo: z.string(),
     task: TaskId.optional(),
+    title: z.string().optional(),
     text: z.string().default(""),
     options: z.array(z.string()).default([]),
     clear: z.boolean().default(false),
   }),
   // Your answer to an item: an option's letter, or a reply in your own words. `seen` is the item's
-  // text and options as you saw them, so an answer never goes to an item the lead replaced
+  // title, text and options as you saw them, so an answer never goes to an item the lead replaced
   // meanwhile, even with the same text.
   z.object({
     command: z.literal("answer"),
     repo: z.string(),
     task: TaskId.optional(),
-    seen: z.object({ text: z.string(), options: z.array(z.string()) }),
+    seen: z.object({ title: z.string(), text: z.string(), options: z.array(z.string()) }),
     pick: z.enum(letters).optional(),
     reply: z.string().optional(),
+  }),
+  // Your pick on Skelcrew's own item on a thread, by its letter. `seen` is the item's title and
+  // text as you saw them, so a pick never acts on something else the thread needs you for now.
+  // Merging the approved PR carries `commit`, the head you saw approved, as a merge does, and
+  // merging without approval `merging`, the PR you saw: its number, when its thread started and
+  // its head, the only commit it merges.
+  z.object({
+    command: z.literal("pick"),
+    repo: z.string(),
+    task: TaskId,
+    seen: z.object({ title: z.string(), text: z.string() }),
+    pick: z.enum(letters),
+    commit: z
+      .string()
+      .regex(/^[0-9a-f]{40,64}$/)
+      .optional(),
+    merging: z
+      .object({ pr: z.number().int().positive(), started: z.number().nullable(), head: z.string() })
+      .optional(),
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   // A lead's brief for another repository's lead. `to` names that repository. It isn't `repo`,
@@ -229,7 +250,8 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   // `from` is the remote of the checkout you ran sc check in, which names the repository whose
   // test command it runs. An agent's own socket names its repository instead.
   z.object({ command: z.literal("check"), from: z.string().optional() }),
-  z.object({ command: z.literal("question asked") }),
+  // `question` is what the builder asked, when its harness says.
+  z.object({ command: z.literal("question asked"), question: z.string().optional() }),
   // `prompt` is what was typed into the agent, when its harness says.
   z.object({ command: z.literal("question answered"), prompt: z.string().optional() }),
   z.object({ command: z.literal("question closed") }),
@@ -304,6 +326,7 @@ export const allowed = {
     "merge skip review",
     "merge cancel",
     "answer",
+    "pick",
     "check",
   ],
   lead: [

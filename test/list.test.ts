@@ -1021,9 +1021,9 @@ test("every section has its heading with its count, only open ones show rows, an
     "",
     "   Needs you  2",
     " ▸ ● 12  Rate limit the API",
-    "     question · the lead is looking at this · 2m",
+    "     Its builder asked a question · 2 options",
     "   ● 14  Fix the export header",
-    "     ready to merge · the lead is looking at this · #41 ✓ r1",
+    "     Ready to merge · 2 options",
     "",
     " 0 Backlog    1",
     " 1 Task queue 1",
@@ -1114,9 +1114,9 @@ test("no blank line parts one stage from the next, only Needs you from the stage
   expect(sectionsOf(drawn(1, 40, 80, open)).slice(0, 19)).toEqual([
     "   Needs you  2",
     " ▸ ● 12   Rate limit the API",
-    "     question · the lead is looking at this · 2m",
+    "     Its builder asked a question · 2 options",
     "   ● 14   Fix the export header",
-    "     ready to merge · the lead is looking at this · #41 ✓ r1",
+    "     Ready to merge · 2 options",
     "",
     " 0 Backlog    1",
     "   ○ #31  Export as CSV  14d",
@@ -1539,12 +1539,12 @@ ${threadSql({ task: "17", title: "Failed review", status: "waiting", review_fail
   const lines = drawn(1, 40, 80, ["needs you", "building", "reviewing"]).map((line) =>
     line.trimEnd(),
   );
-  expect(lines).toContain("     ready to merge · the lead is looking at this · #41 ✓ r1");
+  expect(lines).toContain("     Ready to merge · 2 options");
   expect(lines).toContain("     changes · #46 ✗ r3");
   expect(lines).toContain("     #45 ● r2");
   // On a terminal with colours, each mark is in its own.
-  const coloured = drawnWith(1, frame, { width: 80, height: 40 }, ["needs you"]).join("\n");
-  expect(coloured).toContain("\x1b[38;5;34m✓\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;34mr1");
+  const coloured = drawnWith(1, frame, { width: 80, height: 40 }, ["building"]).join("\n");
+  expect(coloured).toContain("\x1b[38;5;203m✗\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;136mr3");
 });
 
 // A wide terminal used to lose the last letter of whatever reached its right edge.
@@ -1676,7 +1676,7 @@ test("on the lead, the list starts at Needs you, with what is below at the botto
     "",
     "   Needs you  2",
     "   ● 12  Rate limit the API",
-    "     question · the lead is looking at this · 2m",
+    "     Its builder asked a question · 2 options",
     "   ● 14  Fix the export header",
     " ↓ +3  Back 1  Queue 1  Build 1  Rev 0  Chk 0  Ready 0  Done 0",
   ]);
@@ -1960,7 +1960,7 @@ test("a task moves into Needs you and back as its mark comes and goes, and you s
   );
   await until(() => seen().includes(" Needs you  3"), "app-7 under Needs you");
   expect(here()).toStartWith("▸ ● 7 ");
-  expect(below()).toStartWith("apply the split");
+  expect(below()).toStartWith("Its session host is missing · 2 options");
   // It is first under Needs you, as the one that changed last, right under its heading.
   const lines = seen().split("\n");
   expect(lines[lines.findIndex((line) => line.includes("Needs you")) + 1]).toContain("● 7 ");
@@ -2209,11 +2209,14 @@ test("s on Backlog with every builder busy asks to queue it, and says what the d
 // you had comes back with you.
 test("while attached the title names the agent and the key back, and the list shows the key", async () => {
   await open();
-  expect(seen()).toContain("⏎ attach · ctrl+\\ back");
+  expect(seen()).toContain("⏎ open item");
   const title = () =>
     tmux("display-message", "-p", "-t", "=one:", "#{pane_title}").stdout.toString();
   tmux("select-pane", "-t", "=one:", "-T", "my shell");
+  // Enter opens its item, whose first option opens the builder.
   press("Enter");
+  await until(() => seen().includes("a) Open the builder"), "the item");
+  type("a");
   await until(() => seen().includes("I am app-12"), "app-12's agent");
   await until(() => title() === "APP-12 · ctrl+\\ back\n", "the title");
   press("C-\\");
@@ -2484,9 +2487,11 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await open();
   await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   // The host has a key of its own to come back, so the list doesn't offer tmux's.
+  press("Enter");
+  await until(() => seen().includes("a) Open the builder"), "the item");
   expect(seen()).toContain("⏎ attach  ");
   expect(seen()).not.toContain("ctrl+\\ back");
-  press("Enter");
+  type("a");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   press("Enter");
   await until(() => seen().includes("q/esc quit"), "the list again");
@@ -2840,11 +2845,17 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   await open({ width: wide });
   expect(here()).toStartWith("▸ ● 12 ");
   await until(() => titled("APP-12  Rate limit the API"), "app-12's details");
-  expect(paneSeen().slice(0, 10)).toEqual([
+  expect(paneSeen().slice(0, 16)).toEqual([
     `APP-12  Rate limit the API${" ".repeat(62)}Building`,
     "─".repeat(paneWidth(wide)),
-    "Needs you: question",
-    "the lead is looking at this",
+    `┌${"─".repeat(paneWidth(wide) - 2)}┐`,
+    `│ ${"Its builder asked a question".padEnd(paneWidth(wide) - 4)} │`,
+    `│ ${"".padEnd(paneWidth(wide) - 4)} │`,
+    `│ ${"Its builder asked a question in its session.".padEnd(paneWidth(wide) - 4)} │`,
+    `│ ${"".padEnd(paneWidth(wide) - 4)} │`,
+    `│ ${"a) Open the builder".padEnd(paneWidth(wide) - 4)} │`,
+    `│ ${"b) Let the lead handle it".padEnd(paneWidth(wide) - 4)} │`,
+    `└${"─".repeat(paneWidth(wide) - 2)}┘`,
     "",
     `Now      question · last change 19 Nov 14:58, ${ago(now - 120_000, Date.now())}`,
     "Issue    #12  https://github.com/simon/app/issues/12",
@@ -2896,7 +2907,7 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
     "step four",
     "I am app-12",
   ]);
-  expect(seen()).toContain("⏎ attach · ctrl+\\ back · o output");
+  expect(seen()).toContain("⏎ open item · o output");
   type("o");
   await until(() => liveSeen().includes("step one"), "the whole screen");
   expect(liveSeen().slice(0, 5)).toContain("step two");
@@ -2907,9 +2918,14 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   await until(() => liveSeen().includes("step one"), "the whole screen on app-12 again");
   type("o");
   await until(() => !liveSeen().includes("step one"), "the strip again");
-  // Enter still attaches to the builder.
+  // Its item's first option still attaches to the builder.
   press("Enter");
-  await until(() => !seen().includes("q/esc quit"), "app-12's agent");
+  await until(() => seen().includes("a) Open the builder"), "the item");
+  type("a");
+  await until(
+    () => !seen().includes("q/esc quit") && !seen().includes("esc back"),
+    "app-12's agent",
+  );
   type("hello");
   press("Enter");
   await until(() => read(join(home, "app-12.typed")) === "hello\n", "what was typed");
