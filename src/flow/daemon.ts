@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs"
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { renewSignIns } from "../agents/harness.ts";
 import {
   agentRuns,
   endExitedSession,
@@ -258,6 +259,9 @@ const exitLook = z.coerce
   .min(0)
   .catch(1000)
   .parse(process.env.SKELCREW_EXIT_LOOK_MS ?? 1000);
+
+// How often the daemon renews sign-ins that end soon, in milliseconds.
+const renewEvery = 2 * 60 * 1000;
 
 // How often, in milliseconds, the daemon looks for work that waits: the queue of limits.threads,
 // and the messages waiting for builders. Tests set
@@ -1212,6 +1216,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
   }, 2000);
+  // Every two minutes, the daemon renews each sign-in of yours that ends soon, and gives running
+  // agents the fresh one. A failed renewal is tried again on the next.
+  setInterval(
+    () =>
+      doing("renewing sign-ins", () =>
+        renewSignIns().catch((error) => console.log(errorText(error))),
+      ),
+    renewEvery,
+  );
   setInterval(() => {
     try {
       doing("queueing the daily digest", () => queueDigest(db));

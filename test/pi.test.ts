@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { pi, piLoggedIn } from "../src/agents/pi.ts";
+import { pi, piLoggedIn, renewLogins } from "../src/agents/pi.ts";
 import skelcrew, {
   busyMark,
   failureOf,
@@ -26,6 +26,9 @@ import skelcrew, {
 import { quietSince } from "../src/agents/transport.ts";
 
 let home = "";
+// What an agent says when its sign-in expired before Skelcrew could renew it.
+const expired =
+  "the sign-in expired and Skelcrew couldn't renew it yet: it keeps trying, or sign Skelcrew in to Pi again";
 const data = () => join(home, ".local", "share", "skelcrew");
 // Saves Skelcrew's Pi login, as pi auth login does.
 function saveLogin(logins: object): void {
@@ -267,12 +270,13 @@ describe("the extension in a lead or a builder", () => {
       expect(await failedTurn(error)).toBe(sent("billing", outOfCredit));
   });
 
-  test("a sign-in Pi couldn't renew is a failed login, in Skelcrew's words", async () => {
-    const error =
-      'OAuth refresh failed for anthropic: Anthropic token refresh request failed. body={"error":{"message":"Invalid request format"}}';
-    expect(await failedTurn(error)).toBe(
-      sent("auth", "the sign-in expired: Skelcrew renews it as the session starts again"),
-    );
+  test("a sign-in that expired before Skelcrew renewed it is a failed login, in Skelcrew's words", async () => {
+    for (const error of [
+      'OAuth refresh failed for anthropic: Anthropic token refresh request failed. body={"error":{"message":"Invalid request format"}}',
+      "OAuth refresh failed for anthropic: fetch failed",
+      "Credential store modify failed for anthropic",
+    ])
+      expect(await failedTurn(error)).toBe(sent("auth", expired));
   });
 
   test("an event Pi sends in another shape still ends the turn", async () => {
@@ -447,7 +451,7 @@ describe("usage limits", () => {
       "the provider failed (500)",
       "the request failed with no HTTP status, such as offline",
       "out of credit (429): check the provider's plan and billing",
-      "the sign-in expired: Skelcrew renews it as the session starts again",
+      expired,
       "Pi failed to start, such as on a model it doesn't know: run pi by hand to see why",
       '429: {"message":"raw text from a provider"}',
     ])
@@ -589,7 +593,7 @@ describe("starting a lead or a builder", () => {
     expect(readFileSync(yours, "utf8")).toBe("keep\n");
   });
 
-  test("a copied sign-in has no refresh token, and Skelcrew renews one that expires within a day first", async () => {
+  test("a copied sign-in has no refresh token, and Skelcrew renews one that expires soon first", async () => {
     const later = Date.now() + 3 * 24 * 60 * 60 * 1000;
     saveLogin({
       anthropic: {
@@ -618,12 +622,88 @@ describe("starting a lead or a builder", () => {
     });
     // Only the sign-in that expires soon is renewed, outside the sandbox, in Skelcrew's login.
     expect(readFileSync(join(home, "renewals"), "utf8")).toBe(
-      "auth print-bearer-token --provider anthropic --min-expiry 24h\n",
+      "auth print-bearer-token --provider anthropic --min-expiry 20m\n",
     );
     expect(JSON.parse(readFileSync(join(agentFolder(), "auth.json"), "utf8"))).toEqual({
       anthropic: { ...renewed, refresh: "" },
       "openai-codex": { type: "oauth", access: "fine", refresh: "", expires: later },
     });
+  });
+
+  // Puts a fake pi first on the path, which renews Skelcrew's sign-in to anthropic as `renewed`,
+  // as pi auth print-bearer-token does, or fails while the file "failing" is there.
+  const renewingPi = (renewed: object) => {
+    writeFileSync(
+      join(home, "bin", "pi"),
+      `#!/bin/sh\necho "$*" >> "${join(home, "renewals")}"\n` +
+        `[ -e "${join(home, "failing")}" ] && exit 1\n` +
+        `printf '%s' '${JSON.stringify({ anthropic: renewed })}' > "$PI_CODING_AGENT_DIR/auth.json"\n`,
+      { mode: 0o755 },
+    );
+    return `${join(home, "bin")}:/usr/bin:/bin`;
+  };
+  const signIn = (access: string, refresh: string, minutes: number) => ({
+    type: "oauth",
+    access,
+    refresh,
+    expires: Date.now() + minutes * 60_000,
+  });
+  const copied = (file: string) => JSON.parse(readFileSync(file, "utf8"));
+
+  test("a renewal reaches each running agent's copy, never with the refresh token", async () => {
+    saveLogin({ anthropic: signIn("first", "r1", 60) });
+    await start();
+    const review = join(home, "review");
+    mkdirSync(review);
+    await pi.review({ home, folder: review });
+    const copies = [join(agentFolder(), "auth.json"), join(review, "pi", "auth.json")];
+    for (const copy of copies) expect(copied(copy).anthropic.access).toBe("first");
+    // The sign-in nears its end while the builder and the review still run.
+    saveLogin({ anthropic: signIn("first", "r1", 10) });
+    const renewed = signIn("second", "r2", 8 * 60);
+    await renewLogins(home, renewingPi(renewed));
+    for (const copy of copies)
+      expect(copied(copy)).toEqual({ anthropic: { ...renewed, refresh: "" } });
+    expect(readFileSync(copies[0] ?? "", "utf8")).not.toContain("r2");
+    expect(copied(join(data(), "pi", "auth.json")).anthropic.refresh).toBe("r2");
+    // A copy that went, as its review ended, is never written again.
+    rmSync(join(review, "pi"), { recursive: true });
+    saveLogin({ anthropic: signIn("second", "r2", 10) });
+    await renewLogins(home, renewingPi(signIn("third", "r3", 8 * 60)));
+    expect(copied(copies[0] ?? "").anthropic).toMatchObject({ access: "third", refresh: "" });
+    expect(existsSync(join(review, "pi"))).toBe(false);
+  });
+
+  test("a sign-in that doesn't end soon isn't renewed, and a key never is", async () => {
+    saveLogin({ anthropic: signIn("first", "r1", 60), google: { type: "api_key", key: "k" } });
+    await start();
+    await renewLogins(home, renewingPi(signIn("second", "r2", 60)));
+    expect(existsSync(join(home, "renewals"))).toBe(false);
+    expect(copied(join(agentFolder(), "auth.json")).anthropic.access).toBe("first");
+  });
+
+  test("a failed renewal leaves each copy as it was, and the next one tries again", async () => {
+    saveLogin({ anthropic: signIn("first", "r1", 10) });
+    const renewed = signIn("second", "r2", 8 * 60);
+    const path = renewingPi(renewed);
+    writeFileSync(join(home, "failing"), "");
+    await pi.start({
+      name: "app-12",
+      socket: join(home, "run", "app-12.sock"),
+      thread: folder(),
+      sessionId: "4b7d6f0e-0000-4000-8000-000000000001",
+      env: { ...env(), PATH: path },
+    });
+    const copy = join(agentFolder(), "auth.json");
+    expect(copied(copy).anthropic).toMatchObject({ access: "first", refresh: "" });
+    await expect(renewLogins(home, path)).rejects.toThrow(
+      "couldn't renew Pi's sign-in to anthropic",
+    );
+    expect(copied(copy).anthropic).toMatchObject({ access: "first", refresh: "" });
+    rmSync(join(home, "failing"));
+    await renewLogins(home, path);
+    expect(copied(copy)).toEqual({ anthropic: { ...renewed, refresh: "" } });
+    expect(readFileSync(join(home, "renewals"), "utf8").split("\n").length - 1).toBe(3);
   });
 
   test("a session gets no login when Skelcrew has none", async () => {

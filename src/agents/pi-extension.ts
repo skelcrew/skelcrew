@@ -78,10 +78,14 @@ export function failureOf(error: string): { kind: string; message: string } {
     const limit = `${limitWords} by ChatGPT's usage limit`;
     return { kind: "rate_limit", message: minutes ? `${limit}, resets in ~${minutes} min` : limit };
   }
-  if (said.startsWith("OAuth refresh failed for "))
+  if (
+    said.startsWith("OAuth refresh failed for ") ||
+    said.startsWith("Credential store modify failed for ")
+  )
     return {
       kind: "auth",
-      message: "the sign-in expired: Skelcrew renews it as the session starts again",
+      message:
+        "the sign-in expired and Skelcrew couldn't renew it yet: it keeps trying, or sign Skelcrew in to Pi again",
     };
   const status = httpStatus(said);
   if (status === 429 && outOfCredit(said))

@@ -242,11 +242,16 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
   writes anew from its own login as the agent starts. No sandbox sees Skelcrew's login.
 - **Renewing a sign-in rotates its refresh token.** Pi's own code says so, and the old token may
   stop working. Copies that each renewed would end the sign-in for the rest. So a copy holds no
-  refresh token, and Skelcrew renews a sign-in that ends within a day, outside the sandbox, with
-  `pi auth print-bearer-token --min-expiry 24h`, which saves the renewal in Skelcrew's login. A
-  copy Pi can't renew fails with "OAuth refresh failed for anthropic: ...", which Skelcrew
-  reports as an expired sign-in. A session that runs past its token's end stops on that until it
-  starts again.
+  refresh token. Every two minutes, and as an agent starts, Skelcrew renews a sign-in that ends
+  within 20 minutes, outside the sandbox, with `pi auth print-bearer-token --min-expiry 20m`.
+  That takes Pi's lock and saves the renewal in Skelcrew's login. Pi in a sandbox tries to
+  renew its copy itself 5 minutes before it ends, so the gap leaves several tries. A copy Pi
+  can't renew fails with "OAuth refresh failed for anthropic: ...", which Skelcrew reports as an
+  expired sign-in.
+- **A running Pi reads a changed `auth.json` for its next request.** In 1.6.0, each request
+  reads the credential through `AuthStorage.read`, which compares the file's device, inode, size
+  and times with the last read, and reads it again under its lock when they changed. So
+  Skelcrew renames a new copy over the old one: Pi sees the new inode, and never half a file.
 - **A read-only `auth.json` can't hold a sign-in for Pi.** Pi writes the file in place, with no
   rename, but it renews inside a lock, and writes only after the provider answered. A write that
   fails throws away the renewal, so the turn fails, though the provider already rotated the

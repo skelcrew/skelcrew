@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
-import { loginCopies, pi, removeLoginCopy } from "./pi.ts";
+import { loginCopies, pi, removeLoginCopy, renewLogins } from "./pi.ts";
 
 // A harness's name, as your config and Skelcrew's database write it.
 export const HarnessName = z.enum(["claude", "codex", "pi"]);
@@ -22,6 +22,13 @@ export function harnessNamed<Name extends HarnessName>(name: Name): (typeof harn
 // keep none per session.
 export function forgetLogin(name: string): void {
   removeLoginCopy(name);
+}
+
+// Renews your sign-ins that end soon, outside every sandbox, and gives each running agent's copy
+// of your login the fresh one. Only Pi keeps copies. Throws when a renewal failed, which the next
+// call tries again.
+export async function renewSignIns(): Promise<void> {
+  await renewLogins();
 }
 
 // The sessions whose start runs in this daemon now, whose copy of your login no sweep removes,

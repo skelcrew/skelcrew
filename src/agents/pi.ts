@@ -1,9 +1,18 @@
 // How Pi runs inside the sandbox: as the lead or a builder, in a tmux session with an agent folder
 // of its own, and as the reviewer, once per review. Each gets its own copy of Skelcrew's Pi login,
-// and loads Skelcrew's extension, which runs the hooks and draws the marks Skelcrew reads.
-import { lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// which Skelcrew keeps renewed, and loads Skelcrew's extension, which runs the hooks and draws the
+// marks Skelcrew reads.
+import {
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { copySkills, type SkillsFrom } from "../skills.ts";
@@ -67,15 +76,19 @@ export function readyLogin(home = homedir()): string {
   return piHome(home);
 }
 
-// How long a sign-in must still last as an agent starts, or Skelcrew renews it first.
-const signInLasts = "24h";
+// How long a sign-in must still last, or Skelcrew renews it. Pi in a sandbox tries to renew its
+// copy itself 5 minutes before it ends, which fails without the refresh token, so Skelcrew renews
+// well before that, with a few tries to spare.
+const renewWithin = 20 * 60 * 1000;
+const signInLasts = "20m";
 
-// Renews each sign-in of Skelcrew's login that expires within a day, outside the sandbox, with
-// pi on `path`, which saves the renewal in Skelcrew's login. A renewal that fails leaves the
-// sign-in as it was, and the agent says it expired. What pi prints is never read, as it holds
-// the token.
-async function renewLogin(home: string, path: string): Promise<void> {
-  const soon = Date.now() + 24 * 60 * 60 * 1000;
+// Renews each sign-in of Skelcrew's login that expires soon, outside the sandbox, with pi on
+// `path`, which takes Pi's lock and saves the renewal in Skelcrew's login. Returns the providers
+// whose renewal failed, which keep their sign-in as it was. What pi prints is never read, as it
+// holds the token.
+async function renewLogin(home: string, path: string): Promise<string[]> {
+  const soon = Date.now() + renewWithin;
+  const failed: string[] = [];
   for (const [provider, login] of Object.entries(savedLogins(home))) {
     const signIn = SignIn.safeParse(login);
     if (!signIn.success || signIn.data.expires > soon) continue;
@@ -92,28 +105,75 @@ async function renewLogin(home: string, path: string): Promise<void> {
         stdio: ["ignore", "ignore", "ignore"],
         timeout: 30_000,
       });
-      await renewal.exited;
-    } catch {}
+      if ((await renewal.exited) !== 0) failed.push(provider);
+    } catch {
+      failed.push(provider);
+    }
   }
+  return failed;
 }
 
+// Returns what an agent's copy of Skelcrew's login holds, or null when there is no login. A
+// sign-in goes without its refresh token: a renewal rotates that token, which would end the
+// sign-in for Skelcrew's login and every other copy. Skelcrew renews it instead.
+function copiedLogin(home: string): string | null {
+  const logins = savedLogins(home);
+  if (Object.keys(logins).length === 0) return null;
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(logins).map(([provider, login]) => [
+        provider,
+        SignIn.safeParse(login).success ? { ...login, refresh: "" } : login,
+      ]),
+    ),
+  );
+}
+
+// What each copy of Skelcrew's login was last given, by its file, kept in the daemon's memory.
+// A review's copy, in the review's own folder, is found only here.
+const copies = new Map<string, string>();
+
 // Gives an agent folder its own copy of Skelcrew's login, written anew each start, so an agent
-// that changed its copy never changes another's, nor keeps its change. A sign-in goes without
-// its refresh token: a renewal rotates that token, which would end the sign-in for Skelcrew's
-// login and every other copy. Skelcrew renews it instead, as the agent starts. Whatever the agent
-// left there goes first, a link too, so the write never goes through one.
+// that changed its copy never changes another's, nor keeps its change. Whatever the agent left
+// there goes first, a link too, so the write never goes through one.
 function copyLogin(home: string, agentFolder: string): void {
   const copy = join(agentFolder, "auth.json");
   rmSync(copy, { recursive: true, force: true });
-  const logins = savedLogins(home);
-  if (Object.keys(logins).length === 0) return;
-  const copied = Object.fromEntries(
-    Object.entries(logins).map(([provider, login]) => [
-      provider,
-      SignIn.safeParse(login).success ? { ...login, refresh: "" } : login,
-    ]),
-  );
-  writeFileSync(copy, JSON.stringify(copied), { mode: 0o600, flag: "wx" });
+  copies.delete(copy);
+  const copied = copiedLogin(home);
+  if (copied === null) return;
+  writeFileSync(copy, copied, { mode: 0o600, flag: "wx" });
+  copies.set(copy, copied);
+}
+
+// Renews Skelcrew's sign-ins that expire soon, outside every sandbox, then gives each copy of the
+// login that is still there the fresh access token. A running Pi reads its copy again for its
+// next request. A copy is replaced whole, by renaming a new file over it, so Pi never reads half
+// of one, and a copy that went is never written again. A failed renewal throws once the copies
+// are done, and the next one tries again.
+export async function renewLogins(home = homedir(), path = process.env.PATH ?? ""): Promise<void> {
+  const failed = await renewLogin(home, path);
+  const copied = copiedLogin(home);
+  const sessions = join(dataDir(home), "pi-sessions");
+  const found = loginCopies(home).map((name) => join(sessions, name, "auth.json"));
+  for (const copy of new Set([...copies.keys(), ...found])) {
+    const there =
+      lstatSync(dirname(copy), { throwIfNoEntry: false })?.isDirectory() &&
+      lstatSync(copy, { throwIfNoEntry: false })?.isFile();
+    if (!there) copies.delete(copy);
+    if (!there || copied === null || copies.get(copy) === copied) continue;
+    const next = `${copy}.next`;
+    try {
+      rmSync(next, { recursive: true, force: true });
+      writeFileSync(next, copied, { mode: 0o600, flag: "wx" });
+      renameSync(next, copy);
+      copies.set(copy, copied);
+    } catch {
+      rmSync(next, { recursive: true, force: true });
+    }
+  }
+  if (failed.length > 0)
+    throw new Error(`couldn't renew Pi's sign-in to ${failed.join(", ")}, so it tries again soon`);
 }
 
 // Removes the copy of Skelcrew's login that the session `name` got, once Skelcrew ends it, so no
