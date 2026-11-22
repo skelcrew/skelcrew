@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
-import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { forgetLogin, HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
   checkAgentStarted,
   endSession,
@@ -323,6 +323,7 @@ export async function startLead(
     .get(owner, repo);
   if (!still) {
     await endSession(host, id);
+    forgetLogin(lead.name);
     throw new Error(`${owner}/${repo} was closed or removed while its lead started`);
   }
   // The opening note saved above, and any other that waited while the lead wasn't running, go
@@ -402,6 +403,7 @@ export async function closeExitedLeads(db: Database, sessions: string): Promise<
         );
         if (closed.changes === 0) return;
         await endSession(sessions, id);
+        forgetLogin(leadOf(db, owner, repo).name);
         console.log(
           `${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`,
         );
@@ -432,6 +434,7 @@ export async function endLeadOfClosedTab(
       const lead = await leadSession(db, sessions, owner, repo);
       if (lead === null) throw new Error(`${name}'s lead's host went away while it was ${verb}d`);
       await stopSession(lead.host, lead.id);
+      forgetLogin(leadOf(db, owner, repo).name);
       ended = true;
     },
   });

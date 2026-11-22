@@ -483,21 +483,27 @@ console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
   expect(said).toBe("refused\ntrue 0\n");
 });
 
-test("removing a repository ends its lead on a plugin's host, found by its labels", () => {
+test("removing a repository ends its lead on a plugin's host, found by its labels, and removes its login copy", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
     "sessions",
     `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
 const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const fs = require("node:fs");
 db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES ('app', 'simon', 'app', '', 'fake')");
 const host = pluginHost(db, "fake");
 await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+// A Pi lead's copy of Skelcrew's login, in the session folder kept for its conversation.
+const session = ${JSON.stringify(join(home, ".local", "share", "skelcrew", "pi-sessions"))} + "/" + leadOf(db, "simon", "app").name;
+fs.mkdirSync(session, { recursive: true });
+fs.writeFileSync(session + "/auth.json", '{"openrouter":{"type":"api_key","key":"k"}}');
 db.run("DELETE FROM threads");
 console.log(await removeRepo("app", "unused"));
-console.log(await hasSession(host, "fake-lead-app"));`,
+console.log(await hasSession(host, "fake-lead-app"), fs.existsSync(session + "/auth.json"));`,
     {},
   );
-  expect(said).toBe("Removed app and Skelcrew's clone of it.\nfalse\n");
+  expect(said).toBe("Removed app and Skelcrew's clone of it.\nfalse false\n");
   expect(readFileSync(join(fake, "asked"), "utf8")).toContain('"ask":"end"');
 });
 

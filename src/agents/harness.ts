@@ -17,8 +17,9 @@ export function harnessNamed<Name extends HarnessName>(name: Name): (typeof harn
   return harnesses[name];
 }
 
-// Removes what a harness kept of your login for the session `name`, once its thread ends: Pi's
-// copy of it. Claude Code and Codex keep none per session.
+// Removes what a harness kept of your login for the session `name`, a lead or a builder, once
+// Skelcrew ends it: Pi's copy of it, which the next start writes again. Claude Code and Codex
+// keep none per session.
 export function forgetLogin(name: string): void {
   removeLoginCopy(name);
 }

@@ -116,7 +116,7 @@ function copyLogin(home: string, agentFolder: string): void {
   writeFileSync(copy, JSON.stringify(copied), { mode: 0o600, flag: "wx" });
 }
 
-// Removes the copy of Skelcrew's login that the session `name` got, once its thread ends, so no
+// Removes the copy of Skelcrew's login that the session `name` got, once Skelcrew ends it, so no
 // key stays behind in a folder kept for its conversation.
 export function removeLoginCopy(name: string, home = homedir()): void {
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(name)) return;

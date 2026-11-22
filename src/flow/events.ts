@@ -150,6 +150,7 @@ function endInTurn(
         const now = readThread(db, folder);
         if (now.host !== ended.host || now.host_id !== ended.host_id) return;
         record(db, folder, { host: null, host_id: null });
+        forgetLogin(folder);
         then();
       })();
     },
