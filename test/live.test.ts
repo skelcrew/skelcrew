@@ -133,10 +133,24 @@ test("Codex's input box and footer are cut, idle, at work or with a long message
   expect(bottom(agentOutput("codex", reworded), 1)).toEqual(["• Edited src/api/limit.ts (+12 -0)"]);
 });
 
+test("Pi's input, its rules, its footer and Skelcrew's ready mark are cut, idle, at work or with a draft", async () => {
+  const idle = agentOutput("pi", await screen("pi-idle.txt"));
+  expect(bottom(idle, 1)).toEqual([" Thinking slowly about it."]);
+  // While a turn runs, the line counting its seconds stays, as it shows the agent at work.
+  const busy = agentOutput("pi", await screen("pi-busy.txt"));
+  expect(bottom(busy, 2)).toEqual([" Thinking slowly", " ◆ Pi is at work 2s"]);
+  expect(busy).not.toContain("Working");
+  const draft = agentOutput("pi", await screen("pi-draft.txt"));
+  expect(bottom(draft, 1)).toEqual([" Thinking slowly about it."]);
+  expect(draft).not.toContain("a draft");
+  expect(draft).not.toContain("128k");
+});
+
 test("a screen whose input area isn't found shows whole", async () => {
   const unknown = await screen("unknown.txt");
   expect(agentOutput("claude", unknown)).toBe(unknown);
   expect(agentOutput("codex", unknown)).toBe(unknown);
+  expect(agentOutput("pi", unknown)).toBe(unknown);
   // A Codex whose input box looks other than it knows, such as after an update, shows whole, even
   // with an earlier message in the output and no • after it.
   const changed = [

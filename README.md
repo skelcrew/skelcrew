@@ -19,15 +19,30 @@ curl -fsSL https://skelcrew.dev/install.sh | sh
 sc install
 ```
 
-`sc install` checks for `tmux`, `git`, a sandbox (`bwrap` 0.11 or newer on Linux, `sandbox-exec` on a Mac) and a harness, Claude Code or Codex. If one is missing, it says what to install and stops. If `bwrap` is there but can't start a sandbox, as AppArmor can cause on Ubuntu 24.04 and later, it says what may block it, with the lines that allow it when AppArmor is the likely cause.
+`sc install` checks for `tmux`, `git`, a sandbox (`bwrap` 0.11 or newer on Linux, `sandbox-exec` on a Mac) and a harness: Claude Code, Codex or Pi. If one is missing, it says what to install and stops. If `bwrap` is there but can't start a sandbox, as AppArmor can cause on Ubuntu 24.04 and later, it says what may block it, with the lines that allow it when AppArmor is the likely cause.
 
 Then it asks:
 
 - **The coding agent**, the harness agents run on.
-- **The coding agent for reviews**, only when both are installed. It offers the other one first, as a second model sees what the first one misses. With one installed, reviews run on it.
-- **A sign-in for Skelcrew's agents.** For Claude Code, you run `claude setup-token` in another terminal and paste the token. Codex gets a login of Skelcrew's own, apart from yours.
+- **The coding agent for reviews**, only when more than one is installed. It offers another one first, as a second model sees what the first one misses. With one installed, reviews run on it.
+- **A sign-in for Skelcrew's agents.** For Claude Code, you run `claude setup-token` in another terminal and paste the token. Codex gets a login of Skelcrew's own, apart from yours. For Pi, you name a provider, such as `anthropic` or `openrouter`, and sign in to it, or set its API key, such as `GEMINI_API_KEY` or `OPENROUTER_API_KEY`, and Pi asks nothing.
 
 It ends with `Skelcrew is set up.` Running it again changes nothing that is done.
+
+[Pi](https://pi.dev) runs any model it supports, such as Gemini or OpenRouter's models. It needs Node 22.19 or newer, and Skelcrew was tested with Pi 1.6.0:
+
+```sh
+npm install -g @earendil-works/pi-coding-agent@1.6.0
+```
+
+Pick its model as Pi names it, provider then model, in `~/.config/skelcrew/config.yaml`. With no model set, Pi uses its own default for the first provider it can sign in to.
+
+```yaml
+harness: pi
+model: google/gemini-4-argon
+```
+
+Skelcrew's Pi agents never read your own `~/.pi`. For a provider Pi doesn't have, such as a model you run yourself, write its `models.json` in `~/.local/share/skelcrew/pi/`, and each agent gets a copy as it starts. Keep real keys out of it: a model you run yourself takes any key, such as `"apiKey": "local"`.
 
 ### 2. Set up a repository
 

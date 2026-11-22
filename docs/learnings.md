@@ -180,6 +180,46 @@ that covers the code you are about to write.
   before its `Stop` hooks, which run only when the model needs no follow-up. The abort path
   runs the `Interrupt` hooks instead. `Stop`'s input has `last_assistant_message`.
 
+## Starting Pi
+
+Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
+
+- **Pi's npm package is `@earendil-works/pi-coding-agent`.** `@mariozechner/pi-coding-agent`
+  stopped at 0.73 and is deprecated. Pi needs Node 22.19 or newer: on Node 20 it stops at once
+  with "does not provide an export named 'enableCompileCache'".
+- **Pass `--no-approve`, or the session waits.** In a folder with `.pi/` or `.agents/skills/`,
+  Pi asks whether to trust it before anything else, and nobody is there to answer. The flag also
+  keeps that folder's settings, extensions and skills out, as unapproved skills must be.
+- **Its input has no prompt mark, and its busy line changes words.** The empty input is a blank
+  line between two rules. While it works it shows "Working", "Retrying (1/3) in 2s..." or
+  "Compacting context...". So Skelcrew's extension draws a line of its own above the input: a
+  ready mark while Pi is idle with nothing typed, and a busy line counting seconds otherwise.
+- **A turn ends at `agent_settled`, not `agent_end`.** Pi tries a 429 three times, and each try
+  ends with `agent_end`. Only `agent_settled` comes once, after the retries, with `aborted` true
+  for Esc. A turn that ended on an error has an assistant message with `stopReason: "error"`
+  and Pi's words in `errorMessage`, such as `429: {"message":"..."}`.
+- **`input` fires for the first message too.** The message on the command line comes as typed,
+  with `source: "interactive"`. A long paste shows as "[paste #1 +40 lines]", but `input` gets
+  its whole text.
+- **`--session-id` both starts and brings back a session.** Pi saves it in `--session-dir` as
+  `<time>_<id>.jsonl`, and only once a message went in.
+- **`pi -p` reads its prompt from stdin, whole.** Run with stdin open and nothing written, it
+  waits forever.
+- **Pi has no setting that holds an answer to a shape.** The reviewer gets a tool from
+  Skelcrew's extension, whose parameters are the shape, and Pi checks its arguments against it.
+- **`auth.json` can hold a command Pi runs for a key.** A key written as `!command` runs when Pi
+  needs it. Every session can write the shared login, so Skelcrew never runs pi on it with your
+  rights, except for the first run's login, when it holds no provider.
+- **Pi writes `auth.json` in place, through a link.** It locks the file a link leads to, with
+  a `.lock` folder beside it, so sessions linked to one login renew it in turn.
+- **Interactive Pi downloads `fd` and `rg` when they aren't on the PATH.** It saves them in its
+  agent folder's `bin/`, so each lead and builder downloads them once, at its first start, and
+  keeps them. Reviews run in print mode, whose tools never need them, so they download nothing.
+  Installing `fd` and `ripgrep` on the machine skips the download.
+- **Bun can't import one file both as text and as a module.** Skelcrew writes the extension's
+  own source into each session, so `pi.ts` imports it as text, and repeats the marks the screen
+  is read by. A test pins the two together.
+
 ## The sandbox
 
 - **The boundary holds against mistakes and overreach, not an agent set on escaping.**

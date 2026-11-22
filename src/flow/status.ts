@@ -682,8 +682,8 @@ export function markNeedsYou(
   return record(db, thread.folder, change, `${who} cleared its needs you: ${what}`);
 }
 
-// The builder's turn ended on an error, from Claude Code's StopFailure hook, with the kind of
-// error and its message. A usage limit, or a rate limit, passes by itself, so the builder is
+// The builder's turn ended on an error, from Claude Code's StopFailure hook or Pi's extension,
+// with the kind of error and its message. A usage limit, or a rate limit, passes by itself, so the builder is
 // woken once it resets, and the thread doesn't need you for it. Any other error does.
 export function turnFailed(
   db: Database,

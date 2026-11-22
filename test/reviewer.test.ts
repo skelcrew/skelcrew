@@ -93,7 +93,7 @@ const start = (
   more: {
     signal?: AbortSignal;
     limit?: number;
-    harness?: "claude";
+    harness?: "claude" | "pi";
     model?: string;
     ci?: { has: () => boolean; read: () => Promise<string> };
     issue?: { title: string; body: string };
@@ -577,6 +577,75 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     const done = await start({ harness: "claude" });
     expect(done.verdict).toBe("failed");
     expect(done.body).toContain("shape");
+  });
+
+  // Stands in for Pi in print mode. Its agent folder goes with the review's, so it reports what it
+  // was given in its answer's body, which Skelcrew's extension would have written with its tool.
+  function fakePi(lines: string[]): void {
+    script("pi", [
+      'seen=$( (printf \'%s\\n\' "$@"; env | sort | grep -E \'^(PI_|SKELCREW_PI|GH_|OPENROUTER)\'; readlink "$PI_CODING_AGENT_DIR/auth.json"; test -f "$PI_CODING_AGENT_DIR/skelcrew.ts" && echo extension; pwd; cat) | base64 -w0)',
+      ...lines,
+    ]);
+  }
+  const piAnswer =
+    'printf \'{"verdict":"approve","body":"%s","findings":[]}\' "$seen" > "$SKELCREW_PI_REVIEW/answer.json"';
+
+  test("reviews on Pi with the model it is given, its verdict from its tool, on the shared login", async () => {
+    fakePi([piAnswer]);
+    const done = await review({
+      ...given(),
+      harness: "pi",
+      model: "openrouter/some-model",
+      env: { ...env(), OPENROUTER_API_KEY: "sk-or-test" },
+    });
+    expect(done.verdict).toBe("approve");
+    const seen = Buffer.from(done.body, "base64").toString().split("\n");
+    expect(seen.slice(0, 2)).toEqual(["--no-extensions", "--extension"]);
+    for (const flag of ["--no-approve", "--no-session", "--print"]) expect(seen).toContain(flag);
+    expect(seen[seen.indexOf("--model") + 1]).toBe("openrouter/some-model");
+    expect(seen).toContain("OPENROUTER_API_KEY=sk-or-test");
+    expect(seen.some((line) => line.startsWith("SKELCREW_PI_REVIEW=/"))).toBe(true);
+    expect(seen.some((line) => line.startsWith("GH_"))).toBe(false);
+    expect(seen).toContain(join(home, ".local", "share", "skelcrew", "pi-login", "auth.json"));
+    expect(seen).toContain("extension");
+    expect(seen).toContain(clone);
+    expect(seen.join("\n")).toContain(issue.title);
+  });
+
+  test("a Pi review that meets its usage limit is limited, with when it resets", async () => {
+    const error =
+      '429: {"message":"You exceeded your current quota. Try again at Dec 31st, 2099 11:59 PM."}';
+    fakePi([
+      "cat > /dev/null",
+      "echo 'Warning: tmux extended-keys is off' >&2",
+      `printf '\\nskelcrew: Pi failed: %s\\n%s\\n' '${error}' '${error}' >&2`,
+      "exit 1",
+    ]);
+    expect(await start({ harness: "pi" })).toEqual({
+      verdict: "limited",
+      body: error,
+      reset: new Date(2099, 11, 31, 23, 59).getTime(),
+    });
+  });
+
+  // The code under review can log about rate limits, as this one does.
+  test("takes only Pi's own error, never a line a command printed, for a failed Pi review", async () => {
+    fakePi([
+      "cat > /dev/null",
+      "echo 'ERROR: rate limit exceeded' >&2",
+      "echo '429 Too Many Requests in a test' >&2",
+      "printf '\\nskelcrew: Pi failed: 401: invalid key\\n401: invalid key\\n' >&2",
+      "exit 1",
+    ]);
+    expect(await start({ harness: "pi" })).toEqual({
+      verdict: "failed",
+      body: "pi exited with 1: 401: invalid key",
+    });
+    fakePi(["cat > /dev/null"]);
+    expect(await start({ harness: "pi" })).toEqual({
+      verdict: "failed",
+      body: "the reviewer answered outside the shape: it gave no answer",
+    });
   });
 
   // The file CI's result is in, as the reviewer's prompt names it.

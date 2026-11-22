@@ -38,7 +38,7 @@ The code is small, plain and tested. `AGENTS.md` says how to write it, and `docs
 | Flow | The stages a task goes through and their settings, such as the round limit and the reviewer's role. A file in `.agents/flows/`. |
 | Role | What an agent does on a task: its instructions, harness and model. `lead`, `builder` and `reviewer` come built in. A flow can name others. A file in `.agents/roles/`. |
 | Thread | One agent working on a task, in one role, on one harness, in one session. A task usually has one thread, its builder. |
-| Harness | The coding agent an agent runs on: Claude Code or Codex. |
+| Harness | The coding agent an agent runs on: Claude Code, Codex or Pi. |
 | Daemon | Skelcrew's long-running process, one per machine, which runs the flow, polls trackers and forges, and talks to plugins. |
 | Builder | The role that writes the change. Its thread lives from the task's start until its PR merges or closes. |
 | Reviewer | The role that reviews each round, fresh each time. It runs once per round, with no session and no thread, and never inherits the builder's context. |

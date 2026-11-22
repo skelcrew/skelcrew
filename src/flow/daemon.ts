@@ -1022,7 +1022,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "question answered":
         questionAnswered(db, callingThread(caller).folder, request.prompt);
         return { asking: false };
-      // Esc on Codex flags nothing: you are looking at the builder anyway.
+      // Esc on Codex or Pi flags nothing: you are looking at the builder anyway.
       case "turn interrupted":
         return { state };
       case "start":

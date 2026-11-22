@@ -1,9 +1,11 @@
 // The first run: what a plain sc sets up on a new machine, skipping each step already
 // done.
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { piLoggedIn, readyLogin } from "../agents/pi.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { errorText, toRun } from "../format.ts";
@@ -49,7 +51,7 @@ const macTools = [
 ];
 
 // Returns the commands that install a harness for agents, when none they can run is installed:
-// the one your config saved, or else either one. Empty when one is there.
+// the one your config saved, or else any one. Empty when one is there.
 function missingHarness(env: Env): string[] {
   const PATH = env.PATH ?? "";
   const saved = readSettings(["yourHarness"]).yourHarness;
@@ -61,7 +63,7 @@ function missingHarness(env: Env): string[] {
 
 // Stops the first run, before it asks anything, when a program agents need is missing, saying
 // what to install. `tools` are the commands that install the tools, and `before` what to read
-// above them, such as where to get Homebrew. A harness comes last, as a choice when either will
+// above them, such as where to get Homebrew. A harness comes last, as a choice when any will
 // do. It reads as a step to take, not as an error, so it isn't on stderr and has no Skelcrew:
 // in front, and sc exits with 1, so a script can tell nothing was set up.
 function stopForTools(before: string[], tools: string[], harness: string[]): void {
@@ -238,6 +240,33 @@ function logInCodex(env: Env, line: string): void {
   console.log("Signed in to Codex.");
 }
 
+// Logs Skelcrew in to Pi in its own folder, for the provider you name, such as anthropic or
+// openrouter: with your account, through a link and a code you paste, as the machine may have no
+// browser, or with an API key Pi asks for. Pi saves it once, in the login every Pi agent and review
+// shares. Pi names the providers it has when you name one it doesn't. While Pi runs, Ctrl-C stops
+// only Pi.
+function logInPi(env: Env, line: string): void {
+  console.log(line);
+  const provider = prompt(
+    "Provider, such as anthropic, openai-codex, google or openrouter:",
+  )?.trim();
+  if (!provider || !/^[\w.-]+$/.test(provider))
+    throw new Error("no provider was named, so Pi has no login for Skelcrew");
+  const ignore = () => {};
+  process.on("SIGINT", ignore);
+  let ran = false;
+  try {
+    ran = Bun.spawnSync(["pi", "auth", "login", provider, "--no-browser"], {
+      env: { ...env, PI_CODING_AGENT_DIR: readyLogin() },
+      stdio: ["inherit", "inherit", "inherit"],
+    }).success;
+  } finally {
+    process.off("SIGINT", ignore);
+  }
+  if (!ran) throw new Error("pi auth login didn't finish, so Pi has no login for Skelcrew");
+  console.log("Signed in to Pi.");
+}
+
 // Returns whether a plugin named github is installed, so sc offers it only until it is.
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
 
@@ -277,7 +306,7 @@ function offerGitHub(repository: string, remote: string): void {
 }
 
 // Saves which harness agents run on. With only one installed there is nothing to ask, so it
-// says which it found and takes that one. With both, you pick one, Claude Code first. A harness
+// says which it found and takes that one. With more, you pick one, Claude Code first. A harness
 // that isn't installed is never offered, as the tools check stopped setup without one.
 function pickHarness(env: Env): void {
   const config = yourConfigDocument();
@@ -304,19 +333,20 @@ function savedReviewerHarness(): HarnessName | undefined {
   return readSettings(["yourReviewer"]).yourReviewer;
 }
 
-// Asks which harness reviews run on, offering the other one first, as a second model sees what
-// the builder's model misses. Saves it only when it isn't your harness, which reviews run on
+// Asks which installed harness reviews run on, offering the others first, as a second model sees
+// what the builder's model misses. Saves it only when it isn't your harness, which reviews run on
 // anyway.
-function pickReviewer(harness: HarnessName): void {
-  // The other harness comes first, so Enter takes it.
+function pickReviewer(harness: HarnessName, env: Env): void {
+  const installed = harnesses.filter((h) => Bun.which(h.program, { PATH: env.PATH ?? "" }));
+  // Another harness comes first, so Enter takes it.
   const choices = [
-    ...harnesses.filter((h) => h.name !== harness),
-    ...harnesses.filter((h) => h.name === harness),
+    ...installed.filter((h) => h.name !== harness),
+    ...installed.filter((h) => h.name === harness),
   ];
   const at = pick(
     "Choose the coding agent for reviews:",
-    // Both are installed, as the question comes only then, and say so as the first question
-    // does. The other harness, first, is marked as the second opinion it gives.
+    // Each is installed, and says so as the first question does. The first, another harness, is
+    // marked as the second opinion it gives.
     choices.map((h, index) => ({
       label: h.title,
       hint: index === 0 ? "installed · a second opinion" : "installed",
@@ -331,10 +361,12 @@ function pickReviewer(harness: HarnessName): void {
 }
 
 // Reports whether agents on this harness have their login: Claude Code's token from the
-// first run, or Skelcrew's own Codex login, which reviews use too. Only files are looked at, as
-// plain sc checks this each time it starts.
+// first run, Skelcrew's own Codex login, which reviews use too, or Skelcrew's own Pi login or a key
+// Pi reads. Only files and the environment are looked at, as plain sc checks this each time it
+// starts.
 function agentsLoggedIn(harness: HarnessName): boolean {
   if (harness === "claude") return existsSync(claudeTokenFile());
+  if (harness === "pi") return piLoggedIn(homedir(), process.env);
   return existsSync(join(codexHome(), "auth.json"));
 }
 
@@ -466,14 +498,14 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const harness = readSettings(["yourHarness"]).yourHarness;
   if (!harness) steps.push({ title: "the coding agent", take: () => pickHarness(env) });
   const PATH = env.PATH ?? "";
-  // Reviews are asked about only when both harnesses are installed, as otherwise there is
+  // Reviews are asked about only when more than one harness is installed, as otherwise there is
   // nothing to pick.
-  const both = harnesses.every((h) => Bun.which(h.program, { PATH }));
-  if (harness && both && !savedReviewerHarness() && !asked.reviewer)
+  const several = harnesses.filter((h) => Bun.which(h.program, { PATH })).length > 1;
+  if (harness && several && !savedReviewerHarness() && !asked.reviewer)
     steps.push({
       title: "the coding agent for reviews",
       take: () => {
-        pickReviewer(harness);
+        pickReviewer(harness, env);
         asked.reviewer = true;
       },
     });
@@ -482,7 +514,7 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const uses = (name: HarnessName) =>
     agents === name || (savedReviewerHarness() ?? agents) === name;
   if (uses("claude") && !existsSync(claudeTokenFile())) {
-    const forReviews = harness === "codex" ? " for reviews" : "";
+    const forReviews = harness && harness !== "claude" ? " for reviews" : "";
     steps.push({
       title: "Claude's sign-in",
       take: () => {
@@ -500,6 +532,11 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
     steps.push({
       title: "Codex's sign-in",
       take: () => logInCodex(env, `Sign in to Codex${forReviews}. Press Enter to start.`),
+    });
+  if (uses("pi") && !piLoggedIn(homedir(), env))
+    steps.push({
+      title: "Pi's sign-in",
+      take: () => logInPi(env, `Sign in to Pi${harness === "pi" ? "" : " for reviews"}.`),
     });
   return steps;
 }

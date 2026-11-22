@@ -465,8 +465,8 @@ const StopFailure = z.looseObject({
   last_assistant_message: z.string().optional(),
 });
 
-// Tells the daemon, for a Claude Code agent's hook, that its turn ended on an error, such as a
-// lapsed login or a usage limit, with what the hook was told of it, so a builder's thread needs
+// Tells the daemon, for a Claude Code or Pi agent's hook, that its turn ended on an error, such as
+// a lapsed login or a usage limit, with what the hook was told of it, so a builder's thread needs
 // you or waits for the limit to reset. The agent's own socket says which agent. A hook input that can't be read still reports the error, only without its words.
 export async function reportTurnFailed(input: string): Promise<void> {
   let given: unknown = {};
@@ -483,7 +483,7 @@ export async function reportTurnFailed(input: string): Promise<void> {
   });
 }
 
-// Tells the daemon, for a Codex agent's Interrupt hook, that you stopped its turn with Esc, so
+// Tells the daemon, for a Codex or Pi agent's hook on Esc, that you stopped its turn, so
 // it shows idle. The agent's own socket says which one.
 export async function reportTurnInterrupted(): Promise<void> {
   await request({ command: "turn interrupted" });

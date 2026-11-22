@@ -176,6 +176,7 @@ test("takes every step on the first run, and none on the second", async () => {
       "",
       "Claude Code detected",
       "Codex not found",
+      "Pi not found",
       "Agents will run on Claude Code",
       "",
       "Sign in to Claude. In another terminal, run:",
@@ -848,6 +849,8 @@ test("names each missing tool with what to install, and runs nothing else", asyn
       "",
       "  npm install -g @openai/codex",
       "",
+      "  npm install -g @earendil-works/pi-coding-agent@1.6.0",
+      "",
       "Then run sc again.",
       "",
     ].join("\n"),
@@ -1009,6 +1012,58 @@ esac`,
   );
 }
 
+// Stands in for Pi. pi auth login saves a login for the provider it is given in its agent folder,
+// unless `login` says otherwise.
+function fakePi(
+  login = 'printf \'{"%s":{"type":"oauth"}}\' "$3" > "$PI_CODING_AGENT_DIR/auth.json"',
+): void {
+  fake(
+    "pi",
+    `echo "PI_CODING_AGENT_DIR=$PI_CODING_AGENT_DIR" >> "$HOME/calls"
+case "$1 $2" in
+  "auth login") ${login} ;;
+esac`,
+  );
+}
+
+test("on a machine with only Pi, it signs in to the provider you name, once, in Skelcrew's own folder", async () => {
+  unlinkSync(join(bin, "claude"));
+  fakePi();
+  const run = await skel("openrouter\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Claude Code not found\nCodex not found\nPi detected\nAgents will run on Pi\n",
+  );
+  expect(run.out).toContain("\nSign in to Pi.\n");
+  expect(run.out).toContain("Signed in to Pi.\n");
+  const folder = join(home, ".local", "share", "skelcrew", "pi");
+  expect(calls()).toContain(
+    `pi auth login openrouter --no-browser\nPI_CODING_AGENT_DIR=${folder}\n`,
+  );
+  // The login lands in the folder every Pi agent and review links to.
+  const shared = join(home, ".local", "share", "skelcrew", "pi-login", "auth.json");
+  expect(readFileSync(shared, "utf8")).toBe('{"openrouter":{"type":"oauth"}}');
+  expect(readFileSync(config(), "utf8")).toContain("harness: pi");
+
+  writeFileSync(join(home, "calls"), "");
+  const second = await skel();
+  expect(second.code).toBe(0);
+  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+});
+
+test("Pi needs no sign-in when a key it reads is set, and a failed one finishes no setup", async () => {
+  unlinkSync(join(bin, "claude"));
+  fakePi("exit 1");
+  const failed = await skel("openrouter\n");
+  expect(failed.code).toBe(1);
+  expect(failed.err).toContain("pi auth login didn't finish");
+  expect(existsSync(unit())).toBe(false);
+  const keyed = await skel("", bin, main(), home, { OPENROUTER_API_KEY: "sk-or-test" });
+  expect(keyed.code).toBe(0);
+  expect(keyed.out).not.toContain("Sign in to Pi");
+});
+
 // Reviews on your own harness save nothing, so only the first run's end shows the question was
 // answered. Here your harness has its login before the question is asked.
 test("asks about reviews again after a first run stopped at that question", async () => {
@@ -1123,7 +1178,7 @@ test("with only Claude Code installed, asks nothing about harnesses and says age
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("Choose");
   expect(run.out).toContain(
-    "\nClaude Code detected\nCodex not found\nAgents will run on Claude Code\n",
+    "\nClaude Code detected\nCodex not found\nPi not found\nAgents will run on Claude Code\n",
   );
 });
 
@@ -1150,7 +1205,9 @@ test("on a machine with only Codex, it is taken without asking, and its one logi
   const run = await skel("\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Claude Code not found\nCodex detected\nAgents will run on Codex\n");
+  expect(run.out).toContain(
+    "Claude Code not found\nCodex detected\nPi not found\nAgents will run on Codex\n",
+  );
   expect(run.out).not.toContain("Choose");
   expect(run.out).toContain("\nSign in to Codex. Press Enter to start.\nSigned in to Codex.\n");
   expect(run.out).not.toContain("for reviews");
