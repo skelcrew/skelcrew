@@ -78,16 +78,17 @@ export function stillOffered(asking: Asking, rows: Row[]): Question | string {
   return offer && "refused" in offer ? offer.refused : changed;
 }
 
-// What a pick on a row's item does: answers the lead's item, starts a reply, opens the builder,
-// merges as m does, or does what an option of Skelcrew's own item does, which a merge without
-// approval first asks y/n of, as every merge does.
+// What a pick on a row's item does: answers the lead's item, starts a reply, or does what an
+// option of Skelcrew's own item does. Every option of Skelcrew's own goes to the daemon, so the
+// lead hears each pick. Opening the builder then attaches to it, and a merge asks y/n first, as
+// every merge does, or says why it can't.
 export type Picked =
   | { answer: Letter }
   | "reply"
-  | "open"
-  | "merge"
+  | { open: Question }
   | { confirm: Question }
-  | { run: Question };
+  | { run: Question }
+  | { refused: string };
 
 // Returns what a pick on the item of `row`, in the repository `repo` names, does, or null when the
 // row has no such option.
@@ -96,14 +97,17 @@ export function picked(row: Row, pick: Pick, repo: string): Picked | null {
   if (!row.ask) return null;
   if (row.ask.acts === null) return { answer: pick };
   const act = row.ask.acts[letters.indexOf(pick)];
-  if (act === "open" || act === "merge") return act;
+  if (act === "merge" && row.merge && "refused" in row.merge) return row.merge;
+  if (act === "merge" && !row.merge) return { refused: `${row.name} has no PR to merge here` };
   const question = ownPick(row, pick, repo);
   if (question === null) return null;
-  return act === "skip review" ? { confirm: question } : { run: question };
+  if (act === "open") return { open: question };
+  return question.ask ? { confirm: question } : { run: question };
 }
 
 // Returns what a pick on Skelcrew's own item on `row` asks the daemon, with what the bottom line
-// asks first, for a merge without approval, and says meanwhile, or null with no such option.
+// asks first, for a merge, and says meanwhile, or null with no such option. Merging the approved
+// PR carries the commit you saw approved, as m does.
 function ownPick(row: Row, pick: Letter, repo: string): Question | null {
   if (!row.ask || row.ask.acts === null || row.task === null) return null;
   const at = letters.indexOf(pick);
@@ -111,11 +115,14 @@ function ownPick(row: Row, pick: Letter, repo: string): Question | null {
   const act = row.ask.acts[at];
   if (label === undefined || act === undefined) return null;
   const pr = row.pr || row.name;
+  const merge = act === "merge" && row.merge && "ask" in row.merge ? row.merge : null;
+  if (act === "merge" && merge === null) return null;
+  const commit = merge?.request.command === "merge" ? { commit: merge.request.commit } : {};
   return {
     ask:
       act === "skip review"
         ? `Merge ${pr} (${row.name}) without Skelcrew's approval? CI must still pass. y/n`
-        : "",
+        : (merge?.ask ?? ""),
     working: `${label}…`,
     request: {
       command: "pick",
@@ -123,6 +130,7 @@ function ownPick(row: Row, pick: Letter, repo: string): Question | null {
       task: typedTask(row.task),
       seen: { title: row.ask.title, text: row.ask.text },
       pick,
+      ...commit,
     },
     queues: false,
   };

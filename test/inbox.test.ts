@@ -299,8 +299,7 @@ console.log(JSON.stringify(out));`);
     text: "Its branch is ready at abcdef1.",
     options: ["Merge it", "Not yet"],
   });
-  // Merging asks y/n on the screen first, so only Not yet reaches the daemon.
-  expect(ran("ready")[1]).toBe("Handed APP-12 to the lead.");
+  expect(ran("ready")).toEqual(["did merge", "Handed APP-12 to the lead."]);
   expect(seen.question).toMatchObject({
     title: "Its builder asked a question",
     text: "CSV or JSON?",
@@ -311,7 +310,7 @@ console.log(JSON.stringify(out));`);
     text: "I am stuck on the login.",
     options: ["Open the builder", "Let the lead handle it"],
   });
-  expect(ran("turn ended")[1]).toBe("Handed APP-12 to the lead.");
+  expect(ran("turn ended")).toEqual(["did open", "Handed APP-12 to the lead."]);
   expect(seen.error).toMatchObject({
     title: "Its harness stopped on an error",
     text: "OAuth token has expired",
@@ -348,38 +347,105 @@ console.log(JSON.stringify({ said, notes: notes() }));`);
   });
 });
 
-// On the screen, opening the builder attaches to it, merging asks y/n as m does, a merge without
-// approval asks y/n before the daemon arms it, and the rest go to the daemon at once.
-test("a pick on the screen opens the builder, asks before a merge, or goes to the daemon", () => {
+// On the screen every option of Skelcrew's own item goes to the daemon, so the lead hears it:
+// opening the builder then attaches, both merges ask y/n first, carrying the commit you saw
+// approved for the PR, and the rest go at once. Skelcrew's own item takes no reply.
+test("a pick on the screen goes to the daemon, asking first before a merge", () => {
   const seen = inProcess(`
 const { picked } = await import(${JSON.stringify(source("list/actions.ts"))});
 record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", held: "Fix it.", needs_you: true, pr: 7 });
 const limit = row("APP-12");
 const atLimit = ["a", "b", "c"].map((pick) => picked(limit, pick, "simon/app"));
 record(db, "app-12", { held: null, rounds: 0, verdict: null, needs_you: false, asking: true });
-const asking = ["a", "b", "r"].map((pick) => picked(row("APP-12"), pick, "simon/app"));
-console.log(JSON.stringify({ atLimit, asking }));`);
-  const request = (pick: string) => ({
+const asking = ["a", "r"].map((pick) => picked(row("APP-12"), pick, "simon/app"));
+const merge = { ask: "Merge app#7 into main? y/n", working: "Merging app#7…", request: { command: "merge", repo: "simon/app", pr: 7, commit: "a".repeat(40) }, queues: false };
+const ready = { ...row("APP-12"), merge, ask: { title: "Ready to merge", text: "#7 is ready.", options: ["Merge it", "Not yet"], acts: ["merge", "lead"] } };
+const merging = ["a", "b"].map((pick) => picked(ready, pick, "simon/app"));
+const refused = picked({ ...ready, merge: { refused: "app#7's checks haven't passed" } }, "a", "simon/app");
+console.log(JSON.stringify({ atLimit, asking, merging, refused }));`);
+  const request = (title: string, text: string, pick: string, more = {}) => ({
     command: "pick",
     repo: "simon/app",
     task: "12",
-    seen: { title: "Review still wants changes after 3 rounds", text: "The latest review asks:" },
+    seen: { title, text },
     pick,
+    ...more,
   });
+  const limit = ["Review still wants changes after 3 rounds", "The latest review asks:"] as const;
   expect(seen.atLimit).toEqual([
-    { run: { ask: "", working: "Go on: fix the findings…", request: request("a"), queues: false } },
+    {
+      run: {
+        ask: "",
+        working: "Go on: fix the findings…",
+        request: request(...limit, "a"),
+        queues: false,
+      },
+    },
     {
       confirm: {
         ask: "Merge #7 (APP-12) without Skelcrew's approval? CI must still pass. y/n",
         working: "Merge without approval…",
-        request: request("b"),
+        request: request(...limit, "b"),
         queues: false,
       },
     },
-    { run: { ask: "", working: "Stop the builder…", request: request("c"), queues: false } },
+    {
+      run: {
+        ask: "",
+        working: "Stop the builder…",
+        request: request(...limit, "c"),
+        queues: false,
+      },
+    },
   ]);
-  expect((seen.asking as unknown[])[0]).toBe("open");
-  expect((seen.asking as unknown[])[2]).toBe(null);
+  const question = [
+    "Its builder asked a question",
+    "Its builder asked a question in its session.",
+  ] as const;
+  expect(seen.asking).toEqual([
+    {
+      open: {
+        ask: "",
+        working: "Open the builder…",
+        request: request(...question, "a"),
+        queues: false,
+      },
+    },
+    null,
+  ]);
+  expect(seen.merging).toEqual([
+    {
+      confirm: {
+        ask: "Merge app#7 into main? y/n",
+        working: "Merge it…",
+        request: request("Ready to merge", "#7 is ready.", "a", { commit: "a".repeat(40) }),
+        queues: false,
+      },
+    },
+    {
+      run: {
+        ask: "",
+        working: "Not yet…",
+        request: request("Ready to merge", "#7 is ready.", "b"),
+        queues: false,
+      },
+    },
+  ]);
+  expect(seen.refused).toEqual({ refused: "app#7's checks haven't passed" });
+});
+
+// An item handed to the lead stays gone only while the thread still needs you for it: the same
+// question asked again later shows again.
+test("a handed item shows again when the same thing happens again", () => {
+  const seen = inProcess(`
+const { questionAsked } = await import(${JSON.stringify(source("flow/status.ts"))});
+questionAsked(db, "none", "app-12", "CSV or JSON?");
+await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", async () => "ran");
+const handed = row("APP-12").section;
+record(db, "app-12", { asking: false });
+questionAsked(db, "none", "app-12", "CSV or JSON?");
+console.log(JSON.stringify({ handed, again: row("APP-12").section, ask: row("APP-12").ask?.text }));`);
+  expect(seen).toEqual({ handed: "building", again: "needs you", ask: "CSV or JSON?" });
 });
 
 // The lead has the builder's own words already, as a message from it, so it gets no note that

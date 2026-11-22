@@ -463,6 +463,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const { repository, task } = resolveTask(db, request.repo, request.task);
     return { ...request, repo: repository, task };
   };
+  // Merges a PR at the commit you saw approved, and returns what to say. The merge ends the PR's
+  // thread and takes the PR off the screen's list once a poll sees it. Polled now, so that
+  // happens before the screen stops saying it is merging. A poll that fails changes nothing
+  // about the merge, which is done.
+  const merge = async (repository: string, pr: number, commit: string) => {
+    const found = findRepository(db, repository);
+    const refused = await mergePr(db, found, { pr, commit });
+    if (refused !== null) throw new Error(refused);
+    await (await polling.promise)(`${found.owner}/${found.repo}`).catch((error) =>
+      console.log(errorText(error)),
+    );
+    return `Merged ${found.name}#${pr}.`;
+  };
   // Restarts a running builder, keeping its conversation, and returns what to say.
   const restartThread = async (thread: Thread): Promise<string> => {
     const name = threadName(db, thread);
@@ -485,9 +498,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Does what an option of Skelcrew's own item on a thread does, as its command would for you,
   // and returns what to say. A builder whose session host is gone starts again on the current
   // one, by a stop and a start, as only those move it.
-  const runPick = async (act: Act, thread: Thread, repo: string, task: string) => {
+  const runPick = async (
+    act: Act,
+    thread: Thread,
+    { repo, task, commit }: { repo: string; task: string; commit?: string | undefined },
+  ) => {
     const name = threadName(db, thread);
     switch (act) {
+      case "open":
+        return `Opening ${name}'s builder.`;
+      case "merge":
+        if (thread.pr === null || commit === undefined)
+          throw new Error(`${name} has no PR to merge here`);
+        return merge(repo, thread.pr, commit);
       case "go on":
         return (await startTask({ command: "start", repo, task })).started;
       case "stop":
@@ -504,7 +527,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         await stopThread(db, sessions, thread);
         return (await startTask({ command: "start", repo, task })).started;
       default:
-        throw new Error(`${name}'s ${act} is done on the screen`);
+        throw new Error(`${name}'s item hands ${act} to the lead, so nothing runs`);
     }
   };
   const setUpAndStart = async (thread: Thread) => {
@@ -953,17 +976,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { removed: name, issue: shown, unfiled: false, closed: issue !== null };
       }
       case "merge": {
-        const repository = findRepository(db, request.repo);
-        const { owner, repo } = repository;
-        const refused = await mergePr(db, repository, { pr: request.pr, commit: request.commit });
-        if (refused !== null) throw new Error(refused);
-        // The merge ends the PR's thread and takes the PR off the screen's list once a poll
-        // sees it. Polled now, so that happens before the screen stops saying it is merging. A
-        // poll that fails changes nothing about the merge, which is done.
-        await (await polling.promise)(`${owner}/${repo}`).catch((error) =>
-          console.log(errorText(error)),
-        );
-        return { merged: `Merged ${repository.name}#${request.pr}.` };
+        return { merged: await merge(request.repo, request.pr, request.commit) };
       }
       // What sc merge asks you about at your terminal before it arms, and whether a merge is
       // armed already, so you aren't asked again. A merge without approval also shows the head
@@ -1028,7 +1041,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
       case "pick": {
         const { repo, task } = request;
-        const run = (act: Act, thread: Thread) => runPick(act, thread, repo, task);
+        const run = (act: Act, thread: Thread) => runPick(act, thread, request);
         return {
           said: await pickOwnItem(db, sessions, repo, task, request.seen, request.pick, run),
         };

@@ -391,7 +391,7 @@ export const readThread = (db: Database, folder: string) =>
 // Saves a change to the thread, logs the thread as it now is, and returns it. `why` goes in
 // the log, so a failure says what went wrong. When the change makes the thread start needing
 // you, `why` is also saved as the note for the lead, on one line; once it no longer needs you,
-// a note not yet typed is dropped. While the lead's item on the thread is open, the round limit
+// a note not yet typed is dropped, and so is the item it handed to the lead. While the lead's item on the thread is open, the round limit
 // or an approval brings no note unless a new round came, as the lead is already asking you. A
 // thread that ends drops its item, and an item posted after, such as to start it again, stays.
 // The daemon types saved notes with typeLeadNotes. A thread that starts needing you also queues a
@@ -409,8 +409,12 @@ export function record(
 ): Thread {
   const before = readThread(db, folder);
   let { noting } = change;
-  if (!needsYou({ ...before, ...change })) noting = null;
-  else if (!needsYou(before) && noting === undefined)
+  // A thread that no longer needs you forgets the item it handed to the lead, so the next time it
+  // needs you, the same words show again.
+  if (!needsYou({ ...before, ...change })) {
+    noting = null;
+    if (change.handed === undefined && before.handed !== null) change = { ...change, handed: null };
+  } else if (!needsYou(before) && noting === undefined)
     noting =
       change.needs_you === true &&
       itemOpen(db, before) &&

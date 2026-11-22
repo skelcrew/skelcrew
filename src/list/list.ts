@@ -410,17 +410,25 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
   // Acts on what a key or a click on an item's line picks: an option of the lead's item, which
   // answers it, a reply, which you then type, or an option of Skelcrew's own, which does what it
-  // says, as picked says.
-  const pickOn = (row: Row, pick: Pick) => {
+  // says, as picked says. Opening the builder attaches once the daemon told the lead.
+  const pickOn = async (row: Row, pick: Pick) => {
     const does = picked(row, pick, `${open.owner}/${open.repo}`);
     if (does === null) return draw();
     if (does === "reply") {
       replying = { row, text: "" };
       return draw();
     }
-    if (does === "open") return openRow(row);
+    if ("refused" in does) return say(does.refused);
+    if ("open" in does) {
+      try {
+        await startOrMerge(does.open.request);
+      } catch (error) {
+        item = null;
+        return say(errorText(error));
+      }
+      return openRow(row);
+    }
     item = null;
-    if (does === "merge") return mergeRow(row);
     if ("answer" in does) return answerRow(row, { pick: does.answer });
     if ("run" in does) return goAhead(does.run);
     asking = { question: does.confirm, row: row.name, offer: "pick" };

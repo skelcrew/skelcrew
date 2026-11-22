@@ -806,16 +806,24 @@ export async function runSidebar(
     refresh();
   };
   // Acts on what a key or a tap on an item's line picks: an option, which answers it, or a reply,
-  // which you then type.
-  // An option of Skelcrew's own item does what it says, as picked says.
+  // which you then type. An option of Skelcrew's own item does what it says, as picked says, and
+  // opening the builder attaches once the daemon told the lead.
   const pickOn = (row: Row, pick: Pick) => {
     const does = picked(row, pick, `${open.owner}/${open.repo}`);
     if (does === null) return;
     if (does === "reply") replying = { row, text: "" };
-    else if (does === "open") enter();
+    else if ("open" in does)
+      void startOrMerge(does.open.request).then(
+        () => enter(),
+        (error) => {
+          item = null;
+          said = errorText(error);
+          refresh();
+        },
+      );
     else {
       item = null;
-      if (does === "merge") mergeRow(row);
+      if ("refused" in does) said = does.refused;
       else if ("answer" in does) void answerRow(row, { pick: does.answer });
       else if ("run" in does) void goAhead(does.run);
       else asking = { question: does.confirm, row: row.name, offer: "pick" };

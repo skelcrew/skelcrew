@@ -2922,7 +2922,10 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   press("Enter");
   await until(() => seen().includes("a) Open the builder"), "the item");
   type("a");
-  await until(() => !seen().includes("q/esc quit"), "app-12's agent");
+  await until(
+    () => !seen().includes("q/esc quit") && !seen().includes("esc back"),
+    "app-12's agent",
+  );
   type("hello");
   press("Enter");
   await until(() => read(join(home, "app-12.typed")) === "hello\n", "what was typed");

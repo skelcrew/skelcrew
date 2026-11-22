@@ -488,7 +488,12 @@ export function questionAsked(
   folder: string,
   question?: string,
 ): void {
-  record(db, folder, { asking: true, said: question ?? null }, "its builder asked a question");
+  record(
+    db,
+    folder,
+    { asking: true, said: question ?? null, handed: null },
+    "its builder asked a question",
+  );
   stopDelivering(db, folder, false, forQuestion);
   typeLeadNotes(db, sessions);
 }
@@ -541,7 +546,7 @@ export function turnEnded(
     record(
       db,
       folder,
-      { turn_ended: true, noting: thread.noting, said: ended.message ?? null },
+      { turn_ended: true, noting: thread.noting, said: ended.message ?? null, handed: null },
       "its builder stopped without submitting",
     );
 }
@@ -569,7 +574,13 @@ export function turnFailed(
   // A limit it stopped on before is over: this error is new, and needs you, so the wake
   // planned for the old one never types "continue" over it.
   endWake(thread.folder);
-  const erred = { erred: true, limited: false, limit_reset: null, said: message ?? null };
+  const erred = {
+    erred: true,
+    limited: false,
+    limit_reset: null,
+    said: message ?? null,
+    handed: null,
+  };
   record(db, thread.folder, erred, "its builder's harness stopped on an error");
   typeLeadNotes(db, sessions);
 }
