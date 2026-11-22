@@ -64,12 +64,12 @@ function shareLogin(home: string, folder = piHome(home)): string {
   return login;
 }
 
-// Reports whether Pi's agents have a login: a provider saved in Skelcrew's Pi login, one of the
-// keys or tokens Pi reads in `env`, or a provider of your own in Skelcrew's models.json, such as a
-// model you run yourself. Only the files are read, never a link or a pipe an agent left, and no pi
-// runs: an agent could put a command in auth.json for Pi to run as a key.
-export function piLoggedIn(home: string, env: Record<string, string | undefined>): boolean {
-  if (pi.keys.some((key) => /KEY|TOKEN/.test(key) && env[key])) return true;
+// Reports whether Pi's agents have a login: a provider saved in Skelcrew's Pi login, or a
+// provider of your own in Skelcrew's models.json, such as a model you run yourself. A key in your
+// shell doesn't count: the daemon's service gets only PATH, so its agents would never see it.
+// Only the files are read, never a link or a pipe an agent left, and no pi runs: an agent could
+// put a command in auth.json for Pi to run as a key.
+export function piLoggedIn(home: string): boolean {
   const saved = (file: string, shape: z.ZodType<Record<string, unknown>>) => {
     if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) return false;
     try {

@@ -593,26 +593,21 @@ test("a provider of your own in Skelcrew's models.json is a login, as Pi needs n
   mkdirSync(join(data(), "pi"), { recursive: true });
   const models = join(data(), "pi", "models.json");
   writeFileSync(models, '{"providers":{}}');
-  expect(piLoggedIn(home, {})).toBe(false);
+  expect(piLoggedIn(home)).toBe(false);
   writeFileSync(
     models,
     '{"providers":{"ollama":{"baseUrl":"http://localhost:11434/v1","apiKey":"local"}}}',
   );
-  expect(piLoggedIn(home, {})).toBe(true);
+  expect(piLoggedIn(home)).toBe(true);
 });
 
-test("Pi has a login once a provider is saved or a key it reads is set", () => {
-  expect(piLoggedIn(home, {})).toBe(false);
-  for (const key of ["TYPESAFE_API_KEY", "CLOUDFLARE_API_KEY", "QWEN_TOKEN_PLAN_TEAM_API_KEY"])
-    expect(piLoggedIn(home, { [key]: "k" })).toBe(true);
-  // A region or an account ID alone is no key.
-  expect(piLoggedIn(home, { AWS_REGION: "us-east-1", CLOUDFLARE_ACCOUNT_ID: "a" })).toBe(false);
+test("Pi has a login once a provider is saved, never for a key in the shell alone", () => {
+  expect(piLoggedIn(home)).toBe(false);
   mkdirSync(join(data(), "pi-login"), { recursive: true });
   writeFileSync(login(), "{}");
-  expect(piLoggedIn(home, {})).toBe(false);
-  expect(piLoggedIn(home, { OPENROUTER_API_KEY: "k" })).toBe(true);
+  expect(piLoggedIn(home)).toBe(false);
   writeFileSync(login(), '{"anthropic":{"type":"oauth"}}');
-  expect(piLoggedIn(home, {})).toBe(true);
+  expect(piLoggedIn(home)).toBe(true);
 });
 
 // Runs `code` in a Bun of its own under the test's home, as the Pi module finds Skelcrew's

@@ -366,7 +366,7 @@ function pickReviewer(harness: HarnessName, env: Env): void {
 // starts.
 function agentsLoggedIn(harness: HarnessName): boolean {
   if (harness === "claude") return existsSync(claudeTokenFile());
-  if (harness === "pi") return piLoggedIn(homedir(), process.env);
+  if (harness === "pi") return piLoggedIn(homedir());
   return existsSync(join(codexHome(), "auth.json"));
 }
 
@@ -533,7 +533,7 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
       title: "Codex's sign-in",
       take: () => logInCodex(env, `Sign in to Codex${forReviews}. Press Enter to start.`),
     });
-  if (uses("pi") && !piLoggedIn(homedir(), env))
+  if (uses("pi") && !piLoggedIn(homedir()))
     steps.push({
       title: "Pi's sign-in",
       take: () => logInPi(env, `Sign in to Pi${harness === "pi" ? "" : " for reviews"}.`),

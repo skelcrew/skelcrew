@@ -229,6 +229,9 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
   table leaves some out, such as `CLOUDFLARE_API_KEY`, `TYPESAFE_API_KEY` and the Qwen token-plan
   keys. Cloudflare and Azure need more than a key, such as an account ID or a base URL. Vertex
   and Bedrock can sign in from files in your home folder, which the sandbox hides.
+- **A key in the shell you run setup in never reaches the agents.** The daemon's service, under
+  systemd or launchd, gets only PATH. So setup asks for Pi's sign-in, which saves a key too,
+  whatever your shell holds.
 - **`pi -p` reads its prompt from stdin, whole.** Run with stdin open and nothing written, it
   waits forever.
 - **Pi has no setting that holds an answer to a shape.** The reviewer gets a tool from

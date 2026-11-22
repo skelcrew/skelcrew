@@ -25,7 +25,7 @@ Then it asks:
 
 - **The coding agent**, the harness agents run on.
 - **The coding agent for reviews**, only when more than one is installed. It offers another one first, as a second model sees what the first one misses. With one installed, reviews run on it.
-- **A sign-in for Skelcrew's agents.** For Claude Code, you run `claude setup-token` in another terminal and paste the token. Codex gets a login of Skelcrew's own, apart from yours. For Pi, you name a provider, such as `anthropic` or `openrouter`, and sign in to it, or set its API key, such as `GEMINI_API_KEY` or `OPENROUTER_API_KEY`, and Pi asks nothing.
+- **A sign-in for Skelcrew's agents.** For Claude Code, you run `claude setup-token` in another terminal and paste the token. Codex gets a login of Skelcrew's own, apart from yours. For Pi, you name a provider, such as `anthropic` or `openrouter`, and sign in to it with your account, or paste its API key when Pi asks. Skelcrew keeps one login for every Pi agent. A key exported in your shell doesn't count, as Skelcrew's service never sees your shell.
 
 It ends with `Skelcrew is set up.` Running it again changes nothing that is done.
 

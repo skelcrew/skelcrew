@@ -1052,16 +1052,18 @@ test("on a machine with only Pi, it signs in to the provider you name, once, in 
   expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });
 
-test("Pi needs no sign-in when a key it reads is set, and a failed one finishes no setup", async () => {
+// The daemon's service gets only PATH, so a key in the shell you run setup in never reaches the
+// agents, and Pi still needs a login of Skelcrew's own.
+test("Pi asks for its sign-in though a key it reads is in your shell, and a failed one finishes no setup", async () => {
   unlinkSync(join(bin, "claude"));
   fakePi("exit 1");
-  const failed = await skel("openrouter\n");
+  const failed = await skel("openrouter\n", bin, main(), home, {
+    OPENROUTER_API_KEY: "sk-or-test",
+  });
   expect(failed.code).toBe(1);
+  expect(failed.out).toContain("Sign in to Pi");
   expect(failed.err).toContain("pi auth login didn't finish");
   expect(existsSync(unit())).toBe(false);
-  const keyed = await skel("", bin, main(), home, { OPENROUTER_API_KEY: "sk-or-test" });
-  expect(keyed.code).toBe(0);
-  expect(keyed.out).not.toContain("Sign in to Pi");
 });
 
 test("Pi needs no sign-in when Skelcrew's models.json has a provider of your own", async () => {
