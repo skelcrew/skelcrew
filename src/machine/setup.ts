@@ -10,6 +10,7 @@ import { hasPiLogin, piHome } from "../agents/pi-login.ts";
 import { approvedAgents } from "../approved-agents.ts";
 import { agentRole, configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
+import { repositoryFlows } from "../flows.ts";
 import { errorText, toRun } from "../format.ts";
 import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from "../paths.ts";
 import { addPlugin, installYourPlugins } from "../plugins/install.ts";
@@ -68,8 +69,9 @@ function missingHarness(env: Env): string[] {
 }
 
 // Returns whether a role runs on Pi: yours, your reviewer's, or a role of a repository Skelcrew
-// has, as you approved its .agents/. Pi is experimental, so only a role that names it uses it.
-// A repository whose settings can't be read counts for none, as its agents stop on that anyway.
+// has, as you approved its .agents/: its lead, and the builder and reviewer of each of its
+// flows, which can be roles of its own. Pi is experimental, so only a role that names it uses
+// it. A flow whose settings can't be read counts for none, as its agents stop on that anyway.
 function piInUse(): boolean {
   const { yourHarness, yourReviewer } = readSettings(["yourHarness", "yourReviewer"]);
   if (yourHarness === "pi" || yourReviewer === "pi") return true;
@@ -78,14 +80,24 @@ function piInUse(): boolean {
     const repositories = z
       .array(z.object({ owner: z.string(), repo: z.string() }))
       .parse(db.query("SELECT owner, repo FROM repositories").all());
-    return repositories.some((place) => {
-      const repository = { ...place, agents: approvedAgents(place) };
-      const roles = ["lead", "builder", "reviewer"] as const;
+    const named = (read: () => boolean) => {
       try {
-        return roles.some((role) => agentRole(role, repository).harness === "pi");
+        return read();
       } catch {
         return false;
       }
+    };
+    const stages = ["builder", "reviewer"] as const;
+    return repositories.some((place) => {
+      const repository = { ...place, agents: approvedAgents(place) };
+      if (named(() => agentRole("lead", repository).harness === "pi")) return true;
+      return named(() =>
+        repositoryFlows(repository).some((flow) =>
+          named(() =>
+            stages.some((role) => agentRole(role, { ...repository, flow }).harness === "pi"),
+          ),
+        ),
+      );
     });
   } finally {
     db.close();
@@ -400,7 +412,9 @@ function agentsLoggedIn(harness: HarnessName): boolean {
 export function setupDone(): boolean {
   const harness = readSettings(["yourHarness"]).yourHarness;
   if (harness === undefined) return false;
-  const piReady = !piInUse() || agentsLoggedIn("pi");
+  // Pi must be there too, found here or where your login shell finds it, as firstRun looks.
+  const piFound = () => Bun.which("pi") !== null || Bun.which("pi", { PATH: loginPath() }) !== null;
+  const piReady = !piInUse() || (agentsLoggedIn("pi") && piFound());
   return (
     agentsLoggedIn(harness) && piReady && (existsSync(setUpFile()) || existsSync(serviceFile()))
   );

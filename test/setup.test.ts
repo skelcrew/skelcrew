@@ -1147,6 +1147,39 @@ exit 0`,
   expect(calls()).not.toContain("pi auth login");
 });
 
+// A flow can run a role of the repository's own, whose approved file names Pi.
+test("signs Pi in when a flow's own role runs on it, and asks to install Pi once it is gone", async () => {
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(join(clone, ".agents", "flows"), { recursive: true });
+  mkdirSync(join(clone, ".agents", "roles"));
+  writeFileSync(join(clone, ".agents", "flows", "quick.yaml"), "build:\n  role: tester\n");
+  writeFileSync(join(clone, ".agents", "roles", "tester.md"), "---\nharness: pi\n---\nTest it.\n");
+  const inClone = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+      stdout: "pipe",
+    })
+      .stdout.toString()
+      .trim();
+  inClone("init", "-q");
+  inClone("add", ".");
+  inClone("commit", "-qm", "agents");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  const tree = inClone("rev-parse", "HEAD:.agents");
+  writeFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), `simon/app: ${tree}\n`);
+  fake(
+    "pi",
+    `[ "$1 $2" = "auth login" ] && echo '{"anthropic":{"type":"api_key","key":"k"}}' > "$PI_CODING_AGENT_DIR/auth.json"
+exit 0`,
+  );
+  const run = await skel("sk-ant-oat01-good\nanthropic\n");
+  expect(run.code).toBe(0);
+  expect(calls()).toContain("pi auth login anthropic --no-browser");
+  unlinkSync(join(bin, "pi"));
+  const gone = await skel();
+  expect(gone.code).toBe(1);
+  expect(gone.out).toContain("npm install -g @earendil-works/pi-coding-agent@1.6.0");
+});
+
 test("with only Claude Code installed, asks nothing about harnesses and says agents run on it", async () => {
   const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);
