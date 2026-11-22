@@ -86,9 +86,23 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   expect(readFileSync(written, "utf8")).toBe("");
 });
 
-// A spinner on the mark of an agent at work turns about four times a second, and each turn
-// rewrites its cell alone, so the screen sends your terminal little. Over sc --remote it stays
-// still, as each turn would cost a write over a slow link, and the screen then sends nothing.
+// What a turn leaves once the codes that change no cell are taken out: cursor moves (A to D, G, H,
+// f, d), colours (m) and the markers of a synchronized update (?2026). tmux adds the rest to every
+// turn, and none of them draws: ?12 and ?25 set the cursor's blink and visibility, ?1000, ?1002,
+// ?1003 and ?1006 set how the mouse reports, r sets the scroll region without scrolling, and ( B
+// picks the plain character set for what comes next. Any other code stays, as does any other text.
+function shownBy(turn: string): string {
+  const esc = "\x1b";
+  const kept = `${esc}(\\[[0-9;]*[ABCDGHfdmr]|\\[\\?(2026|12|25|1000|1002|1003|1006)[hl]|\\(B)`;
+  return turn.replaceAll(new RegExp(kept, "g"), "");
+}
+
+// A spinner on the mark of an agent at work turns about four times a second. Each turn is a
+// frame of its own that rewrites its cell alone, so the rest of the screen stays as it was,
+// however many turns fall in the time watched. What the screen sends is checked from the end of
+// one whole turn to the end of another, so every byte checked belongs to a whole turn. Over
+// sc --remote it stays still, as each turn would cost a write over a slow link, and the screen
+// then sends nothing.
 test("the lead at work has a spinner that turns by its cell alone, and stays still over sc --remote", async () => {
   sql("UPDATE repositories SET lead_state = 'working'");
   sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
@@ -100,15 +114,29 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
     for (const [frame] of seen().matchAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?= working)/g)) frames.add(frame);
     return frames.size >= 3;
   }, "the spinner to turn");
+  const stillScreen = () => seen().replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠿");
+  const before = stillScreen();
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
+  const sentSoFar = () => (existsSync(written) ? readFileSync(written, "utf8") : "");
+  let start = "";
+  await until(() => {
+    start = sentSoFar();
+    return start.endsWith("\x1b[?2026l");
+  }, "a whole turn");
   await Bun.sleep(1500);
-  const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
-  // Each turn sends its cell and little else, however many turns fall in the time watched: about
-  // 175 bytes with tmux's own codes, where a redraw of the screen would send thousands.
-  const turns = sent.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g)?.length ?? 0;
-  expect(turns).toBeGreaterThan(0);
-  expect(sent.length / turns).toBeLessThan(250);
+  let sent = "";
+  await until(() => {
+    sent = sentSoFar().slice(start.length);
+    return sent.endsWith("\x1b[?2026l");
+  }, "a whole turn");
+  expect(stillScreen()).toBe(before);
+  const [beforeFirst, ...turns] = sent.split("\x1b[?2026h");
+  expect(shownBy(beforeFirst ?? "")).toBe("");
+  expect(turns.length).toBeGreaterThan(0);
+  for (const turn of turns) {
+    expect(shownBy(turn)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
+  }
 });
 
 test("over sc --remote the lead at work shows a still mark, and the screen sends nothing", async () => {
