@@ -305,12 +305,17 @@ function askLines(
   }));
 }
 
+// What an item opened full-size says on a screen too short to show it.
+export const tooShort = "make the screen taller to read this item";
+
 // Returns the lead's item on `row`, the row at `here`, opened full-size in a place `width` columns
 // wide and `height` tall, scrolled `scroll` lines down: what it is about, then its whole text, its
 // options and the reply line, with what tapping each line answers. However long the item and
 // however short the screen, scrolling reaches every line: by the keys or the wheel, or by a tap on
 // the `↑ more` or `↓ more` line at its top or bottom edge, which scrolls a page, for a screen with
-// taps alone. Gives the scroll as far as it can go, for the next draw.
+// taps alone. A screen under 3 lines tall has no room for those, so it says only to make the
+// screen taller, and nothing on it answers. Gives the scroll as far as it can go, for the next
+// draw.
 export function drawItem(
   row: Row,
   here: number,
@@ -324,7 +329,11 @@ export function drawItem(
     { text: "", pick: null },
     ...askLines(row, false, width),
   ];
-  const edges = all.length > height && height >= 3;
+  if (height < 3) {
+    const lines = [`   ${fitted(tooShort, Math.max(width - 3, 1))}`, ""].slice(0, height);
+    return { lines, targets: lines.map((): Target => null), scroll: 0 };
+  }
+  const edges = all.length > height;
   const view = edges ? height - 2 : height;
   const at = Math.min(Math.max(scroll, 0), Math.max(all.length - view, 0));
   const shown = all.slice(at, at + view);

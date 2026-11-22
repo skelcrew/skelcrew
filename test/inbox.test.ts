@@ -352,6 +352,26 @@ console.log(JSON.stringify({ reached, keys: [...keys], first: Bun.stripANSI(draw
   expect(seen.first).toBe("app  about the repository");
 });
 
+// Under 3 lines there is no room to scroll, so the item says only to make the screen taller, and
+// nothing on it answers.
+test("an item opened on a screen under 3 lines tall asks for a taller screen", () => {
+  const seen = inProcess(`
+const { drawItem } = await import(${JSON.stringify(source("list/layout.ts"))});
+postItem(db, "app", null, "Add simon/web?", ["yes", "no"]);
+const rows = shownRows(all(), sections, true);
+const at = rows.findIndex((r) => r.part === "ask");
+const on = (height) => {
+  const drawn = drawItem(rows[at], at, 50, height, 0);
+  return { lines: drawn.lines.map((line) => Bun.stripANSI(line).trim()), answers: drawn.targets.some(Boolean) };
+};
+console.log(JSON.stringify({ one: on(1), two: on(2), three: on(3).answers }));`);
+  expect(seen).toEqual({
+    one: { lines: ["make the screen taller to read this item"], answers: false },
+    two: { lines: ["make the screen taller to read this item", ""], answers: false },
+    three: true,
+  });
+});
+
 // A phone has taps alone, so tapping ↓ more, then ↑ more, reaches every line too.
 test("taps on an opened item's more lines scroll it to every option", () => {
   const seen = inProcess(`
