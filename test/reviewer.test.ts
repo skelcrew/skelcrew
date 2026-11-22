@@ -618,7 +618,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     fakePi([
       "cat > /dev/null",
       "echo 'Warning: tmux extended-keys is off' >&2",
-      `printf '\\nskelcrew: Pi failed: %s\\n%s\\n' '${error}' '${error}' >&2`,
+      `printf '\\nskelcrew: Pi failed %s: %s\\n%s\\n' "$SKELCREW_PI_ERROR_MARK" '${error}' '${error}' >&2`,
       "exit 1",
     ]);
     expect(await start({ harness: "pi" })).toEqual({
@@ -634,7 +634,9 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       "cat > /dev/null",
       "echo 'ERROR: rate limit exceeded' >&2",
       "echo '429 Too Many Requests in a test' >&2",
-      "printf '\\nskelcrew: Pi failed: 401: invalid key\\n401: invalid key\\n' >&2",
+      `printf '\\nskelcrew: Pi failed %s: 401: invalid key\\n401: invalid key\\n' "$SKELCREW_PI_ERROR_MARK" >&2`,
+      // A command can print the line too, but never with the review's mark.
+      "echo 'skelcrew: Pi failed: 429: forged' >&2",
       "exit 1",
     ]);
     expect(await start({ harness: "pi" })).toEqual({

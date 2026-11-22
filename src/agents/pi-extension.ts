@@ -23,14 +23,37 @@ export function isUsageLimit(error: string): boolean {
   return /^429(\D|$)/.test(error.trim()) || /exceeded[^.]*quota/i.test(error);
 }
 
-// Returns Pi's error with every key taken out, as Skelcrew keeps it in the task's log: the value
-// of each key or token in the environment, and anything shaped like a key, such as sk-... or a
-// Google key, which a provider can echo back.
-export function withoutKeys(error: string): string {
+// Returns the credentials Pi may send: the key and headers it resolved for the model it runs, from
+// its login, a key it ran a command for or the environment, and every key or token in the
+// environment. Whatever can't be read is left out.
+async function credentials(ctx: Context): Promise<string[]> {
+  const found = Object.entries(process.env).flatMap(([name, value]) =>
+    value && /KEY|TOKEN|SECRET/.test(name) ? [value] : [],
+  );
+  try {
+    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+    found.push(text(auth, "apiKey"));
+    for (const part of ["headers", "env"]) {
+      const values = field(auth, part);
+      if (typeof values !== "object" || values === null) continue;
+      for (const value of Object.values(values))
+        if (typeof value === "string") found.push(value, value.split(" ").at(-1) ?? "");
+    }
+  } catch {}
+  return found.filter((value) => value.trim() !== "");
+}
+
+// Returns Pi's error with every key taken out, as Skelcrew keeps it in the task's log: each of
+// the credentials Pi may send, however short, and anything shaped like a key, such as sk-... or a
+// Google key, which a provider can echo back. A credential is taken out where it stands as a
+// word of its own, so a short one never cuts into other words.
+async function withoutKeys(error: string, ctx: Context): Promise<string> {
   let said = error;
-  for (const [name, value] of Object.entries(process.env))
-    if (value && value.length >= 8 && /(KEY|TOKEN|SECRET)/.test(name))
-      said = said.split(value).join("[key]");
+  const longest = (await credentials(ctx)).sort((a, b) => b.length - a.length);
+  for (const value of longest) {
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    said = said.replace(new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, "g"), "[key]");
+  }
   return said
     .replace(/\b(sk|rk|pk)-[\w-]{8,}/g, "[key]")
     .replace(/\bAIza[\w-]{20,}/g, "[key]")
@@ -40,6 +63,8 @@ export function withoutKeys(error: string): string {
 // What Pi gives a handler besides its event, as far as this extension uses it.
 type Context = {
   hasUI: boolean;
+  model: unknown;
+  modelRegistry: { getApiKeyAndHeaders: (model: unknown) => Promise<unknown> };
   isIdle: () => boolean;
   ui: {
     setWidget: (key: string, lines: string[] | undefined) => void;
@@ -95,6 +120,10 @@ function textOf(message: unknown): string {
 // lead or a builder, and its hooks tell Skelcrew what it does.
 export default function skelcrew(pi: Pi): void {
   const review = process.env.SKELCREW_PI_REVIEW;
+  // The mark Skelcrew knows its error line by. It leaves the environment at once, so no command
+  // the reviewer runs can print a line Skelcrew would take for Pi's.
+  const mark = process.env.SKELCREW_PI_ERROR_MARK ?? "";
+  delete process.env.SKELCREW_PI_ERROR_MARK;
   // The last answer of the run that ended, kept for the moment Pi settles: a run Pi retries ends
   // once for each try.
   let last: unknown = {};
@@ -116,12 +145,11 @@ export default function skelcrew(pi: Pi): void {
         return { content: [{ type: "text", text: "Skelcrew has your verdict." }], details: {} };
       },
     });
-    // Pi's error goes on a line of its own, so Skelcrew never takes a line a command printed
-    // for it.
-    pi.on("agent_settled", (event) => {
+    // Pi's error goes on a line of its own, with the mark.
+    pi.on("agent_settled", async (event, ctx) => {
       if (field(event, "aborted") === true || !failed()) return;
-      const said = withoutKeys(text(last, "errorMessage")).replace(/\s+/g, " ").trim();
-      process.stderr.write(`\nskelcrew: Pi failed: ${said || "an unknown error"}\n`);
+      const said = (await withoutKeys(text(last, "errorMessage"), ctx)).replace(/\s+/g, " ").trim();
+      process.stderr.write(`\nskelcrew: Pi failed ${mark}: ${said || "an unknown error"}\n`);
     });
     return;
   }
@@ -129,10 +157,10 @@ export default function skelcrew(pi: Pi): void {
     if (field(event, "source") !== "extension")
       await hook("prompt", { prompt: text(event, "text") });
   });
-  pi.on("agent_settled", async (event) => {
+  pi.on("agent_settled", async (event, ctx) => {
     if (field(event, "aborted") === true) return hook("turn-interrupted");
     if (failed()) {
-      const said = withoutKeys(text(last, "errorMessage"));
+      const said = await withoutKeys(text(last, "errorMessage"), ctx);
       const error = isUsageLimit(said) ? "rate_limit" : "error";
       return hook("turn-failed", { error, error_details: said });
     }

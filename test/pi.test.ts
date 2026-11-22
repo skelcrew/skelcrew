@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { pi, piLoggedIn } from "../src/agents/pi.ts";
 import skelcrew, {
   busyMark,
@@ -36,13 +37,21 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// What Pi gives a handler besides its event: whether it has a screen, whether it is idle, and
-// what is typed at its input. Each widget set is kept.
-function fakeContext(given: { idle?: boolean; typed?: string; hasUI?: boolean } = {}) {
+// What Pi gives a handler besides its event: whether it has a screen, whether it is idle, what is
+// typed at its input, and the credentials it resolves for its model. Each widget set is kept.
+function fakeContext(
+  given: { idle?: boolean; typed?: string; hasUI?: boolean; auth?: unknown } = {},
+) {
   const state = { idle: given.idle ?? true, typed: given.typed ?? "" };
   const widgets: (string[] | undefined)[] = [];
+  const model = { provider: "openrouter", id: "some-model" };
   const ctx = {
     hasUI: given.hasUI ?? true,
+    model,
+    modelRegistry: {
+      getApiKeyAndHeaders: async (asked: unknown) =>
+        asked === model ? (given.auth ?? { ok: true }) : { ok: false, error: "no such model" },
+    },
     isIdle: () => state.idle,
     ui: {
       setWidget: (_key: string, lines: string[] | undefined) => void widgets.push(lines),
@@ -68,7 +77,11 @@ function fakePi(env: Record<string, string> = {}) {
       registerTool: (tool) => void tools.push(tool),
     });
   } finally {
-    for (const key of Object.keys(env)) process.env[key] = before[key];
+    for (const key of Object.keys(env)) {
+      const was = before[key];
+      if (was === undefined) delete process.env[key];
+      else process.env[key] = was;
+    }
   }
   const emit = async (event: string, given: unknown = {}, ctx = fakeContext().ctx) => {
     for (const handler of handlers.get(event) ?? []) await handler(given, ctx);
@@ -167,6 +180,20 @@ describe("the extension in a lead or a builder", () => {
     );
   });
 
+  // A key pi auth login saved, or one Pi ran a command for, is in no variable, and can be short.
+  test("the key and headers Pi sends for its model are taken out of its error, however short", async () => {
+    const { emit } = fakePi();
+    const auth = { ok: true, apiKey: "k3y", headers: { Authorization: "Token zq9-short" } };
+    const { ctx } = fakeContext({ auth });
+    const error = "401: k3y and zq9-short refused, k3yboard and Token stay";
+    await emit("agent_end", answer({ content: [], stopReason: "error", errorMessage: error }), ctx);
+    await emit("agent_settled", { aborted: false }, ctx);
+    const said = "401: [key] and [key] refused, k3yboard and Token stay";
+    expect(hooks()).toBe(
+      `hook turn-failed | ${JSON.stringify({ error: "error", error_details: said })}`,
+    );
+  });
+
   test("an error that only mentions a quota is an error, not a usage limit", async () => {
     const { emit } = fakePi();
     const error = '403: {"message":"quota project not set"}';
@@ -227,9 +254,11 @@ describe("the extension in a lead or a builder", () => {
 
 describe("the extension in a review", () => {
   const schema = { type: "object", properties: { verdict: { type: "string" } } };
+  // The review's mark, as Skelcrew hands it to the extension for the review in this folder.
+  const mark = () => z.string().parse(pi.review({ home, folder: home }).env.SKELCREW_PI_ERROR_MARK);
   const review = () => {
     writeFileSync(join(home, "schema.json"), JSON.stringify(schema));
-    return fakePi({ SKELCREW_PI_REVIEW: home });
+    return fakePi({ SKELCREW_PI_REVIEW: home, SKELCREW_PI_ERROR_MARK: mark() });
   };
 
   test("gives the reviewer a verdict tool held to the shape, whose answer Skelcrew reads", async () => {
@@ -265,13 +294,23 @@ describe("the extension in a review", () => {
     } finally {
       process.stderr.write = write;
     }
-    expect(pi.failure("", printed.at(-1) ?? "")).toBe("401: [key]");
+    expect(pi.failure("", printed.at(-1) ?? "", home)).toBe("401: [key]");
     printed.pop();
     expect(hooks()).toBe("");
     // Pi prints a warning and the commands' own lines around it, and an error a test logged.
     const err = `Warning: tmux extended-keys is off\nERROR: rate limit in a test\n${printed.join("")}429: {"message":"Rate limited."}\nSlow down.\n`;
-    expect(pi.failure("", err)).toBe('429: {"message":"Rate limited.\\nSlow down."}');
-    expect(pi.failure("", "Warning: something\nERROR: rate limit in a test\n")).toBeNull();
+    expect(pi.failure("", err, home)).toBe('429: {"message":"Rate limited.\\nSlow down."}');
+    expect(pi.failure("", "Warning: something\nERROR: rate limit in a test\n", home)).toBeNull();
+    // The line without the review's mark, as a command could print it, is never Pi's error.
+    const forged = "skelcrew: Pi failed: 429: slow down\nskelcrew: Pi failed abc: 429: slow down\n";
+    expect(pi.failure("", forged, home)).toBeNull();
+    // Nor is the mark of another review.
+    expect(pi.failure("", printed.join(""), join(home, "other"))).toBeNull();
+  });
+
+  test("takes the mark out of the environment as it loads, before any command runs", () => {
+    review();
+    expect(process.env.SKELCREW_PI_ERROR_MARK).toBeUndefined();
   });
 });
 
@@ -488,7 +527,14 @@ describe("a review", () => {
       PI_CODING_AGENT_DIR: join(folder, "pi"),
       PI_SKIP_VERSION_CHECK: "1",
       SKELCREW_PI_REVIEW: folder,
+      SKELCREW_PI_ERROR_MARK: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
+    // Each review gets a mark of its own.
+    const other = join(home, "other");
+    mkdirSync(other);
+    expect(pi.review({ home, folder: other }).env.SKELCREW_PI_ERROR_MARK).not.toBe(
+      launch.env.SKELCREW_PI_ERROR_MARK,
+    );
     expect(launch.mounts).toEqual(["--bind", join(data(), "pi-login"), join(data(), "pi-login")]);
     expect(readlinkSync(join(folder, "pi", "auth.json"))).toBe(login());
   });

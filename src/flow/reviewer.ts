@@ -189,14 +189,15 @@ async function spawnReviewer(given: {
   return { out, err, code };
 }
 
-// Returns the error a reviewer that failed ended on, never a line of the prompt it was given:
+// Returns the error the reviewer in `folder` ended on, never a line of the prompt it was given:
 // the error its harness reports, else, when `guess` and the harness allows it, the last line it
-// printed on stderr, or else stdout. A harness can echo the prompt as it starts, so the end of what it printed can be
-// the task's text rather than what went wrong. A task can hold a line that looks like the
+// printed on stderr, or else stdout. A harness can echo the prompt as it starts, so the end of
+// what it printed can be the task's text rather than what went wrong. A task can hold a line that looks like the
 // harness's own error, such as "ERROR: connection refused" in a bug report, so the echoed
 // prompt is taken out before anything is read.
 function failureOf(
   name: HarnessName,
+  folder: string,
   finished: { out: string; err: string },
   prompt: string,
   guess: boolean,
@@ -216,7 +217,7 @@ function failureOf(
       .join("\n");
   };
   const [out, err] = [own(finished.out), own(finished.err)];
-  const reported = harnessNamed(name).failure(out, err);
+  const reported = harnessNamed(name).failure(out, err, folder);
   if (reported !== null) return reported.slice(0, 2000);
   if (!guess || !harnessNamed(name).guessesErrors) return null;
   for (const printed of [err, out]) {
@@ -241,8 +242,8 @@ function readVerdict(
   const failed = (otherwise: string): Review | Limited => {
     // Only the error the harness itself reports can be a usage limit. A line guessed at could
     // be a test's output, and would hold every review on the harness for nothing.
-    const reported = failureOf(name, finished, prompt, false);
-    const error = reported ?? (code === 0 ? null : failureOf(name, finished, prompt, true));
+    const reported = failureOf(name, folder, finished, prompt, false);
+    const error = reported ?? (code === 0 ? null : failureOf(name, folder, finished, prompt, true));
     const limit = reported === null ? null : harnessNamed(name).usageLimit(reported, Date.now());
     if (error !== null && limit !== null) return { verdict: "limited", body: error, ...limit };
     if (code === 0)

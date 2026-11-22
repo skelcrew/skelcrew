@@ -197,14 +197,21 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
 - **A turn ends at `agent_settled`, not `agent_end`.** Pi tries a 429 three times, and each try
   ends with `agent_end`. Only `agent_settled` comes once, after the retries, with `aborted` true
   for Esc. A turn that ended on an error has an assistant message with `stopReason: "error"`
-  and Pi's words in `errorMessage`, such as `429: {"message":"..."}`. The status comes first, so a 429
-  anywhere else, such as in a request ID, is no limit. A provider can echo a key in that message,
-  and Skelcrew logs it, so the extension takes keys out first.
+  and Pi's words in `errorMessage`, such as `429: {"message":"..."}`. The status comes first,
+  so a 429 anywhere else, such as in a request ID, is no limit.
+- **A provider can echo a key in its error, and Skelcrew logs it.** So the extension takes keys
+  out first. The key may be in no variable, as `pi auth login` saves it in `auth.json`, or a
+  command gives it. `ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)` returns the key and
+  headers Pi sends for its model.
 - **`input` fires for the first message too.** The message on the command line comes as typed,
   with `source: "interactive"`. A long paste shows as "[paste #1 +40 lines]", but `input` gets
   its whole text.
 - **`--session-id` both starts and brings back a session.** Pi saves it in `--session-dir` as
   `<time>_<id>.jsonl`, and only once a message went in.
+- **A command in a review can print a line like Pi's error.** So the extension's error line
+  carries a mark Skelcrew makes for each review. The extension deletes it from `process.env` as
+  it loads, and Pi's `bash` tool starts commands with `process.env` as it is then, so they never
+  see it. Checked by running `env` from the tool.
 - **`pi -p` reads its prompt from stdin, whole.** Run with stdin open and nothing written, it
   waits forever.
 - **Pi has no setting that holds an answer to a shape.** The reviewer gets a tool from

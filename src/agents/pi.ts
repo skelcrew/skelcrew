@@ -293,6 +293,7 @@ function reviewCommand(given: {
     PI_CODING_AGENT_DIR: agentFolder,
     PI_SKIP_VERSION_CHECK: "1",
     SKELCREW_PI_REVIEW: folder,
+    SKELCREW_PI_ERROR_MARK: errorMark(folder),
   };
   return { command, mounts: rw(login), env, skills: [] };
 }
@@ -305,15 +306,26 @@ function readAnswer(folder: string): unknown {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-// The start of the line Skelcrew's extension prints on stderr when a review's turn ends on an
-// error, with Pi's error after it.
-const failedLine = "skelcrew: Pi failed: ";
+// A secret of this run of Skelcrew's, which each review's mark is made from.
+const markSecret = crypto.randomUUID();
 
-// Returns the error a reviewer's pi ended on, or null when it printed none. Pi prints other lines
-// on stderr too, such as warnings, so only the line Skelcrew's extension printed counts.
-function reportedError(_out: string, err: string): string | null {
-  const line = err.split("\n").findLast((text) => text.startsWith(failedLine));
-  const said = line?.slice(failedLine.length).trim() ?? "";
+// Returns the mark of the review in `folder`, which Skelcrew's extension puts in the line it prints
+// with Pi's error. The extension takes it out of the environment as it loads, before any command
+// runs, so a command's output can't print the line.
+const errorMark = (folder: string) =>
+  new Bun.CryptoHasher("sha256").update(`${markSecret}:${folder}`).digest("hex");
+
+// Returns the start of the line Skelcrew's extension prints on stderr when the review in `folder`
+// ends on an error, with Pi's error after it.
+const failedLine = (folder: string) => `skelcrew: Pi failed ${errorMark(folder)}: `;
+
+// Returns the error the reviewer's pi in `folder` ended on, or null when it printed none. Pi prints
+// other lines on stderr too, such as warnings, and so can a command it runs, so only the line
+// with the review's mark counts.
+function reportedError(_out: string, err: string, folder: string): string | null {
+  const start = failedLine(folder);
+  const line = err.split("\n").findLast((text) => text.startsWith(start));
+  const said = line?.slice(start.length).trim() ?? "";
   return said === "" ? null : said;
 }
 
