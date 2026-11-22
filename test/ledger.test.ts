@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test";
 import type { Posting } from "../src/flow/ledger.ts";
 import {
+  approvalFound,
   atRoundLimit,
   changesTyped,
   checkSet,
@@ -462,4 +463,9 @@ test("the last round reviewed is the last that approved or asked for changes, ne
   // A row from before Skelcrew kept a record says the same from its own fields.
   const old = thread({ verdict: "approve", review_round: 4, reviewed_commit: "c3" });
   expect(lastReviewed(old)).toEqual({ round: 4, commit: "c3", findings: [] });
+  // An approval from before Skelcrew saved its commit counts once the daemon finds the commit.
+  const unsaved = thread({ verdict: "approve", review_round: 4, reviewed_commit: null });
+  expect(lastReviewed(unsaved)).toBeNull();
+  const found = { ...unsaved, ...approvalFound(unsaved, "d4") };
+  expect(lastReviewed(found)).toEqual({ round: 4, commit: "d4", findings: [] });
 });

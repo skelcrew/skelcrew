@@ -322,22 +322,29 @@ export function nextRound(thread: Recorded): number {
 
 // Returns the last round a reviewer finished, approving or asking for changes, with the commit it
 // reviewed and its findings, or null before any. A review that failed found nothing, so it never
-// counts. A kept approval counts, at the commit it kept.
+// counts. A kept approval counts, at the commit it kept. An approval from before Skelcrew saved
+// its commit counts once the commit is found.
 export function lastReviewed(
   thread: Recorded,
 ): { round: number; commit: string; findings: string[] } | null {
-  let last: { round: number; commit: string; findings: string[] } | null = null;
+  let last: { round: number; commit: string | null; findings: string[] } | null = null;
+  let approved = false;
   for (const event of recordOf(thread)) {
-    if (event.kind === "verdict" && (event.verdict === "approve" || event.verdict === "changes"))
+    if (event.kind === "verdict" && (event.verdict === "approve" || event.verdict === "changes")) {
       last = { round: event.round, commit: event.commit, findings: event.findings };
+      approved = event.verdict === "approve";
+    }
     if (event.kind === "before") {
       const { verdict, review_round, reviewed_commit, review_findings } = event.round;
-      const counted = verdict === "approve" || verdict === "changes";
-      if (counted && review_round !== null && reviewed_commit !== null)
+      if ((verdict === "approve" || verdict === "changes") && review_round !== null) {
         last = { round: review_round, commit: reviewed_commit, findings: review_findings ?? [] };
+        approved = verdict === "approve";
+      }
     }
+    if (event.kind === "approval found" && last !== null && approved)
+      last = { ...last, commit: event.commit };
   }
-  return last;
+  return last?.commit ? { ...last, commit: last.commit } : null;
 }
 
 // Returns whether the thread has used up its rounds of changes. Past that a review's changes
