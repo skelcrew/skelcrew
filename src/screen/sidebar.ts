@@ -579,12 +579,14 @@ export async function runSidebar(
     // An agent can end and its client move to the lead by itself, so the session shown is asked
     // of tmux, unless details show. With no client on the right while the lead isn't running,
     // the right side is waiting for the lead, such as after a builder ended while its lead was
-    // gone, so the lead is what it shows. The sidebar then moves to the lead's row with it.
+    // gone, so the lead is what it shows. The sidebar then moves to the lead's row with it, unless
+    // it is on the lead's item about the repository, which shows the lead too.
     if (!isDetails(shown) && !empty) {
       const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
       else if (!running.includes(open.lead)) shown = open.lead;
-      if (shown === open.lead && rows[here]?.part !== "lead") here = 0;
+      const onLead = rows[here]?.part === "lead" || rows[here]?.part === "ask";
+      if (shown === open.lead && !onLead) here = 0;
     }
     // A lead that moved to or from a plugin's host, or to another session on it, is shown
     // through its host now, once the right side shows the lead. This comes once the sidebar knows
@@ -1027,8 +1029,8 @@ export async function runSidebar(
   // in the next read, however late, so it is still seen whole. A lone Esc waits too, as the
   // sidebar has no use for it: when what comes next doesn't go on with [, the Esc was a key of its
   // own, and is taken apart from it, so Esc then a stays two keys rather than Alt-a. Only the
-  // close key's question and a reply you type take Esc, to cancel, so while either is open a lone
-  // Esc also acts once nothing followed it for a moment longer than tmux waits. It stays cut all the same, so a
+  // close key's question, a reply you type and an item you opened take Esc, to go back, so while
+  // one is open a lone Esc also acts once nothing followed it for a moment longer than tmux waits. It stays cut all the same, so a
   // paste whose rest comes late is still skipped whole, and isn't acted on again.
   let cut = "";
   let lone: ReturnType<typeof setTimeout> | undefined;
@@ -1043,7 +1045,7 @@ export async function runSidebar(
     actedOn = false;
     cut = unfinished("", text);
     act(text.slice(0, text.length - cut.length));
-    if (cut === esc && (closing || replying))
+    if (cut === esc && (closing || replying || item !== null))
       lone = setTimeout(() => {
         actedOn = true;
         act(esc);
