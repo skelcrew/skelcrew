@@ -127,6 +127,11 @@ test("runs the test commands in its own folder, one check at a time, the rest to
   expect((await second.ended).code).toBe(0);
   expect((await third.ended).code).toBe(0);
   expect(log()).toBe("start a\nend a\nstart b\nend b\nstart c\nend c\n");
+  // The daemon's log says each time a slot is taken and given back, and why.
+  const daemonLog = () => read(join(home, "daemon.log"));
+  await until(() => daemonLog().split("gave back a check slot").length === 4);
+  expect(daemonLog()).toContain("you took a check slot in simon/app\n");
+  expect(daemonLog()).toContain("you gave back a check slot in simon/app: its check ended\n");
 }, 60_000);
 
 // Returns whether the suite started in the checkout still runs. A suite that ended can stay a

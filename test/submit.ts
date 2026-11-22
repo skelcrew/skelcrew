@@ -107,7 +107,8 @@ exec sleep 300`,
 
 // Stands in for Codex. Review n answers with the verdict in Skelcrew's Codex folder's verdict-n,
 // and fails without one. With check-n there, it first runs sc check, as a reviewer runs the
-// tests, and notes in the sessions folder that it did. It sleeps first when slow-n is there, and while held-n is there it
+// tests, and notes in the sessions folder that it did. With linger-n there, it leaves a process
+// in a session of its own that holds its output open, and notes its ID in linger-n there. It sleeps first when slow-n is there, and while held-n is there it
 // waits for the test to put go-n in the sessions folder. With error-n there, it echoes its
 // prompt and then that error, as codex exec does, and fails. What it was given, the branches it
 // saw, and in since-n the diff since the last round, go in the sessions folder, the one place a
@@ -126,6 +127,7 @@ f=$(grep -o '/[^ ]*/since-last-round\\.diff' "$s/prompt-$n.new" | head -1)
 test -z "$f" || cp "$f" "$s/since-$n"
 mv "$s/prompt-$n.new" "$s/prompt-$n"
 test -e "$CODEX_HOME/check-$n" && { touch "$s/checking-$n"; sc check > /dev/null 2>&1; }
+test -e "$CODEX_HOME/linger-$n" && { setsid sleep 600 & echo $! > "$s/linger-$n"; }
 test -e "$CODEX_HOME/slow-$n" && sleep 30
 i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
 test -e "$CODEX_HOME/error-$n" && { cat "$s/prompt-$n" "$CODEX_HOME/error-$n" >&2; exit 1; }

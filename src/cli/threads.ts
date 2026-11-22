@@ -73,11 +73,20 @@ export async function checkCommand(args: string[]): Promise<void> {
   const { takeCheckSlot } = await import("../client.ts");
   const { originHere } = await import("../machine/origin.ts");
   const from = process.env.SKELCREW_SOCKET ? undefined : (originHere() ?? undefined);
+  let suite: number | null = null;
   const slot = await takeCheckSlot({
     queued: (place) =>
       console.log(
         `Waiting for a check slot: number ${place} in line. The tests start once one is free.`,
       ),
+    ended: (why) => {
+      if (suite !== null)
+        try {
+          process.kill(-suite, "SIGKILL");
+        } catch {}
+      console.error(`The check ended, as ${why}.`);
+      process.exit(1);
+    },
     from,
   });
   if (slot.test.length === 0) {
@@ -89,6 +98,7 @@ export async function checkCommand(args: string[]): Promise<void> {
     stdio: ["inherit", "inherit", "inherit", "ignore", "pipe"],
     detached: true,
   });
+  suite = run.pid;
   process.exit(await run.exited);
 }
 

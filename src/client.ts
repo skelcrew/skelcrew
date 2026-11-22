@@ -351,16 +351,19 @@ export async function submitForReview(summary: string): Promise<string> {
 
 // Waits for one of the machine's check slots, for sc check, and returns the repository's test
 // commands. The daemon keeps the slot while the connection stays open, so until this process
-// ends. `queued` is told the caller's place in line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
+// ends. `queued` is told the caller's place in line when it has to wait, and `ended` why the
+// check must end, when the builder or reviewer that ran it has ended. `from` is the remote of the checkout you ran it in; an agent's own
 // socket names its repository instead. Throws with the daemon's error, such as when no test
 // command is configured, or when nothing answers.
 export function takeCheckSlot(given: {
   queued: (place: number) => void;
+  ended: (why: string) => void;
   from?: string | undefined;
 }): Promise<{ test: string[] }> {
-  const { queued, from } = given;
+  const { queued, ended, from } = given;
   const Line = z.union([
     z.object({ queued: z.number() }),
+    z.object({ ended: z.string() }),
     z.object({ test: z.array(z.string()) }),
     z.object({ error: z.string() }),
   ]);
@@ -383,6 +386,7 @@ export function takeCheckSlot(given: {
           connection.destroy();
           fail(new Error("the daemon answered in a way this Skelcrew doesn't understand"));
         } else if ("queued" in line.data) queued(line.data.queued);
+        else if ("ended" in line.data) ended(line.data.ended);
         else if ("error" in line.data) {
           answered = true;
           fail(new Error(line.data.error));

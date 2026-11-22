@@ -299,6 +299,14 @@ export function reviewerPrompt(
 // sandbox started can have lost the daemon as an ancestor by then, and still be in its group.
 const reviewerGroups = new Set<number>();
 
+const reviewing = new Map<string, number>();
+let reviewsStarted = 0;
+
+// Returns which reviewer runs now with the given reviewer socket, by a number of its own, or
+// null when none does. So a check slot a reviewer took is given back once its process has
+// ended, even when the next round's reviewer runs on the same socket.
+export const reviewOn = (socket: string) => reviewing.get(socket) ?? null;
+
 // Kills every reviewer that runs now, with whatever it started, for the daemon's stop, and
 // returns once none of them runs. Waiting matters: a next daemon would otherwise run the review
 // again while the last one still writes its files. It blocks, as the daemon exits right after.
@@ -339,8 +347,9 @@ async function spawnReviewer(given: {
   env: Record<string, string>;
   input: string;
   signal: AbortSignal;
+  socket: string | undefined;
 }): Promise<{ out: string; err: string; code: number }> {
-  const { argv, env, input, signal } = given;
+  const { argv, env, input, signal, socket } = given;
   const mac = process.platform === "darwin";
   // A group of its own, listed until the reviewer has ended and the group is killed.
   const proc = Bun.spawn(argv, {
@@ -353,7 +362,10 @@ async function spawnReviewer(given: {
     detached: true,
   });
   reviewerGroups.add(proc.pid);
+  const started = ++reviewsStarted;
+  if (socket) reviewing.set(socket, started);
   proc.exited.then(() => {
+    if (socket && reviewing.get(socket) === started) reviewing.delete(socket);
     try {
       process.kill(-proc.pid, "SIGKILL");
     } catch {}
@@ -640,7 +652,7 @@ async function reviewNow(given: {
       bounds,
     );
     const input = told ? `${prompt}\n\n${told}` : prompt;
-    const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });
+    const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal, socket });
     const after = whyStopped();
     if (after) return after;
     const verdict = readVerdict(harness, folder, finished, input, given.strict);

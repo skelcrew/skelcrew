@@ -38,6 +38,7 @@ import { assignIssue } from "./assign.ts";
 import { filedTask, fileTask, unfileTask } from "./backlog.ts";
 import {
   bringBack,
+  builderStartOf,
   endEarlierBuilder,
   failThread,
   refuseSecondBuilder,
@@ -105,7 +106,7 @@ import {
   repositoryNamed,
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
-import { killReviewers } from "./reviewer.ts";
+import { killReviewers, reviewOn } from "./reviewer.ts";
 import {
   endRound,
   goOn,
@@ -1171,12 +1172,26 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       const thread = reviewer ?? builderOf(caller);
       const repository = thread ?? (from === undefined ? undefined : repositoryAt(db, from));
       if (!repository) throw new Error("run sc check in a checkout of a repository Skelcrew has");
-      // sc ps names the slot's holder as it names threads, such as APP-12/reviewer.
       const holder =
         thread === null ? "you" : `${threadName(db, thread)}/${reviewer ? "reviewer" : "builder"}`;
+      const review = reviewer ? reviewOn(reviewSocket(reviewer.folder)) : null;
+      const start = thread === null ? null : builderStartOf(thread.folder);
+      const runs = async () => {
+        if (thread === null) return true;
+        if (reviewer) return review !== null && reviewOn(reviewSocket(reviewer.folder)) === review;
+        const live = db
+          .query("SELECT 1 FROM task_threads WHERE folder = ? AND status IN ('working', 'waiting')")
+          .get(thread.folder);
+        if (live === null || builderStartOf(thread.folder) !== start) return false;
+        const now = readThread(db, thread.folder);
+        if (now.host === null) return false;
+        const { host, id } = await builderSession(db, sessions, now);
+        return agentRuns(host, id);
+      };
       holdCheckSlot(connection, repositoryCommands(repository).test, {
         holder,
         repository: `${repository.owner}/${repository.repo}`,
+        runs,
       });
     } catch (error) {
       connection.end(`${JSON.stringify({ error: errorText(error) })}\n`);

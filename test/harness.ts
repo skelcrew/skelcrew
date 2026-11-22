@@ -171,10 +171,11 @@ export function startDaemon(
   const polls = every === undefined ? "" : `, ${every}`;
   const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)}${polls});`;
-  // Reviews start at once on a repository without CI, unless the test asks for the wait.
+  // Reviews start at once on a repository without CI, unless the test asks for the wait. What
+  // the daemon logs goes to daemon.log in the test's home.
   const run = Bun.spawn([process.execPath, "-e", code], {
     env: { SKELCREW_CHECK_WAIT_MS: "0", ...env },
-    stdout: "ignore",
+    stdout: env.HOME ? Bun.file(join(env.HOME, "daemon.log")) : "ignore",
     stderr: "ignore",
   });
   running.push(run);
