@@ -378,7 +378,7 @@ async function reviewNow(given: {
   instructions: string;
   clone: string;
   issue: { title: string; body: string };
-  bounds?: Bounds;
+  bounds?: () => Bounds;
   base: string;
   test: string[] | undefined;
   commit: string;
@@ -541,7 +541,7 @@ async function reviewNow(given: {
       tests,
       given.test,
       last,
-      given.bounds,
+      given.bounds?.(),
     );
     const input = told ? `${prompt}\n\n${told}` : prompt;
     const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });

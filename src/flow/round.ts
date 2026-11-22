@@ -492,16 +492,14 @@ async function reviewRound(
           // change that was docs alone is asked again, against the base just fetched. One that
           // now changes code runs the tests, as there is then no CI result to read.
           const docsOnly = given.docsOnly === true && changesOnlyDocs(skelcrewClone, bases, sha);
-          const before = readThread(db, folder);
           const description =
             last?.description ??
-            (before.stay_true.length === 0 || before.pr === null
+            (thread.stay_true.length === 0 || thread.pr === null
               ? null
-              : await refreshPr(db, repository, before.pr).then(
+              : await refreshPr(db, repository, thread.pr).then(
                   (shown) => shown?.body ?? null,
                   () => null,
                 ));
-          const fresh = readThread(db, folder);
           const started = Date.now();
           const result = await review({
             ...given,
@@ -509,10 +507,9 @@ async function reviewRound(
             last,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
-            bounds: {
-              decisions: fresh.decisions,
-              stayTrue: fresh.stay_true,
-              description,
+            bounds: () => {
+              const fresh = readThread(db, folder);
+              return { decisions: fresh.decisions, stayTrue: fresh.stay_true, description };
             },
             base: from,
             test: repositoryCommands(thread).test,
