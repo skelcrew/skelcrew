@@ -325,6 +325,17 @@ openDb().exec(${JSON.stringify(queued)});`;
   );
 }, 60_000);
 
+// A daemon that just started has no copy of the tracker until its first poll, and sc start waits
+// for that poll, so a name such as APP-12 from when tasks were named after their issues still
+// reaches issue #12.
+test("sc start of an issue by its old name, before the first poll, starts the issue", async () => {
+  addApp();
+  serve();
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+  expect(await sc("start", "app-12")).toContain("APP-12 is queued");
+  expect(statuses()["app-12"]).toBe("queued");
+}, 60_000);
+
 test("sc start --now starts a task its label queued while the start waited for the poll", async () => {
   addApp(["12"]);
   answer(plugin, "took", { took: true });

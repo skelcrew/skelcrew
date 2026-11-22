@@ -443,7 +443,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Returns the request with the task it names as Skelcrew stores it, such as t158 for APP-158
   // or for its old name APP-T158, or #12 for an issue no task has yet, as resolveTask says.
   const resolveName = (request: DaemonRequest): DaemonRequest => {
-    if (!("task" in request) || request.task === undefined || !("repo" in request) || !request.repo)
+    if (
+      request.command === "start" ||
+      !("task" in request) ||
+      request.task === undefined ||
+      !("repo" in request) ||
+      !request.repo
+    )
       return request;
     const { repository, task } = resolveTask(db, request.repo, request.task);
     return { ...request, repo: repository, task };
@@ -503,9 +509,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       failThread(db, sessions, thread, error);
     }
   };
+  // sc start names its task as typed, and the name is looked up here: once as it comes in, and
+  // again once the poll before a new thread brought in the issues the tracker has now, such as
+  // issue #12 for APP-12 on a daemon that just started.
   const startTask = async (
-    request: Extract<DaemonRequest, { command: "start" }>,
+    given: Extract<DaemonRequest, { command: "start" }>,
   ): Promise<{ started: string }> => {
+    const named = () => {
+      const { repository, task } = resolveTask(db, given.repo, given.task);
+      return { ...given, repo: repository, task };
+    };
+    let request = named();
     const done = (said: string, change: () => void = () => {}) => {
       db.transaction(change)();
       return { started: said };
@@ -579,13 +593,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       throw new Error(`${threadName(db, before)} has a thread already`);
     const repository = findRepository(db, request.repo);
     const { owner, repo } = repository;
+    // The issue being started, which no poll starts by its label meanwhile. Before the poll, a
+    // number typed may yet name an issue the copy doesn't have, such as 12 for #12.
     const issue = request.task.startsWith("#") ? request.task.slice(1) : before?.issue;
-    const key = `${owner}/${repo}#${issue ?? request.task}`;
-    startingTasks.add(key);
+    const keys = [issue ?? request.task, given.task.replace(/^#/, "")].map(
+      (id) => `${owner}/${repo}#${id}`,
+    );
+    for (const key of keys) startingTasks.add(key);
     let thread: Thread;
     try {
       if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
       await (await polling.promise)(`${owner}/${repo}`);
+      if (!before) request = named();
       const started = threadOn(db, request.repo, request.task);
       if (!before && started?.status === "queued" && request.now) {
         if (request.flow && request.flow !== started.flow) switchFlow(started, request.flow);
@@ -601,7 +620,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
       thread = await startThread(db, request);
     } finally {
-      startingTasks.delete(key);
+      for (const key of keys) startingTasks.delete(key);
     }
     if (thread.status === "queued") {
       const owed = await claimQueued(db, sessions, thread, false).then(
