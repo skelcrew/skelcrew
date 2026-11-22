@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { fillIssues, type Repository } from "../db.ts";
 import { errorText } from "../format.ts";
+import { trackerOf } from "../plugins/ask.ts";
 import {
   claimedAt,
   claimedNames,
@@ -119,7 +120,13 @@ async function renumberTasks(db: Database, repository: Repository, folder: strin
     const task = await claimOwnName(db, repository, folder, undefined, undefined, alias);
     db.transaction(() => {
       fillIssues(db);
-      db.run(`UPDATE tasks SET task = ?, alias = ? ${where}`, [task, alias, owner, repo, alias]);
+      // An issue GitHub's plugin numbered is written as GitHub writes it, as writtenAs does.
+      const github = trackerOf(db, repository) === "github" ? 1 : 0;
+      db.run(
+        `UPDATE tasks SET task = ?, alias = ?, issue_ref = COALESCE(issue_ref, CASE WHEN ?
+          AND issue GLOB '[0-9]*' AND issue NOT GLOB '*[^0-9]*' THEN '#' || issue END) ${where}`,
+        [task, alias, github, owner, repo, alias],
+      );
       db.run(`UPDATE threads SET task = ? ${where}`, [task, owner, repo, alias]);
     })();
     console.log(

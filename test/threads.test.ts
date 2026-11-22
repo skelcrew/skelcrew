@@ -610,6 +610,19 @@ test("more data on a connection doesn't run its request again", async () => {
   expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(1);
 });
 
+// GitHub's plugin from before it said how GitHub writes an issue gives its number alone. GitHub
+// writes it #40, so that is how sc ls shows it.
+test("an issue from GitHub's older plugin, which gives its number alone, shows as #40", async () => {
+  addApp();
+  known.push({ ...taskItem("40", "Add search", { body: "Find notes." }), ref: undefined });
+  answer(plugin, "changed", { items: known, next: null });
+  serve();
+  await untilAnswers();
+  await until(async () => (await skel("ls", "app", "--json")).out.includes("APP#40"));
+  const listed = JSON.parse((await skel("ls", "app", "--json")).out);
+  expect(listed).toContainEqual(expect.objectContaining({ task: "APP#40", issue: "#40" }));
+});
+
 test("sc start refuses a repository Skelcrew doesn't have, and a task its tracker doesn't have", async () => {
   addApp();
   serve();
