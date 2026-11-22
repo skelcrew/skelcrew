@@ -173,14 +173,12 @@ export function namePlugin(folder: string, source: string): void {
   );
 }
 
+// The first line of a repository's skelcrew.lock, which is all one that pins nothing holds.
+export const lockStart = "# Written by sc plugin add and sc plugin update. Commit it.\n";
+
 function nameAndPin(folder: string, source: string, locked: Locked): void {
   namePlugin(folder, source);
-  setKey(
-    join(folder, "skelcrew.lock"),
-    "# Written by sc plugin add and sc plugin update. Commit it.\n",
-    source,
-    locked,
-  );
+  setKey(join(folder, "skelcrew.lock"), lockStart, source, locked);
 }
 
 // Returns the installed plugins without changing Skelcrew's state: none on a machine where Skelcrew

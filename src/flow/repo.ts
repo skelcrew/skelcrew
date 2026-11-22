@@ -37,13 +37,15 @@ import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
 import {
   githubPlugin,
+  lockStart,
   namePlugin,
   pinRepositoryPlugin,
   repositoryPlugins,
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
-import { builtInRole } from "../roles.ts";
+import { builtInRole, readRole } from "../roles.ts";
 import { dropsFolder } from "../screen/drops.ts";
+import { readSettings } from "../settings.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 import { closeTabAndEndLead, leadOf } from "./lead.ts";
@@ -610,49 +612,59 @@ function addForgePlugin(root: string, remote: string): "named" | "pinned" | null
   }
 }
 
-// Returns the built-in .agents/ as sc init writes it, each file by its path inside .agents/: the
-// three roles, each with your harness and model as its frontmatter, so the repository works the
-// same for a teammate, and the default flow.
-function builtInAgents(): Map<string, string> {
-  const files = new Map<string, string>();
-  for (const name of ["lead", "builder", "reviewer"] as const) {
-    const lines = Object.entries(agentRole(name)).map(
-      ([key, value]) => `${key}: ${yamlValue(value)}`,
-    );
-    files.set(
-      join("roles", `${name}.md`),
-      `---\n${lines.join("\n")}\n---\n${builtInRole(name).instructions}`,
-    );
-  }
-  files.set(join("flows", "default.yaml"), builtInFlowText);
-  return files;
-}
+// The roles sc init writes, each built in.
+const roleNames = ["lead", "builder", "reviewer"] as const;
 
-// Writes the built-in .agents/ into the checkout at `root`, which has none. Each file is new, so no
-// write follows a link.
+// Writes the built-in .agents/ into the checkout at `root`, which has none: the three roles and
+// the default flow. Each role has your harness and model as its frontmatter, so the repository
+// works the same for a teammate. On a machine with no harness picked yet, they have none, so they
+// run on the harness sc install picks. Each file is new, so no write follows a link.
 function writeAgents(root: string): void {
-  for (const [path, text] of builtInAgents()) {
+  const picked = readSettings(["yourHarness"]).yourHarness !== undefined;
+  const write = (path: string, text: string) => {
     const file = join(root, ".agents", path);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, text, { flag: "wx" });
+  };
+  for (const name of roleNames) {
+    const lines = Object.entries(agentRole(name)).map(
+      ([key, value]) => `${key}: ${yamlValue(value)}`,
+    );
+    const front = picked ? `---\n${lines.join("\n")}\n---\n` : "";
+    write(join("roles", `${name}.md`), `${front}${builtInRole(name).instructions}`);
   }
+  write(join("flows", "default.yaml"), builtInFlowText);
 }
 
 // Reports whether the .agents/ folder at `root` holds the built-in files alone, as sc init writes
-// them. A link counts as a file that differs.
+// them on any machine: the three roles with the built-in instructions, whatever harness and model
+// their frontmatter names, and the default flow. A link counts as a file that differs.
 function holdsBuiltInAgents(root: string): boolean {
   const folder = join(root, ".agents");
-  const expected = builtInAgents();
+  const expected = new Map<string, (text: string) => boolean>([
+    [join("flows", "default.yaml"), (text) => text === builtInFlowText],
+  ]);
+  for (const name of roleNames)
+    expected.set(join("roles", `${name}.md`), (text) => {
+      try {
+        return readRole(text).instructions === builtInRole(name).instructions;
+      } catch {
+        return false;
+      }
+    });
   const found = readdirSync(folder, { recursive: true, encoding: "utf8" }).filter(
     (path) => !lstatSync(join(folder, path)).isDirectory(),
   );
   return (
     found.length === expected.size &&
-    found.every(
-      (path) =>
+    found.every((path) => {
+      const matches = expected.get(path);
+      return (
+        matches !== undefined &&
         lstatSync(join(folder, path)).isFile() &&
-        readFileSync(join(folder, path), "utf8") === expected.get(path),
-    )
+        matches(readFileSync(join(folder, path), "utf8"))
+      );
+    })
   );
 }
 
@@ -686,6 +698,10 @@ export function initRepo(): void {
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
   const forge = addForgePlugin(root, remote);
+  // Every repository gets a skelcrew.lock, so one that pins nothing yet has one to commit too.
+  const lock = join(root, "skelcrew.lock");
+  const newLock = lstatSync(lock, { throwIfNoEntry: false }) === undefined;
+  if (newLock) writeFileSync(lock, lockStart, { flag: "wx" });
   if (hasConfig)
     console.log(
       forge === null
@@ -697,7 +713,7 @@ export function initRepo(): void {
   else console.log(".agents/ is there already, so Skelcrew left it as it is.");
   const wrote = [
     hasConfig && forge === null ? null : "skelcrew.yaml",
-    forge === "pinned" ? "skelcrew.lock" : null,
+    forge === "pinned" || newLock ? "skelcrew.lock" : null,
     hasAgents ? null : ".agents/",
   ].filter((name) => name !== null);
   if (wrote.length > 0) {

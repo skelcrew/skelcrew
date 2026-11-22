@@ -1092,6 +1092,53 @@ test("init pins the forge's plugin at its newest version, and installs nothing",
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "github"))).toBe(false);
 });
 
+// Before sc install picks a harness, there is none to name, and naming the default could name a
+// harness this machine doesn't have. So the roles are the built-in files as they are.
+test("init on a machine with no harness picked writes roles that name none", async () => {
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "");
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  expect((await skel(["init"], "", checkout)).err).toBe("");
+  for (const name of ["lead", "builder", "reviewer"] as const)
+    expect(readFileSync(join(checkout, ".agents", "roles", `${name}.md`), "utf8")).toBe(
+      builtInRole(name).instructions,
+    );
+});
+
+// A repository's skelcrew.lock comes with every sc init, so one whose forge has no plugin to pin
+// still gets one, pinning nothing, to commit with the rest.
+test("init writes a skelcrew.lock that pins nothing for a repository that isn't on GitHub", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  git(checkout, "remote", "set-url", "origin", "git@gitlab.com:simon/app.git");
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toStartWith("Wrote skelcrew.yaml, skelcrew.lock and .agents/.\n");
+  expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(
+    "# Written by sc plugin add and sc plugin update. Commit it.\n",
+  );
+  // The starter skelcrew.yaml is only comments, so it names no plugin.
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toBeNull();
+});
+
+// The roles sc init wrote on another machine, or before your settings changed, name another
+// harness or model, and are still only the built-in roles, so install approves them too.
+test("install approves built-in roles whose frontmatter names another model", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "harness: claude\nmodel: haiku\n",
+  );
+  expect((await skel(["init"], "", checkout)).err).toBe("");
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\nmodel: opus\n");
+  const run = await skel(["install"], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).not.toContain("Approve");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "init");
+  expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
+});
+
 // sc init only reads Skelcrew's state, so the plugin installed here is pinned and the database
 // stays byte for byte as it was, even one an older Skelcrew left, which preparing it would change.
 test("init on a machine with Skelcrew's state leaves that state as it was", async () => {
@@ -1276,7 +1323,9 @@ test("init leaves a skelcrew.yaml or skelcrew.lock written as one map as it is",
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
   expect(readFileSync(yaml, "utf8")).toBe("{setup: [ make ], test: [make test]}\n");
-  expect(existsSync(lock)).toBe(false);
+  expect(readFileSync(lock, "utf8")).toBe(
+    "# Written by sc plugin add and sc plugin update. Commit it.\n",
+  );
   expect(run.out).toContain(
     "is written as one map, which Skelcrew leaves as it is. Add plugins: [skelcrew/skelcrew-github] to it by hand.",
   );
@@ -1302,7 +1351,9 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
   expect(readFileSync(file, "utf8")).toBe(text);
-  expect(existsSync(join(checkout, "skelcrew.lock"))).toBe(false);
+  expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(
+    "# Written by sc plugin add and sc plugin update. Commit it.\n",
+  );
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   // Setup and test are filled in already, so the lead has nothing to propose.
   expect(run.out).not.toContain("filled in");
@@ -1325,7 +1376,7 @@ test("init leaves an .agents/ that is there as it is, and install asks before ap
   expect(run.out).toContain("Ship it fast.");
   expect(run.out).toContain("Approve simon/app's .agents/?");
   expect(run.out).toContain("Tasks in simon/app run on the built-in roles.");
-  expect(git(checkout, "status", "--porcelain")).toBe("?? skelcrew.yaml\n");
+  expect(git(checkout, "status", "--porcelain")).toBe("?? skelcrew.lock\n?? skelcrew.yaml\n");
   expect(readFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), "utf8")).toBe(
     "simon/app: none\n",
   );
