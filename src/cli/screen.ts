@@ -8,7 +8,9 @@ export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { bringInFrom, checkoutTop, repositories } = await import("../flow/repo.ts");
   const { originHere } = await import("../machine/origin.ts");
   const { ensureDaemon } = await import("../machine/service.ts");
-  const { firstRun, install, installFinished } = await import("../machine/setup.ts");
+  const { firstRun, install, installFinished, setUpPiForRoles } = await import(
+    "../machine/setup.ts"
+  );
   if (installFinished()) firstRun(from);
   else install(from, true);
   await ensureDaemon();
@@ -21,6 +23,7 @@ export async function leadCommand(list: boolean, from?: string): Promise<void> {
     process.exit(1);
   }
   const found = await bringInFrom(from);
+  setUpPiForRoles();
   const { tellOldKeys } = await import("../config.ts");
   tellOldKeys(undefined);
   if (repositories(openDb()).length === 0) return;

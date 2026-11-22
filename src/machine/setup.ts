@@ -104,6 +104,17 @@ function piInUse(): boolean {
   }
 }
 
+// Checks that Pi is installed and signed in once a role runs on it, for sc install and plain sc
+// after they added the checkout you are in: the first run, before that, couldn't read its roles.
+export function setUpPiForRoles(): void {
+  if (!piInUse()) return;
+  const env = Bun.which("pi") ? process.env : { ...process.env, PATH: loginPath() };
+  stopForTools([], [], missingHarness(env));
+  if (hasPiLogin(homedir())) return;
+  console.log("");
+  logInPi(env, "Sign in to Pi for the roles that run on it.");
+}
+
 // Stops the first run, before it asks anything, when a program agents need is missing, saying
 // what to install. `tools` are the commands that install the tools, and `before` what to read
 // above them, such as where to get Homebrew. A harness comes last, as a choice when either will
