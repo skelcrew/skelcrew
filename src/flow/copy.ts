@@ -157,43 +157,6 @@ export function saveItems(
   })();
 }
 
-// The description of each PR Skelcrew gave one, by owner/repo#number, with the time it holds
-// as of: when the forge took Skelcrew's, or when the forge's newest answer since was asked for.
-// Kept in memory while the daemon runs. An answer asked for before then is older.
-const described = new Map<string, { body: string; at: number }>();
-
-// Saves the description Skelcrew just gave the PR in its copy, so sc show shows it, and keeps it
-// over the forge's answers asked for before `at`, when the forge took it, such as a poll's under
-// way. Returns whether the copy has the PR.
-export function savePrDescription(
-  db: Database,
-  owner: string,
-  repo: string,
-  pr: number,
-  body: string,
-  at: number,
-): boolean {
-  described.set(`${owner}/${repo}#${pr}`, { body, at });
-  const copied = prOf(db, owner, repo, pr);
-  if (copied) saveItems(db, owner, repo, [{ ...copied, body }], []);
-  return copied !== null;
-}
-
-// Returns the forge's answer, asked for at `asked`, with each PR Skelcrew gave a description
-// holding the newest one known, so an answer older than another never puts its description back.
-export function withDescriptions(owner: string, repo: string, items: Item[], asked: number) {
-  return items.map((item): Item => {
-    const key = `${owner}/${repo}#${item.id}`;
-    const known = item.kind === "pr" ? described.get(key) : undefined;
-    if (known === undefined) return item;
-    if (known.at <= asked) {
-      described.set(key, { body: item.body, at: asked });
-      return item;
-    }
-    return { ...item, body: known.body };
-  });
-}
-
 // Returns the items that the query's rows hold, checked, as what was saved could come from an
 // older Skelcrew. An item it can't read is left out until the next poll saves it again.
 const parseItems = (rows: unknown[]) =>

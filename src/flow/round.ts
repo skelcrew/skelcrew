@@ -22,14 +22,7 @@ import {
 import { repositoryRole } from "../roles.ts";
 import { capture } from "../run.ts";
 import { baseOf } from "./builder.ts";
-import {
-  openPrs,
-  prOf,
-  saveItems,
-  savePrDescription,
-  threadTask,
-  withDescriptions,
-} from "./copy.ts";
+import { openPrs, prOf, saveItems, threadTask } from "./copy.ts";
 import {
   branchMoved,
   ciResult,
@@ -191,8 +184,8 @@ async function describePr(
   // A newer submit's push waits for this one, so its own edit comes next and says what holds.
   if (signal.aborted) return;
   if (edited === true) {
-    if (!savePrDescription(db, thread.owner, thread.repo, pr, body, Date.now()))
-      await refreshPr(db, repository, pr).catch(() => null);
+    const copied = prOf(db, thread.owner, thread.repo, pr);
+    if (copied) saveItems(db, thread.owner, thread.repo, [{ ...copied, body }], []);
     record(db, folder, {}, `replaced PR #${pr}'s description`);
     return;
   }
@@ -941,10 +934,8 @@ async function refreshPr(
 ): Promise<PullRequest | null> {
   const forge = forgeOf(db, repository);
   if (forge === null) throw new Error(`${repository.name} has no forge`);
-  const asked = Date.now();
   const { items } = await askWhatChanged(db, forge, repository, ["forge"], null, [pr]);
-  const answered = withDescriptions(repository.owner, repository.repo, items, asked);
-  const shown = answered.flatMap((item) =>
+  const shown = items.flatMap((item) =>
     item.kind === "pr" && item.id === String(pr) ? [item] : [],
   );
   saveItems(db, repository.owner, repository.repo, shown, []);

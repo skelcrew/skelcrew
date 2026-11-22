@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prItem, source, threadSql } from "./harness.ts";
+import { source, threadSql } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -35,7 +35,7 @@ const task = (id: number, more: object = {}) => ({
 // own, as the database's folder comes from the HOME a process started with.
 function run(code: string): unknown {
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { saveItems, openTasks, prOf, savePrDescription, taskOf, withDescriptions } from ${JSON.stringify(source("flow/copy.ts"))};
+import { saveItems, openTasks, taskOf } from ${JSON.stringify(source("flow/copy.ts"))};
 const db = openDb();
 db.run("INSERT OR IGNORE INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
 db.run(${JSON.stringify(threadSql({ task: "12" }))});
@@ -138,38 +138,4 @@ ${closes()}`),
     run(`db.run("UPDATE tasks SET closes = NULL");
 ${closes()}`),
   ).toBe("Fixes JOTT-12");
-});
-
-// A poll under way as a submit replaced the PR's description brings the forge's answer from
-// before the edit. It never puts the older description back, even after a newer answer came,
-// and a PR the copy hadn't yet takes the new one as it comes in.
-test("the forge's answers from before Skelcrew replaced a PR's description keep the new one", () => {
-  const pr = (body: string) => JSON.stringify(prItem("7", "Add export", { body }));
-  const bodies = run(`const body = () => prOf(db, "simon", "app", 7)?.body ?? null;
-const answer = (text, asked) =>
-  saveItems(db, "simon", "app", withDescriptions("simon", "app", [text], asked), []);
-const said = [];
-const old = Date.now() - 1000;
-said.push(savePrDescription(db, "simon", "app", 7, "Round 2", Date.now() - 500), body());
-answer(${pr("Round 1")}, old);
-said.push(body());
-answer(${pr("Round 2")}, Date.now() - 200);
-answer(${pr("Round 1")}, old);
-said.push(body());
-said.push(savePrDescription(db, "simon", "app", 7, "Round 3", Date.now() - 100), body());
-answer(${pr("Edited on GitHub")}, Date.now());
-said.push(body());
-answer(${pr("Round 3")}, old);
-said.push(body());
-console.log(JSON.stringify(said));`);
-  expect(bodies).toEqual([
-    false,
-    null,
-    "Round 2",
-    "Round 2",
-    true,
-    "Round 3",
-    "Edited on GitHub",
-    "Edited on GitHub",
-  ]);
 });
