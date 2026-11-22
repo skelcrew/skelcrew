@@ -500,15 +500,15 @@ async function reviewRound(
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
             bounds: async () => {
+              const fresh = readThread(db, folder);
               const shown =
                 last?.description ??
-                (thread.pr === null
+                (fresh.stay_true.length === 0 || fresh.pr === null
                   ? null
-                  : await refreshPr(db, repository, thread.pr).then(
+                  : await refreshPr(db, repository, fresh.pr).then(
                       (pr) => pr?.body ?? null,
                       () => null,
                     ));
-              const fresh = readThread(db, folder);
               return { decisions: fresh.decisions, stayTrue: fresh.stay_true, description: shown };
             },
             base: from,

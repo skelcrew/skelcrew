@@ -225,7 +225,12 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       'pwd >> "$CODEX_HOME/sessions/seen"; cat README >> "$CODEX_HOME/sessions/seen"',
       "echo changed > README; echo new > made",
     ]);
-    expect(await start()).toEqual({ verdict: "approve", body: "Looks right.", findings: [] });
+    expect(await start()).toEqual({
+      verdict: "approve",
+      body: "Looks right.",
+      findings: [],
+      choices: [],
+    });
     expect(kept("seen")).toBe(`${clone}\napp\n`);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
     expect(existsSync(join(clone, "made"))).toBe(false);
@@ -260,7 +265,12 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     fakeCodex(approve, [
       '{ git rev-parse HEAD; cat README; test -e new || echo no-new; } > "$CODEX_HOME/sessions/seen"',
     ]);
-    expect(await start()).toEqual({ verdict: "approve", body: "Looks right.", findings: [] });
+    expect(await start()).toEqual({
+      verdict: "approve",
+      body: "Looks right.",
+      findings: [],
+      choices: [],
+    });
     expect(kept("seen")).toBe(`${commit}\napp\nno-new\n`);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
   });
@@ -279,7 +289,12 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       "echo tried > README && git add README && git -c user.name=t -c user.email=t@t commit -qm tried",
       'git log -1 --format=%s >> "$CODEX_HOME/sessions/seen"',
     ]);
-    expect(await start()).toEqual({ verdict: "approve", body: "Looks right.", findings: [] });
+    expect(await start()).toEqual({
+      verdict: "approve",
+      body: "Looks right.",
+      findings: [],
+      choices: [],
+    });
     expect(kept("seen")).toBe(`${commit}\napp\ntried\n`);
     // The builder's git still holds them, and its clone is as it left it.
     expect(existsSync(join(clone, ".git", "index.lock"))).toBe(true);
@@ -294,7 +309,12 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       'other=$(mktemp -d) && git -C "$other" init -q && echo x > "$other/f"',
       'git -C "$other" add f && git -C "$other" ls-files > "$CODEX_HOME/sessions/seen"',
     ]);
-    expect(await start()).toEqual({ verdict: "approve", body: "Looks right.", findings: [] });
+    expect(await start()).toEqual({
+      verdict: "approve",
+      body: "Looks right.",
+      findings: [],
+      choices: [],
+    });
     expect(kept("seen")).toBe("f\n");
   });
 
@@ -574,7 +594,12 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       'cat > /dev/null; echo \'{"type":"result","structured_output":{"verdict":"approve","body":"From Claude Code.","findings":[]}}\'',
     ]);
     const done = await review({ ...given(), harness: "claude" });
-    expect(done).toEqual({ verdict: "approve", body: "From Claude Code.", findings: [] });
+    expect(done).toEqual({
+      verdict: "approve",
+      body: "From Claude Code.",
+      findings: [],
+      choices: [],
+    });
   });
 
   test("a Claude Code review that meets its usage limit is limited, with when it resets", async () => {
@@ -626,7 +651,12 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       'echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$body\\",\\"findings\\":[]}}"',
     ]);
     const done = await start({ harness: "claude", ci });
-    expect(done).toEqual({ verdict: "approve", body: "CI failed on this commit.", findings: [] });
+    expect(done).toEqual({
+      verdict: "approve",
+      body: "CI failed on this commit.",
+      findings: [],
+      choices: [],
+    });
   });
 
   // From round 2 on, the diff since the last round's commit is in a file the prompt names.
