@@ -2,6 +2,7 @@
 // options that act directly, until the lead posts an item of its own for the thread.
 import { removeControlCodes } from "../screen/look.ts";
 import { limitOf, roundOf } from "./ledger.ts";
+import type { DaemonRequest } from "./requests.ts";
 import { needsYou, threadWord } from "./status.ts";
 import type { Thread } from "./thread.ts";
 
@@ -26,6 +27,51 @@ export function ownItem(thread: Thread, asked: boolean): OwnItem | null {
   if (asked || thread.status === "done" || !needsYou(thread)) return null;
   const item = itemFor(thread);
   return thread.handed === handedKey(item) ? null : item;
+}
+
+// What a pick carries besides its letter: the task, and for a merge what you saw of the PR.
+export type Picking = {
+  repo: string;
+  task: string;
+  commit?: string | undefined;
+  merging?: { pr: number; started: number | null; head: string } | undefined;
+};
+
+// Returns the requests a pick makes of the daemon, in order, exactly as their commands make them,
+// so a pick does what the command does: sc start to go on, sc stop, sc merge --skip-review with
+// the PR you saw, the merge m makes with the commit you saw approved, and the screen's restart.
+// A builder that isn't running, as its session ended or its host is gone, has nothing to restart,
+// so it is stopped and started again, which resumes it on the current host. Opening the builder
+// and handing the item to the lead make none.
+export function pickRequests(
+  act: Act,
+  thread: Thread,
+  picking: Picking,
+  runs: boolean,
+): DaemonRequest[] {
+  const { repo, task, commit, merging } = picking;
+  const start: DaemonRequest = { command: "start", repo, task };
+  const stop: DaemonRequest = { command: "stop", repo, task };
+  switch (act) {
+    case "go on":
+      return [start];
+    case "stop":
+      return [stop];
+    case "skip review":
+      return merging === undefined
+        ? []
+        : [{ command: "merge skip review", repo, task, seen: merging }];
+    case "merge":
+      return thread.pr === null || commit === undefined
+        ? []
+        : [{ command: "merge", repo, pr: thread.pr, commit }];
+    case "restart":
+      return runs && thread.needs_you_for === null
+        ? [{ command: "restart", repo, task }]
+        : [stop, start];
+    default:
+      return [];
+  }
 }
 
 // Returns what an item you handed to the lead is kept as, so the same item stays gone and a new

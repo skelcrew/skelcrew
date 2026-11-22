@@ -338,6 +338,65 @@ console.log(JSON.stringify(out));`);
   expect(limit[2]?.shows).toBe("needs you");
 });
 
+// Each option makes of the daemon exactly the requests its command makes, which the daemon handles
+// as yours: sc start, sc stop, sc merge --skip-review with the PR you saw, the merge m makes, and
+// the screen's restart, or a stop and a start for a builder that isn't running or whose host is
+// gone. Opening the builder and handing the item to the lead make none.
+test("each option of Skelcrew's own items sends exactly its command's request", () => {
+  const seen = inProcess(`
+const { ownItem, pickRequests } = await import(${JSON.stringify(source("flow/own-items.ts"))});
+const merging = { pr: 7, started: 1000, head: "b".repeat(40) };
+const picking = { repo: "simon/app", task: "t12", commit: "a".repeat(40), merging };
+const marks = {
+  "round limit": { status: "waiting", rounds: 3, verdict: "changes", held: "Fix it.", needs_you: true, pr: 7 },
+  ready: { status: "waiting", verdict: "approve", held: null, needs_you: true, pr: 7, checks: "passing", ci_passed: true },
+  question: { asking: true },
+  error: { erred: true },
+  host: { host: "herdr", needs_you_for: "run sc install: its session host herdr is missing" },
+};
+const fresh = { status: "working", rounds: 0, verdict: null, held: null, needs_you: false, asking: false, erred: false, host: "tmux", needs_you_for: null, pr: null };
+const out = {};
+for (const [kind, mark] of Object.entries(marks)) {
+  record(db, "app-12", { ...fresh, ...mark });
+  const item = ownItem(thread(), false);
+  out[kind] = Object.fromEntries(item.options.map((option) => [option.label, [true, false].map((runs) => pickRequests(option.act, thread(), picking, runs))]));
+}
+console.log(JSON.stringify(out));`);
+  const repo = "simon/app";
+  const task = "t12";
+  const start = { command: "start", repo, task };
+  const stop = { command: "stop", repo, task };
+  const both = (requests: unknown[]) => [requests, requests];
+  expect(seen["round limit"]).toEqual({
+    "Go on: fix the findings": both([start]),
+    "Merge without approval": both([
+      {
+        command: "merge skip review",
+        repo,
+        task,
+        seen: { pr: 7, started: 1000, head: "b".repeat(40) },
+      },
+    ]),
+    "Stop the builder": both([stop]),
+  });
+  expect(seen.ready).toEqual({
+    "Merge it": both([{ command: "merge", repo, pr: 7, commit: "a".repeat(40) }]),
+    "Not yet": both([]),
+  });
+  expect(seen.question).toEqual({
+    "Open the builder": both([]),
+    "Let the lead handle it": both([]),
+  });
+  expect(seen.error).toEqual({
+    "Start it again": [[{ command: "restart", repo, task }], [stop, start]],
+    "Open the builder": both([]),
+  });
+  expect(seen.host).toEqual({
+    "Start it again": both([stop, start]),
+    "Open the builder": both([]),
+  });
+});
+
 // A pick acts only on what you saw: once the thread needs you for something else, it is refused.
 test("a pick on Skelcrew's own item is refused once the item changed", () => {
   const seen = inProcess(`

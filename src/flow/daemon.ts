@@ -89,7 +89,7 @@ import {
   typeLeadNotes,
 } from "./messages.ts";
 import { queueDigest, resumeNotifications, sendAsked, sendNotifications } from "./notify.ts";
-import type { Act } from "./own-items.ts";
+import { type Act, type Picking, pickRequests } from "./own-items.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -495,57 +495,26 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       ? `Restarted ${name}'s builder.`
       : `Skelcrew can't tell whether its builder runs, as ${restarted.gone}.`;
   };
-  // Does what an option of Skelcrew's own item on a thread does, as its command would for you,
-  // and returns what to say. A builder whose session host is gone starts again on the current
-  // one, by a stop and a start, as only those move it, and so does one whose session ended.
-  const runPick = async (
-    act: Act,
-    thread: Thread,
-    {
-      repo,
-      task,
-      commit,
-      merging,
-    }: {
-      repo: string;
-      task: string;
-      commit?: string | undefined;
-      merging?: { pr: number; started: number | null; head: string } | undefined;
-    },
-  ) => {
+  // Does what an option of Skelcrew's own item on a thread does, by the very requests its
+  // command makes, each handled as yours, and returns what the last one said.
+  const runPick = async (act: Act, thread: Thread, picking: Picking) => {
     const name = threadName(db, thread);
-    switch (act) {
-      case "open":
-        return `Opening ${name}'s builder.`;
-      case "merge":
-        if (thread.pr === null || commit === undefined)
-          throw new Error(`${name} has no PR to merge here`);
-        return merge(repo, thread.pr, commit);
-      case "go on":
-        return (await startTask({ command: "start", repo, task })).started;
-      case "stop":
-        await stopThread(db, sessions, thread);
-        return `Stopped ${name}.`;
-      case "skip review": {
-        if (merging === undefined) throw new Error(`${name} has no PR to merge`);
-        return armMerge(db, sessions, thread, { seen: merging }, true);
-      }
-      case "restart": {
-        // A builder whose session ended, such as on its harness's error, has nothing to restart,
-        // so it is stopped and started again, as is one whose host is gone.
-        const runs =
-          thread.needs_you_for === null &&
-          (await builderSession(db, sessions, thread).then(
-            ({ host, id }) => agentRuns(host, id),
-            () => false,
-          ));
-        if (runs) return restartThread(thread);
-        await stopThread(db, sessions, thread);
-        return (await startTask({ command: "start", repo, task })).started;
-      }
-      default:
-        throw new Error(`${name}'s item hands ${act} to the lead, so nothing runs`);
+    if (act === "open") return `Opening ${name}'s builder.`;
+    const runs = await builderSession(db, sessions, thread).then(
+      ({ host, id }) => agentRuns(host, id),
+      () => false,
+    );
+    const requests = pickRequests(act, thread, picking, runs);
+    if (requests.length === 0) throw new Error(`${name} has nothing to ${act} now`);
+    let said = "";
+    for (const request of requests) {
+      const reply = await handle(request, "you");
+      const stopped = z.object({ stopped: z.string() }).safeParse(reply);
+      said = stopped.success
+        ? `Stopped ${stopped.data.stopped}.`
+        : (Object.values(reply).find((value) => typeof value === "string") ?? said);
     }
+    return said;
   };
   const setUpAndStart = async (thread: Thread) => {
     try {
