@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { harnessNamed } from "../agents/harness.ts";
+import { harnessNamed, startHoldingLogin } from "../agents/harness.ts";
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
   agentRuns,
@@ -48,6 +48,7 @@ import {
   renameOnHost,
   repositoryOf,
   sessionTitle,
+  sweepLoginCopies,
   Thread,
   taskName,
   threadName,
@@ -485,25 +486,30 @@ async function startOnConfiguredHost(
   if (!restarting)
     db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
   const files = filesFor(host);
-  const { argv, env } = await harness.start({
-    name: thread.folder,
-    socket: threadSocket(thread.folder),
-    model: role.harness === harness.name ? role.model : undefined,
-    thread: clone,
-    ...(existsSync(cloneDir(thread.owner, thread.repo))
-      ? { origin: cloneDir(thread.owner, thread.repo) }
-      : {}),
-    system: builderInstructions(
-      repositoryRole(flowRoles(thread).build, thread).instructions,
-      repositoryCommands(thread),
-    ),
-    skills: thread,
-    files,
-    ...start,
+  // Any start's copy of your login left behind by a session that isn't live goes first, and
+  // this one's goes if its start fails.
+  sweepLoginCopies(db);
+  await startHoldingLogin(thread.folder, async () => {
+    const { argv, env } = await harness.start({
+      name: thread.folder,
+      socket: threadSocket(thread.folder),
+      model: role.harness === harness.name ? role.model : undefined,
+      thread: clone,
+      ...(existsSync(cloneDir(thread.owner, thread.repo))
+        ? { origin: cloneDir(thread.owner, thread.repo) }
+        : {}),
+      system: builderInstructions(
+        repositoryRole(flowRoles(thread).build, thread).instructions,
+        repositoryCommands(thread),
+      ),
+      skills: thread,
+      files,
+      ...start,
+    });
+    const on = { host, name: hostName };
+    await startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
+    console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
   });
-  const on = { host, name: hostName };
-  await startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
-  console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
 }
 
 type BuilderSession = {

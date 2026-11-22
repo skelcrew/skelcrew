@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
-import { forgetLogin, HarnessName, harnessNamed } from "../agents/harness.ts";
+import { forgetLogin, HarnessName, harnessNamed, startHoldingLogin } from "../agents/harness.ts";
 import {
   agentRuns,
   checkAgentStarted,
@@ -31,6 +31,7 @@ import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
 import { supervisor } from "./supervisor.ts";
+import { sweepLoginCopies } from "./thread.ts";
 
 // What Skelcrew's database keeps about a repository's lead, checked as it is read back.
 const LeadRow = z.object({
@@ -274,75 +275,79 @@ export async function startLead(
     [owner, repo],
   );
   const files = filesFor(host);
-  const { argv, env } = await harness.start({
-    name: lead.name,
-    socket: lead.socket,
-    // A model name belongs to its harness, so a lead on another one than your config now names
-    // for leads gets that harness's default.
-    model: role.harness === harness.name ? role.model : undefined,
-    folder: lead.folder,
-    origin: clone,
-    repositories: reposDir(),
-    // The lead's role comes from the .agents/ you approved, as it is when the lead starts. The
-    // repository is named by its owner/name, which every command takes and which never
-    // changes, while its name in Skelcrew can gain its owner.
-    system: leadInstructions(
-      repositoryRole("lead", repository).instructions,
-      `${owner}/${repo}`,
-      clone,
-      repositoryCommands(repository),
-      leadCanMerge(),
-    ),
-    // Its skills come from the .agents/ you approved, as its role does.
-    skills: { owner, repo, agents: approvedAgents(repository) },
-    files,
-    ...(resume ? { resume } : { sessionId: session }),
+  // Any start's copy of your login left behind by a session that isn't live goes first, and
+  // this one's goes if its start fails.
+  sweepLoginCopies(db);
+  await startHoldingLogin(lead.name, async () => {
+    const { argv, env } = await harness.start({
+      name: lead.name,
+      socket: lead.socket,
+      // A model name belongs to its harness, so a lead on another one than your config now names
+      // for leads gets that harness's default.
+      model: role.harness === harness.name ? role.model : undefined,
+      folder: lead.folder,
+      origin: clone,
+      repositories: reposDir(),
+      // The lead's role comes from the .agents/ you approved, as it is when the lead starts. The
+      // repository is named by its owner/name, which every command takes and which never
+      // changes, while its name in Skelcrew can gain its owner.
+      system: leadInstructions(
+        repositoryRole("lead", repository).instructions,
+        `${owner}/${repo}`,
+        clone,
+        repositoryCommands(repository),
+        leadCanMerge(),
+      ),
+      // Its skills come from the .agents/ you approved, as its role does.
+      skills: { owner, repo, agents: approvedAgents(repository) },
+      files,
+      ...(resume ? { resume } : { sessionId: session }),
+    });
+    // On tmux the session stays when the lead exits, so closeExitedLeads can tell exiting it from a
+    // crash. The role label tells a plugin's host this is the lead, such as for herdr to give it
+    // its repository's first tab.
+    const labels: Labels = { repository: `${owner}/${repo}`, role: "lead" };
+    const id = await startSession(host, lead.name, {
+      folder: lead.folder,
+      command: argv,
+      env,
+      labels,
+      keepOnExit: true,
+      files,
+    });
+    db.run("UPDATE repositories SET lead_host_id = ? WHERE owner = ? AND repo = ?", [
+      id,
+      owner,
+      repo,
+    ]);
+    // sc repo rm closes the tab before it looks for the lead. A removal that looked while this
+    // session was still starting on a slow host missed it, and would leave it running with no
+    // repository behind it. So a lead whose tab closed or whose repository went meanwhile ends
+    // here. Either this sees the tab closed, or the removal looks after the session is there.
+    const still = db
+      .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
+      .get(owner, repo);
+    if (!still) {
+      await endSession(host, id);
+      throw new Error(`${owner}/${repo} was closed or removed while its lead started`);
+    }
+    // The opening note saved above, and any other that waited while the lead wasn't running, go
+    // in once the lead is ready.
+    typeLeadNotes(db, sessions);
+    // A host that shows status hears it afresh, as a session starting under an ID it had before
+    // has shown nothing yet.
+    forgetStatus(hostName, id);
+    reportLeadStatus(db, owner, repo);
+    // A remote can be slow or away, and attaching waits on this.
+    refreshClones(db).catch((error) => console.log(errorText(error)));
+    // A lead that had a conversation but starts a new one says so, as it starts without its
+    // history and the log is all that tells why.
+    const lost = stored !== null && resume === null ? `, as ${stored} wasn't saved` : "";
+    console.log(
+      `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}${lost}.`,
+    );
+    await checkAgentStarted(host, id, "lead");
   });
-  // On tmux the session stays when the lead exits, so closeExitedLeads can tell exiting it from a
-  // crash. The role label tells a plugin's host this is the lead, such as for herdr to give it
-  // its repository's first tab.
-  const labels: Labels = { repository: `${owner}/${repo}`, role: "lead" };
-  const id = await startSession(host, lead.name, {
-    folder: lead.folder,
-    command: argv,
-    env,
-    labels,
-    keepOnExit: true,
-    files,
-  });
-  db.run("UPDATE repositories SET lead_host_id = ? WHERE owner = ? AND repo = ?", [
-    id,
-    owner,
-    repo,
-  ]);
-  // sc repo rm closes the tab before it looks for the lead. A removal that looked while this
-  // session was still starting on a slow host missed it, and would leave it running with no
-  // repository behind it. So a lead whose tab closed or whose repository went meanwhile ends
-  // here. Either this sees the tab closed, or the removal looks after the session is there.
-  const still = db
-    .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
-    .get(owner, repo);
-  if (!still) {
-    await endSession(host, id);
-    forgetLogin(lead.name);
-    throw new Error(`${owner}/${repo} was closed or removed while its lead started`);
-  }
-  // The opening note saved above, and any other that waited while the lead wasn't running, go
-  // in once the lead is ready.
-  typeLeadNotes(db, sessions);
-  // A host that shows status hears it afresh, as a session starting under an ID it had before
-  // has shown nothing yet.
-  forgetStatus(hostName, id);
-  reportLeadStatus(db, owner, repo);
-  // A remote can be slow or away, and attaching waits on this.
-  refreshClones(db).catch((error) => console.log(errorText(error)));
-  // A lead that had a conversation but starts a new one says so, as it starts without its
-  // history and the log is all that tells why.
-  const lost = stored !== null && resume === null ? `, as ${stored} wasn't saved` : "";
-  console.log(
-    `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}${lost}.`,
-  );
-  await checkAgentStarted(host, id, "lead");
 }
 
 // How the note that gives a lead its opening turn starts, which marks it as Skelcrew's, not the

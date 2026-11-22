@@ -430,6 +430,55 @@ console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
   );
 });
 
+// A Pi session's copy of Skelcrew's login is written before its host starts it, so a start the
+// host fails must take the copy with it.
+const piSessions = () => join(home, ".local", "share", "skelcrew", "pi-sessions");
+function piLogin(): void {
+  const folder = join(home, ".local", "share", "skelcrew", "pi");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "auth.json"), '{"openrouter":{"type":"api_key","key":"k"}}');
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: pi\nsession: fake\n");
+}
+
+test("a Pi lead whose host fails its start leaves no copy of your login", () => {
+  piLogin();
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { startLead, leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened) VALUES ('app', 'simon', 'app', '', 1)");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+fs.writeFileSync(${JSON.stringify(join(fake, "fail-start"))}, "");
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+const started = await startLead(db, "unused", repository).then(() => "started", () => "failed");
+const name = leadOf(db, "simon", "app").name;
+console.log(started, fs.existsSync(${JSON.stringify(piSessions())} + "/" + name + "/skelcrew.ts"), fs.existsSync(${JSON.stringify(piSessions())} + "/" + name + "/auth.json"));`,
+    {},
+  );
+  expect(said).toBe("failed true false\n");
+}, 20_000);
+
+test("a Pi builder whose host fails its start leaves no copy of your login", () => {
+  piLogin();
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(fake, "fail-start"))}, "");
+const back = await bringBack(db, "unused", readThread(db, "app-12")).then(() => "back", () => "failed");
+console.log(back, fs.existsSync(${JSON.stringify(join(piSessions(), "app-12", "skelcrew.ts"))}), fs.existsSync(${JSON.stringify(join(piSessions(), "app-12", "auth.json"))}));`,
+    { host: "fake", host_id: "fake-app-12", harness: "pi" },
+  );
+  expect(said).toBe("failed true false\n");
+}, 40_000);
+
 test("a lead still starting on a slow host when its repository is removed is ended, not left running", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(

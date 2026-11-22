@@ -141,6 +141,7 @@ import {
   readThread,
   record,
   renameBuilders,
+  sweepLoginCopies,
   type Thread,
   taskName,
   threadName,
@@ -316,6 +317,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   marksToItems(db);
   finishUpgrade(db);
   saveApprovedCommits(db);
+  // A copy of your login that a session which no longer runs left behind goes.
+  sweepLoginCopies(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile

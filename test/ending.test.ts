@@ -63,6 +63,29 @@ console.log(JSON.stringify({ ended, fresh: existsSync(freshLogin) }));`);
   expect(seen).toEqual({ ended: { login: false, conversation: true }, fresh: true });
 });
 
+// A copy of your login that any path left behind goes at the next sweep, as the daemon starts
+// or before a session starts: only a working or waiting thread's builder, or a lead whose tab
+// is open, keeps its own.
+test("a sweep removes each login copy whose session isn't live", () => {
+  const seen = withThread(`const { writeFileSync } = await import("node:fs");
+const { sweepLoginCopies } = await import(${JSON.stringify(source("flow/thread.ts"))});
+const { leadOf } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const sessions = ${JSON.stringify(join(home, ".local", "share", "skelcrew", "pi-sessions"))};
+const copy = (name) => { mkdirSync(sessions + "/" + name, { recursive: true }); writeFileSync(sessions + "/" + name + "/auth.json", "{}"); };
+const lead = leadOf(db, "simon", "app").name;
+for (const name of [thread.folder, lead, "app-t9", "gone-lead"]) copy(name);
+writeFileSync(sessions + "/app-t9/conversation.jsonl", "{}");
+sweepLoginCopies(db);
+const has = (name) => existsSync(sessions + "/" + name + "/auth.json");
+const first = [has(thread.folder), has(lead), has("app-t9"), has("gone-lead"), existsSync(sessions + "/app-t9/conversation.jsonl")];
+// Its tab closed, the lead's copy goes too, and so does a stopped thread's.
+db.run("UPDATE repositories SET tab_closed = 1");
+record(db, thread.folder, { status: "stopped" });
+sweepLoginCopies(db);
+console.log(JSON.stringify({ first, after: [has(thread.folder), has(lead)] }));`);
+  expect(seen).toEqual({ first: [true, true, false, false, true], after: [false, false] });
+});
+
 // A failure note still waiting for the lead, such as while the human reads further up in it,
 // would reach the lead after the thread started over, and the lead would ask for a start the
 // thread already had.
