@@ -22,6 +22,7 @@ import {
   pushed,
   pushedRound,
   reviews,
+  running,
   setUp,
   skel,
   startApp12,
@@ -354,6 +355,56 @@ done`,
     );
     await until(() => finished("success").length === 1, 30_000);
     expect((await skel(["ps"])).out).not.toContain("check slot");
+  }, 90_000);
+
+  // Runs sc check as an agent would, on the given socket, in a folder of its own, from outside
+  // the agent's sandbox, so its process runs on after the agent ends. The suite runs until the
+  // test ends it.
+  function checkOn(agentSocket: string) {
+    const folder = join(home, "checking");
+    mkdirSync(folder, { recursive: true });
+    const run = Bun.spawn([process.execPath, source("main.ts"), "check"], {
+      cwd: folder,
+      env: { ...env(), SKELCREW_SOCKET: agentSocket },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    running.push(run);
+    return run;
+  }
+  const holds = async (who: string) =>
+    (await skel(["ps"])).out.includes(`${who} holds a check slot`);
+
+  test("a thread stopped while its reviewer holds a check slot gives the slot back", async () => {
+    addApp();
+    config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const check = checkOn(join(home, "run", "skelcrew", "reviews", short, "skelcrew.sock"));
+    await waitFor(() => holds("APP-12/reviewer"), { timeout: 30_000 });
+    // While the review runs, its reviewer keeps the slot, past the daemon's next look.
+    await Bun.sleep(6000);
+    expect(await holds("APP-12/reviewer")).toBe(true);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    await waitFor(async () => !(await holds("APP-12/reviewer")), { timeout: 30_000 });
+    expect(check.exitCode).toBeNull();
+  }, 90_000);
+
+  test("a builder's check slot is given back once its thread is stopped, though its sc check runs on", async () => {
+    addApp();
+    config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    await startApp12();
+    await until(() => thread().status === "waiting", 30_000);
+    const check = checkOn(builderSocket());
+    await waitFor(() => holds("APP-12/builder"), { timeout: 30_000 });
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    await waitFor(async () => !(await holds("APP-12/builder")), { timeout: 30_000 });
+    expect(check.exitCode).toBeNull();
   }, 90_000);
 
   test("a review that times out twice needs you, and the lead hears why", async () => {

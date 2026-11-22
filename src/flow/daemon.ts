@@ -102,7 +102,7 @@ import {
   repositoryNamed,
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
-import { killReviewers } from "./reviewer.ts";
+import { killReviewers, reviewerRuns } from "./reviewer.ts";
 import {
   endRound,
   goOn,
@@ -1104,12 +1104,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       const thread = reviewer ?? builderOf(caller);
       const repository = thread ?? (from === undefined ? undefined : repositoryAt(db, from));
       if (!repository) throw new Error("run sc check in a checkout of a repository Skelcrew has");
-      // sc ps names the slot's holder as it names threads, such as APP-12/reviewer.
       const holder =
         thread === null ? "you" : `${threadName(db, thread)}/${reviewer ? "reviewer" : "builder"}`;
+      const live = db.query(
+        "SELECT 1 FROM task_threads WHERE folder = ? AND status IN ('working', 'waiting')",
+      );
+      const runs = () =>
+        thread === null ||
+        (reviewer ? reviewerRuns(reviewSocket(thread.folder)) : live.get(thread.folder) !== null);
       holdCheckSlot(connection, repositoryCommands(repository).test, {
         holder,
         repository: `${repository.owner}/${repository.repo}`,
+        runs,
       });
     } catch (error) {
       connection.end(`${JSON.stringify({ error: errorText(error) })}\n`);
