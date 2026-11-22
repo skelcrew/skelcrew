@@ -611,7 +611,8 @@ function prepareTables(db: Database): void {
   // `reading_released` is the place in the notes' sequence of the human's last message to the
   // lead. What came before it goes in once the lead is idle, though its answer opens a window.
   // `lead_human_turn` is whether the human started the lead's turn under way, whose end opens a
-  // window.
+  // window. `closes` counts the times its tab was closed to end its lead, so the daemon's start
+  // never opens again a tab that a close newer than its look closed.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -635,6 +636,7 @@ function prepareTables(db: Database): void {
     reading_until: "INTEGER NOT NULL DEFAULT 0",
     reading_released: "INTEGER NOT NULL DEFAULT 0",
     lead_human_turn: "INTEGER NOT NULL DEFAULT 0",
+    closes: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

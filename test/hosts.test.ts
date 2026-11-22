@@ -556,6 +556,43 @@ console.log(await hasSession(host, "fake-lead-app"));`,
   expect(readFileSync(join(fake, "asked"), "utf8")).toContain('"ask":"end"');
 });
 
+test("a closed tab whose lead still runs on a plugin's host opens again, and one whose lead doesn't stays closed", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { reopenTabsOfRunningLeads } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, tab_closed, lead_host) VALUES ('app', 'simon', 'app', '', 1, 1, 'fake'), ('web', 'simon', 'web', '', 1, 1, 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+await reopenTabsOfRunningLeads(db, "unused");
+console.log(JSON.stringify(db.query("SELECT repo, tab_closed FROM repositories ORDER BY repo").all()));`,
+    {},
+  );
+  expect(said).toContain('[{"repo":"app","tab_closed":0},{"repo":"web","tab_closed":1}]');
+});
+
+test("a tab closed again while the daemon's start looks at its lead stays closed", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { closeTabAndEndLead, reopenTabsOfRunningLeads } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened, tab_closed, lead_host) VALUES ('app', 'simon', 'app', '', 1, 1, 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "slow-list"))}, "");
+const looking = reopenTabsOfRunningLeads(db, "unused");
+await Bun.sleep(500);
+db.run("UPDATE repositories SET tab_closed = 0");
+const closing = closeTabAndEndLead(db, "unused", { name: "app", owner: "simon", repo: "app", forge: null, remote: "" }, "close");
+await looking;
+console.log("tab", db.query("SELECT tab_closed FROM repositories").get().tab_closed);
+await closing;`,
+    {},
+  );
+  expect(said).toContain("tab 1");
+}, 40_000);
+
 // Closing a repository ends its lead in the lead's turn. A host slow to end it can see you open
 // the repository again meanwhile. The start that opening asks for then comes after the end, so it
 // never finds the old lead still running and keeps it, only for the end to take it away.
@@ -595,6 +632,44 @@ test("a repository opened again before its lead's end came keeps its lead runnin
 const ended = await endLeadOfClosedTab(db, "unused", repository, "close");
 const sawOld = await reopen();`);
   expect(JSON.parse(said)).toEqual({ ended: false, sawOld: true, running: true });
+}, 40_000);
+
+test("a lead its host fails to end gets its tab back, unless it was opened again meanwhile", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said =
+    closingLead(`const failEnd = () => require("node:fs").writeFileSync(${JSON.stringify(join(fake, "fail-end"))}, "");
+const { closeTabAndEndLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const tab = () => db.query("SELECT tab_closed FROM repositories").get().tab_closed;
+db.run("UPDATE repositories SET tab_closed = 0");
+failEnd();
+const failed = await closeTabAndEndLead(db, "unused", repository, "close").catch(() => "failed");
+console.log(failed, tab());
+failEnd();
+const opening = closeTabAndEndLead(db, "unused", repository, "close").catch(() => "failed");
+await Bun.sleep(500);
+db.run("UPDATE repositories SET tab_closed = 0");
+console.log(await opening, tab());
+const ended = false;
+const sawOld = null;`);
+  expect(said.split("\n").slice(0, 2)).toEqual(["failed 0", "failed 0"]);
+}, 40_000);
+
+test("a close that fails while you close again leaves the tab closed, and the second close ends the lead", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said =
+    closingLead(`require("node:fs").writeFileSync(${JSON.stringify(join(fake, "fail-end"))}, "");
+const { closeTabAndEndLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+db.run("UPDATE repositories SET tab_closed = 0");
+const first = closeTabAndEndLead(db, "unused", repository, "close").catch(() => "failed");
+await Bun.sleep(500);
+const second = closeTabAndEndLead(db, "unused", repository, "close");
+console.log(await first, db.query("SELECT tab_closed FROM repositories").get().tab_closed);
+const ended = await second;
+console.log(db.query("SELECT tab_closed FROM repositories").get().tab_closed);
+const sawOld = null;`);
+  expect(said).toBe(
+    `failed 1\n1\n${JSON.stringify({ ended: true, sawOld: null, running: false })}\n`,
+  );
 }, 40_000);
 
 test("a repository opened again while its removal ends its lead keeps its clone and record", () => {
