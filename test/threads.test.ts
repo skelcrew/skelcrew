@@ -1411,6 +1411,8 @@ nameRepositories(db);`;
     addApp();
     onGitHub({}, "app", "bob");
     onGitHub({}, "simon-app", "bob");
+    // Its task on issue #12 is BOB/SIMON-APP-12 too.
+    numberedBefore(join(github(), "bob", "simon-app.git"), 11);
     const script = `import { nameRepositories, openDb } from ${JSON.stringify(source("db.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo) VALUES ('x', 'bob', 'app'), ('y', 'bob', 'simon-app')");
@@ -1610,6 +1612,7 @@ nameRepositories(db);`;
   test("sc start --flow switches a thread at work until its builder submits", async () => {
     // A third flow, careful, builds with a role of the repository's own.
     const work = addFlows();
+    numberedBefore(join(github(), "simon", "app.git"), 11);
     mkdirSync(join(work, ".agents", "roles"), { recursive: true });
     writeFileSync(join(work, ".agents", "flows", "careful.yaml"), "build:\n  role: tester\n");
     writeFileSync(join(work, ".agents", "roles", "tester.md"), "Write the test first.\n");

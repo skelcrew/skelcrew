@@ -430,7 +430,7 @@ echo "Not logged in"; exit 1`,
     answer(plugin, "took", { took: true });
     pr({ labeled: true });
     serve();
-    await until(() => thread().task === 12);
+    await until(() => thread().issue === "12");
     // Assigning you comes after the thread started, and the claim isn't asked twice.
     await until(() => thread().assigned === 1);
     expect(claims()).toEqual([claim12]);
@@ -457,7 +457,7 @@ echo "Not logged in"; exit 1`,
     await until(() => listed().length === 1);
     expect(listed()).toEqual([
       {
-        task: "APP-12",
+        task: "APP#12",
         stage: "issue",
         title: "Add export",
         short: null,
@@ -472,7 +472,7 @@ echo "Not logged in"; exit 1`,
     await morePolls();
     expect(claims()).toEqual([]);
     changes([issue12(true)]);
-    await until(() => thread().task === 12);
+    await until(() => thread().issue === "12");
     expect(listed()).toMatchObject([{ task: "APP-12", issue: "#12", stage: "working" }]);
     expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
     // A task from a label runs the default flow, unless the lead switches it.
