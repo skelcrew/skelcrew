@@ -449,6 +449,8 @@ async function reviewNow(given: {
     return null;
   };
   let argv: string[] = [];
+  // The folders of the review's own the harness made, such as a copy of a login.
+  const made: string[] = [];
   // CI's result goes in the review's folder, which the reviewer sees. It is written whole and
   // then moved in, so the reviewer never reads half of it. The reviewer can write in that
   // folder too, so Skelcrew never writes to a file there it didn't just make: each result goes
@@ -501,6 +503,7 @@ async function reviewNow(given: {
       signal,
       ...(given.skills ? { skills: given.skills } : {}),
     });
+    if ("login" in launch) made.push(launch.login);
     // Only what a shell and the tests need gets in, with the harness's own keys added.
     const sandboxEnv = { ...launch.env, ...filterEnv(env, keys) };
     // The builder can go on changing its clone after it submits, so the reviewer sees the
@@ -586,7 +589,7 @@ async function reviewNow(given: {
     clearInterval(refresh);
     // On a Mac the review may have been ended with SIGKILL, before the sandbox could remove
     // its own folders, one of them in /tmp.
-    for (const own of [folder, ...sandboxFolders(argv)])
+    for (const own of [folder, ...made, ...sandboxFolders(argv)])
       rmSync(own, { recursive: true, force: true });
   }
 }

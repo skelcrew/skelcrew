@@ -5,8 +5,10 @@ import { dlopen, FFIType } from "bun:ffi";
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { dropReviewLogins, keepLogins } from "../agents/harness.ts";
 import {
   agentRuns,
   endExitedSession,
@@ -269,6 +271,29 @@ const look = z.coerce
   .catch(2000)
   .parse(process.env.SKELCREW_LOOK_MS ?? 2000);
 
+// Returns whether the lead or builder whose session has the given name may still run. One whose
+// host can't say, such as a plugin that is gone or doesn't answer, may.
+async function agentNamedRuns(db: Database, sessions: string, name: string): Promise<boolean> {
+  try {
+    const thread = db.query("SELECT folder FROM task_threads WHERE folder = ?").get(name);
+    if (thread) {
+      const { host, id } = await builderSession(db, sessions, readThread(db, name));
+      return await agentRuns(host, id);
+    }
+    const repositories = z
+      .array(z.object({ owner: z.string(), repo: z.string() }))
+      .parse(db.query("SELECT owner, repo FROM repositories").all());
+    for (const { owner, repo } of repositories) {
+      if (leadOf(db, owner, repo).name !== name) continue;
+      const lead = await leadSession(db, sessions, owner, repo);
+      return lead === null || (await agentRuns(lead.host, lead.id));
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
 // daemon is down. The processes it started, such as a git clone or a reviewer, are ended and
@@ -315,6 +340,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (!lock(`${path}.lock`))
     throw new Error("the daemon is already running. Run sc to attach to a lead.");
+  dropReviewLogins(homedir());
   const db = openDb();
   moveToTasks(db);
   moveTurnEnded(db);
@@ -1200,6 +1226,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       ),
     exitLook,
   );
+  // The agents' logins are kept now, before any agent starts, and every minute from here on.
+  const keep = () =>
+    doing("keeping the agents' logins", () =>
+      keepLogins(homedir(), (name) => agentNamedRuns(db, sessions, name)).catch((error) =>
+        console.log(`couldn't keep the agents' logins: ${errorText(error)}`),
+      ),
+    );
+  keep();
+  setInterval(keep, 60_000);
   // From here on, the daemon also looks every two seconds for a working agent whose screen
   // shows it idle, where no hook said so. A session that ends during a look only ends that look.
   setInterval(() => {

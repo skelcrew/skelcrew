@@ -68,6 +68,7 @@ const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 // as Codex's does. error ends the builder's turn on an error as an unknown model does: Codex
 // prints it and sits at its prompt, with no hook. renew renews the login as Codex does from
 // 0.167: it follows the link to it, writes the renewal beside its target and renames it over it.
+// tamper writes "evil" into each file the rest of the test's file names, one to a line.
 // Its arguments are written aside and moved into place, so a test that sees the file never reads
 // them half written. The builder leaves a file named ready once it looks for the test's files.
 function fakeCodex(): void {
@@ -141,6 +142,7 @@ for i in $(seq 3000); do
   test -e talk && { id=$(head -n 1 talk); rm talk; hook UserPromptSubmit "" "$id"; }
   test -e typed-talk && { rm typed-talk; hook UserPromptSubmit; }
   test -e renew && { id=$(head -n 1 renew); rm renew; login=$(readlink -f auth.json); echo renewed > "$login.new" && mv "$login.new" "$login"; echo "renewed $id" >> ran; }
+  test -e tamper && { id=$(head -n 1 tamper); tail -n +2 tamper | while IFS= read -r f; do echo evil > "$f"; done 2> /dev/null; rm tamper; echo "tampered $id" >> ran; }
   sleep 0.1
 done`,
   );
@@ -186,6 +188,19 @@ function config(roles: string): void {
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), `harness: claude\n${roles}`);
 }
 
+// Saves Skelcrew's own Codex login, as codex login does, renewed just now.
+function saveLogin(): void {
+  mkdirSync(join(data(), "codex"), { recursive: true });
+  const tokens = {
+    id_token: "id",
+    access_token: "access",
+    refresh_token: "refresh",
+    account_id: "a",
+  };
+  const login = { tokens, last_refresh: new Date().toISOString() };
+  writeFileSync(join(data(), "codex", "auth.json"), JSON.stringify(login));
+}
+
 // What this test's processes run with.
 const env = () => homeEnv(home);
 
@@ -228,6 +243,7 @@ const ranLine = {
   interrupt: "Interrupt",
   error: "error",
   renew: "renewed",
+  tamper: "tampered",
 };
 
 // Has the fake builder do something, as Codex would, with `input` as what its hooks read, and
@@ -544,12 +560,32 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(existsSync(join(builder(), "args"))).toBe(false);
   }, 60_000);
 
-  test("a session renewing the login renews Skelcrew's own, which every session shares", async () => {
-    mkdirSync(join(data(), "codex"), { recursive: true });
-    writeFileSync(join(data(), "codex", "auth.json"), "mine\n");
+  test("each agent logs in with its own copy, and can't write another's or Skelcrew's", async () => {
+    saveLogin();
+    // A copy an earlier daemon left, whose session no longer runs.
+    const gone = join(data(), "codex-logins", "app-9");
+    mkdirSync(gone, { recursive: true });
+    writeFileSync(join(gone, "auth.json"), "{}");
     await startApp12();
+    await until(() => !existsSync(gone));
+    const own = join(data(), "codex-login", "auth.json");
+    const saved = read(own);
+    const leadCopy = read(join(lead(), "auth.json"));
+    expect(JSON.parse(leadCopy).tokens.refresh_token).toBe("");
+    expect(JSON.parse(read(join(builder(), "auth.json"))).tokens.access_token).toBe("access");
+    const leadLogin = join(data(), "codex-logins", leadPlaces("simon", "app").name, "auth.json");
+    const ownCodex = join(data(), "codex", "auth.json");
+    await act("tamper", [own, ownCodex, leadLogin, join(lead(), "auth.json")].join("\n"));
+    expect(read(own)).toBe(saved);
+    expect(read(join(lead(), "auth.json"))).toBe(leadCopy);
+    // A renewal in the builder stays in its own copy, and the next builder gets Skelcrew's login.
     await act("renew");
-    expect(read(join(data(), "codex", "auth.json"))).toBe("renewed\n");
-    expect(read(join(lead(), "auth.json"))).toBe("renewed\n");
+    expect(read(join(builder(), "auth.json"))).toBe("renewed\n");
+    expect(read(own)).toBe(saved);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    rmSync(join(builder(), "args"));
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => read(join(builder(), "args")) !== "", 30_000);
+    expect(read(join(builder(), "auth.json"))).toBe(leadCopy);
   }, 60_000);
 });

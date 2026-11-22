@@ -380,6 +380,11 @@ await stopSession(${JSON.stringify(socket)}, "agent");`;
 });
 
 const codexHome = () => join(home, ".local", "share", "skelcrew", "codex");
+// Skelcrew's Codex login, as codex login saves it, renewed just now.
+const login = JSON.stringify({
+  tokens: { id_token: "id", access_token: "access", refresh_token: "refresh", account_id: "a" },
+  last_refresh: new Date().toISOString(),
+});
 
 // Runs git in the clone and returns what it printed.
 const git = (clone: string, ...args: string[]) =>
@@ -403,7 +408,7 @@ function reviewable(extra: string): string {
   const cp = Bun.which("cp") ?? "cp";
   fake("cp", `test "$2" = -c && { shift 2; exec ${cp} -a "$@"; }; exit 1`);
   writeFileSync(join(codexHome(), "config.toml"), "model = 1\n");
-  writeFileSync(join(codexHome(), "auth.json"), "login\n");
+  writeFileSync(join(codexHome(), "auth.json"), login);
   fake(
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
@@ -422,13 +427,14 @@ process.exit(0);`);
   return JSON.parse(ran.out);
 }
 
-test("a reviewer works in a copy, and only its login and sessions reach Skelcrew's", async () => {
+test("a reviewer works in a copy, and only its sessions reach Skelcrew's", async () => {
   const clone = reviewable(`mkdir -p "$CODEX_HOME/sessions"
 pwd > "$CODEX_HOME/sessions/where"
 cat README >> "$CODEX_HOME/sessions/where"
 echo "$CODEX_HOME" > "$CODEX_HOME/sessions/home"
 echo changed > README
 echo evil > "$CODEX_HOME/config.toml"
+cat "$CODEX_HOME/auth.json" > "$CODEX_HOME/sessions/login"
 echo renewed > "$CODEX_HOME/auth.json"`);
   expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine.", findings: [] });
   const [where, seen] = readFileSync(join(codexHome(), "sessions", "where"), "utf8").split("\n");
@@ -437,7 +443,12 @@ echo renewed > "$CODEX_HOME/auth.json"`);
   expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
   expect(readFileSync(join(codexHome(), "sessions", "home"), "utf8").trim()).not.toBe(codexHome());
   expect(readFileSync(join(codexHome(), "config.toml"), "utf8")).toBe("model = 1\n");
-  expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
+  // It logs in with a copy of its own, which holds no refresh token, and goes with the review.
+  expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe(login);
+  const copy = JSON.parse(readFileSync(join(codexHome(), "sessions", "login"), "utf8"));
+  expect(copy.tokens).toEqual({ ...JSON.parse(login).tokens, refresh_token: "" });
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "codex-review-logins"))).toBe(true);
+  expect(readdirSync(join(home, ".local", "share", "skelcrew", "codex-review-logins"))).toEqual([]);
   expect(readFileSync(join(home, "calls"), "utf8")).toContain("sandbox-exec -f");
 });
 
