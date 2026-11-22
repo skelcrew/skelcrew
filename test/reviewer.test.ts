@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { review, reviewerPrompt } from "../src/flow/reviewer.ts";
+import { type LastRound, review, reviewerPrompt } from "../src/flow/reviewer.ts";
 import { builtInRole } from "../src/roles.ts";
 import { insideSandbox, source } from "./harness.ts";
 
@@ -97,6 +97,7 @@ const start = (
     model?: string;
     ci?: { has: () => boolean; read: () => Promise<string> };
     issue?: { title: string; body: string };
+    last?: LastRound;
   } = {},
 ) => review({ ...given(), ...more });
 
@@ -605,6 +606,40 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(done).toEqual({ verdict: "approve", body: "CI failed on this commit.", findings: [] });
   });
 
+  // From round 2 on, the diff since the last round's commit is in a file the prompt names.
+  test("a reviewer reads what changed since the last round from the file its prompt names", async () => {
+    const last = {
+      round: 1,
+      commit,
+      findings: ["Add a test."],
+      description: null,
+      since: { diff: "+test\n" },
+    };
+    fakeCodex(approve, [
+      'prompt="$CODEX_HOME/sessions/prompt"',
+      `f=$(grep -o '/[^ ]*/since-last-round\\.diff' "$prompt" | head -1)`,
+      'cat "$f" > "$CODEX_HOME/sessions/since"',
+    ]);
+    expect(await start({ last })).toMatchObject({ verdict: "approve" });
+    expect(kept("since")).toBe("+test\n");
+  });
+
+  test("a review after a force push dropped the last round's commit says it reviewed the whole diff only", async () => {
+    const last = {
+      round: 2,
+      commit,
+      findings: [],
+      description: null,
+      since: "dropped" as const,
+    };
+    fakeCodex(approve);
+    const done = await start({ last });
+    expect(done).toMatchObject({ verdict: "approve" });
+    expect("body" in done && done.body).toStartWith(
+      `Round 2's commit ${commit.slice(0, 7)} is no longer in the branch's history, so this round reviewed the whole diff only, not what changed since.\n\n`,
+    );
+  });
+
   test("keeps CI's result current while the review runs", async () => {
     let asked = 0;
     const ci = { has: () => true, read: async () => `asked ${++asked}\n` };
@@ -853,5 +888,93 @@ describe("what the reviewer is told about the tests", () => {
     );
     expect(prompt).not.toContain("run the repository's whole test suite");
     expect(prompt).not.toContain("ci.md");
+  });
+});
+
+describe("what the reviewer is told of the last round", () => {
+  const last = {
+    round: 1,
+    commit: "4f9c2e1aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5",
+    findings: ["Each agent needs its own login."],
+    description: "Moved the logins into one shared file, as each agent asked separately.",
+    since: { diff: "diff --git a/login.ts b/login.ts\n" },
+  };
+  const file = "/tmp/review/since-last-round.diff";
+
+  test("the first round is told of none", () => {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined);
+    expect(prompt).not.toContain("Since the last round");
+  });
+
+  test("from round 2 on, it gets the diff since the commit it reviewed and that round's findings", () => {
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+      round: last,
+      file,
+    });
+    expect(prompt).toContain("git diff origin/main...HEAD");
+    expect(prompt).toContain(
+      "Round 1 reviewed 4f9c2e1. It asked for these changes:\n\n1. Each agent needs its own login.",
+    );
+    expect(prompt).toContain(
+      `What changed since 4f9c2e1 is in ${file}: the diff from ${last.commit} to HEAD.`,
+    );
+    expect(prompt).toContain("Did it fix what the last round asked for?");
+    expect(prompt).toContain(
+      "Did it give up anything the earlier version had, such as safety, isolation, data or behaviour? Anything it gave up is a finding, unless the PR's description says so.",
+    );
+    expect(prompt).toContain(
+      `It only says which trade-offs the builder stated:\n\n${last.description}`,
+    );
+  });
+
+  // The builder writes the description, so it never fills a blank of the role.
+  test("the PR's description reaches the reviewer as written, never as a blank", () => {
+    const round = { ...last, findings: [], description: "Says {{title}} and $&" };
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+      round,
+      file,
+    });
+    expect(prompt).toContain("It approved, with no findings.");
+    expect(prompt).toEndWith("Says {{title}} and $&");
+  });
+
+  // A description the forge couldn't give never excuses a trade-off.
+  test("with no description to read, no trade-off counts as stated", () => {
+    const round = { ...last, description: null };
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+      round,
+      file,
+    });
+    expect(prompt).toEndWith(
+      "The PR has no description Skelcrew could read, so no trade-off is stated: anything it gave up is a finding.",
+    );
+  });
+
+  // A review run again on the same commit has no new diff, but still checks what was asked.
+  test("a review of the same commit again gets the last round's findings, and no diff", () => {
+    const round = { ...last, since: "same commit" as const };
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+      round,
+      file,
+    });
+    expect(prompt).toContain(
+      "Round 1 reviewed this same commit. It asked for these changes:\n\n1. Each agent needs its own login.\n\nCheck whether each is fixed.",
+    );
+    expect(prompt).not.toContain(file);
+  });
+
+  test("after a force push dropped the commit it reviewed, it reviews the whole diff only", () => {
+    const round = { ...last, since: "dropped" as const };
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, {
+      round,
+      file,
+    });
+    expect(prompt).toContain(
+      `Round 1 reviewed ${last.commit}, which is no longer in the branch's history`,
+    );
+    expect(prompt).toContain("So review the whole diff only.");
+    expect(prompt).toContain("1. Each agent needs its own login.\n\nCheck whether each is fixed.");
+    expect(prompt).not.toContain(file);
+    expect(prompt).not.toContain(last.description);
   });
 });

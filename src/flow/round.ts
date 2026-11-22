@@ -38,6 +38,7 @@ import { fetchInto, noMaintenance, pushCommit } from "./git.ts";
 import {
   approvalFound,
   checkSet,
+  lastReviewed,
   letGoOn,
   notReviewed,
   reviewAsked,
@@ -52,7 +53,7 @@ import {
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
-import { type Limited, type Review, review } from "./reviewer.ts";
+import { type LastRound, type Limited, type Review, review } from "./reviewer.ts";
 import { needsYou as neededYou } from "./status.ts";
 import { supervisor } from "./supervisor.ts";
 import { cloneOf, readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
@@ -473,7 +474,9 @@ async function reviewRound(
           // the builder fetches: a builder that merged a newer main would show main's commits
           // as its own. That commit is in the commit's history, so the reviewer's copy of the
           // clone has it. A review with no current base to read fails and says why, rather
-          // than judging a diff that may hold someone else's commits.
+          // than judging a diff that may hold someone else's commits. From round 2 on, the
+          // last round asks the forge for the PR first, so the base comes from that answer too.
+          const last = await lastRound(db, thread, skelcrewClone, sha);
           const base = prBase(db, thread);
           const fetched = await fetchInto(db, repository, skelcrewClone, base, bases).then(
             () => null,
@@ -493,6 +496,7 @@ async function reviewRound(
           const result = await review({
             ...given,
             docsOnly,
+            last,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
             base: from,
@@ -885,14 +889,22 @@ async function postOrEdit(
   record(db, folder, reviewOnPr(readThread(db, folder), post, Date.now()), `${how} on PR #${pr}`);
 }
 
-// Brings Skelcrew's copy of the PR up to date with its forge, for a review the thread saved no
-// ID for, as the copy can be a poll behind. Throws when the forge can't answer.
-async function refreshPr(db: Database, repository: Repository, pr: number): Promise<void> {
+// Brings Skelcrew's copy of the PR up to date with its forge, as the copy can be a poll behind,
+// and returns the PR as the forge just showed it, or null when it didn't. Throws when the forge
+// can't answer.
+async function refreshPr(
+  db: Database,
+  repository: Repository,
+  pr: number,
+): Promise<PullRequest | null> {
   const forge = forgeOf(db, repository);
   if (forge === null) throw new Error(`${repository.name} has no forge`);
   const { items } = await askWhatChanged(db, forge, repository, ["forge"], null, [pr]);
-  const shown = items.filter((item) => item.kind === "pr" && item.id === String(pr));
+  const shown = items.flatMap((item) =>
+    item.kind === "pr" && item.id === String(pr) ? [item] : [],
+  );
   saveItems(db, repository.owner, repository.repo, shown, []);
+  return shown[0] ?? null;
 }
 
 // Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,
@@ -1195,6 +1207,36 @@ function lastApproved(thread: Thread): string | null {
 function prBase(db: Database, thread: Thread): string {
   const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
   return pr?.base ?? baseOf(thread);
+}
+
+// Returns what the reviewer gets of the last round the thread's reviewer finished: its findings,
+// the PR's description, and the diff from the commit it reviewed to this one, read in Skelcrew's
+// clone, which the builder can't change. The description is what the forge answers now, never
+// Skelcrew's copy, which can be a poll behind an edit or hold a PR the forge no longer shows. It
+// is null when there is no PR or the forge doesn't give it, so no trade-off counts as stated. A
+// commit no longer in this one's history, such as after a force push, gives no diff. Null on the
+// first round.
+async function lastRound(
+  db: Database,
+  thread: Thread,
+  clone: string,
+  sha: string,
+): Promise<LastRound | null> {
+  const last = lastReviewed(thread);
+  if (last === null) return null;
+  if (last.commit === sha) return { ...last, description: null, since: "same commit" };
+  const { pr } = thread;
+  const shown =
+    pr === null ? null : await refreshPr(db, repositoryOf(db, thread), pr).catch(() => null);
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
+  const kept = git("merge-base", "--is-ancestor", last.commit, sha).success;
+  const diff = kept ? git("diff", last.commit, sha) : null;
+  return {
+    ...last,
+    description: shown?.body ?? null,
+    since: diff?.success ? { diff: diff.stdout.toString() } : "dropped",
+  };
 }
 
 // Returns whether the commit, in the clone, changes only docs and Markdown since it met the
