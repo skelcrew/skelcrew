@@ -308,8 +308,9 @@ function askLines(
 // Returns the lead's item on `row`, the row at `here`, opened full-size in a place `width` columns
 // wide and `height` tall, scrolled `scroll` lines down: what it is about, then its whole text, its
 // options and the reply line, with what tapping each line answers. However long the item and
-// however short the screen, scrolling reaches every line. Gives the scroll as far as it can go,
-// for the next draw.
+// however short the screen, scrolling reaches every line: by the keys or the wheel, or by a tap on
+// the `↑ more` or `↓ more` line at its top or bottom edge, which scrolls a page, for a screen with
+// taps alone. Gives the scroll as far as it can go, for the next draw.
 export function drawItem(
   row: Row,
   here: number,
@@ -323,15 +324,25 @@ export function drawItem(
     { text: "", pick: null },
     ...askLines(row, false, width),
   ];
-  const at = Math.min(Math.max(scroll, 0), Math.max(all.length - height, 0));
-  const shown = all.slice(at, at + height);
-  const blank = Array.from({ length: height - shown.length }, () => "");
+  const edges = all.length > height && height >= 3;
+  const view = edges ? height - 2 : height;
+  const at = Math.min(Math.max(scroll, 0), Math.max(all.length - view, 0));
+  const shown = all.slice(at, at + view);
+  const edge = (more: boolean, sign: string, by: number) =>
+    more
+      ? { text: `   ${paint(grey, `${sign} more`)}`, target: { scroll: by } }
+      : { text: "", target: null };
+  const above = edges ? [edge(at > 0, "↑", -view)] : [];
+  const below = edges ? [edge(at + view < all.length, "↓", view)] : [];
+  const body = shown.map((line) => ({
+    text: line.text,
+    target: line.pick === null ? null : { row: here, pick: line.pick },
+  }));
+  const blank = Array.from({ length: view - shown.length }, () => ({ text: "", target: null }));
+  const drawn: { text: string; target: Target }[] = [...above, ...body, ...blank, ...below];
   return {
-    lines: [...shown.map((line) => line.text), ...blank],
-    targets: [
-      ...shown.map((line): Target => (line.pick === null ? null : { row: here, pick: line.pick })),
-      ...blank.map((): Target => null),
-    ],
+    lines: drawn.map((line) => line.text),
+    targets: drawn.map((line) => line.target),
     scroll: at,
   };
 }
@@ -452,8 +463,9 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
 }
 
 // What a click on a line of the list reaches: a row, by its place in the rows, which is the
-// lead's or a task's, with `pick` on a line of its item that answers it, a section's heading, or
-// nothing, such as on a blank line or an edge.
+// lead's or a task's, with `pick` on a line of its item that answers it, a section's heading, a
+// number of lines to scroll an item open full-size by, or nothing, such as on a blank line or an
+// edge.
 // On an edge line, a click reaches the heading pinned at its column: `pinned` has each one's
 // columns, counted from 1 as your terminal counts a click.
 export type Pinned = { from: number; to: number; section: Section };
@@ -461,6 +473,7 @@ export type Target =
   | { row: number; pick?: Pick }
   | { section: Section }
   | { pinned: Pinned[] }
+  | { scroll: number }
   | null;
 
 // One line of the sections' part of the list: its text, the row it belongs to, by its place in

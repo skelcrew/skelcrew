@@ -566,6 +566,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       const pinned = target.pinned.find((span) => span.from <= at && at <= span.to);
       return pinned ? toggleSection(pinned.section) : draw();
     }
+    if ("scroll" in target) {
+      if (item !== null) item += target.scroll;
+      return draw();
+    }
     const row = rows[target.row];
     if (!row) return draw();
     if (target.pick && target.row === here) return pickOn(row, target.pick);

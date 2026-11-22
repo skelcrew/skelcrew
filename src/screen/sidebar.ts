@@ -894,7 +894,8 @@ export async function runSidebar(
   // Acts on a press of the mouse at a column and line, counted from 1. A click on the lead moves
   // to it, so the right side shows the lead, and gives the lead your typing. A click on a task
   // moves to it, and a second click on it opens it as Enter does. A click on a stage's heading, or
-  // its name pinned at an edge, opens or closes it. The wheel moves one row up or down.
+  // its name pinned at an edge, opens or closes it. The wheel moves one row up or down. On an item
+  // open full-size, the wheel scrolls it a line, and a tap on its ↑ more or ↓ more a page.
   const click = (button: string, column: number, line: number) => {
     if ((button === "64" || button === "65") && item !== null) {
       item += button === "64" ? -1 : 1;
@@ -909,6 +910,10 @@ export async function runSidebar(
     if ("pinned" in target) {
       const pinned = target.pinned.find((span) => span.from <= column && column <= span.to);
       return pinned && toggle(pinned.section);
+    }
+    if ("scroll" in target) {
+      if (item !== null) item += target.scroll;
+      return;
     }
     const tapped = rows[target.row];
     if (target.pick && tapped)

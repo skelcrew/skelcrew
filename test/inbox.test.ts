@@ -338,7 +338,7 @@ for (let step = 0; step < 40; step++) {
   for (const key of ["a", "b", "c", "d", "r"]) if (itemKey(rows[at], at, drawn.targets, key)) keys.add(key);
   scroll = drawn.scroll + 1;
 }
-console.log(JSON.stringify({ reached, keys: [...keys], first: Bun.stripANSI(drawItem(rows[at], at, 30, 4, 0).lines[0]).trim() }));`);
+console.log(JSON.stringify({ reached, keys: [...keys], first: Bun.stripANSI(drawItem(rows[at], at, 30, 4, 0).lines[1]).trim() }));`);
   const reached = seen.reached as string[];
   for (const line of [
     "a) first choice",
@@ -350,6 +350,34 @@ console.log(JSON.stringify({ reached, keys: [...keys], first: Bun.stripANSI(draw
     expect(reached).toContain(line);
   expect(seen.keys).toEqual(["a", "b", "c", "d", "r"]);
   expect(seen.first).toBe("app  about the repository");
+});
+
+// A phone has taps alone, so tapping ↓ more, then ↑ more, reaches every line too.
+test("taps on an opened item's more lines scroll it to every option", () => {
+  const seen = inProcess(`
+const { drawItem } = await import(${JSON.stringify(source("list/layout.ts"))});
+postItem(db, "app", null, "word ".repeat(100), ["first choice", "second choice", "third choice"]);
+const rows = shownRows(all(), sections, true);
+const at = rows.findIndex((r) => r.part === "ask");
+const tap = (drawn, sign) => drawn.targets.find((target, line) => target && "scroll" in target && Bun.stripANSI(drawn.lines[line]).includes(sign));
+const reached = [];
+let scroll = 0;
+let down = drawItem(rows[at], at, 30, 6, scroll);
+while (true) {
+  reached.push(...down.lines.map((line) => Bun.stripANSI(line).trim()));
+  const more = tap(down, "↓ more");
+  if (!more) break;
+  scroll = down.scroll + more.scroll;
+  down = drawItem(rows[at], at, 30, 6, scroll);
+}
+const up = tap(down, "↑ more");
+const back = drawItem(rows[at], at, 30, 6, down.scroll + up.scroll);
+console.log(JSON.stringify({ reached, moved: back.scroll < down.scroll, top: Bun.stripANSI(drawItem(rows[at], at, 30, 6, 0).lines.at(-1)).trim() }));`);
+  const reached = seen.reached as string[];
+  for (const line of ["a) first choice", "b) second choice", "c) third choice", "r) reply"])
+    expect(reached).toContain(line);
+  expect(seen.moved).toBe(true);
+  expect(seen.top).toBe("↓ more");
 });
 
 test("an item goes when its thread ends, and the lead can take one off", () => {
