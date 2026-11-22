@@ -86,11 +86,13 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   expect(readFileSync(written, "utf8")).toBe("");
 });
 
-// What a turn leaves once the codes that only move the cursor, set colours or set modes are
-// taken out. A code that erases, inserts, deletes or scrolls cells stays, as does any other text.
+// What a turn leaves once the codes that only move the cursor, set colours or the scroll region,
+// or set modes that change no cell, are taken out: synchronized updates, the cursor's blink and
+// visibility, and mouse reports. Any other code stays, as does any other text.
 function shownBy(turn: string): string {
   const esc = "\x1b";
-  return turn.replaceAll(new RegExp(`${esc}(\\[[0-?]*[ABCDGHdmhlr]|\\(B)`, "g"), "");
+  const kept = `${esc}(\\[[0-9;]*[ABCDGHdmr]|\\[\\?(2026|12|25|1000|1002|1003|1006)[hl]|\\(B)`;
+  return turn.replaceAll(new RegExp(kept, "g"), "");
 }
 
 // A spinner on the mark of an agent at work turns about four times a second. Each turn is a
