@@ -59,7 +59,7 @@ It proposes a thread, with a title and a one-line summary, and starts it once yo
 
 Every task gets a name, such as `APP-12`, with its issue beside it, such as `#483`. An issue no task has yet goes by `APP#483`. Use your task's name where this page says `APP-12`.
 
-The task shows in the sidebar. Move to its row with the arrow keys and press Enter, or click it, to see its builder at work beside the sidebar. Ctrl+\ brings your typing back to the sidebar. Alt+Q leaves the screen, and the agents run on.
+The task shows in the sidebar. Your typing starts in the lead, so press Ctrl+\ to bring it to the sidebar. Then move to the task's row with the arrow keys and press Enter, or click the row, to see its builder at work beside the sidebar. Ctrl+\ brings your typing back to the sidebar from there too. Alt+Q leaves the screen, and the agents run on.
 
 The builder submits each round, and a fresh reviewer reviews it. Only a P1 holds the PR back: a bug someone will hit, a security or data-loss problem, or the task not done. Smaller findings are listed on the PR, and filed in the backlog once it merges. After 3 rounds of changes, the task waits for you. `sc start APP-12` lets it go on.
 
