@@ -415,6 +415,25 @@ done`,
     );
   }, 90_000);
 
+  test("a reviewer's check slot is given back once its process ends, though its sc check runs on", async () => {
+    addApp();
+    config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const check = checkOn(join(home, "run", "skelcrew", "reviews", short, "skelcrew.sock"));
+    await waitFor(() => holds("APP-12/reviewer"), { timeout: 30_000 });
+    writeFileSync(join(codexHome(), "sessions", "go-1"), "");
+    await waitFor(async () => !(await holds("APP-12/reviewer")), { timeout: 30_000 });
+    expect(check.exitCode).toBeNull();
+    expect(read(join(home, "daemon.log"))).toContain(
+      "APP-12/reviewer gave back a check slot in simon/app: its review has ended",
+    );
+  }, 90_000);
+
   test("a builder killed while its sc check runs on gives its check slot back", async () => {
     addApp();
     config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);

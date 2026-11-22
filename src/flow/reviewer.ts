@@ -238,9 +238,9 @@ const reviewerGroups = new Set<number>();
 const reviewing = new Map<string, number>();
 let reviewsStarted = 0;
 
-// Returns which review runs now with the given reviewer socket, by a number of its own, or null
-// when none does. So a check slot taken during one review is given back once that review has
-// ended, even when the next round's review runs on the same socket.
+// Returns which reviewer runs now with the given reviewer socket, by a number of its own, or
+// null when none does. So a check slot a reviewer took is given back once its process has
+// ended, even when the next round's reviewer runs on the same socket.
 export const reviewOn = (socket: string) => reviewing.get(socket) ?? null;
 
 // Kills every reviewer that runs now, with whatever it started, for the daemon's stop, and
@@ -283,8 +283,9 @@ async function spawnReviewer(given: {
   env: Record<string, string>;
   input: string;
   signal: AbortSignal;
+  socket: string | undefined;
 }): Promise<{ out: string; err: string; code: number }> {
-  const { argv, env, input, signal } = given;
+  const { argv, env, input, signal, socket } = given;
   const mac = process.platform === "darwin";
   // A group of its own, listed until the reviewer has ended and the group is killed.
   const proc = Bun.spawn(argv, {
@@ -297,7 +298,10 @@ async function spawnReviewer(given: {
     detached: true,
   });
   reviewerGroups.add(proc.pid);
+  const started = ++reviewsStarted;
+  if (socket) reviewing.set(socket, started);
   proc.exited.then(() => {
+    if (socket && reviewing.get(socket) === started) reviewing.delete(socket);
     try {
       process.kill(-proc.pid, "SIGKILL");
     } catch {}
@@ -581,7 +585,7 @@ async function reviewNow(given: {
       last,
     );
     const input = told ? `${prompt}\n\n${told}` : prompt;
-    const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });
+    const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal, socket });
     const after = whyStopped();
     if (after) return after;
     const verdict = readVerdict(harness, folder, finished, input, given.strict);
@@ -611,12 +615,5 @@ export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review |
       body: "its usage limit is reached",
       reset: limit.reset,
     });
-  const { socket } = given;
-  const started = ++reviewsStarted;
-  if (socket) reviewing.set(socket, started);
-  return reviewNow(given)
-    .catch((error): Review => ({ verdict: "failed", body: errorText(error) }))
-    .finally(() => {
-      if (socket && reviewing.get(socket) === started) reviewing.delete(socket);
-    });
+  return reviewNow(given).catch((error): Review => ({ verdict: "failed", body: errorText(error) }));
 }
