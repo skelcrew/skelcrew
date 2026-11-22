@@ -374,13 +374,14 @@ test("letting a thread go on types its held changes in and stops the round limit
 
 // A PR the forge answered with on a later submit, such as one opened before the daemon stopped
 // and could save its number, may hold an older summary, so it is replaced.
-test("a thread submitted before once its record holds two submits, or comes from before the record", () => {
-  const fresh = thread({ round_log: [] });
-  const first = { ...fresh, ...submitted(fresh, "Add export", 1000, false) };
-  expect(submittedBefore(first)).toBe(false);
-  const second = { ...first, ...submitted(first, "Fix", 2000, false) };
-  expect(submittedBefore(second)).toBe(true);
-  expect(submittedBefore(thread({ round_log: null }))).toBe(true);
+// A new thread's row has no record yet, so its first submit starts one from before.
+test("a thread submitted before once its record holds two submits", () => {
+  for (const fresh of [thread({ round_log: [] }), thread({ round_log: null })]) {
+    const first = { ...fresh, ...submitted(fresh, "Add export", 1000, false) };
+    expect(submittedBefore(first)).toBe(false);
+    const second = { ...first, ...submitted(first, "Fix", 2000, false) };
+    expect(submittedBefore(second)).toBe(true);
+  }
 });
 
 // What the forge said while a round moved on is about the older round. Posting a verdict or

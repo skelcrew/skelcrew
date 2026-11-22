@@ -442,6 +442,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await startApp12();
     await until(
       () =>
+        asked(plugin).filter((q) => q.ask === "edit pr").length === 2 &&
         pushedRound() === "3" &&
         statuses().some((s) => s.sha === pushed() && s.state === "success"),
       longWait,

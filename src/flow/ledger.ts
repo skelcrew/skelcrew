@@ -445,12 +445,9 @@ export function reviewPending(thread: Thread): boolean {
 }
 
 // Returns whether the builder submitted before its latest submit, so a PR may already hold an
-// older summary. A row from before the record may have, so it counts as so.
-export const submittedBefore = (thread: Recorded) => {
-  const events = recordOf(thread);
-  const submits = events.filter((event) => event.kind === "submitted").length;
-  return submits > 1 || events.some((event) => event.kind === "before");
-};
+// older summary. A thread's first event starts its record from before, as a new row has none.
+export const submittedBefore = (thread: Recorded) =>
+  recordOf(thread).filter((event) => event.kind === "submitted").length > 1;
 
 // The builder submitted, which drops what the older review asked for. A flow with no review stage
 // saves its verdict as the submit starts, so the thread waits on checks from then on. A submit is
