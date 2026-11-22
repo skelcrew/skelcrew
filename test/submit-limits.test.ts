@@ -567,42 +567,50 @@ done
 shift
 exec "$@"`;
 
-test("a reviewer that ends while a process it left holds its output open gives its check slot back", async () => {
-  script("bwrap", fakeBwrap);
-  addApp();
-  config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
-  mkdirSync(codexHome(), { recursive: true });
-  writeFileSync(join(codexHome(), "held-1"), "");
-  writeFileSync(join(codexHome(), "linger-1"), "");
-  verdict(1, "approve", "Ready to merge.");
-  await startApp12();
-  const sessions = join(codexHome(), "sessions");
-  await until(() => existsSync(join(sessions, "prompt-1")), 30_000);
-  const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
-  const check = Bun.spawn([process.execPath, source("main.ts"), "check"], {
-    cwd: home,
-    env: {
-      ...env(),
-      SKELCREW_SOCKET: join(home, "run", "skelcrew", "reviews", short, "skelcrew.sock"),
-    },
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  running.push(check);
-  const holds = async () => (await skel(["ps"])).out.includes("APP-12/reviewer holds a check slot");
-  try {
-    await waitFor(holds, { timeout: 30_000 });
-    writeFileSync(join(sessions, "go-1"), "");
-    // The reviewer has ended, and the review waits on its output, which the process left holds.
-    await until(() => read(join(sessions, "linger-1")).trim() !== "");
-    await waitFor(async () => !(await holds()), { timeout: 30_000 });
-    expect(check.exitCode).toBeNull();
-    expect(thread().reviewing).not.toBeNull();
-    expect(read(join(home, "daemon.log"))).toContain(
-      "APP-12/reviewer gave back a check slot in simon/app: its review has ended",
-    );
-  } finally {
-    const left = Number(read(join(sessions, "linger-1")).trim());
-    if (left > 0) process.kill(left, "SIGKILL");
-  }
-}, 90_000);
+// Never inside Skelcrew's sandbox, where a stand-in for bubblewrap would show its agents the real
+// daemon. Linux only: a Mac runs sandbox-exec, not bubblewrap, and stops waiting on such output a
+// second after the reviewer ends.
+test.skipIf(insideSandbox || process.platform === "darwin")(
+  "a reviewer that ends while a process it left holds its output open gives its check slot back",
+  async () => {
+    script("bwrap", fakeBwrap);
+    addApp();
+    config(`repos: { simon/app: { test: ["sleep 600"] } }\n`);
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    writeFileSync(join(codexHome(), "linger-1"), "");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    const sessions = join(codexHome(), "sessions");
+    await until(() => existsSync(join(sessions, "prompt-1")), 30_000);
+    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const check = Bun.spawn([process.execPath, source("main.ts"), "check"], {
+      cwd: home,
+      env: {
+        ...env(),
+        SKELCREW_SOCKET: join(home, "run", "skelcrew", "reviews", short, "skelcrew.sock"),
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    running.push(check);
+    const holds = async () =>
+      (await skel(["ps"])).out.includes("APP-12/reviewer holds a check slot");
+    try {
+      await waitFor(holds, { timeout: 30_000 });
+      writeFileSync(join(sessions, "go-1"), "");
+      // The reviewer has ended, and the review waits on its output, which the process left holds.
+      await until(() => read(join(sessions, "linger-1")).trim() !== "");
+      await waitFor(async () => !(await holds()), { timeout: 30_000 });
+      expect(check.exitCode).toBeNull();
+      expect(thread().reviewing).not.toBeNull();
+      expect(read(join(home, "daemon.log"))).toContain(
+        "APP-12/reviewer gave back a check slot in simon/app: its review has ended",
+      );
+    } finally {
+      const left = Number(read(join(sessions, "linger-1")).trim());
+      if (left > 0) process.kill(left, "SIGKILL");
+    }
+  },
+  90_000,
+);
