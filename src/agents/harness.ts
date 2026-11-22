@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
-import { pi } from "./pi.ts";
+import { pi, removeLoginCopy } from "./pi.ts";
 
 // A harness's name, as your config and Skelcrew's database write it.
 export const HarnessName = z.enum(["claude", "codex", "pi"]);
@@ -15,4 +15,10 @@ const harnesses = { claude, codex, pi } satisfies Record<HarnessName, { name: Ha
 // screen shows. The type follows the name, so a caller sees exactly what that harness offers.
 export function harnessNamed<Name extends HarnessName>(name: Name): (typeof harnesses)[Name] {
   return harnesses[name];
+}
+
+// Removes what a harness kept of your login for the session `name`, once its thread ends: Pi's
+// copy of it. Claude Code and Codex keep none per session.
+export function forgetLogin(name: string): void {
+  removeLoginCopy(name);
 }

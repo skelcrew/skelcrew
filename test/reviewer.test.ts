@@ -616,6 +616,30 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(seen.join("\n")).toContain(issue.title);
   });
 
+  test("a Pi review's copy of your login goes with it, whether it approves or fails", async () => {
+    const piHome = join(home, ".local", "share", "skelcrew", "pi");
+    mkdirSync(piHome, { recursive: true });
+    writeFileSync(join(piHome, "auth.json"), '{"openrouter":{"type":"api_key","key":"k"}}');
+    const temporary = join(home, "tmp");
+    mkdirSync(temporary);
+    const before = process.env.TMPDIR;
+    process.env.TMPDIR = temporary;
+    try {
+      fakePi(['test -f "$PI_CODING_AGENT_DIR/auth.json" || exit 3', piAnswer]);
+      expect((await start({ harness: "pi" })).verdict).toBe("approve");
+      expect(readdirSync(temporary)).toEqual([]);
+      fakePi(["cat > /dev/null", 'test -f "$PI_CODING_AGENT_DIR/auth.json" || exit 3', "exit 1"]);
+      expect(await start({ harness: "pi" })).toEqual({
+        verdict: "failed",
+        body: "pi exited with 1",
+      });
+      expect(readdirSync(temporary)).toEqual([]);
+    } finally {
+      if (before === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = before;
+    }
+  });
+
   test("a Pi review that meets its usage limit is limited, with when it resets", async () => {
     const error = "rate limited (429), resets at Dec 31st, 2099 11:59 PM";
     fakePi([

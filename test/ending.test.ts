@@ -43,6 +43,26 @@ console.log(JSON.stringify({ status: readThread(db, fresh.folder).status, clone:
   expect(seen).toEqual({ status: "working", clone: true, notes: [] });
 });
 
+// A Pi builder's session folder stays for its conversation, but its copy of your login goes
+// with the thread, so no key is left behind. A thread that started over keeps its new one.
+test("an end removes the builder's copy of your login, and a late end leaves a new one alone", () => {
+  const seen = withThread(`const { writeFileSync } = await import("node:fs");
+const { dirname } = await import("node:path");
+const login = ${JSON.stringify(join(home, ".local", "share", "skelcrew", "pi-sessions"))} + "/" + thread.folder + "/auth.json";
+mkdirSync(dirname(login), { recursive: true });
+writeFileSync(login, '{"openrouter":{"type":"api_key","key":"k"}}');
+writeFileSync(dirname(login) + "/conversation.jsonl", "{}");
+await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
+const ended = { login: existsSync(login), conversation: existsSync(dirname(login) + "/conversation.jsonl") };
+const fresh = await startThread(db, { repo: "app", task: "t1" });
+const freshLogin = ${JSON.stringify(join(home, ".local", "share", "skelcrew", "pi-sessions"))} + "/" + fresh.folder + "/auth.json";
+mkdirSync(dirname(freshLogin), { recursive: true });
+writeFileSync(freshLogin, "{}");
+await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
+console.log(JSON.stringify({ ended, fresh: existsSync(freshLogin) }));`);
+  expect(seen).toEqual({ ended: { login: false, conversation: true }, fresh: true });
+});
+
 // A failure note still waiting for the lead, such as while the human reads further up in it,
 // would reach the lead after the thread started over, and the lead would ask for a start the
 // thread already had.

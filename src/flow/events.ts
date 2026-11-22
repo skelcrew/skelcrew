@@ -2,6 +2,7 @@
 // merge, sc stop or sc rm, which must cancel any typing still under way.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
+import { forgetLogin } from "../agents/harness.ts";
 import { agentRuns, stopSession } from "../agents/sessions.ts";
 import { errorText } from "../format.ts";
 import { cloneDir } from "../paths.ts";
@@ -328,10 +329,11 @@ export async function endThread(
     };
     record(db, thread.folder, ended, `${why}: ended the thread`);
   })();
-  // Its clone goes only once the end is saved, so a thread whose end failed keeps it. Nothing
-  // is waited on since the checks above, so a thread started over in this folder meanwhile
-  // can't lose its clone.
+  // Its clone and its builder's copy of your login go only once the end is saved, so a thread
+  // whose end failed keeps them. Nothing is waited on since the checks above, so a thread
+  // started over in this folder meanwhile can't lose them.
   rmSync(cloneOf(thread), { recursive: true, force: true });
+  forgetLogin(thread.folder);
 }
 
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
