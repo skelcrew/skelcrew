@@ -78,6 +78,8 @@ test("with no files, every setting is the built-in default", () => {
     plugins: [],
     host: "tmux",
     leadCanMerge: true,
+    notify: {},
+    digestAt: "08:00",
   });
 });
 
@@ -100,6 +102,8 @@ test("your config goes over the built-in defaults", () => {
     plugins: ["simon/herdr"],
     host: "herdr",
     leadCanMerge: true,
+    notify: {},
+    digestAt: "08:00",
   });
 });
 
@@ -124,6 +128,8 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     plugins: [],
     host: "tmux",
     leadCanMerge: true,
+    notify: {},
+    digestAt: "08:00",
   });
 });
 
@@ -158,6 +164,8 @@ test("a file sets only what is its own", () => {
     plugins: [],
     host: "tmux",
     leadCanMerge: true,
+    notify: {},
+    digestAt: "08:00",
   });
 });
 
