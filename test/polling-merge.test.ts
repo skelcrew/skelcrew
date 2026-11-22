@@ -296,7 +296,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
       db.run(
-        "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, round_log = NULL WHERE task = 12",
+        "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, round_log = NULL WHERE task = 't12'",
       );
       db.close();
       // Nobody will approve it, so neither the question nor the answer says so.
@@ -463,13 +463,12 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
       changes([issue12(), pr7]);
       await until(() => merges().length === 1, 30_000);
       await until(() => thread().status === "done");
-      await until(() =>
-        leadTyped().includes(
-          "APP-12 is done: #7 merged into main when ready, as the human asked. Its not-blocking findings are in APP-T1.",
-        ),
-      );
+      const filedAs =
+        /APP-12 is done: #7 merged into main when ready, as the human asked\. Its not-blocking findings are in APP-(\d+)\./;
+      await until(() => filedAs.test(leadTyped()));
+      const number = leadTyped().match(filedAs)?.[1];
       const remote = join(home, "github", "simon", "app.git");
-      expect(git(remote, "log", "-1", "--format=%B", "refs/skelcrew/tasks/t1")).toContain(
+      expect(git(remote, "log", "-1", "--format=%B", `refs/skelcrew/tasks/t${number}`)).toContain(
         "1. P2: Name the flag better",
       );
     }, 90_000);

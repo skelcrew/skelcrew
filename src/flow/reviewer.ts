@@ -23,13 +23,11 @@ export type Review =
 // resets, or null when the harness didn't say. The round holds it and tries again.
 export type Limited = { verdict: "limited"; body: string; reset: number | null };
 
-const severities = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"] as const;
-
 // One problem the reviewer found: what it is, how bad, and whether it holds the PR back. Only a
 // P1 can block, and in the flow's strict rounds every P1 does.
 const Finding = z.strictObject({
   finding: z.string().trim().min(1, "a finding is blank"),
-  severity: z.enum(severities),
+  severity: z.string().regex(/^P[1-9]\d*$/, "a severity is P1, P2, P3 and so on"),
   blocking: z.boolean(),
 });
 
@@ -86,7 +84,7 @@ const schema = JSON.stringify({
         type: "object",
         properties: {
           finding: { type: "string" },
-          severity: { type: "string", enum: severities },
+          severity: { type: "string" },
           blocking: { type: "boolean" },
         },
         required: ["finding", "severity", "blocking"],
@@ -106,7 +104,7 @@ function blockingTold(strict: boolean): string {
     ? "A P1 blocks whether the change brings it or the base branch already has it."
     : "This round is past the flow's strict rounds, so a P1 blocks only when this change brings it. Mark a P1 the base branch already has as not blocking.";
   return [
-    "Give each finding a severity and say whether it blocks. P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done. A failing check is a P1, and so is a change that breaks something the task says must stay true. Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below, down to P9.",
+    "Give each finding a severity, P1, P2, P3 and so on, and say whether it blocks. P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done. A failing check is a P1, and so is a change that breaks something the task says must stay true. Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below: P2, P3 and so on.",
     `Only a P1 can block. ${which} Every other finding doesn't block: the PR can merge with it, and Skelcrew files it for later.`,
     `Answer "changes" when at least one finding blocks. Otherwise answer "approve", with the findings that don't block, whatever CI's state: Skelcrew waits for every check to pass before the PR is ready.`,
   ].join("\n\n");

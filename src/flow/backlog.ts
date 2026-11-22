@@ -3,9 +3,10 @@
 // shows the same backlog, and the daemon keeps a copy in its database for the list to read.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import type { Repository } from "../db.ts";
+import { fillIssues, type Repository } from "../db.ts";
 import { errorText } from "../format.ts";
 import { cloneDir } from "../paths.ts";
+import { trackerOf } from "../plugins/ask.ts";
 import {
   claimedAt,
   claimedNames,
@@ -15,6 +16,8 @@ import {
   makeCommit,
   moveRefs,
   remoteRef,
+  renamedTo,
+  renames,
   startedRef,
 } from "./git.ts";
 import { lastReviewed } from "./ledger.ts";
@@ -102,6 +105,77 @@ async function claimOldNames(db: Database, repository: Repository, folder: strin
   }
 }
 
+// Gives each task this machine holds under a name from before every task took a number of
+// Skelcrew's, such as 12, named after its issue, or wr4, a number claimed on the remote, as any new
+// task gets. The remote records which old name each number is for, so another machine holding
+// the same task gives it the same number. A task this machine holds under a number from before
+// Skelcrew claimed names, such as t1, whose number another machine gave a task of an old name
+// meanwhile, is another task: it is renumbered too, so no two tasks share a name. Each keeps its
+// old name as its alias, which still reaches it here, and its folder, branch and session, which
+// go by the folder, and the item the lead posted about it, if any. Every change to a thread goes
+// by its folder, so work under way carries on.
+// Otherwise the oldest goes first. Each refresh runs it, and it asks the remote nothing once every task
+// this machine holds has a number of its own.
+async function renumberTasks(db: Database, repository: Repository, folder: string) {
+  const { owner, repo } = repository;
+  const where = "WHERE owner = ? AND repo = ? AND task = ?";
+  // An item the lead posted about an issue no task has, by the issue's ID alone, such as 12, is
+  // about #12, as such an issue goes by now.
+  db.run(
+    `UPDATE OR IGNORE asks SET task = '#' || task WHERE owner = ? AND repo = ? AND task != ''
+      AND task NOT GLOB '#*' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner = asks.owner
+        AND t.repo = asks.repo AND CAST(t.task AS TEXT) = asks.task)
+      AND NOT EXISTS (SELECT 1 FROM backlog b WHERE b.owner = asks.owner AND b.repo = asks.repo
+        AND b.task = asks.task)`,
+    [owner, repo],
+  );
+  const held = db
+    .query("SELECT task, alias FROM tasks WHERE owner = ? AND repo = ? ORDER BY rowid")
+    .all(owner, repo)
+    .map((row) => z.object({ task: z.coerce.string(), alias: z.string().nullable() }).parse(row));
+  const named = held.filter(({ task }) => /^t\d+$/.test(task));
+  const given =
+    named.length > 0 && named.some(({ task }) => !checked.has(`${owner}/${repo}/${task}`))
+      ? await renames(db, repository)
+      : new Map<string, string>();
+  // A task held under a number another machine gave goes first, so the task that number was
+  // given for, if this machine holds it too, finds it free. Only a task found to keep its number,
+  // or given a new one, counts as checked, so a renumbering that fails is tried at the next refresh.
+  const clashing = named.filter(({ task, alias }) => {
+    const to = given.get(task);
+    return to !== undefined && to !== alias;
+  });
+  for (const { task } of named)
+    if (!clashing.some((clash) => clash.task === task)) checked.add(`${owner}/${repo}/${task}`);
+  const old = [...clashing, ...held.filter(({ task }) => !/^t\d+$/.test(task))];
+  for (const { task: alias } of old) {
+    // A number another machine gave in place of an old name is that task's, not this one's, so
+    // this task's own number records nothing.
+    const renaming = /^t\d+$/.test(alias) ? undefined : alias;
+    const task = await claimOwnName(db, repository, folder, undefined, undefined, renaming);
+    db.transaction(() => {
+      fillIssues(db);
+      // An issue GitHub's plugin numbered is written as GitHub writes it, as writtenAs does.
+      const github = trackerOf(db, repository) === "github" ? 1 : 0;
+      db.run(
+        `UPDATE tasks SET task = ?, alias = ?, issue_ref = COALESCE(issue_ref, CASE WHEN ?
+          AND issue GLOB '[0-9]*' AND issue NOT GLOB '*[^0-9]*' THEN '#' || issue END) ${where}`,
+        [task, alias, github, owner, repo, alias],
+      );
+      db.run(`UPDATE threads SET task = ? ${where}`, [task, owner, repo, alias]);
+      db.run(`UPDATE OR REPLACE asks SET task = ? ${where}`, [task, owner, repo, alias]);
+    })();
+    checked.add(`${owner}/${repo}/${task}`);
+    console.log(
+      `renamed ${taskName(repository.name, alias)} to ${taskName(repository.name, task)}, its number`,
+    );
+  }
+}
+
+// The numbered tasks this daemon has looked for in the remote's renames, as owner/repo/task, so
+// each refresh asks the remote only about tasks it hasn't looked at yet.
+const checked = new Set<string>();
+
 // Claims the next name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in
 // the folder, and returns it, such as t104. It is a t and the next number after every one claimed
 // on the remote, which every machine sees, and every one this machine's tasks hold. A brand-new
@@ -109,16 +183,21 @@ async function claimOldNames(db: Database, repository: Repository, folder: strin
 // claimed and live only on the machine that started them, so where this machine holds one,
 // numbers start at 100, above all of them. Only one machine can claim a name, so
 // the claims are read again while another machine claimed first. `filed` is the task to keep in
-// the backlog under the name, as claimName takes it.
+// the backlog under the name, as claimName takes it. `renaming` is the old name of a task that
+// gets the name, as claimName takes it: once another machine renamed that task, its name is
+// returned instead, so the task has the same name on every machine.
 export async function claimOwnName(
   db: Database,
   repository: Repository,
   folder: string,
   filed?: string,
   noting?: (task: string, commit: string) => void,
+  renaming?: string,
 ): Promise<string> {
   const held = heldNames(db, repository);
   while (true) {
+    const renamed = renaming === undefined ? null : await renamedTo(db, repository, renaming);
+    if (renamed !== null) return renamed;
     const claims = await claimedNames(db, repository);
     // A repository with old names, claimed or only held here, numbers its new ones above 99, as
     // another machine may hold old names it hasn't claimed yet.
@@ -127,7 +206,8 @@ export async function claimOwnName(
     const old = claims.old.length > 0 || unclaimed;
     const task = `t${Math.max(old ? 99 : 0, ...numbers) + 1}`;
     const note = noting && ((commit: string) => noting(task, commit));
-    if (await claimName(db, repository, folder, task, claims.last, filed, note)) return task;
+    if (await claimName(db, repository, folder, task, claims.last, filed, note, false, renaming))
+      return task;
   }
 }
 
@@ -275,6 +355,9 @@ async function refreshInTurn(db: Database, repository: Repository, folder: strin
   // A failed claim of an old name stops nothing else, and is tried again at the next refresh.
   await claimOldNames(db, repository, folder).catch((error) =>
     console.log(`couldn't claim ${repository.name}'s old task names: ${errorText(error)}`),
+  );
+  await renumberTasks(db, repository, folder).catch((error) =>
+    console.log(`couldn't renumber ${repository.name}'s tasks: ${errorText(error)}`),
   );
   const { filed, started } = await fetchBacklog(db, repository, folder);
   const tasks = filed.flatMap(({ name, commit, text }) => {

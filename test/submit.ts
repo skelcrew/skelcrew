@@ -13,6 +13,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  numberedBefore,
   read,
   runSkel,
   source,
@@ -233,7 +234,7 @@ export const until = (done: () => boolean, timeout = 30_000) =>
 // written, or one that gives no reason, is left out.
 export function lastSteps(): string {
   const threads = join(data(), "threads");
-  const log = existsSync(join(threads, "app-12.log")) ? "app-12.log" : `app-t1.log`;
+  const log = existsSync(join(threads, "app-12.log")) ? "app-12.log" : `app-1.log`;
   const lines = read(join(threads, log)).split("\n");
   const steps: string[] = [];
   for (const line of lines.slice(-12))
@@ -262,6 +263,8 @@ export function addApp(files: Record<string, string> = {}): string {
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(github(), "simon", "app.git"));
+  // Its task on issue #12 is APP-12.
+  numberedBefore(join(github(), "simon", "app.git"), 11);
   git(work, "remote", "add", "origin", join(github(), "simon", "app.git"));
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote, claimed) VALUES ('app', 'simon', 'app', 1, 'github', 'https://github.com/simon/app.git', 1)");`;

@@ -101,7 +101,7 @@ async function startLabeled(
   // makes. One for a task sc rm removed, as done, is left to the step below.
   db.run(
     `DELETE FROM claims WHERE owner = ? AND repo = ? AND EXISTS (SELECT 1 FROM threads t
-      WHERE t.owner = claims.owner AND t.repo = claims.repo AND CAST(t.task AS TEXT) = claims.task
+      WHERE t.owner = claims.owner AND t.repo = claims.repo AND t.issue = claims.task
         AND t.status NOT IN ('queued', 'done'))`,
     [owner, repo],
   );
@@ -116,7 +116,7 @@ async function startLabeled(
   const asked = new Set(toStart.map((task) => task.id));
   const stranded = db
     .query(`SELECT c.task AS id, t.folder FROM claims c LEFT JOIN task_threads t ON t.owner = c.owner
-        AND t.repo = c.repo AND CAST(t.task AS TEXT) = c.task
+        AND t.repo = c.repo AND t.issue = c.task
       WHERE c.owner = ? AND c.repo = ? AND (t.folder IS NULL OR t.status = 'done')`)
     .all(owner, repo)
     .map((row) => z.object({ id: z.string(), folder: z.string().nullable() }).parse(row))
@@ -126,7 +126,7 @@ async function startLabeled(
     })
     .map(({ id }) => id);
   for (const id of stranded) {
-    const name = taskName(repository.name, id);
+    const name = taskName(repository.name, `#${id}`);
     const note = `${name}'s claim was cut short, and nothing asks Skelcrew to start it now, so Skelcrew can't tell if this machine holds it. To start it, sc start ${name}.`;
     console.log(note);
     db.transaction(() => {
@@ -151,7 +151,7 @@ async function startLabeled(
       return null;
     });
     if (claimed === null) continue;
-    const name = taskName(repository.name, task.id);
+    const name = taskName(repository.name, `#${task.id}`);
     // The claim is forgotten in the same transaction as the note is saved, so a stop between the
     // two can't leave the claim forgotten and the lead never told.
     const forgetAndTell = (note: string, urgent = false) =>
@@ -186,17 +186,19 @@ async function startLabeled(
     // The claim is this daemon's now, so a thread that fails to start isn't started by a
     // later poll either: on another machine, or after a restart, its claim reads as taken. So
     // the lead hears why, and can start it with sc start once that is fixed.
-    const thread = await startThread(db, { repo: fullName, task: task.id }, true).catch((error) => {
-      console.log(
-        `couldn't start ${task.id} in ${fullName}, and its label won't start it again; sc start does: ${errorText(error)}`,
-      );
-      forgetAndTell(
-        `couldn't start ${name} from its label; once fixed, sc start ${name}: ${errorText(error)}`,
-        true,
-      );
-      passed.add(key);
-      return null;
-    });
+    const thread = await startThread(db, { repo: fullName, task: `#${task.id}` }, true).catch(
+      (error) => {
+        console.log(
+          `couldn't start ${task.id} in ${fullName}, and its label won't start it again; sc start does: ${errorText(error)}`,
+        );
+        forgetAndTell(
+          `couldn't start ${name} from its label; once fixed, sc start ${name}: ${errorText(error)}`,
+          true,
+        );
+        passed.add(key);
+        return null;
+      },
+    );
     if (thread === null) continue;
     // Claimed already, so only assigned.
     assignIssue(db, thread, false);

@@ -104,7 +104,7 @@ const Owes = z.object({ owes: z.coerce.boolean() });
 export function leaveQueue(db: Database, skip: (folder: string) => boolean): Thread[] {
   const queued = db
     .query(`SELECT *, EXISTS (SELECT 1 FROM claims c WHERE c.owner = t.owner AND c.repo = t.repo
-          AND c.task = CAST(t.task AS TEXT)) AS owes
+          AND c.task = t.issue) AS owes
       FROM task_threads t WHERE status = 'queued' ORDER BY queued_since, rowid`)
     .all()
     .map((row) => ({ thread: Thread.parse(row), ...Owes.parse(row) }));
@@ -172,11 +172,11 @@ export function claimQueued(
   const key = claimKey(thread);
   const under = claiming.get(key);
   if (under) return under;
-  const { owner, repo, task } = thread;
+  const { owner, repo, issue } = thread;
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
-  if (db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) === null)
+  if (issue === null || db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, issue) === null)
     return Promise.resolve();
-  const ask = claimTask(db, repositoryOf(db, thread), task)
+  const ask = claimTask(db, repositoryOf(db, thread), issue)
     .then(async (took) => {
       // sc rm may have taken it out of the queue while the tracker answered. One still removing
       // it decides first: the task stays queued, and owes its claim, only if that removal fails.
@@ -187,7 +187,7 @@ export function claimQueued(
       const name = threadName(db, thread);
       db.transaction(() => {
         // A claim saved since belongs to the task started again, which still owes it.
-        if (same) db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+        if (same) db.run(`DELETE FROM claims ${where}`, [owner, repo, issue]);
         if (!taken) return;
         record(
           db,
@@ -228,7 +228,7 @@ export function claimUnderWay(thread: Thread): boolean {
 export function claimOwed(db: Database, sessions: string): void {
   const owing = db
     .query(`SELECT * FROM task_threads t WHERE status = 'queued' AND EXISTS (SELECT 1 FROM claims c
-        WHERE c.owner = t.owner AND c.repo = t.repo AND c.task = CAST(t.task AS TEXT))`)
+        WHERE c.owner = t.owner AND c.repo = t.repo AND c.task = t.issue)`)
     .all()
     .map((row) => Thread.parse(row));
   for (const thread of owing)

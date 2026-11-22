@@ -328,7 +328,7 @@ describe("sc ls", () => {
     expect(listed).toMatchObject([
       { task: "APP-9", stage: "working" },
       { task: "APP-12", stage: "working", title: "Add export" },
-      { task: "APP-10", stage: "issue", title: "Fix login" },
+      { task: "APP#10", stage: "issue", title: "Fix login" },
     ]);
   });
 
@@ -340,12 +340,12 @@ describe("sc ls", () => {
     const listed = await skel(["ls"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "TASK    STAGE    TITLE                                     STATUS\n" +
-        "APP-9   working  Send people back to the page they came …  failed\n" +
-        "APP-12  working  JSON export                               working\n" +
-        "SITE-7  working  New landing page                          waiting · needs you\n" +
-        "SITE-8  issue    Fix the footer\n" +
-        "APP-10  issue    Fix login\n",
+      "TASK    ISSUE  STAGE    TITLE                                     STATUS\n" +
+        "APP-9   #9     working  Send people back to the page they came …  failed\n" +
+        "APP-12  #12    working  JSON export                               working\n" +
+        "SITE-7  #7     working  New landing page                          waiting · needs you\n" +
+        "SITE#8  #8     issue    Fix the footer\n" +
+        "APP#10  #10    issue    Fix login\n",
     );
     // They come from Skelcrew's copy, with no call to GitHub.
     expect(read(join(home, "calls"))).not.toContain("issue");
@@ -360,10 +360,10 @@ describe("sc ls", () => {
     const listed = await skel(["ls", "app"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "TASK    STAGE    TITLE                                     STATUS\n" +
-        "APP-10  issue    Fix login                                 done\n" +
-        "APP-9   working  Send people back to the page they came …  failed\n" +
-        "APP-12  working  JSON export                               working\n",
+      "TASK    ISSUE  STAGE    TITLE                                     STATUS\n" +
+        "APP-10  #10    issue    Fix login                                 done\n" +
+        "APP-9   #9     working  Send people back to the page they came …  failed\n" +
+        "APP-12  #12    working  JSON export                               working\n",
     );
     const all = JSON.parse((await skel(["ls", "app", "--all", "--json"])).out);
     expect(all.map((row: { task: string }) => row.task)).toEqual([
@@ -377,12 +377,12 @@ describe("sc ls", () => {
   // The tracker can keep a merged task's issue open, such as when the PR didn't close it. The
   // task is merged all the same, so only --all shows it.
   test("--all adds a merged task whose issue is still open", async () => {
-    sql(`UPDATE threads SET status = 'done' WHERE task = '12';
-UPDATE tasks SET merged = 1 WHERE task = '12'`);
+    sql(`UPDATE threads SET status = 'done' WHERE task = 't12';
+UPDATE tasks SET merged = 1 WHERE task = 't12'`);
     serve();
     await untilAnswers();
     const listed = JSON.parse((await skel(["ls", "app", "--json"])).out);
-    expect(listed.map((row: { task: string }) => row.task)).toEqual(["APP-9", "APP-10"]);
+    expect(listed.map((row: { task: string }) => row.task)).toEqual(["APP-9", "APP#10"]);
     const all = JSON.parse((await skel(["ls", "app", "--all", "--json"])).out);
     expect(all).toContainEqual(
       expect.objectContaining({ task: "APP-12", stage: "merged", issue: "#12" }),
@@ -400,7 +400,7 @@ UPDATE tasks SET merged = 1 WHERE task = '12'`);
         stage: "working",
         title: "Send people back to the page they came from after signing in",
         short: null,
-        issue: null,
+        issue: "#9",
         thread: { status: "failed", needsYou: false, needsYouFor: null, queued: false },
         pr: null,
         checks: null,
@@ -420,7 +420,7 @@ UPDATE tasks SET merged = 1 WHERE task = '12'`);
         asks: false,
       },
       {
-        task: "APP-10",
+        task: "APP#10",
         stage: "issue",
         title: "Fix login",
         short: null,
@@ -440,7 +440,7 @@ UPDATE tasks SET merged = 1 WHERE task = '12'`);
     serve();
     await untilAnswers();
     expect((await skel(["ls", "site"])).out).toBe(
-      "TASK    STAGE    TITLE             STATUS\nSITE-7  working  New landing page  waiting · needs you\n",
+      "TASK    ISSUE  STAGE    TITLE             STATUS\nSITE-7  #7     working  New landing page  waiting · needs you\n",
     );
     sql("DELETE FROM threads WHERE repo = 'site'");
     expect((await skel(["ls", "site"])).out).toBe("There are no tasks.\n");
@@ -478,7 +478,7 @@ describe("sc show", () => {
     // Each started task saved its issue's words as it started.
     sql(`UPDATE tasks SET title = 'Add export', body = 'Export threads as JSON.
 
-Keep it small.' WHERE repo = 'app' AND task = '12';
+Keep it small.' WHERE repo = 'app' AND task = 't12';
 UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo = 'site'`);
   });
 
@@ -487,7 +487,7 @@ UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo =
   // the copy. Starting over leaves the lead's messages behind, so they don't show.
   test("shows a failed thread's task as it started, after its issue was edited or closed", async () => {
     const updates = JSON.stringify([{ from: "lead", at: 0, text: "Keep the old page too." }]);
-    sql(`UPDATE tasks SET body = 'Back to the page.', updates = '${updates}' WHERE task = '9'`);
+    sql(`UPDATE tasks SET body = 'Back to the page.', updates = '${updates}' WHERE task = 't9'`);
     issue("app", 9, "Redirect after login", "Edited.");
     serve();
     await untilAnswers();
@@ -509,12 +509,12 @@ UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo =
   // still came from its issue, which its PR still closes.
   test("a task started over with no tracker keeps the link to its issue and the line that closes it", async () => {
     const link = "https://github.com/simon/app/issues/3";
-    sql(`UPDATE tasks SET issue_link = '${link}', closes = 'Closes #3' WHERE task = '3'`);
+    sql(`UPDATE tasks SET issue_link = '${link}', closes = 'Closes #3' WHERE task = 't3'`);
     const code = `import { openDb } from ${JSON.stringify(dbFile)};
 const { startThread } = await import(${JSON.stringify(source("flow/builder.ts"))});
 const { threadTask } = await import(${JSON.stringify(source("flow/copy.ts"))});
 const db = openDb();
-console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).closes);`;
+console.log(threadTask(db, await startThread(db, { repo: "app", task: "t3" })).closes);`;
     const started = Bun.spawnSync([process.execPath, "-e", code], {
       env: env(),
       stdout: "pipe",
@@ -552,8 +552,8 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     expect((await skel(["show", "SITE-7"])).out).toBe(shown.out);
     expect((await skel(["show", "Site-7"])).out).toBe(shown.out);
     const own = await skel(["show", "app-t4"]);
-    expect(own.out).toStartWith("APP-T4  Rate limit the API\n");
-    expect((await skel(["show", "APP-T4"])).out).toBe(own.out);
+    expect(own.out).toStartWith("APP-4  Rate limit the API\n");
+    expect((await skel(["show", "APP-4"])).out).toBe(own.out);
   });
 
   // Two repositories whose names differ only in case, such as App and app, saved before Skelcrew
@@ -587,9 +587,70 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
         "\nDescription\nMake it calm.\n",
     );
     expect(read(join(home, "calls"))).not.toContain("issues");
-    expect((await skel(["show", "APP-10"])).out).toBe(
-      "APP-10  Fix login\nStage   issue\nIssue   #10  https://github.com/simon/app/issues/10\nThread  none\nPR      none\n",
+    expect((await skel(["show", "APP#10"])).out).toBe(
+      "APP#10  Fix login\nStage   issue\nIssue   #10  https://github.com/simon/app/issues/10\nThread  none\nPR      none\n",
     );
+  });
+
+  // A task's issue is a link beside it, written as its tracker writes it, whatever the tracker:
+  // here one whose IDs are opaque, written as ENG-7. The task keeps its own number, and the issue,
+  // as the tracker writes it, reaches it. It still shows so once the issue closed and left the copy.
+  test("shows a task's issue as its tracker writes it, as a link, after it closed too", async () => {
+    const link = "https://linear.app/simon/issue/ENG-7";
+    const item = {
+      kind: "task",
+      id: "a1b2c3",
+      ref: "ENG-7",
+      title: "Add search",
+      body: "Find notes.",
+      state: "open",
+      author: null,
+      labels: [],
+      link,
+      created: "2026-11-05T10:00:00Z",
+      updated: "2026-11-05T10:00:00Z",
+      closes: "Fixes ENG-7",
+    };
+    sql(`INSERT INTO items (owner, repo, kind, id, state, created, item)
+  VALUES ('simon', 'app', 'task', 'a1b2c3', 'open', '${item.created}', '${JSON.stringify(item)}');
+${threadSql({ task: "t20", status: "stopped", issue: "a1b2c3", issue_ref: "ENG-7", issue_link: link, title: "Add search", body: "Find notes." })}`);
+    serve();
+    await untilAnswers();
+    const shown = await skel(["show", "app-20"]);
+    expect(shown.err).toBe("");
+    expect(shown.out).toStartWith(
+      `APP-20  Add search\nStage   working\nIssue   ENG-7  ${link}\nThread  APP-20/builder  stopped\n`,
+    );
+    expect((await skel(["show", "app#eng-7"])).out).toBe(shown.out);
+    expect((await skel(["show", "app#a1b2c3"])).out).toBe(shown.out);
+    const issueOf = async () =>
+      JSON.parse((await skel(["ls", "app", "--json"])).out).find(
+        (row: { task: string }) => row.task === "APP-20",
+      )?.issue;
+    expect(await issueOf()).toBe("ENG-7");
+    sql("DELETE FROM items WHERE id = 'a1b2c3'");
+    expect((await skel(["show", "app-20"])).out).toContain(`\nIssue   ENG-7  ${link}\n`);
+    expect(await issueOf()).toBe("ENG-7");
+  });
+
+  // A task renamed from an old name of any shape, such as app-abc123 for an issue whose ID is
+  // abc123, is reached by it. A tracker that doesn't say how it writes its IDs has them shown as
+  // they are, never as GitHub writes its own.
+  test("reaches a task by an old name of letters and digits, and shows its issue's ID as it is", async () => {
+    sql(
+      threadSql({
+        task: "t30",
+        status: "stopped",
+        alias: "abc123",
+        issue: "abc123",
+        title: "Old work",
+      }),
+    );
+    serve();
+    await untilAnswers();
+    const shown = await skel(["show", "app-abc123"]);
+    expect(shown.err).toBe("");
+    expect(shown.out).toStartWith("APP-30  Old work\nStage   working\nIssue   abc123\n");
   });
 
   test("shows a task as JSON for tools", async () => {
@@ -613,8 +674,8 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
       filed: null,
       item: null,
     });
-    expect(JSON.parse((await skel(["show", "--json", "APP-10"])).out)).toMatchObject({
-      task: "APP-10",
+    expect(JSON.parse((await skel(["show", "--json", "APP#10"])).out)).toMatchObject({
+      task: "APP#10",
       stage: "issue",
       threads: [],
       body: "",
@@ -697,7 +758,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
       timeout: 15_000,
     });
     const shown = JSON.parse((await skel(["show", "app-t1", "--json"])).out);
-    expect(shown).toMatchObject({ task: "APP-T1", title: "Add docs", issue: null });
+    expect(shown).toMatchObject({ task: "APP-1", title: "Add docs", issue: null });
     expect(shown.body).toMatch(
       /^A page\.\n\n## Changes to the task from the lead.*\n\nTwo pages\.$/s,
     );
@@ -707,8 +768,8 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
   // never see its old messages. A task whose issue closed shows what its thread saved.
   test("shows a done task without its messages, and one whose issue closed from what it saved", async () => {
     const updates = JSON.stringify([{ from: "lead", at: 0, text: "Keep the CSV export too." }]);
-    sql(`UPDATE threads SET status = 'done' WHERE task IN ('12', '3');
-UPDATE tasks SET updates = '${updates}', body = 'Fix the typo.' WHERE task IN ('12', '3')`);
+    sql(`UPDATE threads SET status = 'done' WHERE task IN ('t12', 't3');
+UPDATE tasks SET updates = '${updates}', body = 'Fix the typo.' WHERE task IN ('t12', 't3')`);
     serve();
     await untilAnswers();
     const shown = await skel(["show", "app-12"]);
@@ -731,8 +792,8 @@ ${threadSql({ task: "t2", status: "done", title: "Add tests" })}
 UPDATE tasks SET merged = 1 WHERE task = 't2'`);
     serve();
     await untilAnswers();
-    expect((await skel(["show", "APP-T1"])).out).toBe(
-      "APP-T1  Add docs\nStage   closed\nIssue   none\nThread  APP-T1/builder  done\nPR      none\n",
+    expect((await skel(["show", "APP-1"])).out).toBe(
+      "APP-1  Add docs\nStage   closed\nIssue   none\nThread  APP-1/builder  done\nPR      none\n",
     );
     expect(JSON.parse((await skel(["show", "app-t2", "--json"])).out)).toMatchObject({
       stage: "merged",
@@ -1013,10 +1074,10 @@ describe("with a forge", () => {
     const listed = await skel(["ls", "app"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "TASK    STAGE    TITLE        STATUS\n" +
-        "APP-14  working  Fix login    waiting · #33 · CI running · reviewing r2\n" +
-        "APP-12  working  JSON export  waiting · #31 · CI failed · changes r3\n" +
-        "APP-9   working  Old          failed\n",
+      "TASK    ISSUE  STAGE    TITLE        STATUS\n" +
+        "APP-14  #14    working  Fix login    waiting · #33 · CI running · reviewing r2\n" +
+        "APP-12  #12    working  JSON export  waiting · #31 · CI failed · changes r3\n" +
+        "APP-9   #9     working  Old          failed\n",
     );
   });
 
@@ -1054,7 +1115,7 @@ describe("with a forge", () => {
       at: "2025-11-16T11:00:00.000Z",
     });
     expect((await skel(["ls", "site"])).out).toContain(
-      "SITE-7  working  Add docs  waiting · approved r1\n",
+      "SITE-7  #7     working  Add docs  waiting · approved r1\n",
     );
     expect((await skel(["show", "app-9"])).out).toContain("\nPR      none\n");
     const gone = await skel(["show", "app-99"]);
@@ -1248,7 +1309,7 @@ describe.skipIf(insideSandbox)("from the lead", () => {
     threads();
     issue("app", 12, "Add export", "As JSON");
     // app-12 saved its issue's words as it started.
-    sql("UPDATE tasks SET body = 'As JSON' WHERE repo = 'app' AND task = '12'");
+    sql("UPDATE tasks SET body = 'As JSON' WHERE repo = 'app' AND task = 't12'");
     writeFileSync(
       join(home, "bin", "claude"),
       `#!/bin/sh

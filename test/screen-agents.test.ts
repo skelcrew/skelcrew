@@ -59,7 +59,7 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   const left = (y: number) => lines[y]?.slice(2, sidebar).trimEnd();
   // The lead heads the sidebar, below a blank line, then a line across and how many tasks are
   // where. Then a blank line and the seven stages, the task queue among them, with only Building
-  // open. Nothing needs you, so Needs you has no heading.
+  // open, and no blank line between them. Nothing needs you, so Needs you has no heading.
   expect(left(2)).toBe("");
   expect(lines[2]).toContain("I am lead");
   expect(left(3)).toMatch(/^ ▸ ◆ Lead\b/);
@@ -74,9 +74,8 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   // Building already says it works, and it has no time yet, so nothing else shows under it.
   expect(left(12)).toBe("");
   expect(left(13)).toMatch(/^ {3}[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/);
-  expect(left(15)).toBe("");
-  expect(left(16)).toBe(" 3 Reviewing  0");
-  expect(left(19)).toBe(" 6 Done       1");
+  expect(left(15)).toBe(" 3 Reviewing  0");
+  expect(left(18)).toBe(" 6 Done       1");
   expect(selected()).toMatch(/^▸ ◆ Lead\b/);
   await until(() => litBox() === "right", "the right side's box to light up");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
@@ -102,18 +101,20 @@ test("Alt-Down and Alt-Up move the sidebar, and Enter on a task types to its bui
   await until(() => existsSync(join(home, "app-12.typed")), "the typing");
 });
 
-test("a click on a task shows its details, and a second click types to its builder", async () => {
+test("a click on a task types to its builder, and a click on the lead types to the lead", async () => {
   open("lead");
   await ready("lead");
-  const y = seen()
-    .split("\n")
-    .findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(line));
+  const lines = seen().split("\n");
+  const y = lines.findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(line));
+  const lead = lines.findIndex((line) => line.includes("◆ Lead"));
   click(5, y + 1);
-  await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
-  click(5, y + 1);
-  await until(() => !onDetails() && seen().includes("I am app-7"), "app-7");
+  await until(() => / 7\b/.test(selected()) && seen().includes("I am app-7"), "app-7");
   type("hello\r");
-  await until(() => existsSync(join(home, "app-7.typed")), "the typing");
+  await until(() => read("app-7.typed").endsWith("\n"), "the typing");
+  click(5, lead + 1);
+  await until(() => onLead() && seen().includes("I am lead"), "the lead");
+  type("back\r");
+  await until(() => read("lead.typed").endsWith("\n"), "the typing to the lead");
 });
 
 // A builder on a plugin's host is reached from the sidebar too: Enter on its row runs the host's
@@ -312,7 +313,7 @@ test("a lead on a plugin's host whose host fails from the start isn't brought ba
 });
 
 test("the screen starts on the lead's row, even while a task needs you", async () => {
-  sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 't12'");
   open("lead");
   await ready("lead");
   // Its builder still works, so its mark may spin, in the yellow of needs you.
@@ -324,7 +325,7 @@ test("the screen starts on the lead's row, even while a task needs you", async (
 test("updates on its own, with needs you in the sidebar", async () => {
   open("lead");
   await ready("lead");
-  sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 't12'");
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   const yellow = () =>
     [..."●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"].some((mark) => colours().includes(`\x1b[38;5;136m${mark}`));
@@ -333,7 +334,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("Needs you  1");
   // Its tab says so too, as other repositories' tabs would.
   expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {4}Skelcrew .* {2}app •1$/);
-  sql("UPDATE threads SET status = 'done' WHERE task = 7");
+  sql("UPDATE threads SET status = 'done' WHERE task = 't7'");
   await until(() => !/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(seen()), "the done thread to go");
 });
 
@@ -820,14 +821,14 @@ test("a task that ends while you are on it stays yours, under Done, which opens"
   open("lead");
   await ready("lead");
   await toSecondThread();
-  sql("UPDATE threads SET status = 'done' WHERE task = 7");
+  sql("UPDATE threads SET status = 'done' WHERE task = 't7'");
   await until(() => seen().includes("6 Done       2"), "app-7 to end");
   await until(() => / 7\b/.test(selected()), "the sidebar to stay on APP-7");
   expect(seen()).toMatch(/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
 });
 
 test("Enter on a task whose builder isn't running says so on the right, until the next key", async () => {
-  sql("UPDATE threads SET status = 'failed' WHERE task = 12");
+  sql("UPDATE threads SET status = 'failed' WHERE task = 't12'");
   tmux(agents, "kill-session", "-t", "=app-12");
   open("lead");
   await ready("lead");

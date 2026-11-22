@@ -634,7 +634,7 @@ function leadBlock(
 // Returns the lead and the rows as lines for a place `width` columns wide and `height` tall,
 // scrolled from `top`, on the row at `here`. With `spin`, the mark of an agent at work is the
 // spinner's first frame, and `spins` says where each is, so the screen's sidebar can turn them
-// alone.
+// alone. A blank line parts Needs you from the stages, which follow one another with none.
 export function drawRows(
   shownRows: Row[],
   headings: Heading[],
@@ -696,7 +696,8 @@ export function drawRows(
             }))
           : [],
       );
-      const after = parted && ours.length > 0 ? [blankLine] : [];
+      const inbox = parted && heading.section === "needs you" && ours.length > 0;
+      const after = inbox ? [blankLine] : [];
       const plain = headingLine(heading, countWidth, width);
       const text = onHeading === heading.section ? shaded(plain, width) : plain;
       const line = { text, row: null, target: { section: heading.section } };

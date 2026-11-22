@@ -345,12 +345,13 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   test("an approval lists the findings that don't block, and changes need one that does", async () => {
     const minor = '{"finding":"The flag\'s name is long.","severity":"P2","blocking":false}';
     const bug = '{"finding":"The retry never stops.","severity":"P1","blocking":true}';
-    fakeCodex(`{"verdict":"approve","body":"Fine.","findings":[${minor}]}`);
+    const least = '{"finding":"Add a comma.","severity":"P10","blocking":false}';
+    fakeCodex(`{"verdict":"approve","body":"Fine.","findings":[${minor},${least}]}`);
     expect(await start()).toEqual({
       verdict: "approve",
       body: "Fine.",
       findings: [],
-      notBlocking: ["P2: The flag's name is long."],
+      notBlocking: ["P2: The flag's name is long.", "P10: Add a comma."],
     });
     fakeCodex(`{"verdict":"changes","body":"One bug.","findings":[${bug},${minor}]}`);
     expect(await start()).toEqual({
@@ -404,6 +405,11 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       "a P1 finding must block until the flow's strict rounds are over",
     ],
     [
+      "a severity that isn't P and a number",
+      '{"verdict":"approve","body":"Fine.","findings":[{"finding":"Rename it.","severity":"low","blocking":false}]}',
+      "a severity is P1, P2, P3 and so on",
+    ],
+    [
       "a finding as text alone",
       '{"verdict":"changes","body":"See below.","findings":["The retry has no test."]}',
       "shape",
@@ -431,7 +437,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       type: "object",
       properties: {
         finding: { type: "string" },
-        severity: { type: "string", enum: ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"] },
+        severity: { type: "string" },
         blocking: { type: "boolean" },
       },
       required: ["finding", "severity", "blocking"],
@@ -978,7 +984,7 @@ describe("what the reviewer is told of which findings block", () => {
       "P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done.",
     );
     expect(prompt).toContain(
-      "Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below, down to P9.",
+      "Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below: P2, P3 and so on.",
     );
     expect(prompt).toContain(
       "Only a P1 can block. A P1 blocks whether the change brings it or the base branch already has it.",
