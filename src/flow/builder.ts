@@ -301,6 +301,7 @@ async function recordThread(
       merge_record: null,
       merge_record_id: null,
       merge_followup: null,
+      not_blocking_task: null,
       needs_you_for: null,
       agents,
       flow,

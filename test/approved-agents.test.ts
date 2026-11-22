@@ -463,6 +463,21 @@ test("a flow's stage runs a role of the repository's own, with its file's instru
   });
 });
 
+// Up to the strict rounds any P1 blocks. After them, only a P1 the change brings does.
+test("a flow sets its strict rounds, and one that names none gets the built-in flow's", () => {
+  const strictOf = (place = "app") =>
+    inHome(
+      `const { strictRounds } = await import(${JSON.stringify(source("flows.ts"))}); return strictRounds(${place});`,
+    );
+  expect(strictOf("{ ...app, agents: null }")).toBe(3);
+  agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
+  agentsFile("flows/careful.yaml", "review:\n  strict_until: 6\n");
+  commit("flows");
+  inHome(approveCurrent);
+  expect(strictOf()).toBe(3);
+  expect(strictOf('{ ...app, flow: "careful" }')).toBe(6);
+});
+
 test("a flow naming a role with no file is refused, naming the role", () => {
   agentsFile("flows/default.yaml", "review:\n  role: critic\n");
   commit("flow");

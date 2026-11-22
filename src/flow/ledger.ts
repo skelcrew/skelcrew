@@ -10,14 +10,15 @@ import { roundLimit } from "../config.ts";
 import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
-// Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict, findings and
-// round it last said, so each round edits that one review, or posts again only when what it says
+// Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict, findings, those
+// that don't block, and round it last said, so each round edits that one review, or posts again only when what it says
 // changed. The round is null in a row from before Skelcrew kept it.
 export const ReviewPost = z.object({
   pr: z.number(),
   id: z.string(),
   verdict: z.enum(["approve", "changes"]),
   findings: z.array(z.string()),
+  notBlocking: z.array(z.string()).optional(),
   round: z.number().nullable().default(null),
 });
 export type ReviewPost = z.infer<typeof ReviewPost>;
@@ -38,6 +39,7 @@ export const Posting = z.object({
       verdict: z.enum(["approve", "changes"]),
       body: z.string(),
       findings: z.array(z.string()),
+      notBlocking: z.array(z.string()).optional(),
       round: z.number(),
     })
     .nullable(),
@@ -86,8 +88,8 @@ export const RoundEvent = z.discriminatedUnion("kind", [
   // The commit was pushed, and its review is on its way.
   z.object({ kind: z.literal("review started"), at: z.number(), commit: z.string() }),
   // A review's verdict, with the round it took and the limit it was judged by, its reviewer, the
-  // first line of what it said, its findings, the choices it left the lead, none in an event from
-  // before them, the changes it asked for, and what to post.
+  // first line of what it said, its findings, those that don't block, the choices it left the
+  // lead, none in an event from before them, the changes it asked for, and what to post.
   z.object({
     kind: z.literal("verdict"),
     at: z.number(),
@@ -98,6 +100,7 @@ export const RoundEvent = z.discriminatedUnion("kind", [
     commit: z.string(),
     line: z.string(),
     findings: z.array(z.string()),
+    notBlocking: z.array(z.string()).optional(),
     choices: z.array(z.string()).default([]),
     changes: z.string().nullable(),
     posting: Posting.nullable(),
@@ -323,23 +326,30 @@ export function nextRound(thread: Recorded): number {
 }
 
 // Returns the last round a reviewer finished, approving or asking for changes, with the commit it
-// reviewed and its findings, or null before any. A review that failed found nothing, so it never
+// reviewed, its findings and those that didn't block, or null before any. A review that failed found nothing, so it never
 // counts. A kept approval counts, at the commit it kept. An approval from before Skelcrew saved
 // its commit counts once the commit is found.
 export function lastReviewed(
   thread: Recorded,
-): { round: number; commit: string; findings: string[] } | null {
-  let last: { round: number; commit: string | null; findings: string[] } | null = null;
+): { round: number; commit: string; findings: string[]; notBlocking: string[] } | null {
+  let last: {
+    round: number;
+    commit: string | null;
+    findings: string[];
+    notBlocking: string[];
+  } | null = null;
   let approved = false;
   for (const event of recordOf(thread)) {
     if (event.kind === "verdict" && (event.verdict === "approve" || event.verdict === "changes")) {
-      last = { round: event.round, commit: event.commit, findings: event.findings };
+      const { round, commit, findings, notBlocking = [] } = event;
+      last = { round, commit, findings, notBlocking };
       approved = event.verdict === "approve";
     }
     if (event.kind === "before") {
       const { verdict, review_round, reviewed_commit, review_findings } = event.round;
       if ((verdict === "approve" || verdict === "changes") && review_round !== null) {
-        last = { round: review_round, commit: reviewed_commit, findings: review_findings ?? [] };
+        const findings = review_findings ?? [];
+        last = { round: review_round, commit: reviewed_commit, findings, notBlocking: [] };
         approved = verdict === "approve";
       }
     }
@@ -552,11 +562,21 @@ export function verdictPosted(thread: Thread, posting: Posting, now: number) {
 export const checkSet = (thread: Thread, posting: Posting, now: number) =>
   samePosting(thread, posting) ? logged(thread, { kind: "check set", at: now }) : null;
 
-// Returns what a reviewer said in words: its body, then each finding numbered, for the builder
-// and the PR to read.
-export function reviewText(review: { body: string; findings: string[] }): string {
-  const findings = review.findings.map((finding, n) => `${n + 1}. ${finding.trim()}`);
-  return [review.body.trim(), ...(findings.length > 0 ? [findings.join("\n")] : [])]
+// Returns what a reviewer said in words: its body, then each finding numbered, then those that
+// don't block under a heading of their own, for the builder and the PR to read.
+export function reviewText(review: {
+  body: string;
+  findings: string[];
+  notBlocking?: string[] | undefined;
+}): string {
+  const numbered = (findings: string[]) =>
+    findings.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
+  const notBlocking = review.notBlocking ?? [];
+  return [
+    review.body.trim(),
+    numbered(review.findings),
+    notBlocking.length > 0 ? `### Not blocking\n\n${numbered(notBlocking)}` : "",
+  ]
     .filter((part) => part !== "")
     .join("\n\n");
 }
@@ -644,6 +664,7 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
           verdict: review.verdict,
           body: review.body,
           findings: review.findings,
+          ...(review.notBlocking ? { notBlocking: review.notBlocking } : {}),
           round,
         }
       : (roundOf(thread).posting?.review ?? null);
@@ -661,6 +682,7 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
     commit: sha,
     line: review.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
     findings: "findings" in review ? review.findings : [],
+    notBlocking: "findings" in review ? (review.notBlocking ?? []) : [],
     choices: "choices" in review ? (review.choices ?? []) : [],
     changes,
     posting,

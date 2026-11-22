@@ -72,6 +72,75 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(leadTyped().split("APP-12 is done").length - 1).toBe(1);
   }, 60_000);
 
+  // A review that found only what doesn't block approves, and what it found isn't lost: the merge
+  // files it in the backlog, once, never in the tracker.
+  test("a merged PR files what its review found that didn't block as one task of the backlog", async () => {
+    script(
+      "codex",
+      `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+cat > /dev/null
+echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag better","severity":"P2","blocking":false}]}' > "$out"`,
+    );
+    await approvedApp12();
+    expect(thread().verdict).toBe("approve");
+    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
+    await until(() => thread().status === "done");
+    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
+    const filedAs =
+      /APP-12 is done: #7 merged into main\. Its not-blocking findings are in APP-(\d+)\./;
+    await until(() => filedAs.test(leadTyped()));
+    const number = leadTyped().match(filedAs)?.[1];
+    const remote = join(home, "github", "simon", "app.git");
+    const kept = git(remote, "log", "-1", "--format=%B", `refs/skelcrew/tasks/t${number}`);
+    expect(kept).toContain("Not-blocking findings from #7's review");
+    expect(kept).toContain("1. P2: Name the flag better");
+    expect(kept).toContain("APP-12.");
+    await morePolls();
+    expect(git(remote, "for-each-ref", "--format=%(refname)", "refs/skelcrew/tasks")).toBe(
+      `refs/skelcrew/tasks/t${number}`,
+    );
+    expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+  }, 60_000);
+
+  // A remote that can't take the task as the thread ends loses nothing: the lead gets each
+  // finding, to file by hand, and sc show still lists them.
+  test("not-blocking findings a merge couldn't file go to the lead, and stay on the task", async () => {
+    script(
+      "codex",
+      `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+cat > /dev/null
+echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag better","severity":"P2","blocking":false}]}' > "$out"`,
+    );
+    await approvedApp12();
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *push*"refs/skelcrew/"*) echo refused >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      { mode: 0o755 },
+    );
+    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
+    await until(() => thread().status === "done");
+    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
+    await until(() =>
+      leadTyped().includes(
+        "Its not-blocking findings couldn't be filed: the note before lists them.",
+      ),
+    );
+    expect(leadTyped()).toContain(
+      "APP-12's not-blocking findings couldn't be filed in the backlog",
+    );
+    expect(leadTyped()).toContain("File them with sc add: 1) P2: Name the flag better");
+    expect(thread().not_blocking_task).toBeNull();
+    const shown = Bun.spawnSync([process.execPath, main, "show", "app-12"], {
+      env: env(),
+      stdout: "pipe",
+    });
+    expect(shown.stdout.toString()).toContain(
+      "Not blocking, from the latest review\n1. P2: Name the flag better",
+    );
+    const remote = join(home, "github", "simon", "app.git");
+    expect(git(remote, "for-each-ref", "refs/skelcrew/tasks")).toBe("");
+  }, 90_000);
+
   // m on the screen's list of PRs asks on your socket. The lead's and builders' sockets refuse it,
   // so merging stays your choice, and no sc command an agent runs can merge.
   test("a merge asked on your socket goes to the forge at the commit you saw, and agents can't ask", async () => {

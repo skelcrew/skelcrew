@@ -135,7 +135,7 @@ cp "$CODEX_HOME/verdict-$n" "$out"`,
 }
 
 // Gives review n's answer. Changes name the body as their one finding, unless `findings` says
-// otherwise.
+// otherwise. Each finding is a P1 that blocks.
 export function verdict(
   n: number,
   said: "approve" | "changes",
@@ -145,7 +145,11 @@ export function verdict(
   mkdirSync(codexHome(), { recursive: true });
   writeFileSync(
     join(codexHome(), `verdict-${n}`),
-    JSON.stringify({ verdict: said, body, findings }),
+    JSON.stringify({
+      verdict: said,
+      body,
+      findings: findings.map((finding) => ({ finding, severity: "P1", blocking: true })),
+    }),
   );
 }
 

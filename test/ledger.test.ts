@@ -17,6 +17,7 @@ import {
   reviewAsked,
   reviewOnPr,
   reviewStarted,
+  reviewText,
   roundFailed,
   roundMoved,
   roundOf,
@@ -103,6 +104,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_record: null,
     merge_record_id: null,
     merge_followup: null,
+    not_blocking_task: null,
     needs_you_for: null,
     limit_decided: false,
     review_failed: false,
@@ -484,13 +486,38 @@ test("the last round reviewed is the last that approved or asked for changes, ne
     round: 1,
     commit: "a1",
     findings: ["fix a1"],
+    notBlocking: [],
   });
   // A row from before Skelcrew kept a record says the same from its own fields.
   const old = thread({ verdict: "approve", review_round: 4, reviewed_commit: "c3" });
-  expect(lastReviewed(old)).toEqual({ round: 4, commit: "c3", findings: [] });
+  expect(lastReviewed(old)).toEqual({ round: 4, commit: "c3", findings: [], notBlocking: [] });
   // An approval from before Skelcrew saved its commit counts once the daemon finds the commit.
   const unsaved = thread({ verdict: "approve", review_round: 4, reviewed_commit: null });
   expect(lastReviewed(unsaved)).toBeNull();
   const found = { ...unsaved, ...approvalFound(unsaved, "d4") };
-  expect(lastReviewed(found)).toEqual({ round: 4, commit: "d4", findings: [] });
+  expect(lastReviewed(found)).toEqual({
+    round: 4,
+    commit: "d4",
+    findings: [],
+    notBlocking: [],
+  });
+});
+
+// Findings that don't block let the PR be approved, and are kept for the next round and the merge.
+test("an approval keeps the findings that didn't block, and they go on the PR under their own heading", () => {
+  const notBlocking = ["P2: The flag's name is long."];
+  const { change, check } = reach(thread(), { ...approval, notBlocking });
+  expect(check).toBe("success");
+  expect(change).toMatchObject({ verdict: "approve", rounds: 0 });
+  const saved = { ...thread(), ...change };
+  expect(lastReviewed(saved)).toEqual({ round: 1, commit: sha, findings: [], notBlocking });
+  expect(roundOf(saved).posting?.review?.notBlocking).toEqual(notBlocking);
+  expect(reviewText({ ...approval, notBlocking })).toBe(
+    "Ready.\n\n### Not blocking\n\n1. P2: The flag's name is long.",
+  );
+  // Changes list what blocks first, then what doesn't, so the builder sees which is which.
+  const asked = reach(thread(), { ...changes, notBlocking }).tell;
+  expect(asked).toContain(
+    "1. The export has no test.\n2. The flag is misspelled.\n\n### Not blocking\n\n1. P2: The flag's name is long.",
+  );
 });
