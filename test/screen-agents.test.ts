@@ -59,7 +59,7 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   const left = (y: number) => lines[y]?.slice(2, sidebar).trimEnd();
   // The lead heads the sidebar, below a blank line, then a line across and how many tasks are
   // where. Then a blank line and the seven stages, the task queue among them, with only Building
-  // open. Nothing needs you, so Needs you has no heading.
+  // open, and no blank line between them. Nothing needs you, so Needs you has no heading.
   expect(left(2)).toBe("");
   expect(lines[2]).toContain("I am lead");
   expect(left(3)).toMatch(/^ ▸ ◆ Lead\b/);
@@ -74,9 +74,8 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   // Building already says it works, and it has no time yet, so nothing else shows under it.
   expect(left(12)).toBe("");
   expect(left(13)).toMatch(/^ {3}[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/);
-  expect(left(15)).toBe("");
-  expect(left(16)).toBe(" 3 Reviewing  0");
-  expect(left(19)).toBe(" 6 Done       1");
+  expect(left(15)).toBe(" 3 Reviewing  0");
+  expect(left(18)).toBe(" 6 Done       1");
   expect(selected()).toMatch(/^▸ ◆ Lead\b/);
   await until(() => litBox() === "right", "the right side's box to light up");
   // Nothing of the screen is left in agents' sessions: each stays one pane.

@@ -1029,15 +1029,15 @@ test("every section has its heading with its count, only open ones show rows, an
     " 1 Task queue 1",
     "   ○ 9   Old work",
     "     paused · 1m",
-    "",
     " 2 Building   1",
     "   ○ 7   Login redirect",
     "     5m",
-    "",
     " 3 Reviewing  0",
     " 4 Checks     0",
     " 5 Ready      0",
     " 6 Done       0",
+    "",
+    "",
   ]);
   // The bottom line has the keys, and the load at its right end, short of the last column.
   expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  0-6 sections  q/esc quit${" ".repeat(30)}cpu 12%`);
@@ -1053,13 +1053,13 @@ test("an open section shows its rows, and its heading is bright while a closed o
     "   Needs you  2",
     " 0 Backlog    1",
     " ▸ ○ #31  Export as CSV  14d",
-    "",
     " 1 Task queue 1",
     " 2 Building   1",
     " 3 Reviewing  0",
     " 4 Checks     0",
     " 5 Ready      0",
     " 6 Done       0",
+    "",
   ]);
   const coloured = drawnWith(1, frame, { width: 80, height: 24 }, ["backlog"]);
   expect(coloured).toContain(" \x1b[90m0\x1b[22;39m \x1b[1mBacklog   \x1b[22;39m 1");
@@ -1096,9 +1096,9 @@ test("the task queue shows its key 1 between Backlog and Building, and an empty 
   ).toBe("↑↓ move  ⏎ open/close  0-6 sections  q/esc quit");
 });
 
-// Every stage is spaced alike, the task queue too: one blank line after a stage whose rows show,
-// and none after a heading with no rows under it, whether it is closed or open and empty.
-test("only a stage showing rows has a blank line after it, at every stage boundary", () => {
+// The stages follow one another with no blank line between them, whether a stage shows rows, is
+// open and empty, or is closed. Only Needs you, which is not a stage, has a blank line after it.
+test("no blank line parts one stage from the next, only Needs you from the stages", () => {
   const open: Section[] = [
     "needs you",
     "backlog",
@@ -1109,20 +1109,23 @@ test("only a stage showing rows has a blank line after it, at every stage bounda
     "ready",
     "done",
   ];
-  const stages = (lines: string[]) =>
-    lines.slice(lines.findIndex((line) => line.startsWith(" 0 Backlog"))).map((l) => l.trimEnd());
-  expect(stages(drawn(1, 40, 80, open)).slice(0, 16)).toEqual([
+  const sectionsOf = (lines: string[]) =>
+    lines.slice(lines.findIndex((line) => line.includes("Needs you"))).map((l) => l.trimEnd());
+  expect(sectionsOf(drawn(1, 40, 80, open)).slice(0, 19)).toEqual([
+    "   Needs you  2",
+    " ▸ ● 12   Rate limit the API",
+    "     question · the lead is looking at this · 2m",
+    "   ● 14   Fix the export header",
+    "     ready to merge · the lead is looking at this · #41 ✓ r1",
+    "",
     " 0 Backlog    1",
     "   ○ #31  Export as CSV  14d",
-    "",
     " 1 Task queue 1",
     "   ○ 9    Old work",
     "     paused · 1m",
-    "",
     " 2 Building   1",
     "   ○ 7    Login redirect",
     "     5m",
-    "",
     " 3 Reviewing  0",
     " 4 Checks     0",
     " 5 Ready      0",
@@ -1130,18 +1133,14 @@ test("only a stage showing rows has a blank line after it, at every stage bounda
     "",
   ]);
   sql("DELETE FROM threads WHERE folder = 'app-9';");
-  expect(stages(drawn(1, 40, 80, open)).slice(0, 11)).toEqual([
+  expect(sectionsOf(drawn(1, 40, 80, open)).slice(6, 13)).toEqual([
     " 0 Backlog    1",
     "   ○ #31  Export as CSV  14d",
-    "",
     " 1 Task queue 0",
     " 2 Building   1",
     "   ○ 7    Login redirect",
     "     5m",
-    "",
     " 3 Reviewing  0",
-    " 4 Checks     0",
-    " 5 Ready      0",
   ]);
 });
 
@@ -1349,7 +1348,7 @@ test("a row's word is in its colour, then its step and PR dim, its CI's mark and
   expect(lines.slice(at, at + 3)).toEqual([
     "   \x1b[38;5;69m○\x1b[22;39m 7   Login redirect",
     "     \x1b[1mchanges\x1b[22;39m\x1b[90m · Editing rows.ts · #40 \x1b[22;39m\x1b[38;5;136m●\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;136mr2\x1b[22;39m\x1b[90m · 5m\x1b[22;39m",
-    "",
+    " \x1b[90m3\x1b[22;39m \x1b[38;5;171mReviewing \x1b[22;39m 0",
   ]);
 });
 
