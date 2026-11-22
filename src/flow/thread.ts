@@ -18,6 +18,7 @@ import {
 } from "../plugins/runtime.ts";
 import { threadTask } from "./copy.ts";
 import { Posting, ReviewPost, RoundEvent, reviewPending } from "./ledger.ts";
+import { noticeNeedsYou } from "./notify.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -382,7 +383,8 @@ export const readThread = (db: Database, folder: string) =>
 // Saves a change to the thread, logs the thread as it now is, and returns it. `why` goes in
 // the log, so a failure says what went wrong. When the change makes the thread start needing
 // you, `why` is also saved as the note for the lead, on one line; once it no longer needs you,
-// a note not yet typed is dropped. The daemon types saved notes with typeLeadNotes.
+// a note not yet typed is dropped. The daemon types saved notes with typeLeadNotes. A new mark
+// also queues a needs-you message to you.
 export function record(
   db: Database,
   folder: string,
@@ -452,6 +454,7 @@ export function record(
       : why;
   log(db, thread, cleared);
   reportStatus(db, thread);
+  noticeNeedsYou(db, thread);
   if (thread.short !== before.short) renameOnHost(db, folder);
   return thread;
 }

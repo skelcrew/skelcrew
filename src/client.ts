@@ -371,6 +371,14 @@ export async function tellOn(repository: string, task: string, text: string): Pr
   return checkReply(z.object({ told: z.string() }), reply).told;
 }
 
+export async function notifyTheHuman(
+  message: { via: string; subject: string; text: string },
+  asked: string,
+): Promise<string> {
+  const reply = await request({ command: "notify", ...message, asked });
+  return checkReply(z.object({ said: z.string() }), reply).said;
+}
+
 // Has the daemon type a builder's message into the lead, for sc tell lead. The builder's
 // own socket tells the daemon which thread it comes from. The daemon answers at once.
 export async function tellTheLead(text: string): Promise<void> {

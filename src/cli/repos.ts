@@ -19,7 +19,12 @@ export async function repoCommand(args: string[], json: boolean): Promise<void> 
     return;
   }
   if (sub === "ls" && rest.length === 0) {
-    printRepositories(runByAgent() ? await askForRepositories() : listRepositories(openDb()), json);
+    if (runByAgent()) return printRepositories(await askForRepositories(), json);
+    const db = openDb();
+    printRepositories(listRepositories(db), json);
+    if (json) return;
+    const { notifyProblems } = await import("../flow/notify.ts");
+    for (const problem of notifyProblems(db)) console.log(problem);
     return;
   }
   if (sub === "rm" && rest[0] && rest.length === 1) {

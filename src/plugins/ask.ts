@@ -9,7 +9,7 @@ import { Item, type Task } from "../flow/copy.ts";
 import { callPlugin, installedPlugins, readManifest } from "./plugin.ts";
 
 // Returns the installed plugins that do the job.
-export function pluginsWithJob(db: Database, job: "tracker" | "forge"): string[] {
+export function pluginsWithJob(db: Database, job: "tracker" | "forge" | "notifier"): string[] {
   // A plugin whose manifest can't be read does no job, so one broken plugin stops nothing else.
   return installedPlugins(db)
     .filter((plugin) => {

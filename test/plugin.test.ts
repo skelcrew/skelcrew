@@ -340,6 +340,28 @@ test("a runtime plugin can provide sessions, transport, status and files, with t
   expect(refused.err).toContain("a sessions plugin needs attach");
 });
 
+test("a notifier is an I/O plugin that needs a call, and installs as any plugin does", async () => {
+  const folder = join(home, "skelcrew-fake");
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  const notifier = (lines: string) => {
+    fakePlugin(folder, "0.1.0");
+    writeFileSync(
+      manifest,
+      readFileSync(manifest, "utf8").replace("kind: io\nprovides: [tracker, forge]", lines),
+    );
+  };
+  notifier("kind: runtime\nprovides: [notifier]");
+  const runtime = await skel(["plugin", "add", "-g", "./skelcrew-fake"], "y\n");
+  expect(runtime.err).toContain("notifier isn't for a plugin of kind runtime");
+  notifier("kind: io\nprovides: [notifier]");
+  writeFileSync(manifest, readFileSync(manifest, "utf8").replace(/^call: .*\n/m, ""));
+  const noCall = await skel(["plugin", "add", "-g", "./skelcrew-fake"], "y\n");
+  expect(noCall.err).toContain("a notifier plugin needs call");
+  notifier("kind: io\nprovides: [notifier]");
+  expect((await skel(["plugin", "add", "-g", "./skelcrew-fake"], "y\n")).code).toBe(0);
+  expect((await skel(["plugin", "ls"])).out).toBe("fake 0.1.0 io: notifier\n");
+});
+
 test("a manifest whose kind doesn't fit what it provides, or that mixes both shapes, is refused", async () => {
   const folder = join(home, "skelcrew-fake");
   const manifest = join(folder, "skelcrew-plugin.yaml");

@@ -79,6 +79,7 @@ import {
   noteForLead,
   typeLeadNotes,
 } from "./messages.ts";
+import { queueAsked, queueDigest, sendNotifications } from "./notify.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -963,6 +964,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "tell lead":
         messageLead(db, sessions, caller, request.text);
         return { told: "lead" };
+      case "notify": {
+        const { subject, text, asked: words, via } = request;
+        const said = queueAsked(db, { subject, text, words, via });
+        sendNotifications(db).catch((error) =>
+          console.log(`couldn't send messages: ${errorText(error)}`),
+        );
+        return { said };
+      }
       case "brief lead": {
         // Only you bring a repository in, in your own terminal, so the lead is told how to ask.
         const to = repositories(db).find((r) => r.name === request.to || fullNameIs(r, request.to));
@@ -1167,6 +1176,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     } catch (error) {
       console.log(`couldn't mark stopped builders nobody acted on: ${errorText(error)}`);
     }
+  }, look);
+  setInterval(() => {
+    try {
+      doing("queueing the daily digest", () => queueDigest(db));
+    } catch (error) {
+      console.log(`couldn't queue the daily digest: ${errorText(error)}`);
+    }
+    sendNotifications(db).catch((error) =>
+      console.log(`couldn't send messages: ${errorText(error)}`),
+    );
   }, look);
   // A host that shows status hears each builder's as it is now, and each change from here on.
   reportStatuses(db);

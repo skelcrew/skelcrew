@@ -72,6 +72,16 @@ const File = z.looseObject({
   plugins: z.array(z.string()).optional(),
   // The host new sessions start on: tmux, built in, or a runtime plugin by its name.
   session: z.string().min(1).optional(),
+  notify: z
+    .looseObject({
+      "needs-you": z.string().min(1).optional(),
+      digest: z.string().min(1).optional(),
+      digest_at: z
+        .string()
+        .regex(/^([01]?\d|2[0-3]):[0-5]\d$/, "must be a time such as 08:00")
+        .optional(),
+    })
+    .optional(),
 });
 type File = z.infer<typeof File>;
 type Key = keyof typeof File.shape;
@@ -94,7 +104,8 @@ export type Role = { harness: HarnessName; model?: string };
 // `declined` the repositories never offered the GitHub plugin again. `plugins` are your personal
 // plugins. `host` is where new sessions start: tmux, or the name of a runtime plugin that provides
 // sessions. `leadCanMerge` is whether the lead may arm a merge when you ask it to, on unless
-// you turn it off.
+// you turn it off. `notify` is the plugin each type of message to you goes through, none for a
+// type that isn't sent, and `digestAt` when the daily digest goes, 08:00 unless you say.
 export type Settings = {
   lead: Role;
   builder: Role;
@@ -115,6 +126,8 @@ export type Settings = {
   plugins: string[];
   host: string;
   leadCanMerge: boolean;
+  notify: Record<"needs-you" | "digest", string | undefined>;
+  digestAt: string;
 };
 type Group = keyof Settings;
 
@@ -140,11 +153,14 @@ const keysOf: Record<Group, Key[]> = {
   plugins: ["plugins"],
   host: ["session"],
   leadCanMerge: ["can_merge", "may_arm_merges"],
+  notify: ["notify"],
+  digestAt: ["notify"],
 };
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time,
 // how long a stopped builder waits before it needs you, the repositories you declined the GitHub plugin for, your personal plugins and the session host
-// fit you, your account and your machine, so a repository can't set them. Letting the lead merge grants an agent
+// fit you, your account and your machine, so a repository can't set them. So do where messages
+// to you go, as their recipient is yours alone. Letting the lead merge grants an agent
 // what is yours, so only you can say whether it may, never a repository. The tracker belongs to the repository, so your
 // config doesn't. Setup and test can come from either: yours stand in for a repository you
 // don't want to commit a skelcrew.yaml to.
@@ -165,6 +181,7 @@ const yourKeys: Key[] = [
   "session",
   "can_merge",
   "may_arm_merges",
+  "notify",
 ];
 const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker", "threads"];
 // What an override under repos: may set, besides the harness and model of its roles, which
@@ -623,5 +640,10 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     host: first((l) => l.session) ?? "tmux",
     // In each layer, can_merge goes over its old name, may_arm_merges.
     leadCanMerge: first((l) => l.can_merge ?? l.may_arm_merges) ?? true,
+    notify: {
+      "needs-you": first((l) => l.notify?.["needs-you"]),
+      digest: first((l) => l.notify?.digest),
+    },
+    digestAt: first((l) => l.notify?.digest_at) ?? "08:00",
   };
 }
