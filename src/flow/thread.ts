@@ -631,11 +631,16 @@ function knownTask(db: Database, repository: string, typed: string): string | nu
     );
   };
   if (typed.startsWith("#")) return issue(typed.slice(1));
+  // A number alone, such as 1 for APP-1, is the task numbered so now, ahead of an old name. An old
+  // name spelled with its t, such as t1 for APP-T1, is the task that had it, ahead of the task
+  // that holds its number now, as one renumbered past a clash.
+  const alias = () => found(`SELECT task FROM task_threads ${where} AND alias = ?`, typed);
   const own = /^\d+$/.test(typed) ? `t${typed}` : typed;
   return (
+    (/^t\d+$/.test(typed) ? alias() : null) ??
     found(`SELECT task FROM task_threads ${where} AND task = ?`, own) ??
     found(`SELECT task FROM backlog ${where} AND task = ?`, own) ??
-    found(`SELECT task FROM task_threads ${where} AND alias = ?`, typed) ??
+    alias() ??
     found(`SELECT task FROM task_threads ${where} AND CAST(task AS TEXT) = ?`, typed) ??
     (found(`${items} AND lower(id) = lower(?)`, typed) && issue(typed))
   );

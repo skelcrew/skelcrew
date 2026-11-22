@@ -857,7 +857,7 @@ ${issueTask}`;
 import { resolveTask } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 console.log(JSON.stringify({ mine: db.query("SELECT task, alias, folder FROM task_threads WHERE title = 'Mine'").get(),
-  byOldName: resolveTask(db, "app", "t1").task }));`;
+  byOldName: resolveTask(db, "app", "t1").task, byNumber: resolveTask(db, "app", "1").task }));`;
   const shown = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: laptop },
     stdout: "pipe",
@@ -866,9 +866,57 @@ console.log(JSON.stringify({ mine: db.query("SELECT task, alias, folder FROM tas
   expect(shown.stderr.toString()).toBe("");
   expect(JSON.parse(shown.stdout.toString())).toEqual({
     mine: { task: "t3", alias: "t1", folder: "app-t1" },
-    // t1 is the task on issue #2 now, and a number wins over an old name.
-    byOldName: "t1",
+    // APP-T1, the old name as it was spelled, is still the task that had it. APP-1 is the task
+    // numbered 1 now, the one on issue #2.
+    byOldName: "t3",
+    byNumber: "t1",
   });
+}, 60_000);
+
+// A renumbering the remote refuses, such as while it can't be reached, is tried again at the next
+// refresh, so a task never stays under a number another machine gave different work.
+test("a task held under another task's number is renumbered at the next refresh when a try fails", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  const issueTask = `db.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', '2', 'app-2', 'skelcrew/2-old', 'done')");
+db.run("INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', '2', 'Old')");`;
+  expect(await namesFrom(startOn(lapdog, remote, ["New"], issueTask))).toEqual(["APP-2"]);
+  // The laptop's git refuses every push while the file is there.
+  const failing = join(laptop, "fail-push");
+  mkdirSync(join(laptop, "bin"));
+  writeFileSync(
+    join(laptop, "bin", "git"),
+    `#!/bin/sh\ncase "$*" in *push*) [ -e ${JSON.stringify(failing)} ] && { echo refused >&2; exit 1; } ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(failing, "");
+  const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
+  Bun.spawnSync(["git", "clone", "-q", remote, clone]);
+  const code = `import { rmSync } from "node:fs";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { refreshBacklog } from ${JSON.stringify(source("flow/backlog.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+db.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', 't1', 'app-t1', 'skelcrew/t1-mine', 'done')");
+db.run("INSERT INTO tasks (owner, repo, task, title) VALUES ('simon', 'app', 't1', 'Mine')");
+const [repository] = db.query("SELECT * FROM repositories").all();
+await refreshBacklog(db, repository, ${JSON.stringify(clone)});
+console.log(JSON.stringify(db.query("SELECT task FROM tasks").get()));
+rmSync(${JSON.stringify(failing)});
+await refreshBacklog(db, repository, ${JSON.stringify(clone)});
+console.log(JSON.stringify(db.query("SELECT task, alias FROM tasks").get()));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: laptop, PATH: `${join(laptop, "bin")}:${process.env.PATH}` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const lines = run.stdout.toString().trim().split("\n");
+  expect(lines.filter((line) => line.startsWith("{"))).toEqual([
+    '{"task":"t1"}',
+    '{"task":"t3","alias":"t1"}',
+  ]);
+  expect(lines).toContain("renamed APP-1 to APP-3, its number");
 }, 60_000);
 
 // An old name whose issue's ID held a dash, such as APP-JOTT-12, splits like any name, at its last

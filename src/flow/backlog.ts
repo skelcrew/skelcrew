@@ -125,13 +125,15 @@ async function renumberTasks(db: Database, repository: Repository, folder: strin
     named.length > 0 && named.some(({ task }) => !checked.has(`${owner}/${repo}/${task}`))
       ? await renames(db, repository)
       : new Map<string, string>();
-  for (const { task } of named) checked.add(`${owner}/${repo}/${task}`);
   // A task held under a number another machine gave goes first, so the task that number was
-  // given for, if this machine holds it too, finds it free.
+  // given for, if this machine holds it too, finds it free. Only a task found to keep its number,
+  // or given a new one, counts as checked, so a renumbering that fails is tried at the next refresh.
   const clashing = named.filter(({ task, alias }) => {
     const to = given.get(task);
     return to !== undefined && to !== alias;
   });
+  for (const { task } of named)
+    if (!clashing.some((clash) => clash.task === task)) checked.add(`${owner}/${repo}/${task}`);
   const old = [...clashing, ...held.filter(({ task }) => !/^t\d+$/.test(task))];
   for (const { task: alias } of old) {
     // A number another machine gave in place of an old name is that task's, not this one's, so
@@ -149,6 +151,7 @@ async function renumberTasks(db: Database, repository: Repository, folder: strin
       );
       db.run(`UPDATE threads SET task = ? ${where}`, [task, owner, repo, alias]);
     })();
+    checked.add(`${owner}/${repo}/${task}`);
     console.log(
       `renamed ${taskName(repository.name, alias)} to ${taskName(repository.name, task)}, its number`,
     );
