@@ -322,6 +322,33 @@ export function nextRound(thread: Recorded): number {
   return Math.max(top_round ?? 0, rounds) + 1;
 }
 
+// Returns the last round a reviewer finished, approving or asking for changes, with the commit it
+// reviewed and its findings, or null before any. A review that failed found nothing, so it never
+// counts. A kept approval counts, at the commit it kept. An approval from before Skelcrew saved
+// its commit counts once the commit is found.
+export function lastReviewed(
+  thread: Recorded,
+): { round: number; commit: string; findings: string[] } | null {
+  let last: { round: number; commit: string | null; findings: string[] } | null = null;
+  let approved = false;
+  for (const event of recordOf(thread)) {
+    if (event.kind === "verdict" && (event.verdict === "approve" || event.verdict === "changes")) {
+      last = { round: event.round, commit: event.commit, findings: event.findings };
+      approved = event.verdict === "approve";
+    }
+    if (event.kind === "before") {
+      const { verdict, review_round, reviewed_commit, review_findings } = event.round;
+      if ((verdict === "approve" || verdict === "changes") && review_round !== null) {
+        last = { round: review_round, commit: reviewed_commit, findings: review_findings ?? [] };
+        approved = verdict === "approve";
+      }
+    }
+    if (event.kind === "approval found" && last !== null && approved)
+      last = { ...last, commit: event.commit };
+  }
+  return last?.commit ? { ...last, commit: last.commit } : null;
+}
+
 // Returns whether the thread has used up its rounds of changes. Past that a review's changes
 // are held, and the thread needs you until you decide, let it go on, or its reviewer approves.
 // An approval answers the changes the limit held, so an approved thread is ready like any other.

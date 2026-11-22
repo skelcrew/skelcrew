@@ -259,12 +259,14 @@ test("sc issue and sc pr say which task commands replaced them", () => {
   }
 });
 
-// A task with no issue has a name of Skelcrew's, names show in uppercase and are typed in any
-// case, which only the help tells someone new.
-test("the help says how a task with no issue is named, and that names are typed in any case", () => {
+// Every task has a number of Skelcrew's, with its issue beside it, names show in uppercase and are
+// typed in any case, which only the help tells someone new.
+test("the help says how tasks are named, and that names are typed in any case", () => {
   const out = skel(["--help"]).out.replace(/\s+/g, " ");
-  expect(out).toContain("started with no issue, by a T and a number, such as APP-T100.");
-  expect(out).toContain("Type a name in any case: app-t100 is APP-T100.");
+  expect(out).toContain(
+    "Every task is named by its repository and a number, such as APP-100, with its issue beside it, such as #12. An issue no task has yet is app#12.",
+  );
+  expect(out).toContain("Type a name in any case: app-100 is APP-100.");
 });
 
 // sc show takes one task's name. Anything else is no task's name.

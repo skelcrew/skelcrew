@@ -23,6 +23,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  numberedBefore,
   prItem,
   runSkelInTerminal,
   source,
@@ -175,6 +176,8 @@ export function addApp(empty = false): string {
   const bare = join(home, "github", "simon", "app.git");
   if (empty) git(home, "init", "-q", "--bare", "-b", "main", bare);
   else git(home, "clone", "-q", "--bare", work, bare);
+  // Its task on issue #12 is APP-12.
+  if (!empty) numberedBefore(bare, 11);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote, claimed) VALUES ('app', 'simon', 'app', 1, 'github', 'https://github.com/simon/app.git', 1)");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });

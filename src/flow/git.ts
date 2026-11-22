@@ -278,6 +278,52 @@ const lastClaimRef = claimRef("last");
 // the repository has old names, and number its new ones above all of them.
 const oldClaimRef = (name: string) => `refs/skelcrew/old-names/${name}`;
 
+// Where the remote records which number a task named before every task took one now has, such
+// as refs/skelcrew/renamed/12 for the task named after issue #12. It is at the commit of that
+// number's claim, made in the same push, so every machine holding the task gives it the same
+// number.
+const renamedRef = (old: string) => `refs/skelcrew/renamed/${old}`;
+
+// Returns the name the remote gave the task that had the old name, such as t160 for 12, or null
+// when no machine has renamed it yet. Throws when the remote can't be asked.
+export async function renamedTo(
+  db: Database,
+  repository: Repository,
+  old: string,
+): Promise<string | null> {
+  const listed = await git(db, repository, [
+    "ls-remote",
+    repository.remote,
+    renamedRef(old),
+    claimRef("t*"),
+  ]);
+  const lines = listed.split("\n").map((line) => line.split("\t"));
+  const commit = lines.find(([, ref]) => ref === renamedRef(old))?.[0];
+  if (commit === undefined) return null;
+  const claim = lines.find(([at, ref]) => at === commit && ref?.startsWith(claimRef("")));
+  return claim?.[1]?.slice(claimRef("").length) ?? null;
+}
+
+// Returns each number the remote gave a task in place of an old name, with that old name, such as
+// t160 for 12. Throws when the remote can't be asked.
+export async function renames(db: Database, repository: Repository): Promise<Map<string, string>> {
+  const listed = await git(db, repository, [
+    "ls-remote",
+    repository.remote,
+    renamedRef("*"),
+    claimRef("t*"),
+  ]);
+  const lines = listed.split("\n").map((line) => line.split("\t"));
+  const named = new Map<string, string>();
+  for (const [commit, ref] of lines) {
+    if (!ref?.startsWith(renamedRef(""))) continue;
+    const claim = lines.find(([at, other]) => at === commit && other?.startsWith(claimRef("")));
+    const name = claim?.[1]?.slice(claimRef("").length);
+    if (name !== undefined) named.set(name, ref.slice(renamedRef("").length));
+  }
+  return named;
+}
+
 // What the remote holds of Skelcrew's own tasks' names: the names any machine claimed, such as
 // t104, those claimed as old names, such as t25, and the commit of the last claim, or "" before
 // any claim moved it. Only the remote is shared between machines, so it is what keeps their names
@@ -398,7 +444,9 @@ export async function remoteRef(db: Database, repository: Repository, ref: strin
 // is a task to keep in the backlog under the name, as text. It goes in a commit of its own, which only its ref holds, so
 // removing the task leaves its words on no ref. The same push files it, so a task is never filed
 // without its name, nor a name claimed without its task. With `old`, the name is one from before
-// Skelcrew claimed names, and is claimed as such.
+// Skelcrew claimed names, and is claimed as such. `renaming` is the old name of a task the name
+// is for, such as 12, which the same push records, and which no other machine may have renamed
+// first.
 export async function claimName(
   db: Database,
   repository: Repository,
@@ -408,6 +456,7 @@ export async function claimName(
   filed?: string,
   noting?: (commit: string) => void,
   old = false,
+  renaming?: string,
 ): Promise<boolean> {
   const ref = old ? oldClaimRef(name) : claimRef(name);
   const commit = await makeCommit(
@@ -427,6 +476,7 @@ export async function claimName(
     const task = await makeCommit(db, repository, folder, message);
     moves.push({ ref: filedRef(name), was: "", now: task });
   }
+  if (renaming !== undefined) moves.push({ ref: renamedRef(renaming), was: "", now: commit });
   noting?.(commit);
   try {
     await moveRefs(db, repository, folder, moves);
@@ -443,7 +493,9 @@ export async function claimName(
     // claim moved. Otherwise the push failed for another reason, such as the remote being out of
     // reach, which the caller must hear.
     const now = await claimedNames(db, repository);
-    if (now.last === last && !(old ? now.old : now.names).includes(name)) throw error;
+    const renamed = renaming === undefined ? null : await renamedTo(db, repository, renaming);
+    if (now.last === last && !(old ? now.old : now.names).includes(name) && renamed === null)
+      throw error;
     return false;
   }
 }

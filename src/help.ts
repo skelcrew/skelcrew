@@ -131,7 +131,7 @@ const sections: [string, [string, string][]][] = [
 const examples = [
   "sc",
   'sc add app "Fix the login redirect" "Sign-in lands on a 404." --issue',
-  "sc start APP-12",
+  "sc start app#12",
   "sc ls",
   "sc --remote simon@workbox install",
   "sc --remote simon@workbox",
@@ -164,10 +164,10 @@ export function help(color = colorful()): string {
   lines.push("", heading("EXAMPLES"), ...examples.map((example) => `  ${dim("%")} ${example}`));
   lines.push(
     "",
-    dim("  A task is named after its issue, such as APP-12, or, started with no issue,"),
-    dim("  by a T and a number, such as APP-T100. Type a name in any case: app-t100 is"),
-    dim("  APP-T100. --remote keeps Skelcrew on the other side up to date with yours,"),
-    dim("  after asking. See skelcrew.dev."),
+    dim("  Every task is named by its repository and a number, such as APP-100, with"),
+    dim("  its issue beside it, such as #12. An issue no task has yet is app#12. Type a"),
+    dim("  name in any case: app-100 is APP-100. --remote keeps Skelcrew on the other"),
+    dim("  side up to date with yours, after asking. See skelcrew.dev."),
     "",
   );
   return lines.join("\n");

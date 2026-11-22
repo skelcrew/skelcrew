@@ -86,6 +86,9 @@ function thread(change: Partial<Thread> = {}): Thread {
     host_id: null,
     merged: false,
     issue_link: null,
+    issue: null,
+    alias: null,
+    issue_ref: null,
     closes: null,
     merge_plan: null,
     merge_id: null,
@@ -558,12 +561,12 @@ test("events that come together are told together", () => {
   expect(decision.seen).toEqual(["50", "51", "30"]);
 });
 
-test("a labeled task with no thread gets one", () => {
+test("a labeled issue no task has gets one, whatever the task's number", () => {
   const tasks = [
     { id: "12", title: "Add export" },
     { id: "13", title: "Fix the login redirect" },
   ];
-  expect(labeledToStart([thread({ task: "12", status: "working" })], tasks)).toEqual([
+  expect(labeledToStart([thread({ task: "t1", issue: "12", status: "working" })], tasks)).toEqual([
     { id: "13", title: "Fix the login redirect" },
   ]);
 });
@@ -572,8 +575,8 @@ test("a labeled task with no thread gets one", () => {
 // the task must not start it over and over.
 test("a labeled task whose thread failed or is done gets no new thread", () => {
   const threads = [
-    thread({ task: "12", status: "failed" }),
-    thread({ task: "13", status: "done" }),
+    thread({ task: "t1", issue: "12", status: "failed" }),
+    thread({ task: "t2", issue: "13", status: "done" }),
   ];
   const tasks = [
     { id: "12", title: "Add export" },

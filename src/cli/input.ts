@@ -2,7 +2,9 @@
 // body on stdin, and the human's words in a file. Says so when a command can't run as given.
 
 export function splitTaskName(word?: string): [string, string] | undefined {
-  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/i);
+  const issue = word?.match(/^([^#]+)(#[A-Za-z0-9][\w-]*)$/);
+  if (issue?.[1] && issue[2]) return [issue[1], issue[2].toLowerCase()];
+  const parts = word?.match(/^(.+)-(\w+)$/);
   return parts?.[1] && parts[2] ? [parts[1], parts[2].toLowerCase()] : undefined;
 }
 

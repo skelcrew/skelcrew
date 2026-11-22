@@ -24,6 +24,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  numberedBefore,
   read,
   runSkel,
   source,
@@ -123,6 +124,8 @@ function addApp(labeled: string[] = []): void {
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
+  // APP-11 is at work, and the next task on an issue, #12, is APP-12.
+  numberedBefore(join(home, "github", "simon", "app.git"), 11);
   const working = threadSql({ task: "11", title: "Fix login", session: "s", host: "tmux" });
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 const db = openDb();
@@ -322,6 +325,17 @@ openDb().exec(${JSON.stringify(queued)});`;
   );
 }, 60_000);
 
+// A daemon that just started has no copy of the tracker until its first poll, and sc start waits
+// for that poll, so a name such as APP-12 from when tasks were named after their issues still
+// reaches issue #12.
+test("sc start of an issue by its old name, before the first poll, starts the issue", async () => {
+  addApp();
+  serve();
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+  expect(await sc("start", "app-12")).toContain("APP-12 is queued");
+  expect(statuses()["app-12"]).toBe("queued");
+}, 60_000);
+
 test("sc start --now starts a task its label queued while the start waited for the poll", async () => {
   addApp(["12"]);
   answer(plugin, "took", { took: true });
@@ -470,7 +484,7 @@ openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12
   Bun.spawnSync([process.execPath, "-e", cut], { env: env() });
   answer(plugin, "took", { took: false });
   await serveApp();
-  await until(() => leadHears().includes("APP-12's claim was cut short"));
+  await until(() => leadHears().includes("APP#12's claim was cut short"));
   const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
   const before = polls();
   await until(() => polls() >= before + 3);
@@ -478,8 +492,8 @@ openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12
   // Each issue was asked about once, and only 12's claim may be this machine's.
   const claims = asked(plugin).filter((q) => q.ask === "took");
   expect(claims.map((q) => q.task).sort()).toEqual(["12", "13"]);
-  expect(leadHears()).toContain("If no other machine works on it, sc start APP-12.");
-  expect(leadHears()).not.toContain("APP-13's claim");
+  expect(leadHears()).toContain("If no other machine works on it, sc start APP#12.");
+  expect(leadHears()).not.toContain("APP#13's claim");
 }, 60_000);
 
 test("a task that still owes its claim holds back the tasks that joined after it", async () => {
@@ -514,7 +528,7 @@ test("a labelled issue that can't start after its claim is told to the lead, not
   );
   await serveApp();
   await until(() =>
-    leadHears().includes("couldn't start APP-12 from its label; once fixed, sc start APP-12"),
+    leadHears().includes("couldn't start APP#12 from its label; once fixed, sc start APP#12"),
   );
   expect(statuses()["app-12"]).toBeUndefined();
 }, 60_000);
@@ -549,9 +563,11 @@ test("a task joins the queue after every task already in it, though the clock we
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().exec(${JSON.stringify(threadSql({ task: "13", title: "Dark mode", status: "queued", queued_since: later }))});`;
   Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  // APP-13's number is claimed too, so issue #12's task is APP-14.
+  numberedBefore(join(home, "github", "simon", "app.git"), 13);
   await serveApp();
-  expect(await sc("start", "app-12")).toContain("APP-12 is queued");
-  expect(joinedAt("app-12")).toBeGreaterThan(later);
+  expect(await sc("start", "app#12")).toContain("APP-14 is queued");
+  expect(joinedAt("app-14")).toBeGreaterThan(later);
 }, 60_000);
 
 test("sc rm while a queued sc start waits for its claim leaves the issue unassigned", async () => {
@@ -581,8 +597,8 @@ test("a claim the daemon's stop cut short is told to the lead, though its label 
 openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12')");`;
   Bun.spawnSync([process.execPath, "-e", cut], { env: env() });
   await serveApp();
-  await until(() => leadHears().includes("APP-12's claim was cut short"));
-  expect(leadHears()).toContain("sc start APP-12");
+  await until(() => leadHears().includes("APP#12's claim was cut short"));
+  expect(leadHears()).toContain("sc start APP#12");
   expect(claimsSaved()).toBe(0);
   expect(statuses()).toEqual({ "app-11": "working" });
   // Nothing claims the issue now that nobody asks for it.
@@ -623,8 +639,8 @@ test("a claim the daemon's stop cut short after sc rm is told to the lead, not f
   expect(claimsSaved()).toBe(1);
   rmSync(hold);
   await serveApp();
-  await until(() => leadHears().includes("APP-12's claim was cut short"));
-  expect(leadHears()).toContain("sc start APP-12");
+  await until(() => leadHears().includes("APP#12's claim was cut short"));
+  expect(leadHears()).toContain("sc start APP#12");
   expect(claimsSaved()).toBe(0);
   expect(statuses()["app-12"]).toBe("done");
 }, 60_000);
@@ -663,7 +679,7 @@ function givePr(task: string, pr: number): void {
   try {
     db.run("UPDATE tasks SET pr = ? WHERE owner = 'simon' AND repo = 'app' AND task = ?", [
       pr,
-      task,
+      `t${task}`,
     ]);
   } finally {
     db.close();

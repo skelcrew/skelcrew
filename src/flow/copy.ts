@@ -18,24 +18,17 @@ const Author = z.object({
 // A comment on an item, or the text of a review on a PR.
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
 
-// A task's ID in its tracker, or Skelcrew's own for a thread with no task there, such as t1. It
-// names the thread's folder, which setup deletes, and its branch, so it holds only letters,
-// digits, underscores and dashes, starting with a letter or digit: never a / or a .. that
-// would reach outside Skelcrew's threads folder.
+// An issue's ID in its tracker, such as 12, or a task's own ID, such as t1. It holds only
+// letters, digits, underscores and dashes, starting with a letter or digit: never a / or a ..
+// that would reach outside Skelcrew's folders.
 export const TaskId = z
   .string()
   .max(64)
   .regex(/^[A-Za-z0-9][\w-]*$/);
 
-// Returns whether a task is Skelcrew's own, started with no issue in the tracker behind it. Its ID
-// is a t and a number, such as t104, or, for a task named while Skelcrew named them by a code of
-// their machine's, two letters and a number, such as wr4. A thread's name is its repository and
-// its task's ID, so this shape is kept for Skelcrew alone: saveItems leaves out an issue whose ID
-// has it. In any case, such as T104, since a name is typed in any case and must reach one task.
-export const ownTask = (task: string) => /^[a-z]{1,2}\d+$/i.test(task);
-
 // What an item has whatever its kind. An ID is the tracker's own, such as "12" on GitHub, and
-// is checked as the plugin answers, so one that isn't a plain name is refused once, there.
+// is checked as the plugin answers, so one that isn't a plain name is refused once, there. An
+// issue's `ref` is its ID as the tracker writes it, such as #12, which an older plugin leaves out.
 // Times are as the tracker wrote them, which for GitHub sort as text. The link becomes a
 // terminal link, so it may hold only printable characters, with no space.
 const itemFields = {
@@ -55,7 +48,15 @@ const itemFields = {
 // only while it is still the head, or null from a forge too old to send it. A cancelled check
 // isn't the builder's to fix.
 export const Item = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("task"), ...itemFields, closes: z.string() }),
+  z.object({
+    kind: z.literal("task"),
+    ...itemFields,
+    closes: z.string(),
+    ref: z
+      .string()
+      .regex(/^[!-~]+$/)
+      .optional(),
+  }),
   z.object({
     kind: z.literal("pr"),
     ...itemFields,
@@ -105,21 +106,12 @@ export function saveItems(
           WHERE owner = ? AND repo = ? AND kind = ? AND state = 'open'`,
         [owner, repo, kind],
       );
-    // An issue whose ID has the shape of Skelcrew's own would share its name with a thread
-    // started with no issue, and starting one would reach the other, so it is left out.
-    for (const item of items) {
-      if (item.kind === "task" && ownTask(item.id)) {
-        console.log(
-          `left out issue ${item.id} of ${owner}/${repo}: Skelcrew names its own tasks like that`,
-        );
-        continue;
-      }
+    for (const item of items)
       db.run(
         `INSERT OR REPLACE INTO items (owner, repo, kind, id, state, created, item)
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [owner, repo, item.kind, item.id, item.state, item.created, JSON.stringify(item)],
       );
-    }
     // Each task keeps its PR's link, as the copy forgets a closed PR once its thread is done, and
     // the list still opens the PR of a task that ended. Written only when it changed, as this
     // runs at every poll. A database whose threads haven't moved onto tasks yet keeps the task's
@@ -133,13 +125,23 @@ export function saveItems(
         WHERE owner = ? AND repo = ? AND ${link} IS NOT NULL AND pr_link IS NOT ${link}`,
       [owner, repo],
     );
+    // A task named after its issue before every task took a number kept its name in lowercase,
+    // which the upgrade made its issue, such as jott-12. It takes the tracker's own spelling,
+    // such as JOTT-12, so it matches its issue wherever Skelcrew looks.
+    const spelled = `(SELECT i.id FROM items i WHERE i.owner = ${table}.owner AND i.repo = ${table}.repo
+      AND i.kind = 'task' AND lower(i.id) = lower(${table}.issue))`;
+    db.run(
+      `UPDATE ${table} SET issue = ${spelled}
+        WHERE owner = ? AND repo = ? AND ${spelled} IS NOT NULL AND issue IS NOT ${spelled}`,
+      [owner, repo],
+    );
     // Forget the items that are no longer open, unless a thread still queued, working, waiting
-    // or stopped points to one by its task or PR.
+    // or stopped points to one by its issue or PR.
     db.run(
       `DELETE FROM items WHERE owner = ? AND repo = ? AND state != 'open' AND NOT EXISTS (
         SELECT 1 FROM task_threads t WHERE t.owner = items.owner AND t.repo = items.repo
           AND t.status IN ('queued', 'working', 'waiting', 'stopped')
-          AND items.id = CAST((CASE items.kind WHEN 'task' THEN t.task ELSE t.pr END) AS TEXT))`,
+          AND items.id = CAST((CASE items.kind WHEN 'task' THEN t.issue ELSE t.pr END) AS TEXT))`,
       [owner, repo],
     );
     // Count what is left open.
@@ -162,6 +164,15 @@ const parseItems = (rows: unknown[]) =>
     (row) =>
       readJson("items.item", z.object({ item: z.string() }).parse(row).item, Item, null) ?? [],
   );
+
+// Returns an issue as its tracker writes it, such as #12 or JOTT-12: as the copy has it, else as
+// the task saved it as it started, as a closed issue leaves the copy. A plugin that doesn't say
+// how its tracker writes it, such as an older one, has its ID shown as it is.
+export const issueRef = (
+  id: string,
+  inCopy?: { ref?: string | undefined },
+  saved?: string | null,
+) => inCopy?.ref ?? saved ?? id;
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
 // sc show. Throws when the copy doesn't have it.
@@ -240,17 +251,17 @@ export function threadTask(
   thread: {
     owner: string;
     repo: string;
-    task: string;
+    issue: string | null;
     title: string | null;
     body: string | null;
     closes: string | null;
     updates: { at: number; text: string }[];
   },
 ): { title: string; body: string; closes: string | null } {
-  // taskOf throws when the copy has no such task, as for a task with no issue.
+  // taskOf throws when the copy has no such issue.
   let issue: Task | null = null;
   try {
-    issue = taskOf(db, thread.owner, thread.repo, thread.task);
+    if (thread.issue !== null) issue = taskOf(db, thread.owner, thread.repo, thread.issue);
   } catch {}
   const task = {
     title: thread.title ?? issue?.title ?? "",

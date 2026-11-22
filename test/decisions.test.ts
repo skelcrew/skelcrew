@@ -38,10 +38,10 @@ process.exit(0);`;
 
 test("the lead's decisions add up on the task, the human's with their words, and sc show lists them", () => {
   const seen = inProcess(`
-const first = decide(db, "app", "12", "Keep CSV only, as it is what users open.", undefined);
-const second = decide(db, "app", "12", "Never save provider text.", "no, don't save what the provider says\\n");
+const first = decide(db, "app", "t12", "Keep CSV only, as it is what users open.", undefined);
+const second = decide(db, "app", "t12", "Never save provider text.", "no, don't save what the provider says\\n");
 const { decisions } = thread();
-const view = readTask(db, { repo: "app", task: "12" });
+const view = readTask(db, { repo: "app", task: "t12" });
 console.log(JSON.stringify({ first, second, decisions, shown: view.decisions }));`);
   expect(seen.first).toBe(
     "Recorded the decision on APP-12. Every review of it from now on gets it.",
@@ -64,7 +64,7 @@ console.log(JSON.stringify({ first, second, decisions, shown: view.decisions }))
 // Starting the task over clears its decisions, so the thread's log keeps the human's words.
 test("the thread's log keeps a human decision's words, for after the task starts over", () => {
   const seen = inProcess(`
-decide(db, "app", "12", "Never save provider text.", "no, don't save it\\n");
+decide(db, "app", "t12", "Never save provider text.", "no, don't save it\\n");
 const { readFileSync } = await import("node:fs");
 const { join } = await import("node:path");
 const { threadsDir } = await import(${JSON.stringify(source("paths.ts"))});
@@ -84,9 +84,9 @@ console.log(JSON.stringify({ why: last.why, decisions: last.decisions }));`);
 
 test("what must stay true replaces the list it had, and sc show lists it", () => {
   const seen = inProcess(`
-keepTrue(db, "app", "12", ["Exports stay under a second."]);
-const said = keepTrue(db, "app", "12", [" Each agent's login stays separate. ", "Old exports still open."]);
-const view = readTask(db, { repo: "app", task: "12" });
+keepTrue(db, "app", "t12", ["Exports stay under a second."]);
+const said = keepTrue(db, "app", "t12", [" Each agent's login stays separate. ", "Old exports still open."]);
+const view = readTask(db, { repo: "app", task: "t12" });
 console.log(JSON.stringify({ said, kept: thread().stay_true, shown: view.mustStayTrue }));`);
   expect(seen.said).toBe(
     "Set what APP-12 must keep true. Every review of it from now on checks each one.",
@@ -102,7 +102,7 @@ test("sc show keeps both lists once the work is done or failed", () => {
     const seen = inProcess(
       `
 db.run(\`UPDATE tasks SET decisions = '[{"by":"lead","at":1,"text":"Keep CSV."}]', stay_true = '["Fast.","Small."]'\`);
-const view = readTask(db, { repo: "app", task: "12" });
+const view = readTask(db, { repo: "app", task: "t12" });
 console.log(JSON.stringify({ decisions: view.decisions, kept: view.mustStayTrue }));`,
       status,
     );
@@ -117,9 +117,9 @@ test("a task whose work is done takes neither, as its next start begins fresh", 
   const seen = inProcess(
     `
 console.log(JSON.stringify({
-  decided: attempt(() => decide(db, "app", "12", "Keep CSV.", undefined)),
-  kept: attempt(() => keepTrue(db, "app", "12", ["Fast."])),
-  missing: attempt(() => decide(db, "app", "13", "Keep CSV.", undefined)),
+  decided: attempt(() => decide(db, "app", "t12", "Keep CSV.", undefined)),
+  kept: attempt(() => keepTrue(db, "app", "t12", ["Fast."])),
+  missing: attempt(() => decide(db, "app", "t13", "Keep CSV.", undefined)),
 }));`,
     "done",
   );

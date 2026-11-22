@@ -47,7 +47,7 @@ ${code}`;
     stderr: "pipe",
   });
   if (!ran.success) throw new Error(ran.stderr.toString());
-  return JSON.parse(ran.stdout.toString());
+  return JSON.parse(ran.stdout.toString().trim().split("\n").at(-1) ?? "");
 }
 
 test("open tasks read newest first", () => {
@@ -67,6 +67,16 @@ console.log(JSON.stringify({ open: ids(), kept: taskOf(db, "simon", "app", "12")
   expect(() => run(`taskOf(db, "simon", "app", "13");`)).toThrow(
     "there is no open issue 13 in simon/app",
   );
+});
+
+// A task named after its issue before every task took a number kept its name in lowercase, such
+// as jott-12, which the upgrade made its issue. The copy gives it the tracker's own spelling, so
+// a restart finds its issue, and its label doesn't start a second task.
+test("a task whose issue was saved in lowercase takes the tracker's spelling", () => {
+  const code = `db.run(${JSON.stringify(threadSql({ task: "t5", issue: "jott-12", folder: "app-jott-12" }))});
+saveItems(db, "simon", "app", ${JSON.stringify([task(12, { id: "JOTT-12" })])}, ["task"]);
+console.log(JSON.stringify(db.query("SELECT task, issue FROM tasks WHERE task = 't5'").get()));`;
+  expect(run(code)).toEqual({ task: "t5", issue: "JOTT-12" });
 });
 
 test("a change brings an item in or updates it, and a closed one leaves once no thread has it", () => {
