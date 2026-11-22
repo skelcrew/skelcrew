@@ -123,14 +123,16 @@ export function removeLoginCopy(name: string, home = homedir()): void {
   rmSync(join(dataDir(home), "pi-sessions", name, "auth.json"), { recursive: true, force: true });
 }
 
-// Removes every session's copy of Skelcrew's login but those of the sessions named in `live`, so
-// a copy that any path left behind lasts only until the next sweep.
-export function removeLoginCopies(live: ReadonlySet<string>, home = homedir()): void {
+// Returns each session that has a copy of Skelcrew's login, with when the copy was written.
+export function loginCopies(home = homedir()): { name: string; written: number }[] {
   const sessions = join(dataDir(home), "pi-sessions");
-  if (!lstatSync(sessions, { throwIfNoEntry: false })?.isDirectory()) return;
-  for (const entry of readdirSync(sessions, { withFileTypes: true }))
-    if (entry.isDirectory() && !live.has(entry.name))
-      rmSync(join(sessions, entry.name, "auth.json"), { recursive: true, force: true });
+  if (!lstatSync(sessions, { throwIfNoEntry: false })?.isDirectory()) return [];
+  return readdirSync(sessions, { withFileTypes: true }).flatMap((entry) => {
+    const copy = entry.isDirectory()
+      ? lstatSync(join(sessions, entry.name, "auth.json"), { throwIfNoEntry: false })
+      : undefined;
+    return copy ? [{ name: entry.name, written: copy.mtimeMs }] : [];
+  });
 }
 
 // Gives an agent folder Skelcrew's own models.json, where you add providers Pi doesn't have, such

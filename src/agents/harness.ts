@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
-import { pi, removeLoginCopies, removeLoginCopy } from "./pi.ts";
+import { loginCopies, pi, removeLoginCopy } from "./pi.ts";
 
 // A harness's name, as your config and Skelcrew's database write it.
 export const HarnessName = z.enum(["claude", "codex", "pi"]);
@@ -24,20 +24,32 @@ export function forgetLogin(name: string): void {
   removeLoginCopy(name);
 }
 
+// The sessions whose start runs in this daemon now, whose copy of your login no sweep removes.
+const starting = new Set<string>();
+
 // Starts the session `name` with `start`, which writes the harness's copy of your login before
 // the session starts. Any failure removes the copy before it goes on, so a session that never
 // ran keeps none.
 export async function startHoldingLogin<T>(name: string, start: () => Promise<T>): Promise<T> {
+  starting.add(name);
   try {
     return await start();
   } catch (error) {
     forgetLogin(name);
     throw error;
+  } finally {
+    starting.delete(name);
   }
 }
 
-// Removes the copy of your login of every session but the `live` ones, the leads and builders
-// that may run now, whatever path left one behind.
-export function sweepLogins(live: Iterable<string>): void {
-  removeLoginCopies(new Set(live));
+// Removes each session's copy of your login unless `runs` says its session runs, or its start
+// runs in this daemon. A copy written once the sweep began is a start's that just finished, so
+// it stays. A session whose host can't say keeps its copy, for the next sweep.
+export async function sweepLogins(runs: (name: string) => Promise<boolean>): Promise<void> {
+  const began = Date.now();
+  for (const { name, written } of loginCopies()) {
+    if (starting.has(name) || written >= began) continue;
+    const live = await runs(name).catch(() => true);
+    if (!live && !starting.has(name)) forgetLogin(name);
+  }
 }

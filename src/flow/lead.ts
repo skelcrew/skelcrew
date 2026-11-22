@@ -3,7 +3,13 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
-import { forgetLogin, HarnessName, harnessNamed, startHoldingLogin } from "../agents/harness.ts";
+import {
+  forgetLogin,
+  HarnessName,
+  harnessNamed,
+  startHoldingLogin,
+  sweepLogins,
+} from "../agents/harness.ts";
 import {
   agentRuns,
   checkAgentStarted,
@@ -31,7 +37,7 @@ import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
 import { supervisor } from "./supervisor.ts";
-import { sweepLoginCopies } from "./thread.ts";
+import { builderSession, readThread } from "./thread.ts";
 
 // What Skelcrew's database keeps about a repository's lead, checked as it is read back.
 const LeadRow = z.object({
@@ -277,7 +283,7 @@ export async function startLead(
   const files = filesFor(host);
   // Any start's copy of your login left behind by a session that isn't live goes first, and
   // this one's goes if its start fails.
-  sweepLoginCopies(db);
+  await sweepLoginCopies(db, sessions);
   await startHoldingLogin(lead.name, async () => {
     const { argv, env } = await harness.start({
       name: lead.name,
@@ -522,3 +528,28 @@ export async function closeTabAndEndLead(
 
 // Returns the supervisor of a repository's lead, which starts and ends it one at a time.
 export const leadAgent = (owner: string, repo: string) => supervisor(`${owner}/${repo}`);
+
+// Removes each lead's and builder's copy of your login whose session doesn't run, as its host
+// says, unless its start runs in this daemon now. Run as the daemon starts, when nothing starts
+// yet, and before each start writes a copy, so a copy any path left behind, such as a daemon that
+// stopped between writing one and starting its session, never lasts.
+export async function sweepLoginCopies(db: Database, sessions: string): Promise<void> {
+  const Thread = z.object({ folder: z.string() });
+  const Repo = z.object({ owner: z.string(), repo: z.string() });
+  await sweepLogins(async (name) => {
+    const thread = db.query("SELECT folder FROM threads WHERE folder = ?").get(name);
+    if (Thread.safeParse(thread).success) {
+      const now = readThread(db, name);
+      if (now.host === null) return false;
+      const { host, id } = await builderSession(db, sessions, now);
+      return agentRuns(host, id);
+    }
+    for (const row of db.query("SELECT owner, repo FROM repositories").all()) {
+      const { owner, repo } = Repo.parse(row);
+      if (leadOf(db, owner, repo).name !== name) continue;
+      const lead = await leadSession(db, sessions, owner, repo);
+      return lead !== null && (await agentRuns(lead.host, lead.id));
+    }
+    return false;
+  });
+}

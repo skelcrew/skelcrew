@@ -28,6 +28,7 @@ import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
+import { sweepLoginCopies } from "./lead.ts";
 import { freshRounds, pastRoundLimit, roundOf } from "./ledger.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
@@ -48,7 +49,6 @@ import {
   renameOnHost,
   repositoryOf,
   sessionTitle,
-  sweepLoginCopies,
   Thread,
   taskName,
   threadName,
@@ -488,7 +488,7 @@ async function startOnConfiguredHost(
   const files = filesFor(host);
   // Any start's copy of your login left behind by a session that isn't live goes first, and
   // this one's goes if its start fails.
-  sweepLoginCopies(db);
+  await sweepLoginCopies(db, sessions);
   await startHoldingLogin(thread.folder, async () => {
     const { argv, env } = await harness.start({
       name: thread.folder,

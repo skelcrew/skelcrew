@@ -4,11 +4,11 @@ import type { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { HarnessName, harnessNamed, sweepLogins } from "../agents/harness.ts";
+import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { listSessions, renameSession } from "../agents/sessions.ts";
 import { nextSequence, savedJson, taskColumns } from "../db.ts";
 import { errorText } from "../format.ts";
-import { leadPlaces, threadsDir } from "../paths.ts";
+import { threadsDir } from "../paths.ts";
 import {
   type Host,
   hostNamed,
@@ -586,24 +586,4 @@ export function folderName(repository: string): string {
     .replace(/^[^a-zA-Z0-9]+/, "")
     .slice(0, 60);
   return name || "thread";
-}
-
-// Removes each lead's and builder's copy of your login whose session isn't live: a builder of a
-// thread that isn't working or waiting, or a lead whose tab is closed. Run as the daemon starts
-// and before each start writes a copy, so a copy any path left behind never lasts.
-export function sweepLoginCopies(db: Database): void {
-  const Row = z.object({ name: z.string() });
-  const builders = db
-    .query("SELECT folder AS name FROM threads WHERE status IN ('working', 'waiting')")
-    .all()
-    .map((row) => Row.parse(row).name);
-  const Lead = z.object({ owner: z.string(), repo: z.string(), kept_lead: z.coerce.boolean() });
-  const leads = db
-    .query("SELECT owner, repo, kept_lead FROM repositories WHERE tab_closed = 0")
-    .all()
-    .map((row) => {
-      const { owner, repo, kept_lead } = Lead.parse(row);
-      return leadPlaces(owner, repo, kept_lead).name;
-    });
-  sweepLogins([...builders, ...leads]);
 }

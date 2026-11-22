@@ -479,6 +479,39 @@ console.log(back, fs.existsSync(${JSON.stringify(join(piSessions(), "app-12", "s
   expect(said).toBe("failed true false\n");
 }, 40_000);
 
+// A daemon can stop between writing a session's copy of your login and starting the session, so
+// its thread still reads working on a host with no such session. The sweep asks the host, and
+// keeps only the copies of sessions that run there, or whose start runs in this daemon now.
+test("the sweep keeps only the copies of sessions the host runs, or starts now", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { sweepLoginCopies } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { startHoldingLogin } = await import(${JSON.stringify(source("agents/harness.ts"))});
+const fs = require("node:fs");
+const sessions = ${JSON.stringify(piSessions())};
+const copy = (name) => {
+  fs.mkdirSync(sessions + "/" + name, { recursive: true });
+  fs.writeFileSync(sessions + "/" + name + "/auth.json", "{}");
+  fs.utimesSync(sessions + "/" + name + "/auth.json", new Date(0), new Date(0));
+};
+const has = (name) => fs.existsSync(sessions + "/" + name + "/auth.json");
+db.exec(${JSON.stringify(threadSql({ task: "13", session: "s", host: "fake", host_id: "fake-app-13" }))});
+// app-12's start wrote its copy, and the daemon stopped before the host started it.
+for (const name of ["app-12", "app-13", "app-14", "gone"]) copy(name);
+const host = (await builderSession(db, "unused", readThread(db, "app-13"))).host;
+await startSession(host, "app-13", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-13" } });
+// app-14's start runs in this daemon while the sweep looks.
+let finish;
+const starting = startHoldingLogin("app-14", () => new Promise((done) => { finish = done; }));
+await sweepLoginCopies(db, "unused");
+finish();
+await starting;
+console.log(has("app-12"), has("app-13"), has("app-14"), has("gone"));`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe("false true true false\n");
+}, 40_000);
+
 test("a lead still starting on a slow host when its repository is removed is ended, not left running", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
