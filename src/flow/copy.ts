@@ -125,6 +125,16 @@ export function saveItems(
         WHERE owner = ? AND repo = ? AND ${link} IS NOT NULL AND pr_link IS NOT ${link}`,
       [owner, repo],
     );
+    // A task named after its issue before every task took a number kept its name in lowercase,
+    // which the upgrade made its issue, such as jott-12. It takes the tracker's own spelling,
+    // such as JOTT-12, so it matches its issue wherever Skelcrew looks.
+    const spelled = `(SELECT i.id FROM items i WHERE i.owner = ${table}.owner AND i.repo = ${table}.repo
+      AND i.kind = 'task' AND lower(i.id) = lower(${table}.issue))`;
+    db.run(
+      `UPDATE ${table} SET issue = ${spelled}
+        WHERE owner = ? AND repo = ? AND ${spelled} IS NOT NULL AND issue IS NOT ${spelled}`,
+      [owner, repo],
+    );
     // Forget the items that are no longer open, unless a thread still queued, working, waiting
     // or stopped points to one by its issue or PR.
     db.run(
