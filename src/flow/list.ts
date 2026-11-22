@@ -14,9 +14,11 @@ import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
+import { itemOf } from "./inbox.ts";
 import { nextRound, roundOf } from "./ledger.ts";
 import { messagesWaiting } from "./messages.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
+import { letters } from "./requests.ts";
 import { roundRunning } from "./round.ts";
 import { Stage, taskStage } from "./stage.ts";
 import { mergeShown, needsYou, needsYouFor } from "./status.ts";
@@ -179,21 +181,26 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   return { state: states[round.verdict], round: round.review_round, at };
 }
 
+// What sc ps, sc ls and sc show say a thread or task needs you for while the lead's item on it is
+// open in Needs you.
+const itemWaits = "item waits";
+
 // Returns a thread as sc ps shows it, and as sc ls and sc show show its task's PR, CI and
-// review. `forge` is whether its repository has one, as without it there are no PRs. Its PR's
+// review. A thread the lead's item asks you about needs you, as an item waits. `forge` is whether its repository has one, as without it there are no PRs. Its PR's
 // link comes from Skelcrew's copy, which has a PR while it is open or its thread isn't over. The
 // title comes from the tracker and the short title from the lead, so tools get them with no
 // control codes.
 function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
   const pr = forge ? thread.pr : null;
+  const asks = itemOf(db, thread.owner, thread.repo, thread.task) !== null;
   const copy = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
   return {
     thread: threadName(db, thread),
     short: thread.short && removeControlCodes(thread.short),
     title: thread.title && removeControlCodes(thread.title),
     status: thread.status,
-    needsYou: needsYou(thread),
-    needsYouFor: needsYouFor(thread),
+    needsYou: asks || needsYou(thread),
+    needsYouFor: asks ? itemWaits : needsYouFor(thread),
     queued: queuedForReview(thread),
     branch: thread.branch,
     pr,
@@ -232,7 +239,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
 // gave it, its stage, its issue while that is open in Skelcrew's copy, such as #12, and how its
 // builder stands, or null with no thread. `pr` and `checks` are as sc ps gives them for its thread, and
 // null with none. `review` is where Skelcrew's review stands, with a forge or without one, and
-// null with no thread.
+// null with no thread. `asks` is whether the lead's item on it waits in Needs you.
 export const TaskRow = z.object({
   task: z.string(),
   stage: Stage,
@@ -250,6 +257,7 @@ export const TaskRow = z.object({
   pr: ThreadRow.shape.pr,
   checks: ThreadRow.shape.checks,
   review: ThreadRow.shape.review,
+  asks: z.boolean().default(false),
 });
 export type TaskRow = z.infer<typeof TaskRow>;
 
@@ -298,6 +306,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         // Reviews run without a forge too, on the branch, so their state shows whatever sc ps
         // leaves out.
         review: reviewOf(thread),
+        asks: row.needsYouFor === itemWaits,
       };
       return { at: z.object({ at: z.number() }).parse(saved).at, id: thread.task, task };
     });
@@ -314,6 +323,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
           pr: null,
           checks: null,
           review: null,
+          asks: itemOf(db, r.owner, r.repo, item.id) !== null,
         };
         return { created: item.created, task };
       });
@@ -330,6 +340,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         pr: null,
         checks: null,
         review: null,
+        asks: itemOf(db, r.owner, r.repo, t.task) !== null,
       };
       return { created: t.created, task };
     });
@@ -375,6 +386,7 @@ export type PrPage = z.infer<typeof PrPage>;
 // it, as after a merge. `merge` is its armed merge with what it waits on, such as `merges without
 // approval · waiting on its checks`, or null with none, as the list's rows leave that out.
 // `filed` is who filed a task of the backlog and when, as an ISO time, or null for any other.
+// `item` is the lead's item on it in Needs you, with its options, or null with none.
 export const TaskView = z.object({
   task: z.string(),
   stage: Stage,
@@ -394,6 +406,10 @@ export const TaskView = z.object({
   prPage: PrPage.nullable(),
   merge: z.string().nullable(),
   filed: z.object({ by: z.string(), at: z.string() }).nullable().default(null),
+  item: z
+    .object({ text: z.string(), options: z.array(z.string()) })
+    .nullable()
+    .default(null),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -496,6 +512,7 @@ export function readTask(db: Database, which: Which): TaskView {
   const own = ownTask(task);
   const row = thread && threadRow(db, thread, forge);
   const pr = row?.pr ?? null;
+  const item = itemOf(db, owner, repo, task);
   return {
     task: `${taskName(name, task)}`,
     stage: taskStage(thread, issue !== undefined || filed !== null),
@@ -518,6 +535,10 @@ export function readTask(db: Database, which: Which): TaskView {
     prPage: pr === null ? null : prPageOf(db, repository, pr),
     merge: thread ? mergeShown(thread) : null,
     filed: filed && { by: removeControlCodes(filed.by), at: filed.created },
+    item: item && {
+      text: removeControlCodes(item.text),
+      options: item.options.map(removeControlCodes),
+    },
   };
 }
 
@@ -675,8 +696,8 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
 // it does, as "needs you: needs you" would say nothing.
 const saysWhy = (reason: string | null) => (reason === "needs you" ? null : reason);
 
-// The most columns sc ps gives why a thread needs you, so a long mark from the lead leaves the
-// thread's name and title room in 80 columns. sc show prints it whole.
+// The most columns sc ps gives why a thread needs you, so a long reason leaves the thread's name
+// and title room in 80 columns. sc show prints it whole.
 const reasonRoom = 20;
 
 // Returns how sc ps names an armed merge: when ready, or skipping Skelcrew's review.
@@ -689,7 +710,8 @@ function happening(task: TaskRow): string {
   const { thread, review } = task;
   const parts: string[] = [];
   if (thread) parts.push(thread.queued ? "queued for review" : thread.status);
-  if (thread?.needsYou)
+  if (task.asks) parts.push(`needs you: ${itemWaits}`);
+  else if (thread?.needsYou)
     parts.push(saysWhy(thread.needsYouFor) ? `needs you: ${thread.needsYouFor}` : "needs you");
   if (task.pr !== null) parts.push(`#${task.pr}`);
   if (task.checks === "no CI") parts.push(task.checks);
@@ -779,7 +801,9 @@ export function printTask(task: TaskView, json: boolean): void {
   for (const [label = "", value = ""] of facts) console.log(`${label.padEnd(8)}${value}`);
   // The longer texts, each after a blank line, with only those that have something to say.
   const latest = prPage?.review;
+  const options = (task.item?.options ?? []).map((option, at) => `${letters[at]}) ${option}`);
   const texts: [string, string][] = [
+    ["Asks you, in Needs you", [task.item?.text ?? "", ...options].join("\n")],
     ["Description", task.body],
     [
       latest ? `Latest review on the PR: ${latest.verdict} · ${latest.author}` : "",

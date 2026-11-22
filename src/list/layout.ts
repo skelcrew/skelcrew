@@ -2,6 +2,7 @@
 // lead's block that heads the repository, each section's heading in its colour with the rows of
 // those that are open, and the bottom line with the keys and the machine's load. It reads
 // nothing, so what you see can be tested without a terminal.
+import { letters } from "../flow/requests.ts";
 import { ListStage } from "../flow/stage.ts";
 import {
   amber,
@@ -22,7 +23,8 @@ import {
   white,
   yellow,
 } from "../screen/look.ts";
-import type { Ci, Heading, Row, Section, Tab } from "./rows.ts";
+import { itemKeys } from "./actions.ts";
+import { type Ci, type Heading, leadLooks, type Row, type Section, type Tab } from "./rows.ts";
 
 // What the list shows besides its rows: the names of the version of Skelcrew running here, longest
 // first, such as v0.4.2 or 6f1c2ab (checkout), where it runs on a remote, or empty on this machine,
@@ -96,12 +98,14 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
         ? []
         : [enter];
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
+  const answers = row?.ask ? [itemKeys(row)] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const now = row?.startNow ? ["f start now"] : [];
   const reorder = row?.section === "task queue" && row.place !== null ? ["shift+↑↓ reorder"] : [];
   const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   return [
     "↑↓ move",
+    ...answers,
     ...open,
     "0-6 sections",
     ...reorder,
@@ -113,11 +117,12 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
   ].join("  ");
 }
 
-// Returns whether Enter on a row attaches to its agent: the lead, or a task's builder while it is
+// Returns whether Enter on a row attaches to its agent: the lead, on its row or on its item about
+// the repository, or a task's builder while it is
 // at work, or once it is ready but needs you. On Backlog it starts the task, in the task queue it
 // says what the task waits on, as no builder runs for it yet, and on Ready or Done it opens the PR.
 export function enterAttaches(row: Row): boolean {
-  if (row.part === "lead") return true;
+  if (row.part === "lead" || row.part === "ask") return true;
   if (row.section === "task queue") return false;
   const atWork = row.part !== "ready" && row.part !== "done";
   return (atWork || row.needsYou) && row.session !== null;
@@ -247,8 +252,42 @@ export function tabAt(frame: Frame, width: number, column: number): string | nul
 type Columns = { name: number; title: number; when: number };
 
 // Returns whether a row takes two lines: the lead's, and a task's in Building, Reviewing, Checks
-// or Ready. Backlog and Done take one.
-const tall = (row: Row) => row.part !== "backlog" && row.part !== "done";
+// or Ready, or under Needs you. Backlog and Done take one.
+const tall = (row: Row) =>
+  row.section === "needs you" || (row.part !== "backlog" && row.part !== "done");
+
+// What a line of an item answers when tapped: one of its options, or a reply in your own words.
+export type Pick = (typeof letters)[number] | "reply";
+
+// Returns the lines under a row that show the lead's item: its text cut at words, then each option
+// by its letter, then the line for a reply, each line with what tapping it answers. They line up
+// under the row's name, and are shaded with it on the row you are on.
+function askLines(row: Row, here: boolean, width: number): { text: string; pick: Pick | null }[] {
+  if (row.ask === null) return [];
+  const indent = " ".repeat(Bun.stringWidth(`${pointer(here)}${row.mark.sign} `));
+  const room = Math.max(width - indent.length, 1);
+  const wrapped = (text: string) => Bun.wrapAnsi(text, room, { hard: true }).split("\n");
+  const text = wrapped(row.ask.text).map((line) => ({
+    text: `${indent}${tinted(here, bright, line)}`,
+    pick: null,
+  }));
+  const options = row.ask.options.flatMap((option, at) => {
+    const letter = letters[at];
+    if (letter === undefined) return [];
+    return wrapped(`${letter}) ${option}`).map((line) => ({
+      text: `${indent}${tinted(here, yellow, line)}`,
+      pick: letter,
+    }));
+  });
+  const reply = {
+    text: `${indent}${tinted(here, grey, fitted("r) reply", room))}`,
+    pick: "reply" as const,
+  };
+  return [...text, ...options, reply].map((line) => ({
+    ...line,
+    text: here ? shaded(line.text, width) : line.text,
+  }));
+}
 
 // Returns the row you are on as `lines`, shaded across the width, or as they are on another row.
 const marked = (lines: string[], here: boolean, width: number) =>
@@ -336,8 +375,10 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   // step its builder is on then comes first, in the word's colour, as what is happening beyond
   // the stage. Under Needs you or Task queue the word is what the row is there for, so it stays.
   const repeats = row.section === row.part && stageWords[row.part] === row.says;
+  const looks = row.section === "needs you" && row.ask === null && row.part !== "lead";
   const groups = [
     [{ sign: repeats ? "" : row.says, code: markColours[row.colour] }],
+    [{ sign: looks ? leadLooks : "", code: grey }],
     [{ sign: row.step, code: repeats ? markColours[row.colour] : grey }],
     pr,
     [{ sign: row.when, code: grey }],
@@ -364,11 +405,16 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
 }
 
 // What a click on a line of the list reaches: a row, by its place in the rows, which is the
-// lead's or a task's, a section's heading, or nothing, such as on a blank line or an edge.
+// lead's or a task's, with `pick` on a line of its item that answers it, a section's heading, or
+// nothing, such as on a blank line or an edge.
 // On an edge line, a click reaches the heading pinned at its column: `pinned` has each one's
 // columns, counted from 1 as your terminal counts a click.
 export type Pinned = { from: number; to: number; section: Section };
-export type Target = { row: number } | { section: Section } | { pinned: Pinned[] } | null;
+export type Target =
+  | { row: number; pick?: Pick }
+  | { section: Section }
+  | { pinned: Pinned[] }
+  | null;
 
 // One line of the sections' part of the list: its text, the row it belongs to, by its place in
 // the rows, or null for a heading or a blank line, and what a click on it reaches.
@@ -540,12 +586,19 @@ export function drawRows(
     title: widest((row) => row.title),
     when: widest((row) => row.when),
   };
-  const linesOf = (i: number) => {
+  const linesOf = (i: number): { text: string; pick: Pick | null }[] => {
     const row = rows[i];
     if (!row) return [];
     const on = i === here;
-    if (tall(row)) return tallLines(row, on, columns.name, width);
-    return marked([shortLine(row, on, columns, width)], on, width);
+    const plain = (lines: string[]) => lines.map((text) => ({ text, pick: null }));
+    if (row.part === "ask")
+      return [
+        ...plain(tallLines(row, on, columns.name, width).slice(0, 1)),
+        ...askLines(row, on, width),
+      ];
+    if (tall(row))
+      return [...plain(tallLines(row, on, columns.name, width)), ...askLines(row, on, width)];
+    return plain(marked([shortLine(row, on, columns, width)], on, width));
   };
   const onHeading = rows[here]?.part === "heading" ? rows[here]?.section : undefined;
   const countWidth = Math.max(...headings.map((heading) => String(heading.count).length), 1);
@@ -560,7 +613,11 @@ export function drawRows(
     headings.flatMap((heading) => {
       const ours = rows.flatMap((row, i) =>
         row.section === heading.section && row.part !== "heading"
-          ? linesOf(i).map((text) => ({ text, row: i, target: { row: i } }))
+          ? linesOf(i).map(({ text, pick }) => ({
+              text,
+              row: i,
+              target: pick === null ? { row: i } : { row: i, pick },
+            }))
           : [],
       );
       const queue = heading.section === "task queue";

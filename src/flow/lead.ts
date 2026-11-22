@@ -267,12 +267,12 @@ export async function startLead(
       );
   })();
   // The lead reads the flows you approved at their ref, and starts with today's instructions, so
-  // it needs no note of them, nor of briefing another lead.
+  // it needs no note of them, of briefing another lead, nor of the inbox.
   markApproved(repository);
-  db.run("UPDATE repositories SET lead_flows = 1, lead_briefs = 1 WHERE owner = ? AND repo = ?", [
-    owner,
-    repo,
-  ]);
+  db.run(
+    "UPDATE repositories SET lead_flows = 1, lead_briefs = 1, lead_inbox = 1 WHERE owner = ? AND repo = ?",
+    [owner, repo],
+  );
   const files = filesFor(host);
   const { argv, env } = await harness.start({
     name: lead.name,

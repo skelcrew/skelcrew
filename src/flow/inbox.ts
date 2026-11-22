@@ -1,0 +1,156 @@
+// The inbox: what the lead asks you, as items in Needs you. The lead posts one per thread, or one
+// for its repository, and your answer goes back to it as a note, with the words it may act on.
+import type { Database } from "bun:sqlite";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
+import { leadOf } from "./lead.ts";
+import { noteForLead, typeLeadNotes } from "./messages.ts";
+import { findRepository } from "./repo.ts";
+import { letters } from "./requests.ts";
+import { reportStatus } from "./status.ts";
+import { log, readThread, type Thread, taskName, threadOn } from "./thread.ts";
+
+// An item as the database keeps it. `task` is empty for an item about the repository.
+export const Item = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  task: z.string(),
+  text: z.string(),
+  options: z.string().transform((saved) => z.array(z.string()).parse(JSON.parse(saved))),
+  posted: z.number(),
+});
+export type Item = z.infer<typeof Item>;
+
+// Returns the item open for a task, or for the repository with an empty task, or null.
+export function itemOf(db: Database, owner: string, repo: string, task: string): Item | null {
+  const row = db
+    .query("SELECT * FROM asks WHERE owner = ? AND repo = ? AND task = ?")
+    .get(owner, repo, task);
+  return Item.nullable().parse(row);
+}
+
+// Returns the repository's open items, the newest first.
+export const itemsOf = (db: Database, owner: string, repo: string): Item[] =>
+  z
+    .array(Item)
+    .parse(
+      db
+        .query("SELECT * FROM asks WHERE owner = ? AND repo = ? ORDER BY posted DESC")
+        .all(owner, repo),
+    );
+
+// Returns whether the thread's task has an item open.
+export const itemOpen = (db: Database, thread: Thread) =>
+  itemOf(db, thread.owner, thread.repo, thread.task) !== null;
+
+// Returns text as one line with no control codes, as an item's text and options show in the list.
+const oneLine = (text: string) => text.replace(/[\s\p{Cc}]+/gu, " ").trim();
+
+// Returns what an item is about, such as APP-12, or the repository's name.
+function aboutOf(db: Database, owner: string, repo: string, task: string): string {
+  const { name } = findRepository(db, `${owner}/${repo}`);
+  return task === "" ? name : taskName(name, task);
+}
+
+// Posts the lead's item for a task, or with `task` null for the repository, replacing the one open
+// there. A task that has a thread must still be live: a done one has nothing left to decide.
+// Every item passes through here, so a plugin that pushes Needs you hears of each one here.
+export function postItem(
+  db: Database,
+  repository: string,
+  task: string | null,
+  text: string,
+  options: string[],
+): string {
+  const { owner, repo } = findRepository(db, repository);
+  const said = oneLine(text);
+  if (said === "") throw new Error("say in plain words what the human must decide");
+  const picks = options.map(oneLine);
+  if (picks.some((pick) => pick === "")) throw new Error("an --option can't be empty");
+  if (picks.length > letters.length)
+    throw new Error(`an item has at most ${letters.length} options`);
+  const thread = task === null ? null : threadOn(db, repository, task);
+  if (thread?.status === "done")
+    throw new Error(`${aboutOf(db, owner, repo, thread.task)} is done already`);
+  db.run(
+    "INSERT OR REPLACE INTO asks (owner, repo, task, text, options, posted) VALUES (?, ?, ?, ?, ?, ?)",
+    [owner, repo, task ?? "", said, JSON.stringify(picks), Date.now()],
+  );
+  if (thread !== null) {
+    log(db, thread, `the lead asked you: ${said}`);
+    reportStatus(db, readThread(db, thread.folder));
+  }
+  return aboutOf(db, owner, repo, task ?? "");
+}
+
+// Your answer to an item: one of its options by letter, or words of your own.
+export type Answer = { pick: (typeof letters)[number] } | { reply: string };
+
+// Answers the item open for a task, or with `task` null for the repository, and tells the lead.
+// `seen` is the item's text as you saw it, as the lead may have replaced the item since.
+// The item's text and your answer, and nothing else, go in a file in the lead's folder, which the
+// lead gives as --asked-file for what it runs on it, so a pick lets it do only what you picked.
+// Returns what the footer says.
+export function answerItem(
+  db: Database,
+  sessions: string,
+  repository: string,
+  task: string | null,
+  seen: string,
+  answer: Answer,
+): string {
+  const { owner, repo } = findRepository(db, repository);
+  const item = itemOf(db, owner, repo, task ?? "");
+  const about = aboutOf(db, owner, repo, task ?? "");
+  if (item === null) throw new Error(`nothing asks you about ${about} any more`);
+  if (item.text !== seen)
+    throw new Error(`the lead changed its item on ${about} as you answered, so read it again`);
+  let words: string;
+  if ("pick" in answer) {
+    const option = item.options[letters.indexOf(answer.pick)];
+    if (option === undefined) throw new Error(`${about}'s item has no option ${answer.pick}`);
+    words = `You picked ${answer.pick} (${option}) on ${about}: ${item.text}`;
+  } else {
+    const reply = answer.reply.trim();
+    if (reply === "") throw new Error("type a reply first");
+    words = `You replied on ${about}: ${reply}\n\nThe item was: ${item.text}`;
+  }
+  db.run("DELETE FROM asks WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, item.task]);
+  const folder = join(leadOf(db, owner, repo).folder, "answers");
+  mkdirSync(folder, { recursive: true });
+  const file = join(folder, `${about.toLowerCase()}.txt`);
+  writeFileSync(file, `${words}\n`);
+  const note = `${words}\n\nThese words are the human's: give --asked-file ${file} to what you run on this answer.`;
+  noteForLead(db, sessions, { owner, repo }, note, null, true);
+  typeLeadNotes(db, sessions);
+  const thread = task === null ? null : threadOn(db, repository, task);
+  if (thread !== null) {
+    log(db, thread, words.split("\n")[0]);
+    reportStatus(db, readThread(db, thread.folder));
+  }
+  return `Told the lead your answer on ${about}.`;
+}
+
+// Takes the lead's item for a task, or with `task` null for the repository, off the inbox, such as
+// once you answered it in the lead's chat. Returns what it was about.
+export function clearItem(db: Database, repository: string, task: string | null): string {
+  const { owner, repo } = findRepository(db, repository);
+  const about = aboutOf(db, owner, repo, task ?? "");
+  if (itemOf(db, owner, repo, task ?? "") === null) throw new Error(`no item asks about ${about}`);
+  db.run("DELETE FROM asks WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, task ?? ""]);
+  const thread = task === null ? null : threadOn(db, repository, task);
+  if (thread !== null) {
+    log(db, thread, "the lead took its item off");
+    reportStatus(db, readThread(db, thread.folder));
+  }
+  return about;
+}
+
+// Drops the item of a thread that ended, as nothing is left to decide on it.
+export const dropItem = (db: Database, thread: Thread) =>
+  db.run("DELETE FROM asks WHERE owner = ? AND repo = ? AND task = ?", [
+    thread.owner,
+    thread.repo,
+    thread.task,
+  ]);

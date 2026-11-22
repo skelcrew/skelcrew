@@ -14,7 +14,7 @@ import {
   showSession,
 } from "../agents/sessions.ts";
 import { paneTty, paneWidth, respawnPane, screenTmux, showTop } from "../agents/tmux.ts";
-import { moveQueued, openRepository, startOrMerge } from "../client.ts";
+import { answerItem, moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import { closeRepo, removeRepo } from "../flow/repo.ts";
@@ -22,11 +22,22 @@ import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { cloneOf, liveThreads } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
-import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
+import {
+  type Asking,
+  canOpenLinks,
+  itemKey,
+  itemKeys,
+  openPr,
+  type Reply,
+  replyLine,
+  stillOffered,
+  typeReply,
+} from "../list/actions.ts";
 import {
   drawRows,
   enterAttaches,
   listShare,
+  type Pick,
   type Spin,
   spinner,
   type Target,
@@ -81,7 +92,7 @@ const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // the digit alone open or close the task queue or a stage. The screen's tmux sends Ctrl-\'s byte
 // from anywhere, to bring your typing here, and Shift-Enter as CSI-u, only while your typing is
 // here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
-// Enter. Alt-W and plain w ask whether to close or remove the open repository.
+// Enter, except on a row with the lead's item, where it picks option a. Alt-W and plain w ask whether to close or remove the open repository.
 const keyNames: Record<string, string> = {
   "\x1c": "to sidebar",
   "\x1bw": "close",
@@ -122,8 +133,10 @@ function sidebarFooter(row: Row, restarts: boolean): string {
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const now = row.startNow ? "  f start now" : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
-  const enter = enterAttaches(row) ? "⏎ attach  ⇧⏎/a full screen" : "⏎ open";
-  return `${first}  ${enter}${scroll}  0-6 sections${reorder}${start}${now}${merge}${end}`;
+  const answers = row.ask ? `  ${itemKeys(row)}` : "";
+  const full = row.ask ? "⇧⏎ full screen" : "⇧⏎/a full screen";
+  const enter = enterAttaches(row) ? `⏎ attach  ${full}` : "⏎ open";
+  return `${first}${answers}  ${enter}${scroll}  0-6 sections${reorder}${start}${now}${merge}${end}`;
 }
 
 // The question the close key asks about the open repository, by the step it is at: which of
@@ -280,6 +293,9 @@ export async function runSidebar(
   let said: string | null = null;
   let asking: Asking | null = null;
   let working = false;
+  // The reply you are typing to the lead's item on a row, which takes every key until it is sent
+  // or dropped.
+  let replying: Reply | null = null;
   let lastFrame = "";
   // The spinners on the marks of agents at work, where the last frame drew them, and the frame
   // they show. They turn only on this machine, as over sc --remote each turn would cost a write.
@@ -342,7 +358,8 @@ export async function runSidebar(
     ]).out;
     // The lead's row always shows the lead. Its session isn't what the sidebar last showed when
     // it runs on a plugin's host, which no tmux client reports, so the row decides.
-    if (rows[here]?.part !== "lead" && !command.includes(attachedMark)) return;
+    const lead = rows[here]?.part === "lead" || rows[here]?.part === "ask";
+    if (!lead && !command.includes(attachedMark)) return;
     held = false;
     screenTmux(agents, ["select-pane", "-t", rightPane]);
     if (zoom) screenTmux(agents, zoomIn(rightPane));
@@ -358,7 +375,7 @@ export async function runSidebar(
   };
   const follow = () => {
     const row = rows[here];
-    if (row) show(row.part === "lead" ? open.lead : detailsOf(row.name));
+    if (row) show(row.part === "lead" || row.part === "ask" ? open.lead : detailsOf(row.name));
   };
 
   // Returns the session of the agent the right side is about: the lead or an agent shown, or on a
@@ -432,6 +449,7 @@ export async function runSidebar(
   // you need most and what Esc stops.
   const footerText = () => {
     if (closing) return closingText(closing).footer;
+    if (replying) return replyLine(replying);
     if (empty) return "q/⌥Q quit";
     if (said ?? asking) return said ?? asking?.question.ask ?? "";
     const row = rows[here];
@@ -756,6 +774,35 @@ export async function runSidebar(
     working = false;
   };
 
+  // Takes your answer to the lead's item on a row to the daemon, which tells the lead, and says
+  // what the daemon answered, or why it refused, such as for an item the lead replaced meanwhile.
+  const answerRow = async (
+    row: Row,
+    given: { pick: Exclude<Pick, "reply"> } | { reply: string },
+  ) => {
+    if (!row.ask) return;
+    working = true;
+    try {
+      said = await answerItem(`${open.owner}/${open.repo}`, row.task, row.ask.text, given);
+    } catch (error) {
+      said = errorText(error);
+    }
+    working = false;
+    refresh();
+  };
+  // Acts on what a key or a tap on an item's line picks: an option, which answers it, or a reply,
+  // which you then type.
+  const pickOn = (row: Row, pick: Pick) => {
+    if (pick === "reply") replying = { row, text: "" };
+    else void answerRow(row, { pick });
+  };
+  // Acts on a key while you type a reply, which takes every key but Ctrl-\.
+  const typeInReply = (reply: Reply, key: string) => {
+    const typed = typeReply(reply, key);
+    replying = typeof typed === "string" ? null : typed;
+    if (typed === "send") void answerRow(reply.row, { reply: reply.text });
+  };
+
   // Moves the queued task you are on one place earlier, by -1, or later, by 1, as in the list.
   // You stay on its row, and the footer says its place. A paused task has no place until sc start
   // queues it, so the footer says that instead.
@@ -795,7 +842,7 @@ export async function runSidebar(
     const row = rows[here];
     if (!row) return;
     if (zoom && !enterAttaches(row)) return;
-    if (row.part === "lead") return toRight(zoom);
+    if (row.part === "lead" || row.part === "ask") return toRight(zoom);
     if (row.part === "heading" && row.section !== "lead") return toggle(row.section);
     if (row.more > 0) {
       wholeBacklog = true;
@@ -838,6 +885,9 @@ export async function runSidebar(
       const pinned = target.pinned.find((span) => span.from <= column && column <= span.to);
       return pinned && toggle(pinned.section);
     }
+    const tapped = rows[target.row];
+    if (target.pick && tapped)
+      return target.row === here ? pickOn(tapped, target.pick) : moveTo(target.row);
     if (rows[target.row]?.part === "lead") {
       moveTo(target.row);
       return toRight();
@@ -856,6 +906,7 @@ export async function runSidebar(
     if (name === "to sidebar") return toSidebar();
     if (working) return;
     if (closing) return answerClosing(closing, name);
+    if (replying) return typeInReply(replying, name === "enter" || name === "esc" ? name : key);
     if (name === "close") return askToClose();
     if (shown === refused) {
       shown = null;
@@ -880,6 +931,8 @@ export async function runSidebar(
     said = null;
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
+    const pick = itemKey(row, key);
+    if (pick && row) return pickOn(row, pick);
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
     if ((name === "earlier" || name === "later") && row)
       return void reorder(row, name === "earlier" ? -1 : 1);
@@ -927,19 +980,21 @@ export async function runSidebar(
   // onto your terminal, is skipped whole rather than pressing the keys its letters and digits are.
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?2004h");
   let pasting = false;
-  // Acts on each key and click in `text`, but none inside a paste.
+  // Acts on each key and click in `text`, but none inside a paste, which goes into a reply you are
+  // typing and is skipped otherwise.
   const act = (text: string) => {
     for (const [key] of text.matchAll(keyPattern)) {
       if (key === "\x1b[200~" || key === "\x1b[201~") pasting = key === "\x1b[200~";
       else if (!pasting) doing("acting on a key", () => press(key));
+      else if (replying) typeInReply(replying, key);
     }
   };
   // A sequence a read ends inside, such as a paste's start or end cut in two, waits for its rest
   // in the next read, however late, so it is still seen whole. A lone Esc waits too, as the
   // sidebar has no use for it: when what comes next doesn't go on with [, the Esc was a key of its
   // own, and is taken apart from it, so Esc then a stays two keys rather than Alt-a. Only the
-  // close key's question takes Esc, for cancel, so while it is open a lone Esc also acts once
-  // nothing followed it for a moment longer than tmux waits. It stays cut all the same, so a
+  // close key's question and a reply you type take Esc, to cancel, so while either is open a lone
+  // Esc also acts once nothing followed it for a moment longer than tmux waits. It stays cut all the same, so a
   // paste whose rest comes late is still skipped whole, and isn't acted on again.
   let cut = "";
   let lone: ReturnType<typeof setTimeout> | undefined;
@@ -954,7 +1009,7 @@ export async function runSidebar(
     actedOn = false;
     cut = unfinished("", text);
     act(text.slice(0, text.length - cut.length));
-    if (cut === esc && closing)
+    if (cut === esc && (closing || replying))
       lone = setTimeout(() => {
         actedOn = true;
         act(esc);

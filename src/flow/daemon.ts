@@ -18,8 +18,15 @@ import {
   stopSession,
 } from "../agents/sessions.ts";
 import { agentsUnanswered } from "../approved-agents.ts";
-import { checkFlow, graceMinutes, leadCanMerge, repositoryCommands } from "../config.ts";
-import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
+import { checkFlow, leadCanMerge, repositoryCommands } from "../config.ts";
+import {
+  finishUpgrade,
+  marksToItems,
+  moveToTasks,
+  moveTurnEnded,
+  openDb,
+  type Repository,
+} from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { errorText } from "../format.ts";
 import { setupDone } from "../machine/setup.ts";
@@ -46,6 +53,7 @@ import { openTasks, ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
 import { beingRemoved, removalEnded, removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
+import { answerItem, clearItem, postItem } from "./inbox.ts";
 import {
   closeExitedLeads,
   closeTabAndEndLead,
@@ -106,9 +114,6 @@ import {
 import { doing, watchForStalls } from "./stall.ts";
 import {
   keepState,
-  markForgotten,
-  markNeedsYou,
-  needsYou,
   noticeIdleScreens,
   questionAnswered,
   questionAsked,
@@ -249,7 +254,7 @@ const exitLook = z.coerce
   .parse(process.env.SKELCREW_EXIT_LOOK_MS ?? 1000);
 
 // How often, in milliseconds, the daemon looks for work that waits: the queue of limits.threads,
-// the messages waiting for builders, and stopped builders for the safety net. Tests set
+// and the messages waiting for builders. Tests set
 // SKELCREW_LOOK_MS shorter, so seeing that something doesn't happen takes a fraction of a
 // second rather than several. The looks at agents' screens keep their two seconds, as telling
 // a live status line from a still one depends on it.
@@ -308,6 +313,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const db = openDb();
   moveToTasks(db);
   moveTurnEnded(db);
+  marksToItems(db);
   finishUpgrade(db);
   saveApprovedCommits(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
@@ -955,11 +961,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { told: await messageBuilder(db, sessions, caller, thread, request.text) };
       }
       // A lead's request names its own repository only, as limitToOwnRepository checked.
-      case "needs you": {
-        const thread = findThread(db, request.repo, request.task);
-        const by = leadOfCaller(caller) === null ? "you" : "lead";
-        const now = markNeedsYou(db, sessions, thread, request.reason, by);
-        return { thread: threadName(db, now), needsYou: needsYou(now) };
+      case "ask": {
+        const task = request.task ?? null;
+        if (request.clear) return { cleared: clearItem(db, request.repo, task) };
+        return { asked: postItem(db, request.repo, task, request.text, request.options) };
+      }
+      case "answer": {
+        const answer =
+          request.pick === undefined ? { reply: request.reply ?? "" } : { pick: request.pick };
+        const task = request.task ?? null;
+        return { said: answerItem(db, sessions, request.repo, task, request.seen, answer) };
       }
       case "tell lead":
         messageLead(db, sessions, caller, request.text);
@@ -1021,7 +1032,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         questionClosed(db, callingThread(caller).folder);
         return { asking: false };
       case "question answered":
-        questionAnswered(db, callingThread(caller).folder, request.prompt);
+        questionAnswered(db, callingThread(caller).folder);
         return { asking: false };
       // Esc on Codex flags nothing: you are looking at the builder anyway.
       case "turn interrupted":
@@ -1160,18 +1171,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
   }, 2000);
-  // The safety net marks a builder that stopped, and that nobody acted on, as needing you. It
-  // looks every few seconds, reading the wait from your config each time, so a change to it
-  // counts at once.
-  setInterval(() => {
-    try {
-      doing("marking stopped builders nobody acted on", () =>
-        markForgotten(db, sessions, graceMinutes()),
-      );
-    } catch (error) {
-      console.log(`couldn't mark stopped builders nobody acted on: ${errorText(error)}`);
-    }
-  }, look);
   // A host that shows status hears each builder's as it is now, and each change from here on.
   reportStatuses(db);
   // A host's own apps show each builder by its title as it is now, such as after an upgrade.

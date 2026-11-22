@@ -148,12 +148,11 @@ function heardInLog(folder: string, round: number): string | null {
 // `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
 // `merge_record_id` that review's ID, so a restart never posts it twice. `merge_followup` is the
 // issue a merge without approval filed its review's open findings in, so it files one only.
-// `needs_you_for` is what you must do for the thread, in words for you, as the lead, you or the
-// safety net marked it, or null with no mark. `limit_decided` is whether the lead or you cleared
-// the round limit's needs you, so it stops needing you for it until the next review.
-// `review_failed` is whether the latest review or round failed, which the lead hears of and
-// can run again. `ended_at` is when its builder ended a turn without submitting and nobody has acted on it
-// since, and `ended_said` what the builder said last then, for the safety net.
+// `needs_you_for` is the instruction to bring back the builder's missing session host plugin, or
+// null. `limit_decided` is whether you decided the round limit, so it stops needing you for it
+// until the next review. `review_failed` is whether the latest review or round failed, which the
+// lead hears of and can run again. `ended_at` and `ended_said` are no longer used, and stay so
+// the view keeps its columns in place for a screen of an earlier release still running.
 // They are
 // the thread's, so a thread that starts over begins with none. `host` is the session host its
 // builder runs on, tmux or a runtime plugin, and `host_id` the session's ID there, which on tmux
@@ -599,7 +598,8 @@ function prepareTables(db: Database): void {
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
   // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
   // with or a note, so a lead already running when Skelcrew learned of them is told once.
-  // `lead_briefs` is the same for briefing another repository's lead. `lead_host` is the session host the lead
+  // `lead_briefs` is the same for briefing another repository's lead, and `lead_inbox` for asking
+  // you with sc ask in Needs you. `lead_host` is the session host the lead
   // runs on, tmux or a runtime plugin, which it keeps until it ends, and `lead_host_id` its
   // session's ID there. A lead from before hosts runs on tmux, where its ID is its name.
   // `lead_agents` is the tree of the approved .agents/ the running lead started on, `none` for
@@ -629,6 +629,7 @@ function prepareTables(db: Database): void {
     agents_noted: "TEXT",
     lead_flows: "INTEGER NOT NULL DEFAULT 0",
     lead_briefs: "INTEGER NOT NULL DEFAULT 0",
+    lead_inbox: "INTEGER NOT NULL DEFAULT 0",
     lead_host: "TEXT DEFAULT 'tmux'",
     lead_host_id: "TEXT",
     lead_agents: "TEXT",
@@ -756,6 +757,17 @@ function prepareTables(db: Database): void {
     PRIMARY KEY (owner, repo, task)
   )`);
   db.run("DROP TABLE IF EXISTS lead_requests");
+  // The inbox: the item the lead asks you about each task, or the repository with an empty task,
+  // with its options as JSON, until you answer it.
+  db.run(`CREATE TABLE IF NOT EXISTS asks (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    text TEXT NOT NULL,
+    options TEXT NOT NULL,
+    posted INTEGER NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from a tracker, kept until they are typed in, since the lead may not be running.
   // A note's ID is never used twice, which AUTOINCREMENT makes so: without it, SQLite gives a
@@ -955,6 +967,48 @@ export function moveTurnEnded(db: Database): void {
     db.run(`UPDATE threads SET noting = NULL WHERE ${unmoved} AND stalled = 1 AND needs_you = 0
       AND asking = 0 AND (erred = 0 OR limited = 1)`);
     db.run(`UPDATE threads SET turn_ended = stalled WHERE ${unmoved}`);
+  }).immediate();
+}
+
+// Moves the marks the lead, you or the safety net set before the inbox into it, as items with no
+// options, so what they asked of you still shows. A missing host plugin's instruction stays the
+// thread's mark. Only the daemon runs it, as a daemon of the earlier release may still set marks.
+export function marksToItems(db: Database): void {
+  const install = "run sc install: its session host ";
+  const marked = z
+    .array(
+      z.object({
+        owner: z.string(),
+        repo: z.string(),
+        task: z.coerce.string(),
+        folder: z.string(),
+        needs_you_for: z.string(),
+      }),
+    )
+    .parse(
+      db
+        .query(
+          "SELECT owner, repo, task, folder, needs_you_for FROM task_threads WHERE needs_you_for IS NOT NULL AND status != 'done'",
+        )
+        .all(),
+    );
+  db.transaction(() => {
+    for (const thread of marked) {
+      const then = thread.needs_you_for.indexOf(", then ");
+      const hosted = thread.needs_you_for.startsWith(install);
+      if (hosted && then < 0) continue;
+      const text = hosted
+        ? thread.needs_you_for.slice(then + ", then ".length)
+        : thread.needs_you_for;
+      db.run(
+        "INSERT OR IGNORE INTO asks (owner, repo, task, text, options, posted) VALUES (?, ?, ?, ?, '[]', ?)",
+        [thread.owner, thread.repo, thread.task, text, Date.now()],
+      );
+      db.run("UPDATE threads SET needs_you_for = ? WHERE folder = ?", [
+        hosted ? thread.needs_you_for.slice(0, then) : null,
+        thread.folder,
+      ]);
+    }
   }).immediate();
 }
 

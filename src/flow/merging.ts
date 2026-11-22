@@ -18,6 +18,7 @@ import {
   skipReviewWaitsOn,
 } from "./decide.ts";
 import { beingRemoved, endThread } from "./events.ts";
+import { itemOpen } from "./inbox.ts";
 import { limitDecided, roundMoved, roundOf } from "./ledger.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
@@ -402,6 +403,8 @@ export async function mergeIfReady(
     const round = noteRound(now);
     const heard = now.merge_noted === round ? now.merge_noted_for : [];
     record(db, folder, { merge_noted: round, merge_noted_for: [...heard, stuck] });
+    // The lead's item on the thread already asks you about what it is stuck on.
+    if (itemOpen(db, now)) return;
     const when = pinned === null ? `once ${readyWhen(now)}` : "without Skelcrew's approval";
     noteForLead(
       db,

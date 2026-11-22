@@ -21,8 +21,6 @@ const sections: [string, [string, string][]][] = [
       ["peek <task>", "What that builder shows now, without attaching"],
       ["interrupt <task>", "Stop that builder's turn, as Esc does"],
       ["review <task>", "Run the task's last review again"],
-      ['needs-you <task> "<action>"', "Mark it as waiting on you, saying what to do"],
-      ["needs-you --clear <task>", "Take that mark off"],
       ["merge --when-ready <task> | <#pr>", "Merge it once it is approved and green"],
       ["merge --skip-review <task> | <#pr>", "Merge it without Skelcrew's approval once CI passes"],
       ["merge --cancel <task> | <#pr>", "Stop a merge armed with either"],
@@ -74,6 +72,8 @@ const sections: [string, [string, string][]][] = [
       ['tell lead "<text>"', "Type a message into its repository's lead, as a builder"],
       ['tell <task> "<text>" | -', "Type a message into its builder, as the lead, - for stdin"],
       ['tell lead <repo> "<text>" | -', "Type a brief into another repository's lead, - for stdin"],
+      ['ask <task> | <repo> "<text>"', "Ask the human in Needs you, with --option per choice"],
+      ["ask --clear <task> | <repo>", "Take that item off Needs you"],
     ],
   ],
   [

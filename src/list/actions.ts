@@ -1,6 +1,9 @@
 // What the list's keys do on a row that isn't an agent's, for sc --list and the screen's sidebar
-// alike: opening a task's PR, and going ahead with a start or a merge you said yes to.
+// alike: opening a task's PR, going ahead with a start or a merge you said yes to, and answering
+// the lead's item in Needs you.
 import type { Database } from "bun:sqlite";
+import { letters } from "../flow/requests.ts";
+import type { Pick } from "./layout.ts";
 import { hasForge, type Open, type Question, type Row } from "./rows.ts";
 
 // The command that opens a link in your browser.
@@ -64,3 +67,37 @@ export function stillOffered(asking: Asking, rows: Row[]): Question | string {
     ? offer.refused
     : `${asking.row} changed while you were asked, so nothing was done`;
 }
+
+// Returns what a key does on a row with the lead's item: a letter picks that option, and r starts
+// a reply in your own words. Any other key, or a row with no item, does nothing here.
+export function itemKey(row: Row | undefined, key: string): Pick | null {
+  if (!row?.ask) return null;
+  if (key === "r") return "reply";
+  return letters.slice(0, row.ask.options.length).find((letter) => letter === key) ?? null;
+}
+
+// Returns the keys that answer a row's item, for the bottom line, such as `a/b answer  r reply`.
+export function itemKeys(row: Row): string {
+  if (!row.ask) return "";
+  const picks = letters.slice(0, row.ask.options.length).join("/");
+  return picks ? `${picks} answer  r reply` : "r reply";
+}
+
+// A reply you are typing to an item, with the row it answers.
+export type Reply = { row: Row; text: string };
+
+// Returns what a key does to a reply you are typing: Enter sends it, Esc drops it, Backspace takes
+// its last character off, and any other single character is typed. Other keys do nothing.
+export function typeReply(reply: Reply, key: string): "send" | "drop" | Reply {
+  if (key === "enter") return "send";
+  if (key === "esc" || key === "escape") return "drop";
+  if (key === "\x7f" || key === "\b")
+    return { ...reply, text: [...reply.text].slice(0, -1).join("") };
+  if ([...key].length === 1 && !/\p{Cc}/u.test(key)) return { ...reply, text: reply.text + key };
+  return reply;
+}
+
+// Returns what the bottom line says while you type a reply: the reply so far, its end if it is
+// long, and the keys.
+export const replyLine = (reply: Reply) =>
+  `Reply on ${reply.row.label}: ${[...reply.text].slice(-60).join("")}▏  ⏎ send  esc drop`;

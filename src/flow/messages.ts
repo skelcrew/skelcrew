@@ -194,7 +194,7 @@ function afterTyped(db: Database, folder: string, message: Message): void {
     return;
   }
   if (message.sender === "lead") {
-    // Timed from when the lead sent it, as the safety net holds off from that moment.
+    // Timed from when the lead sent it.
     const update: Thread["updates"][number] = { from: "lead", at: message.at, text: message.said };
     record(
       db,
@@ -218,21 +218,21 @@ function afterTyped(db: Database, folder: string, message: Message): void {
       );
 }
 
-// What Skelcrew typed into each agent and its harness hasn't reported yet, by the builder's
-// folder or the lead's owner/name, which never meet as folders hold no /, so the hook that reports something typed in can tell Skelcrew's messages from a
+// What Skelcrew typed into each lead and its harness hasn't reported yet, by the lead's
+// owner/name, so the hook that reports something typed in can tell Skelcrew's notes from a
 // person's typing. Each text is kept from just before its paste, as the hook can come before
 // the typing returns. Only the last few are kept, so a text whose hook never came, such as one a
 // harness dropped, is forgotten.
 const typedLately = new Map<string, string[]>();
 
-// Remembers that Skelcrew is about to type `text` into the thread's builder.
+// Remembers that Skelcrew is about to type `text` into the lead of `folder`, its owner/name.
 function typingIn(folder: string, text: string): void {
   typedLately.set(folder, [...(typedLately.get(folder) ?? []), text.trim()].slice(-5));
 }
 
-// Returns whether `prompt`, which the builder's harness reports was typed in, is one of the
-// texts Skelcrew typed there, and forgets that one. Anything else was typed by a person.
-export function typedBySkelcrew(folder: string, prompt: string): boolean {
+// Returns whether `prompt`, which the lead's harness reports was typed in, is one of the texts
+// Skelcrew typed there, and forgets that one. Anything else was typed by a person.
+function typedBySkelcrew(folder: string, prompt: string): boolean {
   const texts = typedLately.get(folder) ?? [];
   const at = texts.indexOf(prompt.trim());
   if (at === -1) return false;
@@ -309,7 +309,6 @@ async function typeWaiting(
     const pasted = () => db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
     const waitsFor = { timeout: 10_000, signal, unsent, pasted };
     typing.id = message.id;
-    typingIn(folder, message.text);
     const typed = await deliver(host, id, marks, message.text, waitsFor).finally(() => {
       typing.id = null;
     });
@@ -462,7 +461,6 @@ export async function typeContinue(
 ) {
   const { marks } = builderHarness(thread);
   const { host, id } = await builderSession(db, sessions, thread);
-  typingIn(thread.folder, "continue");
   return deliver(host, id, marks, "continue", { timeout: 60_000, signal });
 }
 
@@ -556,10 +554,6 @@ export async function messageBuilder(
     said: text,
     typed_in: [],
   });
-  // The lead acted on a builder that stopped, so the safety net's wait starts again from now, and
-  // holds off for a while after the lead's message. It isn't cleared: a message that never goes
-  // in, such as to a builder that stays stopped, must still be caught once that hold is over.
-  if (thread.ended_at !== null) record(db, thread.folder, { ended_at: Date.now() });
   if (why === "" && ahead === 0) return `Telling ${name}'s builder now: it is idle.`;
   const earlier = ahead === 1 ? "1 earlier message waits" : `${ahead} earlier messages wait`;
   const reasons = [why, ahead > 0 ? earlier : ""].filter((reason) => reason).join(", and ");

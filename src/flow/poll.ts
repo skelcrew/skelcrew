@@ -505,7 +505,7 @@ async function tellRunningLead(
   db: Database,
   sessions: string,
   repository: Repository,
-  told: "lead_flows" | "lead_briefs",
+  told: "lead_flows" | "lead_briefs" | "lead_inbox",
   text: string,
 ): Promise<void> {
   const where = "WHERE owner = ? AND repo = ?";
@@ -519,6 +519,10 @@ async function tellRunningLead(
   db.run(`UPDATE repositories SET ${told} = 1 ${where}`, [repository.owner, repository.repo]);
   skelcrewNoteForLead(db, sessions, repository, text);
 }
+
+// What a lead already running when needs you became an inbox is told of it.
+const inboxNote =
+  'Skelcrew was updated: sc needs-you is gone, and Needs you is now an inbox you write to. When a thread needs the human, post an item with sc ask APP-12 "<the question, framed for someone who has not read the code>" --option "<first choice> (recommended)" --option "<second choice>", or name the repository for something about it as a whole. Asking again replaces the item, and sc ask --clear APP-12 takes it off. Don\'t also ask in this chat: tell the human in one line that an item waits. Their answer comes back as a note, which counts as their words for exactly the option they picked. Give the file it names as --asked-file to what you run on it. A thread Skelcrew marks itself shows "the lead is looking at this" until you post an item for it.';
 
 // What a lead already running when Skelcrew learned of flows is told of them.
 const flowsNote = (repository: Repository) =>
@@ -591,6 +595,9 @@ async function pollRepository(
       }
       await tellRunningLead(db, sessions, repository, "lead_briefs", briefsNote).catch((error) =>
         console.log(`couldn't tell ${owner}/${repo}'s lead of briefs: ${errorText(error)}`),
+      );
+      await tellRunningLead(db, sessions, repository, "lead_inbox", inboxNote).catch((error) =>
+        console.log(`couldn't tell ${owner}/${repo}'s lead of the inbox: ${errorText(error)}`),
       );
     }
   }
