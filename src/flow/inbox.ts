@@ -141,8 +141,8 @@ export function postItem(
 export type Answer = { pick: (typeof letters)[number] } | { reply: string };
 
 // Answers the item open for a task, or with `task` null for the repository, and tells the lead.
-// `seen` is the item's text and options as you saw them, as the lead may have replaced the item
-// since, even with the same text and other options.
+// `seen` is the item's title, text and options as you saw them, as the lead may have replaced the
+// item since, even with the same text and other options, or another title.
 // The item's text and your answer, and nothing else, go in a file of their own in the lead's
 // folder, which the lead gives as --asked-file for what it runs on it, so a pick lets it do only
 // what you picked. Each answer keeps its own file, so a later one never changes what an earlier
@@ -153,14 +153,18 @@ export function answerItem(
   sessions: string,
   repository: string,
   task: string | null,
-  seen: { text: string; options: string[] },
+  seen: { title: string; text: string; options: string[] },
   answer: Answer,
 ): string {
   const { owner, repo } = findRepository(db, repository);
   const item = itemOf(db, owner, repo, task ?? "");
   const about = aboutOf(db, owner, repo, task ?? "");
   if (item === null) throw new Error(`nothing asks you about ${about} any more`);
-  if (item.text !== seen.text || !Bun.deepEquals(item.options, seen.options))
+  if (
+    item.title !== seen.title ||
+    item.text !== seen.text ||
+    !Bun.deepEquals(item.options, seen.options)
+  )
     throw new Error(`the lead changed its item on ${about} as you answered, so read it again`);
   let words: string;
   if ("pick" in answer) {

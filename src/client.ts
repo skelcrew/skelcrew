@@ -269,11 +269,11 @@ export async function postItem(
 }
 
 // Has the daemon take your answer to an item, an option's letter or a reply, to the lead. `seen`
-// is the item as you saw it, its text and options. Returns what the list says then.
+// is the item as you saw it, its title, text and options. Returns what the list says then.
 export async function answerItem(
   repository: string,
   task: string | null,
-  seen: { text: string; options: string[] },
+  seen: { title: string; text: string; options: string[] },
   answer: { pick: Letter } | { reply: string },
 ): Promise<string> {
   const which = { repo: repository, seen, ...(task === null ? {} : { task }) };

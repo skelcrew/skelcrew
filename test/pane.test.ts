@@ -171,7 +171,10 @@ test("the details take the list's look: bold title, stage and verdicts in colour
   // The item is in a box drawn in the colour of the screen's other edges, its title bold.
   expect(line(box[0] ?? "")).toBe(`${esc}[90m${box[0]}${esc}[22;39m`);
   expect(line(box[1] ?? "")).toContain(`${esc}[1mIts builder asked a question${esc}[22;39m`);
-  expect(line(box[5] ?? "")).toContain(`${esc}[38;5;136ma) Open the builder${esc}[22;39m`);
+  // Its options are plain text, not yellow: the box is what sets the item apart.
+  expect(line(box[5] ?? "")).toBe(
+    `${esc}[90m│${esc}[22;39m a) Open the builder${" ".repeat(27)} ${esc}[90m│${esc}[22;39m`,
+  );
   // Each label is dim, and each link is a terminal link to itself.
   const pr = "https://github.com/acme/app/pull/43";
   expect(line(`PR       #43  ${pr}`)).toBe(

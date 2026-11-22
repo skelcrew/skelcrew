@@ -62,7 +62,7 @@ const drawn = () => {
 const lines = () => drawn().lines.map((line) => Bun.stripANSI(line).trimEnd());
 const notes = () => db.query("SELECT text FROM notes ORDER BY id").all().map((n) => n.text);
 const ask = (repository, task, text, options, title) => postItem(db, repository, task, { title, text, options });
-const asSeen = (task) => { const { text, options } = itemOf(db, "simon", "app", task); return { text, options }; };
+const asSeen = (task) => { const { title, text, options } = itemOf(db, "simon", "app", task); return { title, text, options }; };
 ${body}
 process.exit(0);`;
   const done = Bun.spawnSync([process.execPath, "-e", code], {
@@ -215,7 +215,7 @@ console.log(JSON.stringify({ notes: notes() }));`);
 
 // A letter picks what it showed beside it, so an item replaced with the same text but other
 // options, or the same ones in another order, is refused too.
-test("an answer is refused for a letter the item lacks, or for an item the lead replaced", () => {
+test("an answer is refused for a letter the item lacks, or for an item the lead replaced or retitled", () => {
   const seen = inProcess(`
 ask("app", "t12", ${JSON.stringify(asked)}, ${options});
 const before = asSeen("t12");
@@ -223,13 +223,16 @@ const tried = (seen, answer) => { try { answerItem(db, "none", "app", "t12", see
 const letter = tried(before, { pick: "c" });
 ask("app", "t12", ${JSON.stringify(asked)}, ["keep going", "force merge (recommended)"]);
 const reordered = tried(before, { pick: "a" });
+ask("app", "t12", ${JSON.stringify(asked)}, ${options}, "Another title");
+const retitled = tried(before, { pick: "a" });
 ask("app", "t12", "Merge it now?", ["yes", "no"]);
 const replaced = tried(before, { pick: "a" });
-console.log(JSON.stringify({ letter, reordered, replaced, notes: notes(), item: itemOf(db, "simon", "app", "t12").text }));`);
+console.log(JSON.stringify({ letter, reordered, retitled, replaced, notes: notes(), item: itemOf(db, "simon", "app", "t12").text }));`);
   const changed = "the lead changed its item on APP-12 as you answered, so read it again";
   expect(seen).toEqual({
     letter: "APP-12's item has no option c",
     reordered: changed,
+    retitled: changed,
     replaced: changed,
     notes: [],
     item: "Merge it now?",
@@ -450,10 +453,13 @@ db.run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUES ('si
 record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", held: "Fix it.", needs_you: true, pr: 7 });
 const limit = row("APP-12");
 const pick = picked(limit, "b", "simon/app");
+const { stillOffered } = await import(${JSON.stringify(source("list/actions.ts"))});
+db.run("UPDATE pr_agents SET changed = 0");
+const stale = stillOffered({ question: pick.confirm, row: "APP-12", offer: "pick" }, all());
 const startedBefore = thread().started;
 db.run("UPDATE threads SET started = 2000 WHERE folder = 'app-12'");
 const restarted = (() => { try { return armMerge(db, "none", thread(), { seen: pick.confirm.request.merging }, true); } catch (error) { return error.message; } })();
-console.log(JSON.stringify({ merging: limit.ask.merging, started: startedBefore, request: pick.confirm.request, ask: pick.confirm.ask, restarted }));`);
+console.log(JSON.stringify({ merging: limit.ask.merging, started: startedBefore, request: pick.confirm.request, ask: pick.confirm.ask, restarted, stale }));`);
   const merging = { pr: 7, started: seen.started, head: "b".repeat(40) };
   expect(seen.merging).toEqual(merging);
   expect(seen.request).toMatchObject({ command: "pick", pick: "b", merging });
@@ -461,6 +467,9 @@ console.log(JSON.stringify({ merging: limit.ask.merging, started: startedBefore,
     "Merge #7 (APP-12 Add export) without Skelcrew's approval? CI must still pass. Its reviewer hasn't approved it It changes .agents/ (roles, flows or skills): the changes wait for sc repo trust. y/n",
   );
   expect(seen.restarted).toContain("APP-12 changed since you said y, so it won't merge by itself");
+  // A y to a question that no longer says what the row says, such as once a retargeted PR
+  // changes what it says of .agents/, does nothing.
+  expect(seen.stale).toBe("APP-12 changed while you were asked, so nothing was done");
 });
 
 // An item handed to the lead stays gone only while the thread still needs you for it: the same
@@ -816,7 +825,7 @@ describe.skipIf(insideSandbox)("the inbox, with a running daemon", () => {
     expect(await needsYouFor()).toBe("item waits");
     expect((await skel(["show", "app-12"])).out).toContain("a) force merge");
     const code = `import { answerItem } from ${JSON.stringify(source("client.ts"))};
-const seen = { text: ${JSON.stringify(asked)}, options: ["force merge", "keep going"] };
+const seen = { title: "T12 has gone 8 rounds.…", text: ${JSON.stringify(asked)}, options: ["force merge", "keep going"] };
 console.log(await answerItem("simon/app", "12", seen, { pick: "a" }));`;
     const answered = Bun.spawnSync([process.execPath, "-e", code], {
       env: env(),

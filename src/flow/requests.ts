@@ -180,13 +180,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     clear: z.boolean().default(false),
   }),
   // Your answer to an item: an option's letter, or a reply in your own words. `seen` is the item's
-  // text and options as you saw them, so an answer never goes to an item the lead replaced
+  // title, text and options as you saw them, so an answer never goes to an item the lead replaced
   // meanwhile, even with the same text.
   z.object({
     command: z.literal("answer"),
     repo: z.string(),
     task: TaskId.optional(),
-    seen: z.object({ text: z.string(), options: z.array(z.string()) }),
+    seen: z.object({ title: z.string(), text: z.string(), options: z.array(z.string()) }),
     pick: z.enum(letters).optional(),
     reply: z.string().optional(),
   }),

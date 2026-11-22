@@ -814,7 +814,10 @@ export async function runSidebar(
     if (does === "reply") replying = { row, text: "" };
     else if ("open" in does)
       void startOrMerge(does.open.request).then(
-        () => enter(),
+        () => {
+          item = null;
+          attachBuilder(row);
+        },
         (error) => {
           item = null;
           said = errorText(error);
@@ -901,17 +904,18 @@ export async function runSidebar(
       return;
     }
     const atWork = row.part !== "ready" && row.part !== "done";
-    if ((atWork || row.needsYou) && row.session) {
-      const repository = `${open.owner}/${open.repo}`;
-      held = false;
-      const takeTyping = () => !held;
-      void attachTask(agents, session, repository, row.name, takeTyping, zoom).then((failed) => {
-        if (failed !== null) refuse(row.name, failed);
-        refresh();
-      });
-      return;
-    }
+    if ((atWork || row.needsYou) && row.session) return attachBuilder(row, zoom);
     said = openPr(db, open, row, canOpen, (text) => process.stdout.write(text));
+  };
+  // Attaches to the builder of `row`, beside the sidebar or, with `zoom`, full screen.
+  const attachBuilder = (row: Row, zoom = false) => {
+    const repository = `${open.owner}/${open.repo}`;
+    held = false;
+    const takeTyping = () => !held;
+    void attachTask(agents, session, repository, row.name, takeTyping, zoom).then((failed) => {
+      if (failed !== null) refuse(row.name, failed);
+      refresh();
+    });
   };
 
   // Acts on a press of the mouse at a column and line, counted from 1. A click on a row, the

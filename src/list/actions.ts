@@ -63,14 +63,16 @@ export type Asking = {
 // Returns the start or merge to go ahead with once you said yes, given the rows read again just
 // now, or what the bottom line says instead. The task can change while the question is open: CI
 // can fail, the approval can go, or the issue can start elsewhere. So it goes ahead only while
-// the row still offers the very same request.
+// the row still offers the very same request, and a pick only while it asks the very same
+// question, as a retargeted PR can change what it says of .agents/.
 export function stillOffered(asking: Asking, rows: Row[]): Question | string {
   const row = rows.find((candidate) => candidate.name === asking.row);
   const changed = `${asking.row} changed while you were asked, so nothing was done`;
   if (asking.offer === "pick") {
     const { request } = asking.question;
     const again = row && request.command === "pick" && ownPick(row, request.pick, request.repo);
-    return again && Bun.deepEquals(again.request, request) ? again : changed;
+    const same = again && again.ask === asking.question.ask;
+    return same && Bun.deepEquals(again.request, request) ? again : changed;
   }
   const offer = row?.[asking.offer];
   if (offer && "ask" in offer && Bun.deepEquals(offer.request, asking.question.request))

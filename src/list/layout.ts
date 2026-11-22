@@ -281,7 +281,7 @@ export function itemBox(ask: Ask, width: number): { text: string; pick: Pick | n
   const options = ask.options.flatMap((option, at) => {
     const letter = letters[at];
     if (letter === undefined) return [];
-    return wrapped(`${letter}) ${option}`).map((line) => inside(yellow, line, letter));
+    return wrapped(`${letter}) ${option}`).map((line) => inside(null, line, letter));
   });
   const reply =
     ask.acts === null ? wrapped("r) reply").map((line) => inside(grey, line, "reply")) : [];
