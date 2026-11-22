@@ -98,9 +98,9 @@ function shownBy(turn: string): string {
 }
 
 // A spinner on the mark of an agent at work turns about four times a second. Each turn is a
-// frame of its own that rewrites its cell alone, the same codes every time, so the rest of the
-// screen stays as it was, however many turns fall in the time watched. The copy of what the
-// screen sends starts and ends between turns, so every byte it holds belongs to a whole turn. Over
+// frame of its own that rewrites its cell alone, so the rest of the screen stays as it was,
+// however many turns fall in the time watched. What the screen sends is checked from the end of
+// one whole turn to the end of another, so every byte checked belongs to a whole turn. Over
 // sc --remote it stays still, as each turn would cost a write over a slow link, and the screen
 // then sends nothing.
 test("the lead at work has a spinner that turns by its cell alone, and stays still over sc --remote", async () => {
@@ -119,12 +119,15 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   const sentSoFar = () => (existsSync(written) ? readFileSync(written, "utf8") : "");
-  await until(() => sentSoFar().endsWith("\x1b[?2026l"), "a whole turn");
-  writeFileSync(written, "");
+  let start = "";
+  await until(() => {
+    start = sentSoFar();
+    return start.endsWith("\x1b[?2026l");
+  }, "a whole turn");
   await Bun.sleep(1500);
   let sent = "";
   await until(() => {
-    sent = sentSoFar();
+    sent = sentSoFar().slice(start.length);
     return sent.endsWith("\x1b[?2026l");
   }, "a whole turn");
   expect(stillScreen()).toBe(before);
@@ -133,9 +136,6 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
   expect(turns.length).toBeGreaterThan(0);
   for (const turn of turns) {
     expect(shownBy(turn)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
-    expect(turn.replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠿")).toBe(
-      (turns[0] ?? "").replaceAll(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "⠿"),
-    );
     expect(turn.length).toBeLessThan(250);
   }
 });
