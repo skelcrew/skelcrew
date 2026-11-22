@@ -143,7 +143,7 @@ await notify.sendNotifications(db);`);
 test("a message the daemon's stop cut short goes once it is back, but for the lead's", () => {
   const push = fakePlugin(home, "push", ["notifier"]);
   config("notify:\n  needs-you: push\n");
-  run(`const insert = "INSERT INTO notifications (type, message, queued, state, via, sent) VALUES (?, ?, ?, 'delivering', 'push', ?)";
+  run(`const insert = "INSERT INTO notifications (type, message, queued, state, via, called) VALUES (?, ?, ?, 'delivering', 'push', ?)";
 const message = (title) => JSON.stringify({ title, body: "b", links: [] });
 db.run(insert, ["needs-you", message("APP-12 needs you"), Date.now(), Date.now()]);
 db.run(insert, ["asked", message("Status"), Date.now(), Date.now()]);
@@ -196,6 +196,15 @@ await notify.sendNotifications(db);`);
   const bare = await runSkel(["notify", "--via", "email", "Status", "All green."], env);
   expect(bare.code).toBe(1);
   expect(bare.err).toContain("sc notify was given arguments it doesn't take");
+});
+
+test("a call that fails still counts toward the limit, as it may have delivered", () => {
+  const push = fakePlugin(home, "push", ["notifier"]);
+  writeFileSync(join(push, "fail-notify"), "timed out after sending");
+  const out = run(`for (let i = 0; i < 7; i++)
+  await notify.sendAsked(db, { subject: "s" + i, text: "t", words: "text me", via: "push" }).catch((error) => console.log(error.message));`);
+  expect(messages(push)).toHaveLength(5);
+  expect(out.split("at most 5 such messages go each hour").length - 1).toBe(2);
 });
 
 test("messages sent at once still keep to the limit", () => {

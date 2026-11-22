@@ -116,16 +116,11 @@ async function deliver(db: Database, id: number): Promise<string | null> {
     .object({ n: z.number() })
     .parse(
       db
-        .query(
-          "SELECT COUNT(*) AS n FROM notifications WHERE type = ? AND state IN ('sent', 'delivering') AND sent >= ?",
-        )
+        .query("SELECT COUNT(*) AS n FROM notifications WHERE type = ? AND called >= ?")
         .get(type, Date.now() - hour),
     ).n;
   const end = (state: string, error: string | null) => {
-    db.run(
-      "UPDATE notifications SET state = ?, sent = CASE WHEN ? = 'sent' THEN sent END WHERE id = ?",
-      [state, state, id],
-    );
+    db.run("UPDATE notifications SET state = ? WHERE id = ?", [state, id]);
     return error;
   };
   if (taken >= perHour[type]) {
@@ -138,7 +133,10 @@ async function deliver(db: Database, id: number): Promise<string | null> {
     console.log(`dropped a ${type} message, as ${via} isn't an installed notifier`);
     return end("failed", `${via} isn't an installed notifier`);
   }
-  db.run("UPDATE notifications SET state = 'delivering', sent = ? WHERE id = ?", [Date.now(), id]);
+  db.run("UPDATE notifications SET state = 'delivering', called = ? WHERE id = ?", [
+    Date.now(),
+    id,
+  ]);
   try {
     await callPlugin(db, via, { ask: "notify", type, ...message }, z.null(), callTimeout);
     return end("sent", null);

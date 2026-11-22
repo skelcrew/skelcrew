@@ -936,7 +936,7 @@ function prepareTables(db: Database): void {
     queued INTEGER NOT NULL,
     state TEXT NOT NULL DEFAULT 'waiting',
     via TEXT,
-    sent INTEGER
+    called INTEGER
   )`);
   db.run("CREATE TABLE IF NOT EXISTS notified (folder TEXT PRIMARY KEY, mark TEXT NOT NULL)");
 }
