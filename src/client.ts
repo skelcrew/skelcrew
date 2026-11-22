@@ -2,11 +2,7 @@
 import { createConnection } from "node:net";
 import { z } from "zod";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
-import { type DaemonRequest, type letters, parseJson } from "./flow/requests.ts";
-
-// One of the letters an item's options go by.
-type Letter = (typeof letters)[number];
-
+import { type DaemonRequest, type Letter, parseJson } from "./flow/requests.ts";
 import { cliSocket } from "./paths.ts";
 import { capture } from "./run.ts";
 
@@ -261,7 +257,7 @@ export async function stopOn(repository: string, task: string): Promise<string> 
 export async function postItem(
   repository: string,
   task: string | undefined,
-  item: { text: string; options: string[] } | "clear",
+  item: { title?: string; text: string; options: string[] } | "clear",
 ): Promise<string> {
   const which = { repo: repository, ...(task === undefined ? {} : { task }) };
   if (item === "clear") {
@@ -273,11 +269,11 @@ export async function postItem(
 }
 
 // Has the daemon take your answer to an item, an option's letter or a reply, to the lead. `seen`
-// is the item as you saw it, its text and options. Returns what the list says then.
+// is the item as you saw it, its title, text and options. Returns what the list says then.
 export async function answerItem(
   repository: string,
   task: string | null,
-  seen: { text: string; options: string[] },
+  seen: { title: string; text: string; options: string[] },
   answer: { pick: Letter } | { reply: string },
 ): Promise<string> {
   const which = { repo: repository, seen, ...(task === null ? {} : { task }) };
@@ -442,12 +438,22 @@ export async function reviewAgain(repository: string, task: string): Promise<str
 // needs you, or closed, as AskUserQuestion returned its answer within the same turn. Answered is
 // sent whenever something is typed into the agent. It starts a new turn, and for a builder ends
 // any question or error. With answered, the hook's input on stdin holds what was typed, which
-// the daemon needs to tell a person's typing from its own messages. Input that isn't the hook's
+// the daemon needs to tell a person's typing from its own messages. With asked, it holds the
+// questions AskUserQuestion asks, which Needs you shows. Input that isn't the hook's
 // is left out, and a terminal isn't read, as it would wait for you. The agent's own socket tells
 // the daemon which agent it is. The daemon answers at once, as Claude Code waits on its hooks.
 export async function reportQuestion(state: "asked" | "answered" | "closed"): Promise<void> {
-  if (state !== "answered") return void (await request({ command: `question ${state}` }));
+  if (state === "closed") return void (await request({ command: "question closed" }));
   const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
+  if (state === "asked") {
+    const Input = z.object({
+      tool_input: z.object({ questions: z.array(z.object({ question: z.string() })) }),
+    });
+    const input = Input.safeParse(parseJson(text));
+    const asked = input.success ? input.data.tool_input.questions.map((q) => q.question) : [];
+    const question = asked.join("\n\n");
+    return void (await request({ command: "question asked", ...(question ? { question } : {}) }));
+  }
   const input = z.object({ prompt: z.string() }).safeParse(parseJson(text));
   await request({
     command: "question answered",

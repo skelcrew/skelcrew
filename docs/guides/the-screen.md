@@ -39,7 +39,7 @@ Press Ctrl+\ to bring your typing to the sidebar. Then:
 | ↑ ↓ | Move one row |
 | 0 to 6 | Open or close a section: 0 is Backlog, 6 is Done |
 | Enter | Open the row you are on |
-| Shift+Enter, or `a` | Open the row's agent full screen. On a row with a question in Needs you, `a` picks option a instead, so use Shift+Enter there. |
+| Shift+Enter, or `a` | Open the row's agent full screen. In an item you opened, `a` picks option a instead. |
 | `s` | Start a task from the Backlog |
 | `m` | Merge a task that is `ready to merge` |
 | Shift+R | Restart the row's agent, keeping its conversation |
@@ -84,7 +84,7 @@ If backslash is awkward on your keyboard, Ctrl+4 does the same in most terminals
 
 Shift+Enter, or `a`, gives the row's agent the whole terminal. Ctrl+\ brings the sidebar back.
 
-On a row with a question in Needs you, `a` answers it with option a. Use Shift+Enter there.
+In an item you opened from Needs you, `a` answers it with option a. Esc back to the list first.
 
 To open a builder full screen without the screen, use `sc attach`:
 

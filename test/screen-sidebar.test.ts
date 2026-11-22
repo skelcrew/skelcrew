@@ -261,7 +261,8 @@ test("an item opened full-size closes with a lone Esc", async () => {
 // A phone has taps alone, so a tap on ↓ more scrolls an item too long for the screen to its
 // options.
 test("a tap on an opened item's ↓ more scrolls it to its options", async () => {
-  const text = "word ".repeat(400).trim();
+  // Numbered, so each page of it reads differently.
+  const text = Array.from({ length: 400 }, (_, at) => `w${at}`).join(" ");
   sql(`INSERT INTO asks (owner, repo, task, text, options, posted)
     VALUES ('simon', 'app', '', '${text}', '["yes","no"]', 1)`);
   open("lead");

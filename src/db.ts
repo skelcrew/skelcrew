@@ -150,7 +150,10 @@ function heardInLog(folder: string, round: number): string | null {
 // issue a merge without approval filed its review's open findings in, so it files one only.
 // `not_blocking_task` is the backlog task a merge filed its review's not-blocking findings as.
 // `needs_you_for` is the instruction to bring back the builder's missing session host plugin, or
-// null. `limit_decided` is whether you decided the round limit, so it stops needing you for it
+// null. `said` is what the builder last said for what Skelcrew marked itself: the question it
+// asked, its last message once it stopped without submitting, or the error its harness stopped
+// on. `handed` is Skelcrew's own item on the thread that you handed to the lead, by its title and
+// text, so it no longer shows. `limit_decided` is whether you decided the round limit, so it stops needing you for it
 // until the next review. `review_failed` is whether the latest review or round failed, which the
 // lead hears of and can run again. `ended_at` and `ended_said` are no longer used, and stay so
 // the view keeps its columns in place for a screen of an earlier release still running.
@@ -191,6 +194,8 @@ const threadColumns = {
   merge_record_id: "TEXT",
   merge_followup: "TEXT",
   needs_you_for: "TEXT",
+  said: "TEXT",
+  handed: "TEXT",
   limit_decided: "INTEGER NOT NULL DEFAULT 0",
   ended_at: "INTEGER",
   ended_said: "TEXT",
@@ -794,16 +799,20 @@ function prepareTables(db: Database): void {
   )`);
   db.run("DROP TABLE IF EXISTS lead_requests");
   // The inbox: the item the lead asks you about each task, or the repository with an empty task,
-  // with its options as JSON, until you answer it.
+  // with its short title and its options as JSON, until you answer it. An item from before titles
+  // has an empty one.
   db.run(`CREATE TABLE IF NOT EXISTS asks (
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,
     task TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
     text TEXT NOT NULL,
     options TEXT NOT NULL,
     posted INTEGER NOT NULL,
     PRIMARY KEY (owner, repo, task)
   )`);
+  if (!db.query("SELECT 1 FROM pragma_table_info('asks') WHERE name = 'title'").get())
+    db.run("ALTER TABLE asks ADD COLUMN title TEXT NOT NULL DEFAULT ''");
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from a tracker, kept until they are typed in, since the lead may not be running.
   // A note's ID is never used twice, which AUTOINCREMENT makes so: without it, SQLite gives a

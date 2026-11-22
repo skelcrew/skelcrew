@@ -481,9 +481,19 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
 // The builder asked you a question with AskUserQuestion, from Claude Code's PreToolUse hook.
 // The thread needs you until the question is over, and the lead hears of it. A message being
 // typed in now would answer the question for you, so that typing is cancelled, and the message
-// waits until the question is over.
-export function questionAsked(db: Database, sessions: string, folder: string): void {
-  record(db, folder, { asking: true }, "its builder asked a question");
+// waits until the question is over. `question` is what it asked, when its harness said.
+export function questionAsked(
+  db: Database,
+  sessions: string,
+  folder: string,
+  question?: string,
+): void {
+  record(
+    db,
+    folder,
+    { asking: true, said: question ?? null, handed: null },
+    "its builder asked a question",
+  );
   stopDelivering(db, folder, false, forQuestion);
   typeLeadNotes(db, sessions);
 }
@@ -536,7 +546,7 @@ export function turnEnded(
     record(
       db,
       folder,
-      { turn_ended: true, noting: thread.noting },
+      { turn_ended: true, noting: thread.noting, said: ended.message ?? null, handed: null },
       "its builder stopped without submitting",
     );
 }
@@ -564,7 +574,13 @@ export function turnFailed(
   // A limit it stopped on before is over: this error is new, and needs you, so the wake
   // planned for the old one never types "continue" over it.
   endWake(thread.folder);
-  const erred = { erred: true, limited: false, limit_reset: null };
+  const erred = {
+    erred: true,
+    limited: false,
+    limit_reset: null,
+    said: message ?? null,
+    handed: null,
+  };
   record(db, thread.folder, erred, "its builder's harness stopped on an error");
   typeLeadNotes(db, sessions);
 }

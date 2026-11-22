@@ -53,7 +53,7 @@ import { issueRef, openTasks, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
 import { beingRemoved, removalEnded, removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
-import { answerItem, clearItem, postItem } from "./inbox.ts";
+import { answerItem, clearItem, pickOwnItem, postItem } from "./inbox.ts";
 import {
   closeExitedLeads,
   closeTabAndEndLead,
@@ -89,6 +89,7 @@ import {
   typeLeadNotes,
 } from "./messages.ts";
 import { queueDigest, resumeNotifications, sendAsked, sendNotifications } from "./notify.ts";
+import { type Act, type Picking, pickRequests } from "./own-items.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -462,6 +463,59 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const { repository, task } = resolveTask(db, request.repo, request.task);
     return { ...request, repo: repository, task };
   };
+  // Merges a PR at the commit you saw approved, and returns what to say. The merge ends the PR's
+  // thread and takes the PR off the screen's list once a poll sees it. Polled now, so that
+  // happens before the screen stops saying it is merging. A poll that fails changes nothing
+  // about the merge, which is done.
+  const merge = async (repository: string, pr: number, commit: string) => {
+    const found = findRepository(db, repository);
+    const refused = await mergePr(db, found, { pr, commit });
+    if (refused !== null) throw new Error(refused);
+    await (await polling.promise)(`${found.owner}/${found.repo}`).catch((error) =>
+      console.log(errorText(error)),
+    );
+    return `Merged ${found.name}#${pr}.`;
+  };
+  // Restarts a running builder, keeping its conversation, and returns what to say.
+  const restartThread = async (thread: Thread): Promise<string> => {
+    const name = threadName(db, thread);
+    const { host, id } = await builderSession(db, sessions, thread);
+    const live = thread.status === "working" || thread.status === "waiting";
+    if (!live || !(await agentRuns(host, id)))
+      throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+    const restarted = await restartBuilder(db, sessions, thread);
+    if (restarted === "refused") throw new Error(`${name} is being stopped, so it isn't restarted`);
+    if (restarted === "stays ended")
+      return `${name} was stopped or removed meanwhile, so its builder stays ended.`;
+    if ("failed" in restarted) {
+      failThread(db, sessions, thread, restarted.failed);
+      return `${name}'s builder couldn't start again: ${errorText(restarted.failed)}`;
+    }
+    return restarted.gone === null
+      ? `Restarted ${name}'s builder.`
+      : `Skelcrew can't tell whether its builder runs, as ${restarted.gone}.`;
+  };
+  // Does what an option of Skelcrew's own item on a thread does, by the very requests its
+  // command makes, each handled as yours, and returns what the last one said.
+  const runPick = async (act: Act, thread: Thread, picking: Picking) => {
+    const name = threadName(db, thread);
+    if (act === "open") return `Opening ${name}'s builder.`;
+    const runs = await builderSession(db, sessions, thread).then(
+      ({ host, id }) => agentRuns(host, id),
+      () => false,
+    );
+    const requests = pickRequests(act, thread, picking, runs);
+    if (requests.length === 0) throw new Error(`${name} has nothing to ${act} now`);
+    let said = "";
+    for (const request of requests) {
+      const reply = await handle(request, "you");
+      const stopped = z.object({ stopped: z.string() }).safeParse(reply);
+      said = stopped.success
+        ? `Stopped ${stopped.data.stopped}.`
+        : (Object.values(reply).find((value) => typeof value === "string") ?? said);
+    }
+    return said;
+  };
   const setUpAndStart = async (thread: Thread) => {
     try {
       await endEarlierBuilder(db, sessions, thread);
@@ -826,26 +880,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           typeLeadNotes(db, sessions);
           return { said: `Restarted ${repository.name}'s lead.` };
         }
-        const thread = findThread(db, request.repo, request.task);
-        const name = threadName(db, thread);
-        const { host, id } = await builderSession(db, sessions, thread);
-        const live = thread.status === "working" || thread.status === "waiting";
-        if (!live || !(await agentRuns(host, id)))
-          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        const restarted = await restartBuilder(db, sessions, thread);
-        if (restarted === "refused")
-          throw new Error(`${name} is being stopped, so it isn't restarted`);
-        if (restarted === "stays ended")
-          return { said: `${name} was stopped or removed meanwhile, so its builder stays ended.` };
-        if ("failed" in restarted) {
-          failThread(db, sessions, thread, restarted.failed);
-          return { said: `${name}'s builder couldn't start again: ${errorText(restarted.failed)}` };
-        }
-        const said =
-          restarted.gone === null
-            ? `Restarted ${name}'s builder.`
-            : `Skelcrew can't tell whether its builder runs, as ${restarted.gone}.`;
-        return { said };
+        return { said: await restartThread(findThread(db, request.repo, request.task)) };
       }
       case "queue move":
         return { said: moveInQueue(db, findThread(db, request.repo, request.task), request.by) };
@@ -927,17 +962,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { removed: name, issue: shown, unfiled: false, closed: issue !== null };
       }
       case "merge": {
-        const repository = findRepository(db, request.repo);
-        const { owner, repo } = repository;
-        const refused = await mergePr(db, repository, { pr: request.pr, commit: request.commit });
-        if (refused !== null) throw new Error(refused);
-        // The merge ends the PR's thread and takes the PR off the screen's list once a poll
-        // sees it. Polled now, so that happens before the screen stops saying it is merging. A
-        // poll that fails changes nothing about the merge, which is done.
-        await (await polling.promise)(`${owner}/${repo}`).catch((error) =>
-          console.log(errorText(error)),
-        );
-        return { merged: `Merged ${repository.name}#${request.pr}.` };
+        return { merged: await merge(request.repo, request.pr, request.commit) };
       }
       // What sc merge asks you about at your terminal before it arms, and whether a merge is
       // armed already, so you aren't asked again. A merge without approval also shows the head
@@ -998,7 +1023,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "ask": {
         const task = request.task ?? null;
         if (request.clear) return { cleared: clearItem(db, request.repo, task) };
-        return { asked: postItem(db, request.repo, task, request.text, request.options) };
+        return { asked: postItem(db, request.repo, task, request) };
+      }
+      case "pick": {
+        const { repo, task } = request;
+        const run = (act: Act, thread: Thread) => runPick(act, thread, request);
+        return {
+          said: await pickOwnItem(db, sessions, repo, task, request.seen, request.pick, run),
+        };
       }
       case "answer": {
         const answer =
@@ -1058,7 +1090,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { submitted: threadName(db, thread) };
       }
       case "question asked":
-        questionAsked(db, sessions, callingThread(caller).folder);
+        questionAsked(db, sessions, callingThread(caller).folder, request.question);
         return { asking: true };
       case "turn ended":
         turnEnded(db, sessions, callingThread(caller).folder, request);
