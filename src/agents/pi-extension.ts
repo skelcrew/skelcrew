@@ -44,15 +44,17 @@ async function credentials(ctx: Context): Promise<string[]> {
 }
 
 // Returns Pi's error with every key taken out, as Skelcrew keeps it in the task's log: each of
-// the credentials Pi may send, however short, and anything shaped like a key, such as sk-... or a
-// Google key, which a provider can echo back. A credential is taken out where it stands as a
-// word of its own, so a short one never cuts into other words.
+// the credentials Pi may send, wherever it stands, even inside a longer word, and anything shaped
+// like a key, such as sk-... or a Google key, which a provider can echo back. Only one of three
+// characters or fewer, which can be no real key, such as a local model's "x", is taken out just
+// where it stands as a word of its own, so it never cuts into every other word.
 async function withoutKeys(error: string, ctx: Context): Promise<string> {
   let said = error;
   const longest = (await credentials(ctx)).sort((a, b) => b.length - a.length);
   for (const value of longest) {
     const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    said = said.replace(new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, "g"), "[key]");
+    const word = value.length < 4 ? `(?<![\\w-])${escaped}(?![\\w-])` : escaped;
+    said = said.replace(new RegExp(word, "g"), "[key]");
   }
   return said
     .replace(/\b(sk|rk|pk)-[\w-]{8,}/g, "[key]")

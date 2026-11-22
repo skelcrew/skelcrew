@@ -194,6 +194,30 @@ describe("the extension in a lead or a builder", () => {
     );
   });
 
+  test("a key inside a longer value is taken out too", async () => {
+    const { emit } = fakePi();
+    const auth = { ok: true, apiKey: "mysecret", headers: { "x-api-key": "hdr0" } };
+    const { ctx } = fakeContext({ auth });
+    const before = process.env.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEY = "gem1";
+    try {
+      const error = "400: credential=prefix-mysecret-suffix, h=hdr0hdr0, g=xgem1y";
+      await emit(
+        "agent_end",
+        answer({ content: [], stopReason: "error", errorMessage: error }),
+        ctx,
+      );
+      await emit("agent_settled", { aborted: false }, ctx);
+    } finally {
+      if (before === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = before;
+    }
+    const said = "400: credential=prefix-[key]-suffix, h=[key][key], g=x[key]y";
+    expect(hooks()).toBe(
+      `hook turn-failed | ${JSON.stringify({ error: "error", error_details: said })}`,
+    );
+  });
+
   test("an error that only mentions a quota is an error, not a usage limit", async () => {
     const { emit } = fakePi();
     const error = '403: {"message":"quota project not set"}';
