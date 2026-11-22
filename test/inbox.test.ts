@@ -957,8 +957,8 @@ console.log(await startOrMerge({ command: "pick", repo: "simon/app", task: "12",
     await until(
       () => thread().status === "working" && tmux("has-session", "-t", "=app-12").success,
     );
-    // At the round limit, going on decides it, as sc start does, and stopping stops the builder,
-    // as sc stop does.
+    // At the round limit, going on lets it go on, as sc start does, and stopping stops the
+    // builder, as sc stop does.
     const atLimit = () =>
       sql(`UPDATE tasks SET round_log = NULL, rounds = 4, verdict = 'changes', held = 'Fix it.', review_findings = NULL;
 UPDATE threads SET erred = 0, asking = 0, turn_ended = 0, needs_you = 1, limit_decided = 0, handed = NULL WHERE folder = 'app-12'`);
@@ -966,7 +966,8 @@ UPDATE threads SET erred = 0, asking = 0, turn_ended = 0, needs_you = 1, limit_d
     atLimit();
     expect((await skel(["show", "app-12"])).out).toContain(limit[0]);
     expect(pick(...limit, "a")).toContain("APP-12 goes on past the round limit.");
-    await until(() => thread().limit_decided === 1);
+    // Going on stops it needing you, and sets its rounds of changes back to the limit.
+    await until(() => thread().needs_you === 0 && thread().rounds === 3);
     atLimit();
     expect(pick(...limit, "c")).toContain("Stopped APP-12.");
     await until(() => thread().status === "stopped");
