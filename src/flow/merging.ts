@@ -8,6 +8,7 @@ import { z } from "zod";
 import { flowRoles } from "../flows.ts";
 import { errorText } from "../format.ts";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
+import { fileNotBlocking } from "./backlog.ts";
 import { openTasks, prOf } from "./copy.ts";
 import {
   mergeNoteFor,
@@ -365,9 +366,11 @@ export async function mergeIfReady(
     }
     if (waits === null && refused === null) {
       try {
-        const note =
+        const said =
           (await finishSkippedMerge(db, readThread(db, folder), pr)) ??
           `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`;
+        const merged = { name: `#${thread.pr}`, link: pr.link };
+        const note = `${said}${await fileNotBlocking(db, readThread(db, folder), merged)}`;
         await endThread(
           db,
           sessions,

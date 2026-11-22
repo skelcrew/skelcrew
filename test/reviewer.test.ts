@@ -99,6 +99,7 @@ const start = (
     ci?: { has: () => boolean; read: () => Promise<string> };
     issue?: { title: string; body: string };
     last?: LastRound;
+    strict?: boolean;
   } = {},
 ) => review({ ...given(), ...more });
 
@@ -109,7 +110,7 @@ const ownNiceness = () => Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).std
 describe.skipIf(insideSandbox)("reviewer", () => {
   test("answers with Codex's verdict, given the task and the base branch", async () => {
     fakeCodex(
-      '{"verdict":"changes","body":"The retry has no test.","findings":["The retry has no test."]}',
+      `{"verdict":"changes","body":"The retry has no test.","findings":[{"finding":"The retry has no test.","severity":"P1","blocking":true}]}`,
     );
     expect(await start()).toEqual({
       verdict: "changes",
@@ -355,8 +356,21 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(await start()).toEqual({
       verdict: "changes",
       body: "One bug.",
-      findings: ["P1: The retry never stops."],
+      findings: ["The retry never stops."],
       notBlocking: ["P2: The flag's name is long."],
+    });
+  });
+
+  // Past the strict rounds, a P1 the base branch already has doesn't block.
+  test("past the strict rounds, a P1 can be listed as not blocking", async () => {
+    fakeCodex(
+      '{"verdict":"approve","body":"Fine.","findings":[{"finding":"Main loses the log.","severity":"P1","blocking":false}]}',
+    );
+    expect(await start({ strict: false })).toEqual({
+      verdict: "approve",
+      body: "Fine.",
+      findings: [],
+      notBlocking: ["P1: Main loses the log."],
     });
   });
 
@@ -376,7 +390,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     ],
     [
       "an approval with findings",
-      '{"verdict":"approve","body":"Fine.","findings":["The retry has no test."]}',
+      '{"verdict":"approve","body":"Fine.","findings":[{"finding":"The retry has no test.","severity":"P1","blocking":true}]}',
       "it approved but named blocking findings",
     ],
     [
@@ -385,8 +399,18 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       "only a P1 finding can block",
     ],
     [
+      "a P1 that doesn't block in a strict round",
+      '{"verdict":"approve","body":"Fine.","findings":[{"finding":"The retry never stops.","severity":"P1","blocking":false}]}',
+      "a P1 finding must block until the flow's strict rounds are over",
+    ],
+    [
+      "a finding as text alone",
+      '{"verdict":"changes","body":"See below.","findings":["The retry has no test."]}',
+      "shape",
+    ],
+    [
       "a blank finding",
-      '{"verdict":"changes","body":"See below.","findings":["  "]}',
+      '{"verdict":"changes","body":"See below.","findings":[{"finding":"  ","severity":"P1","blocking":true}]}',
       "a finding is blank",
     ],
   ]) {
@@ -587,7 +611,9 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   test("reviews on Claude Code when your config picks it, though Codex is installed", async () => {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
-    fakeCodex('{"verdict":"changes","body":"From Codex.","findings":["From Codex."]}');
+    fakeCodex(
+      `{"verdict":"changes","body":"From Codex.","findings":[{"finding":"From Codex.","severity":"P1","blocking":true}]}`,
+    );
     fakeClaude([
       'cat > /dev/null; echo \'{"type":"result","structured_output":{"verdict":"approve","body":"From Claude Code.","findings":[]}}\'',
     ]);

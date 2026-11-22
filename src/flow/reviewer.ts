@@ -13,7 +13,7 @@ import { limitOn } from "./limits.ts";
 
 // What a review round ends with: the reviewer's verdict, what it said, each problem that blocks
 // the PR and each it found that doesn't, a failed review and why, or a review that ran past its
-// time limit and was ended. A finding the reviewer gave a severity starts with it, such as "P2: ".
+// time limit and was ended. A finding that doesn't block starts with its severity, such as "P2: ".
 export type Review =
   | { verdict: "approve"; body: string; findings: string[]; notBlocking?: string[] }
   | { verdict: "changes"; body: string; findings: string[]; notBlocking?: string[] }
@@ -26,49 +26,52 @@ export type Limited = { verdict: "limited"; body: string; reset: number | null }
 const severities = ["P1", "P2", "P3"] as const;
 
 // One problem the reviewer found: what it is, how bad, and whether it holds the PR back. Only a
-// P1 can block. A finding given as text alone, the shape before severities, blocks, and has no
-// severity to show.
-const Finding = z
-  .union([
-    z.string().transform((finding) => ({ finding, severity: null, blocking: true })),
-    z.strictObject({ finding: z.string(), severity: z.enum(severities), blocking: z.boolean() }),
-  ])
-  .refine((found) => found.finding.trim() !== "", { message: "a finding is blank" })
-  .refine((found) => !found.blocking || found.severity === null || found.severity === "P1", {
-    message: "only a P1 finding can block",
-  });
+// P1 can block, and in the flow's strict rounds every P1 does.
+const Finding = z.strictObject({
+  finding: z.string().trim().min(1, "a finding is blank"),
+  severity: z.enum(severities),
+  blocking: z.boolean(),
+});
 
 // The answer a reviewer must give, checked as any outside input is. A failed verdict is never
 // the reviewer's to give: only Skelcrew says a review failed. Changes name at least one finding
 // that blocks and an approval names none, so an empty "changes requested" never reaches the PR or
-// costs a round, and an approval never passes over a problem it found blocking. An answer that
-// breaks this, or names a blank finding, fails, and you look at it, as Skelcrew can't tell which
-// half is right.
-const Verdict = z
-  .strictObject({
-    verdict: z.enum(["approve", "changes"]),
-    body: z.string(),
-    findings: z.array(Finding),
-  })
-  .refine(
-    (answer) => answer.verdict === "approve" || answer.findings.some((found) => found.blocking),
-    { message: "it asked for changes but named no blocking finding" },
-  )
-  .refine(
-    (answer) => answer.verdict === "changes" || !answer.findings.some((found) => found.blocking),
-    { message: "it approved but named blocking findings" },
-  )
-  .transform((answer): Review => {
-    const text = (found: { finding: string; severity: string | null }) =>
-      found.severity === null ? found.finding.trim() : `${found.severity}: ${found.finding.trim()}`;
-    const notBlocking = answer.findings.filter((found) => !found.blocking).map(text);
-    return {
-      verdict: answer.verdict,
-      body: answer.body,
-      findings: answer.findings.filter((found) => found.blocking).map(text),
-      ...(notBlocking.length > 0 ? { notBlocking } : {}),
-    };
-  });
+// costs a round, and an approval never passes over a problem that blocks. An answer that breaks
+// this, or names a blank finding, fails, and you look at it, as Skelcrew can't tell which half is
+// right. `strict` says a P1 must block, as it does until the flow's strict rounds are over. The
+// findings that block are all P1, so only those that don't keep their severity in their text.
+const verdictOf = (strict: boolean) =>
+  z
+    .strictObject({
+      verdict: z.enum(["approve", "changes"]),
+      body: z.string(),
+      findings: z.array(
+        Finding.refine((found) => !found.blocking || found.severity === "P1", {
+          message: "only a P1 finding can block",
+        }).refine((found) => !strict || found.blocking || found.severity !== "P1", {
+          message: "a P1 finding must block until the flow's strict rounds are over",
+        }),
+      ),
+    })
+    .refine(
+      (answer) => answer.verdict === "approve" || answer.findings.some((found) => found.blocking),
+      { message: "it asked for changes but named no blocking finding" },
+    )
+    .refine(
+      (answer) => answer.verdict === "changes" || !answer.findings.some((found) => found.blocking),
+      { message: "it approved but named blocking findings" },
+    )
+    .transform((answer): Review => {
+      const notBlocking = answer.findings
+        .filter((found) => !found.blocking)
+        .map((found) => `${found.severity}: ${found.finding}`);
+      return {
+        verdict: answer.verdict,
+        body: answer.body,
+        findings: answer.findings.filter((found) => found.blocking).map((found) => found.finding),
+        ...(notBlocking.length > 0 ? { notBlocking } : {}),
+      };
+    });
 
 // The JSON schema of the reviewer's answer, which every harness holds the model to. OpenAI's
 // strict mode needs every property required and no others allowed.
@@ -341,13 +344,14 @@ function failureOf(
 }
 
 // Returns the verdict of a reviewer that has ended, or a failed one saying why there is none:
-// it exited with an error, or answered outside the shape. An error that says the harness's
+// it exited with an error, or answered outside the shape, which `strict` sets. An error that says the harness's
 // usage limit is reached gives a limited review instead, with when the limit resets.
 function readVerdict(
   name: HarnessName,
   folder: string,
   finished: { out: string; err: string; code: number },
   prompt: string,
+  strict: boolean,
 ): Review | Limited {
   // A reviewer that exited with an error, or gave no answer, is asked what went wrong. One that
   // exited cleanly has only the error its harness reports, as any other line is its work.
@@ -377,7 +381,7 @@ function readVerdict(
     const why = errorText(error);
     return failed(`the reviewer answered outside the shape: ${why}`);
   }
-  const verdict = Verdict.safeParse(said);
+  const verdict = verdictOf(strict).safeParse(said);
   if (!verdict.success)
     return {
       verdict: "failed",
@@ -571,7 +575,7 @@ async function reviewNow(given: {
     const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });
     const after = whyStopped();
     if (after) return after;
-    const verdict = readVerdict(harness, folder, finished, input);
+    const verdict = readVerdict(harness, folder, finished, input, given.strict);
     if (last?.round.since !== "dropped" || !("findings" in verdict)) return verdict;
     const dropped = `Round ${last.round.round}'s commit ${last.round.commit.slice(0, 7)} is no longer in the branch's history, so this round reviewed the whole diff only, not what changed since.`;
     return { ...verdict, body: `${dropped}\n\n${verdict.body}` };
