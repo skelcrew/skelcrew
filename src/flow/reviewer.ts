@@ -11,34 +11,68 @@ import { errorText } from "../format.ts";
 import { type SkillsFrom, skillsTold } from "../skills.ts";
 import { limitOn } from "./limits.ts";
 
-// What a review round ends with: the reviewer's verdict, what it said and each problem it found,
-// a failed review and why, or a review that ran past its time limit and was ended.
+// What a review round ends with: the reviewer's verdict, what it said, each problem that blocks
+// the PR and each it found that doesn't, a failed review and why, or a review that ran past its
+// time limit and was ended. A finding that doesn't block starts with its severity, such as "P2: ".
 export type Review =
-  | { verdict: "approve"; body: string; findings: string[] }
-  | { verdict: "changes"; body: string; findings: string[] }
+  | { verdict: "approve"; body: string; findings: string[]; notBlocking?: string[] }
+  | { verdict: "changes"; body: string; findings: string[]; notBlocking?: string[] }
   | { verdict: "failed"; body: string }
   | { verdict: "timed out"; body: string };
 // A review its harness's usage limit stopped, with the harness's error and when the limit
 // resets, or null when the harness didn't say. The round holds it and tries again.
 export type Limited = { verdict: "limited"; body: string; reset: number | null };
 
+// A finding's severity: P and a number from 1 up, with no lowest one, as only P1 blocks.
+const severity = "^P[1-9][0-9]*$";
+
+// One problem the reviewer found: what it is, how bad, and whether it holds the PR back. Only a
+// P1 can block, and in the flow's strict rounds every P1 does.
+const Finding = z.strictObject({
+  finding: z.string().trim().min(1, "a finding is blank"),
+  severity: z.string().regex(new RegExp(severity), "a severity is P1, P2, P3 and so on"),
+  blocking: z.boolean(),
+});
+
 // The answer a reviewer must give, checked as any outside input is. A failed verdict is never
-// the reviewer's to give: only Skelcrew says a review failed. Changes name at least one problem
-// and an approval names none, so an empty "changes requested" never reaches the PR or costs a
-// round, and an approval never passes over a problem it found. An answer that breaks this, or
-// names a blank problem, fails, and you look at it, as Skelcrew can't tell which half is right.
-const Verdict = z
-  .strictObject({
-    verdict: z.enum(["approve", "changes"]),
-    body: z.string(),
-    findings: z.array(z.string().trim().min(1, "a finding is blank")),
-  })
-  .refine((answer) => answer.verdict === "approve" || answer.findings.length > 0, {
-    message: "it asked for changes but named no finding",
-  })
-  .refine((answer) => answer.verdict === "changes" || answer.findings.length === 0, {
-    message: "it approved but named findings",
-  });
+// the reviewer's to give: only Skelcrew says a review failed. Changes name at least one finding
+// that blocks and an approval names none, so an empty "changes requested" never reaches the PR or
+// costs a round, and an approval never passes over a problem that blocks. An answer that breaks
+// this, or names a blank finding, fails, and you look at it, as Skelcrew can't tell which half is
+// right. `strict` says a P1 must block, as it does until the flow's strict rounds are over. The
+// findings that block are all P1, so only those that don't keep their severity in their text.
+const verdictOf = (strict: boolean) =>
+  z
+    .strictObject({
+      verdict: z.enum(["approve", "changes"]),
+      body: z.string(),
+      findings: z.array(
+        Finding.refine((found) => !found.blocking || found.severity === "P1", {
+          message: "only a P1 finding can block",
+        }).refine((found) => !strict || found.blocking || found.severity !== "P1", {
+          message: "a P1 finding must block until the flow's strict rounds are over",
+        }),
+      ),
+    })
+    .refine(
+      (answer) => answer.verdict === "approve" || answer.findings.some((found) => found.blocking),
+      { message: "it asked for changes but named no blocking finding" },
+    )
+    .refine(
+      (answer) => answer.verdict === "changes" || !answer.findings.some((found) => found.blocking),
+      { message: "it approved but named blocking findings" },
+    )
+    .transform((answer): Review => {
+      const notBlocking = answer.findings
+        .filter((found) => !found.blocking)
+        .map((found) => `${found.severity}: ${found.finding}`);
+      return {
+        verdict: answer.verdict,
+        body: answer.body,
+        findings: answer.findings.filter((found) => found.blocking).map((found) => found.finding),
+        ...(notBlocking.length > 0 ? { notBlocking } : {}),
+      };
+    });
 
 // The JSON schema of the reviewer's answer, which every harness holds the model to. OpenAI's
 // strict mode needs every property required and no others allowed.
@@ -47,11 +81,37 @@ const schema = JSON.stringify({
   properties: {
     verdict: { type: "string", enum: ["approve", "changes"] },
     body: { type: "string" },
-    findings: { type: "array", items: { type: "string" } },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          finding: { type: "string" },
+          severity: { type: "string", pattern: severity },
+          blocking: { type: "boolean" },
+        },
+        required: ["finding", "severity", "blocking"],
+        additionalProperties: false,
+      },
+    },
   },
   required: ["verdict", "body", "findings"],
   additionalProperties: false,
 });
+
+// Returns what the reviewer is told of severities and which findings block. Only a P1 blocks.
+// Once `strict` is false, past the flow's strict rounds, only a P1 the change itself brings
+// blocks, so a long PR isn't held back by what its base branch already has.
+function blockingTold(strict: boolean): string {
+  const which = strict
+    ? "A P1 blocks whether the change brings it or the base branch already has it."
+    : "This round is past the flow's strict rounds, so a P1 blocks only when this change brings it. Mark a P1 the base branch already has as not blocking.";
+  return [
+    "Give each finding a severity, P1, P2, P3 and so on, and say whether it blocks. P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done. A failing check is a P1, and so is a change that breaks something the task says must stay true. Wording, style, naming, unlikely edge cases and nice-to-haves are P2 or below: P2, P3 and so on.",
+    `Only a P1 can block. ${which} Every other finding doesn't block: the PR can merge with it, and Skelcrew files it for later.`,
+    `Answer "changes" when at least one finding blocks. Otherwise answer "approve", with the findings that don't block, whatever CI's state: Skelcrew waits for every check to pass before the PR is ready.`,
+  ].join("\n\n");
+}
 
 // Who runs the tests on a review's commit: CI, whose result is in the file `ci`; the reviewer;
 // or no one, on a change to docs and Markdown alone.
@@ -79,17 +139,18 @@ function testsTold(tests: Tests, test: string[] | undefined): string {
     return "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.";
   if (tests === "run")
     return `No CI runs on this commit, so ${runSuite("run the repository's whole test suite", test)}`;
-  return `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, list each failing test as a finding. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, ${runSuite("run the whole test suite yourself", test)} When CI hasn't reported yet, or is still running as you answer, review the code anyway: CI running is never a finding, as the PR is ready only once every check passes. Then approve clean code, and say "CI pending" in the body.`;
+  return `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, list each failing test as a blocking P1 finding. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, ${runSuite("run the whole test suite yourself", test)} When CI hasn't reported yet, or is still running as you answer, review the code anyway: CI running is never a finding, as the PR is ready only once every check passes. Then approve clean code, and say "CI pending" in the body.`;
 }
 
 // What the reviewer gets of the last round, from round 2 on: the round, the commit it reviewed,
-// its findings and the PR's description as the forge has it, or null when it couldn't be read.
-// `since` is the diff from that commit to this one, the same commit reviewed again, or a commit
+// its findings, those that didn't block, and the PR's description as the forge has it, or null
+// when it couldn't be read. `since` is the diff from that commit to this one, the same commit reviewed again, or a commit
 // no longer in the branch's history, such as after a force push.
 export type LastRound = {
   round: number;
   commit: string;
   findings: string[];
+  notBlocking: string[];
   description: string | null;
   since: { diff: string } | "same commit" | "dropped";
 };
@@ -99,11 +160,18 @@ export type LastRound = {
 // stated, never as the task.
 function lastRoundTold(last: LastRound, file: string): string {
   const short = last.commit.slice(0, 7);
-  const findings = last.findings.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
-  const asked =
+  const numbered = (findings: string[]) =>
+    findings.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
+  const findings = numbered(last.findings);
+  const blocked =
     findings === ""
-      ? "It approved, with no findings."
+      ? "It approved, with no blocking findings."
       : `It asked for these changes:\n\n${findings}\n\nCheck whether each is fixed.`;
+  const noted =
+    last.notBlocking.length === 0
+      ? ""
+      : `\n\nIt also found these, which didn't block:\n\n${numbered(last.notBlocking)}\n\nList again each that still stands, as Skelcrew files only the latest review's for later.`;
+  const asked = `${blocked}${noted}`;
   if (last.since === "same commit")
     return `## The last round\n\nRound ${last.round} reviewed this same commit. ${asked}`;
   if (last.since === "dropped")
@@ -124,7 +192,9 @@ function lastRoundTold(last: LastRound, file: string): string {
 // PR against, where the change starts, and who runs the tests and with what filled into their
 // blanks. A repository's own role may leave the blanks out, and a reviewer that never sees the
 // task or the CI policy can't review against them, so what the role leaves out is added after
-// its instructions. All blanks are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
+// its instructions. The rule of which findings block is Skelcrew's, as it checks the answer by
+// it, so it is added too, and `strict` says whether a P1 the base branch has blocks. All blanks
+// are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
 // the reviewer as written. The file's last newline is dropped, as the reviewer has always been
 // told without one. From round 2 on, the last round follows, after the blanks are filled, so the
 // builder's description never fills one.
@@ -134,9 +204,15 @@ export function reviewerPrompt(
   base: string,
   tests: Tests,
   test: string[] | undefined,
+  strict: boolean,
   last?: { round: LastRound; file: string },
 ): string {
-  const blanks: Record<string, string> = { ...issue, base, tests: testsTold(tests, test) };
+  const blanks: Record<string, string> = {
+    ...issue,
+    base,
+    tests: testsTold(tests, test),
+    blocking: blockingTold(strict),
+  };
   const has = (blank: string) => role.includes(`{{${blank}}}`);
   const added = [
     has("title") && has("body") ? null : "It should do this:\n\n# {{title}}\n\n{{body}}",
@@ -144,10 +220,11 @@ export function reviewerPrompt(
       ? null
       : "The change is everything on HEAD since {{base}}. Read the whole diff with `git diff {{base}}...HEAD`.",
     has("tests") ? null : "{{tests}}",
+    has("blocking") ? null : "{{blocking}}",
   ].filter((part) => part !== null);
   const instructions = [role.replace(/\n$/, ""), ...added].join("\n\n");
   const filled = instructions.replace(
-    /\{\{(title|body|base|tests)\}\}/g,
+    /\{\{(title|body|base|tests|blocking)\}\}/g,
     (_, blank: string) => blanks[blank] ?? "",
   );
   return last ? `${filled}\n\n${lastRoundTold(last.round, last.file)}` : filled;
@@ -268,13 +345,14 @@ function failureOf(
 }
 
 // Returns the verdict of a reviewer that has ended, or a failed one saying why there is none:
-// it exited with an error, or answered outside the shape. An error that says the harness's
+// it exited with an error, or answered outside the shape, which `strict` sets. An error that says the harness's
 // usage limit is reached gives a limited review instead, with when the limit resets.
 function readVerdict(
   name: HarnessName,
   folder: string,
   finished: { out: string; err: string; code: number },
   prompt: string,
+  strict: boolean,
 ): Review | Limited {
   // A reviewer that exited with an error, or gave no answer, is asked what went wrong. One that
   // exited cleanly has only the error its harness reports, as any other line is its work.
@@ -304,7 +382,7 @@ function readVerdict(
     const why = errorText(error);
     return failed(`the reviewer answered outside the shape: ${why}`);
   }
-  const verdict = Verdict.safeParse(said);
+  const verdict = verdictOf(strict).safeParse(said);
   if (!verdict.success)
     return {
       verdict: "failed",
@@ -323,7 +401,8 @@ function readVerdict(
 // is the repository's test command, for when the reviewer has to run the suite, which it does
 // through sc check on `socket`, the thread's reviewer socket. `skills` names the .agents/ whose
 // skills the reviewer gets, the one the task started with. `last` is the last round, from round 2
-// on: its diff goes in the review's folder.
+// on: its diff goes in the review's folder. `strict` says whether a P1 the base branch already
+// has blocks, as it does until the flow's strict rounds are over.
 async function reviewNow(given: {
   instructions: string;
   clone: string;
@@ -341,6 +420,7 @@ async function reviewNow(given: {
   socket?: string;
   skills?: SkillsFrom;
   last?: LastRound | null;
+  strict: boolean;
 }): Promise<Review | Limited> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -483,12 +563,20 @@ async function reviewNow(given: {
     // Skills the harness has no folder for are listed last, after the blanks are filled, so a
     // skill's description is never taken for one.
     const told = skillsTold(launch.skills);
-    const prompt = reviewerPrompt(given.instructions, issue, base, tests, given.test, last);
+    const prompt = reviewerPrompt(
+      given.instructions,
+      issue,
+      base,
+      tests,
+      given.test,
+      given.strict,
+      last,
+    );
     const input = told ? `${prompt}\n\n${told}` : prompt;
     const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });
     const after = whyStopped();
     if (after) return after;
-    const verdict = readVerdict(harness, folder, finished, input);
+    const verdict = readVerdict(harness, folder, finished, input, given.strict);
     if (last?.round.since !== "dropped" || !("findings" in verdict)) return verdict;
     const dropped = `Round ${last.round.round}'s commit ${last.round.commit.slice(0, 7)} is no longer in the branch's history, so this round reviewed the whole diff only, not what changed since.`;
     return { ...verdict, body: `${dropped}\n\n${verdict.body}` };

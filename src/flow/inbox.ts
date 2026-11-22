@@ -8,6 +8,7 @@ import { backlogOf } from "./backlog.ts";
 import { openTasks } from "./copy.ts";
 import { leadOf } from "./lead.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
+import { noticeItem } from "./notify.ts";
 import { findRepository } from "./repo.ts";
 import { letters } from "./requests.ts";
 import { reportStatus } from "./status.ts";
@@ -60,7 +61,7 @@ function aboutOf(db: Database, owner: string, repo: string, task: string): strin
 // in the backlog, so its item can be seen and answered. A task whose thread is done shows by its
 // open issue, so the lead can ask whether to start it again. A note that the thread needs you,
 // still waiting for the lead, goes, as the lead is asking you about it now.
-// Every item passes through here, so a plugin that pushes Needs you hears of each one here.
+// Every item passes through here, so each one queues a needs-you message to you here.
 export function postItem(
   db: Database,
   repository: string,
@@ -95,7 +96,9 @@ export function postItem(
   );
   if (thread !== null && live)
     record(db, thread.folder, { noting: null }, `the lead asked you: ${said}`);
-  return aboutOf(db, owner, repo, task ?? "");
+  const about = aboutOf(db, owner, repo, task ?? "");
+  noticeItem(db, about, said, live ? thread : null);
+  return about;
 }
 
 // Your answer to an item: one of its options by letter, or words of your own.

@@ -70,6 +70,7 @@ const details: Details = {
     },
     merge: null,
     filed: null,
+    notBlocking: [],
     item: null,
   },
   findings: [

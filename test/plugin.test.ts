@@ -340,6 +340,28 @@ test("a runtime plugin can provide sessions, transport, status and files, with t
   expect(refused.err).toContain("a sessions plugin needs attach");
 });
 
+test("a notifier is an I/O plugin that needs a call, and installs as any plugin does", async () => {
+  const folder = join(home, "skelcrew-fake");
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  const notifier = (lines: string) => {
+    fakePlugin(folder, "0.1.0");
+    writeFileSync(
+      manifest,
+      readFileSync(manifest, "utf8").replace("kind: io\nprovides: [tracker, forge]", lines),
+    );
+  };
+  notifier("kind: runtime\nprovides: [notifier]");
+  const runtime = await skel(["plugin", "add", "-g", "./skelcrew-fake"], "y\n");
+  expect(runtime.err).toContain("notifier isn't for a plugin of kind runtime");
+  notifier("kind: io\nprovides: [notifier]");
+  writeFileSync(manifest, readFileSync(manifest, "utf8").replace(/^call: .*\n/m, ""));
+  const noCall = await skel(["plugin", "add", "-g", "./skelcrew-fake"], "y\n");
+  expect(noCall.err).toContain("a notifier plugin needs call");
+  notifier("kind: io\nprovides: [notifier]");
+  expect((await skel(["plugin", "add", "-g", "./skelcrew-fake"], "y\n")).code).toBe(0);
+  expect((await skel(["plugin", "ls"])).out).toBe("fake 0.1.0 io: notifier\n");
+});
+
 test("a manifest whose kind doesn't fit what it provides, or that mixes both shapes, is refused", async () => {
   const folder = join(home, "skelcrew-fake");
   const manifest = join(folder, "skelcrew-plugin.yaml");
@@ -1111,6 +1133,28 @@ test("a repository can't name a runtime plugin", async () => {
   expect(yours.err).toContain("fake is a runtime plugin");
   expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
     "# Shared.\nsetup: [bun install]\n",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+});
+
+test("a repository can't name a notifier, as it reaches you", async () => {
+  const folder = onGitHub("skelcrew/skelcrew-email");
+  fakePlugin(folder, "0.1.0");
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace("provides: [tracker, forge]", "provides: [notifier]"),
+  );
+  git(folder, "init", "-q", "-b", "main");
+  git(folder, "add", ".");
+  git(folder, "commit", "-q", "-m", "0.1.0");
+  git(folder, "tag", "v0.1.0");
+  const app = appCheckout();
+  const added = await skel(["plugin", "add", "skelcrew/skelcrew-email"], "y\n", "", {}, app);
+  expect(added.code).toBe(1);
+  expect(added.out).not.toContain("[Y/n]");
+  expect(added.err).toContain(
+    "fake is a notifier, which reaches you, so it is always yours and never a repository's. sc plugin add -g adds it as yours",
   );
   expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
 });

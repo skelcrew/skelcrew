@@ -672,6 +672,7 @@ ${threadSql({ task: "t20", status: "stopped", issue: "a1b2c3", issue_ref: "ENG-7
       prPage: null,
       merge: null,
       filed: null,
+      notBlocking: [],
       item: null,
     });
     expect(JSON.parse((await skel(["show", "--json", "APP#10"])).out)).toMatchObject({
@@ -1063,6 +1064,7 @@ describe("with a forge", () => {
       },
       merge: null,
       filed: null,
+      notBlocking: [],
       item: null,
     });
   });

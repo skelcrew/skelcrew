@@ -6,7 +6,7 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
-import { flowRoles } from "../flows.ts";
+import { flowRoles, strictRounds } from "../flows.ts";
 import { errorText } from "../format.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import {
@@ -41,6 +41,7 @@ import {
   checkSet,
   lastReviewed,
   letGoOn,
+  nextRound,
   notReviewed,
   reviewAsked,
   reviewOnPr,
@@ -463,7 +464,8 @@ async function reviewRound(
     if (signal.aborted) return;
     if (still) {
       const body = `Approval kept: this commit only merges ${base} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. Every CI check on it passed.`;
-      const verdict: Review = { verdict: "approve", body, findings: [] };
+      const notBlocking = lastReviewed(thread)?.notBlocking ?? [];
+      const verdict: Review = { verdict: "approve", body, findings: [], notBlocking };
       const kept = { verdict, by: latest.reviewed_by ?? reviewer, kept: approved };
       await pending;
       await actOnVerdict(db, sessions, folder, sha, signal, kept, builderBack);
@@ -558,6 +560,7 @@ async function reviewRound(
       // The review stage's role, from the task's flow, and its instructions come from the
       // .agents/ the task started with.
       instructions: repositoryRole(flowRoles(thread).review ?? "reviewer", thread).instructions,
+      strict: nextRound(thread) <= strictRounds(thread),
       skills: thread,
       commit: sha,
       signal,
@@ -853,7 +856,7 @@ export async function retryPost(db: Database, sessions: string, folder: string):
 
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
 // the latest round rather than a review per round. It edits the review an earlier round posted.
-// When the forge can't edit it, it posts a new one only if the verdict or findings changed, so a
+// When the forge can't edit it, it posts a new one only if the verdict or any finding changed, so a
 // round that found the same again adds nothing, unless `noted`: the lead is to hear of this
 // round's review, so the PR must show it, not an older round's. One deleted from the PR is posted again. The rounds one by one stay in the thread's log.
 // What it posted is saved on the thread at once, so a later round edits it though this one is
@@ -865,12 +868,19 @@ async function postOrEdit(
   folder: string,
   pr: number,
   commit: string,
-  review: { verdict: "approve" | "changes"; body: string; findings: string[]; round: number },
+  review: {
+    verdict: "approve" | "changes";
+    body: string;
+    findings: string[];
+    notBlocking?: string[] | undefined;
+    round: number;
+  },
   noted: boolean,
 ): Promise<void> {
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const { verdict, findings, round } = review;
+  const notBlocking = review.notBlocking ?? [];
   // The body ends with a hidden marker naming the thread. The forge keeps HTML comments, and
   // gives them back unchanged, so Skelcrew can find its review in its copy of the PR.
   const marker = `<!-- skelcrew:review thread=${thread.folder} -->`;
@@ -893,7 +903,7 @@ async function postOrEdit(
       : [];
   const already = marked.find((posted) => posted.text.trim() === body.trim());
   if (already) {
-    const post = { pr, id: already.id, verdict, findings, round };
+    const post = { pr, id: already.id, verdict, findings, notBlocking, round };
     const saved = reviewOnPr(readThread(db, folder), post, Date.now());
     record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
     return;
@@ -913,14 +923,15 @@ async function postOrEdit(
   const same =
     earlier !== null &&
     earlier.verdict === verdict &&
-    JSON.stringify(earlier.findings) === JSON.stringify(findings);
+    JSON.stringify(earlier.findings) === JSON.stringify(findings) &&
+    JSON.stringify(earlier.notBlocking ?? []) === JSON.stringify(notBlocking);
   if (edit === "can't" && same && !noted) return;
   const id =
     edited && editing !== null
       ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
-  const post = { pr, id, verdict, findings, round };
+  const post = { pr, id, verdict, findings, notBlocking, round };
   record(db, folder, reviewOnPr(readThread(db, folder), post, Date.now()), `${how} on PR #${pr}`);
 }
 

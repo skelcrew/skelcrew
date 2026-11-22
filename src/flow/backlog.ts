@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { fillIssues, type Repository } from "../db.ts";
 import { errorText } from "../format.ts";
+import { cloneDir } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import {
   claimedAt,
@@ -19,7 +20,9 @@ import {
   renames,
   startedRef,
 } from "./git.ts";
-import { taskName } from "./thread.ts";
+import { lastReviewed } from "./ledger.ts";
+import { noteForLead } from "./messages.ts";
+import { record, repositoryOf, type Thread, taskName, threadName } from "./thread.ts";
 
 // A task in the backlog: its name, such as t104, its title and description, when it was filed,
 // as an ISO time so it sorts beside the tracker's issues, and by whom, such as simon or simon via
@@ -209,11 +212,16 @@ export async function claimOwnName(
   }
 }
 
+// Files a task in the backlog and returns its name, and whether an earlier filing whose answer
+// was lost had filed it already. Each try is noted until it is settled, so the same filing run
+// again finds it. `saved` keeps the name where the caller needs it, in the same step that drops
+// the note, so a stop between the two can never file it twice.
 export function fileTask(
   db: Database,
   repository: Repository,
   folder: string,
   given: { title: string; body: string; by: string },
+  saved: (task: string) => void = () => {},
 ): Promise<{ task: string; already: boolean }> {
   return inTurn(repository, async () => {
     const { owner, repo } = repository;
@@ -230,8 +238,15 @@ export function fileTask(
       .map((row) => z.object({ task: z.string(), claim_commit: z.string() }).parse(row));
     for (const note of notes) {
       const holds = await claimedAt(db, repository, note.task);
-      forget(note.claim_commit);
-      if (holds === note.claim_commit) return { task: note.task, already: true };
+      if (holds !== note.claim_commit) {
+        forget(note.claim_commit);
+        continue;
+      }
+      db.transaction(() => {
+        saved(note.task);
+        forget(note.claim_commit);
+      })();
+      return { task: note.task, already: true };
     }
     const kept = { ...given, created: new Date().toISOString() };
     const tried: string[] = [];
@@ -244,9 +259,59 @@ export function fileTask(
       );
     };
     const task = await claimOwnName(db, repository, folder, JSON.stringify(kept), note);
-    for (const commit of tried) forget(commit);
+    db.transaction(() => {
+      saved(task);
+      for (const commit of tried) forget(commit);
+    })();
     return { task, already: false };
   });
+}
+
+// Files what the thread's latest review found that didn't block as one task of the backlog, once
+// its work merged, so none is lost with the thread. It names the PR, or the branch without one.
+// Returns the lead's note of the merge, `said`, with what was filed after it, or as it was when
+// the latest review found none, as they were all fixed. It files once: the task's name is saved on the thread as the filing is
+// settled, and a filing cut short is found again by its words, which every try gives the same.
+// Findings that can't be filed are never lost: they stay on the task, where sc show lists them,
+// and a note of their own gives the lead each one, to file with sc add.
+export async function fileNotBlocking(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+  said: string,
+): Promise<string> {
+  const repository = repositoryOf(db, thread);
+  const named = (task: string) => taskName(repository.name, task);
+  const then = (more: string) => `${said.replace(/\.?$/, ".")} ${more}`;
+  if (thread.not_blocking_task !== null)
+    return then(`Its not-blocking findings are in ${named(thread.not_blocking_task)}.`);
+  const found = lastReviewed(thread)?.notBlocking ?? [];
+  if (found.length === 0) return said;
+  const listed = found.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
+  const merged = thread.pr === null ? `branch ${thread.branch}` : `#${thread.pr}`;
+  const title = `Not-blocking findings from ${merged}'s review`;
+  const body = `Skelcrew's reviewer found these in ${merged} and didn't let them block it, so they wait here:\n\n${listed}\n\nFrom ${merged}, ${threadName(db, thread)}.`;
+  try {
+    const saved = (task: string) =>
+      record(
+        db,
+        thread.folder,
+        { not_blocking_task: task },
+        `filed its review's not-blocking findings as ${named(task)}`,
+      );
+    const clone = cloneDir(repository.owner, repository.repo);
+    const given = { title, body, by: "skelcrew" };
+    const { task } = await fileTask(db, repository, clone, given, saved);
+    return then(`Its not-blocking findings are in ${named(task)}.`);
+  } catch (error) {
+    console.log(
+      `${threadName(db, thread)}: couldn't file its not-blocking findings: ${errorText(error)}`,
+    );
+    const each = found.map((finding, n) => `${n + 1}) ${finding}`).join(" ");
+    const line = `${threadName(db, thread)}'s not-blocking findings couldn't be filed in the backlog (${errorText(error)}). File them with sc add: ${each}`;
+    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "));
+    return then("Its not-blocking findings couldn't be filed: the note before lists them.");
+  }
 }
 
 // Writes tasks into the daemon's copy of the repository's backlog, over any of the same name.
