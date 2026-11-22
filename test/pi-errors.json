@@ -1,0 +1,140 @@
+[
+  {
+    "api": "openai-completions",
+    "body": "openai-quota",
+    "error": "429: {\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.\",\"type\":\"insufficient_quota\",\"param\":null,\"code\":\"insufficient_quota\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-completions",
+    "body": "openai-rate",
+    "error": "429: {\"message\":\"Rate limit reached for gpt-4o in organization org-abc on tokens per min (TPM): Limit 30000, Used 29000, Requested 2000. Please try again in 2s. Visit https://platform.openai.com/account/rate-limits to learn more.\",\"type\":\"tokens\",\"param\":null,\"code\":\"rate_limit_exceeded\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-completions",
+    "body": "anthropic-rate",
+    "error": "429: {\"type\":\"rate_limit_error\",\"message\":\"Number of request tokens has exceeded your per-minute rate limit (https://docs.claude.com/en/api/rate-limits); see the response headers for current usage. Please reduce the prompt length or the maximum tokens requested, or try again later.\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-completions",
+    "body": "google-quota",
+    "error": "429: {\"code\":429,\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\",\"status\":\"RESOURCE_EXHAUSTED\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-completions",
+    "body": "google-project",
+    "error": "403: {\"code\":403,\"message\":\"Your application is authenticating by using local Application Default Credentials. The generativelanguage.googleapis.com API requires a quota project, which is not set by default.\",\"status\":\"PERMISSION_DENIED\"}",
+    "limit": false
+  },
+  {
+    "api": "openai-completions",
+    "body": "openrouter-rate",
+    "error": "429: {\"code\":429,\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-completions",
+    "body": "server-429-id",
+    "error": "500: {\"message\":\"exceeded retry count for quota requests, request 429 failed\",\"type\":\"server_error\",\"code\":null}",
+    "limit": false
+  },
+  {
+    "api": "openai-responses",
+    "body": "openai-quota",
+    "error": "openrouter API error (429): {\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.\",\"type\":\"insufficient_quota\",\"param\":null,\"code\":\"insufficient_quota\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-responses",
+    "body": "openai-rate",
+    "error": "openrouter API error (429): {\"message\":\"Rate limit reached for gpt-4o in organization org-abc on tokens per min (TPM): Limit 30000, Used 29000, Requested 2000. Please try again in 2s. Visit https://platform.openai.com/account/rate-limits to learn more.\",\"type\":\"tokens\",\"param\":null,\"code\":\"rate_limit_exceeded\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-responses",
+    "body": "anthropic-rate",
+    "error": "openrouter API error (429): {\"type\":\"rate_limit_error\",\"message\":\"Number of request tokens has exceeded your per-minute rate limit (https://docs.claude.com/en/api/rate-limits); see the response headers for current usage. Please reduce the prompt length or the maximum tokens requested, or try again later.\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-responses",
+    "body": "google-quota",
+    "error": "openrouter API error (429): {\"code\":429,\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\",\"status\":\"RESOURCE_EXHAUSTED\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-responses",
+    "body": "google-project",
+    "error": "openrouter API error (403): {\"code\":403,\"message\":\"Your application is authenticating by using local Application Default Credentials. The generativelanguage.googleapis.com API requires a quota project, which is not set by default.\",\"status\":\"PERMISSION_DENIED\"}",
+    "limit": false
+  },
+  {
+    "api": "openai-responses",
+    "body": "openrouter-rate",
+    "error": "openrouter API error (429): {\"code\":429,\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\"}",
+    "limit": true
+  },
+  {
+    "api": "openai-responses",
+    "body": "server-429-id",
+    "error": "openrouter API error (500): {\"message\":\"exceeded retry count for quota requests, request 429 failed\",\"type\":\"server_error\",\"code\":null}",
+    "limit": false
+  },
+  {
+    "api": "anthropic-messages",
+    "body": "openai-quota",
+    "error": "429 {\"error\":{\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.\",\"type\":\"insufficient_quota\",\"param\":null,\"code\":\"insufficient_quota\"}}",
+    "limit": true
+  },
+  {
+    "api": "anthropic-messages",
+    "body": "openai-rate",
+    "error": "429 {\"error\":{\"message\":\"Rate limit reached for gpt-4o in organization org-abc on tokens per min (TPM): Limit 30000, Used 29000, Requested 2000. Please try again in 2s. Visit https://platform.openai.com/account/rate-limits to learn more.\",\"type\":\"tokens\",\"param\":null,\"code\":\"rate_limit_exceeded\"}}",
+    "limit": true
+  },
+  {
+    "api": "anthropic-messages",
+    "body": "anthropic-rate",
+    "error": "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Number of request tokens has exceeded your per-minute rate limit (https://docs.claude.com/en/api/rate-limits); see the response headers for current usage. Please reduce the prompt length or the maximum tokens requested, or try again later.\"}}",
+    "limit": true
+  },
+  {
+    "api": "anthropic-messages",
+    "body": "google-quota",
+    "error": "429 {\"error\":{\"code\":429,\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\",\"status\":\"RESOURCE_EXHAUSTED\"}}",
+    "limit": true
+  },
+  {
+    "api": "anthropic-messages",
+    "body": "google-project",
+    "error": "403 {\"error\":{\"code\":403,\"message\":\"Your application is authenticating by using local Application Default Credentials. The generativelanguage.googleapis.com API requires a quota project, which is not set by default.\",\"status\":\"PERMISSION_DENIED\"}}",
+    "limit": false
+  },
+  {
+    "api": "anthropic-messages",
+    "body": "openrouter-rate",
+    "error": "429 {\"error\":{\"code\":429,\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\"}}",
+    "limit": true
+  },
+  {
+    "api": "anthropic-messages",
+    "body": "server-429-id",
+    "error": "500 {\"error\":{\"message\":\"exceeded retry count for quota requests, request 429 failed\",\"type\":\"server_error\",\"code\":null}}",
+    "limit": false
+  },
+  {
+    "api": "google-generative-ai",
+    "body": "google-quota",
+    "error": "{\"error\":{\"code\":429,\"message\":\"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\",\"status\":\"RESOURCE_EXHAUSTED\"}}",
+    "limit": true
+  },
+  {
+    "api": "google-generative-ai",
+    "body": "google-project",
+    "error": "{\"error\":{\"code\":403,\"message\":\"Your application is authenticating by using local Application Default Credentials. The generativelanguage.googleapis.com API requires a quota project, which is not set by default.\",\"status\":\"PERMISSION_DENIED\"}}",
+    "limit": false
+  }
+]

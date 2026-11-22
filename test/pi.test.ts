@@ -358,69 +358,62 @@ test("Skelcrew sees Pi at work while its line counts, and ready only at its mark
     expect(lines(screen(name))).not.toContain(pi.marks.prompt);
 });
 
+// The errors Pi 1.6.0 reported for providers' own answers, as their docs give them, on each of
+// Pi's provider APIs: a fake server answered with each body, and Pi's errorMessage was kept. On
+// Google's API Pi passes the body on alone, so only Google's own bodies, which always name their
+// code, are there.
+const ProviderError = z.object({
+  api: z.string(),
+  body: z.string(),
+  error: z.string(),
+  limit: z.boolean(),
+});
+const providerErrors = z
+  .array(ProviderError)
+  .parse(JSON.parse(readFileSync(join(import.meta.dir, "pi-errors.json"), "utf8")));
+// Errors no provider answered with, each with a word or a number that once fooled a rule.
+const madeUp = [
+  "500: request 429 failed",
+  "404: no resource 429: gone",
+  "exceeded retry count for quota requests",
+  "exceeded retry count: quota project not set",
+  "You exceeded your allocated quota",
+  "429 requests in the queue",
+  "fetch failed",
+  '{"error":{"code":"429"}}',
+  "not json {",
+];
+
 describe("usage limits", () => {
   const now = new Date(2026, 10, 22, 9, 0).getTime();
 
-  test("a 429 or an exceeded quota is a limit, resetting when it says it will", () => {
+  test("a provider's 429 is a limit, on every API Pi has, and nothing else is", () => {
+    expect(providerErrors.length).toBe(23);
+    for (const { api, body, error, limit } of providerErrors) {
+      const seen = { api, body, limit: pi.usageLimit(error, now) !== null };
+      expect(seen).toEqual({ api, body, limit });
+    }
+    for (const error of madeUp) expect(pi.usageLimit(error, now)).toBeNull();
+  });
+
+  test("the reset is the clock right after resets at or try again at", () => {
     const at = pi.usageLimit('429: {"message":"Too many requests. Try again at 3:15 PM."}', now);
     expect(at).toEqual({ reset: new Date(2026, 10, 22, 15, 15).getTime() });
-    const resets = pi.usageLimit("You exceeded your quota for the day, it resets at 5pm", now);
+    const resets = pi.usageLimit('429 {"message":"Your quota resets at 5pm"}', now);
     expect(resets).toEqual({ reset: new Date(2026, 10, 22, 17, 0).getTime() });
-    expect(pi.usageLimit("RESOURCE_EXHAUSTED: You exceeded your current quota", now)).toEqual({
-      reset: null,
-    });
-    for (const error of [
-      "403: You exceeded your allocated quota",
-      "exceeded the free tier API quota for today",
-      "Your quota has been exceeded",
-    ])
-      expect(pi.usageLimit(error, now)).toEqual({ reset: null });
-  });
-
-  test("an error that only mentions a quota, or any other error, is no limit", () => {
-    for (const error of [
-      '403: {"message":"quota project not set"}',
-      "Your quota is shown at https://example.com",
-      "500: internal error at 4291 requests",
-      "500: request 429 failed",
-      "404: no resource 429: gone",
-      "exceeded retry count: quota project not set",
-      "exceeded the quota project's settings",
-      "exceeded retry limit; quota unchanged",
-      "fetch failed",
-    ])
-      expect(pi.usageLimit(error, now)).toBeNull();
-  });
-
-  test("a reset time comes only from resets at or try again at", () => {
+    // OpenAI's "try again in 2s" names no clock, so the limit is waited out.
+    const openai = providerErrors.find((e) => e.body === "openai-rate")?.error ?? "";
+    expect(pi.usageLimit(openai, now)).toEqual({ reset: null });
     // "reset" alone names no time, though a clock follows it.
-    const said = "429: connection reset by peer at 3pm";
-    expect(pi.usageLimit(said, now)).toEqual({ reset: null });
+    expect(pi.usageLimit("429: connection reset by peer at 3pm", now)).toEqual({ reset: null });
     // A clock later in the message isn't the reset's.
     const later = "429: resets at an unknown time; contact support at 5pm";
     expect(pi.usageLimit(later, now)).toEqual({ reset: null });
-    expect(pi.usageLimit("Quota exceeded for quota metric 'Generate requests'", now)).toEqual({
-      reset: null,
-    });
   });
 
   // The extension tells a builder's limit, and Skelcrew a reviewer's, by the same rule.
   test("the extension and Skelcrew count the same errors as limits", () => {
-    for (const error of [
-      "429: slow down",
-      "500: request 429 failed",
-      "exceeded retry count: quota project not set",
-      "Quota exceeded for quota metric 'Generate requests'",
-      "403: You exceeded your allocated quota",
-      "exceeded the free tier API quota for today",
-      "Your quota has been exceeded",
-      "exceeded the quota project's settings",
-      "exceeded retry limit; quota unchanged",
-      "You exceeded your current quota",
-      "quota project not set",
-      "4291 requests",
-      "fetch failed",
-    ])
+    for (const error of [...providerErrors.map((e) => e.error), ...madeUp])
       expect(pi.usageLimit(error, now) !== null).toBe(isUsageLimit(error));
   });
 });

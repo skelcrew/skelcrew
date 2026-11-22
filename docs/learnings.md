@@ -197,8 +197,14 @@ Checked against Pi 1.6.0, in tmux and in print mode, with a fake model server.
 - **A turn ends at `agent_settled`, not `agent_end`.** Pi tries a 429 three times, and each try
   ends with `agent_end`. Only `agent_settled` comes once, after the retries, with `aborted` true
   for Esc. A turn that ended on an error has an assistant message with `stopReason: "error"`
-  and Pi's words in `errorMessage`, such as `429: {"message":"..."}`. The status comes first,
-  so a 429 anywhere else, such as in a request ID, is no limit.
+  and Pi's words in `errorMessage`, such as `429: {"message":"..."}`.
+- **Pi keeps no HTTP status on a message, only text, and each provider API puts it elsewhere.**
+  Run against providers' documented error bodies, Pi 1.6.0 wrote `429: {...}` on OpenAI's
+  completions API, `429 {...}` on Anthropic's, `openrouter API error (429): {...}` on OpenAI's
+  responses API, and Google's body alone, `{"error":{"code":429,...}}`, on Google's. A limit is
+  a 429 read from those places. Providers' words for limits vary too much to go by: a rule built
+  on them kept counting errors such as "exceeded retry count for quota requests". The errors Pi
+  wrote are kept in `test/pi-errors.json`.
 - **A provider can echo a key in its error, and Skelcrew logs it.** So the extension takes keys
   out first. The key may be in no variable, as `pi auth login` saves it in `auth.json`, or a
   command gives it. `ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)` returns the key and

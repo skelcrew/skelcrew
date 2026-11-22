@@ -29,11 +29,17 @@ const extensionSource = String(extension);
 const readyMark = "◇ Pi is ready for a message";
 const busyMark = "◆ Pi is at work";
 const verdictTool = "skelcrew_verdict";
-const isUsageLimit = (error: string) =>
-  /^429(\D|$)/.test(error.trim()) ||
-  /\bexceeded(?: [a-z-]+){0,4} quota\b(?! project)|\bquota (?:has been |was )?exceeded\b/i.test(
-    error,
-  );
+const UsageBody = z.object({ error: z.object({ code: z.literal(429) }) });
+const isUsageLimit = (error: string) => {
+  const said = error.trim();
+  if (/^429(?:: | \{)|^[\w.-]+ API error \(429\): /.test(said)) return true;
+  if (/^\d{3}(?:: | \{)|^[\w.-]+ API error \(\d{3}\): /.test(said)) return false;
+  try {
+    return UsageBody.safeParse(JSON.parse(said)).success;
+  } catch {
+    return false;
+  }
+};
 
 // Returns Skelcrew's own Pi agent folder, where the first run's pi auth login saves the login, and
 // where you put a models.json for every agent: apart from yours in ~/.pi, so neither side's
@@ -333,7 +339,7 @@ function reportedError(_out: string, err: string, folder: string): string | null
 }
 
 // Returns whether Pi's error says a usage limit is reached, and when it resets, or null when it
-// says something else. Only a 429 Pi puts first, or a quota itself exceeded, is a limit. The reset
+// says something else. Only a 429, where Pi's provider APIs put the status, is a limit. The reset
 // is the time right after "resets at" or "try again at", such as "3:15 PM" or "Dec 31st, 2099
 // 11:59 PM": other words with "reset" in them, or a clock later in the message, name no reset. A
 // limit with no time passes on its own, so it is waited out.

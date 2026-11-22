@@ -15,19 +15,26 @@ export const busyMark = "◆ Pi is at work";
 // The tool a reviewer gives its verdict with, as Pi has no setting that holds an answer to a shape.
 export const verdictTool = "skelcrew_verdict";
 
-// Reports whether a Pi error says a usage limit was reached: an HTTP 429, which Pi puts first, as
-// in "429: {...}", or a message that the quota itself was exceeded: "exceeded" and up to four
-// words before "quota", as in "exceeded your allocated quota", or "Quota exceeded". A 429
-// elsewhere, such as in a request ID, and an error that only mentions a quota, such as "exceeded
-// retry count: quota project not set", are no limit: waiting never fixes them.
-export function isUsageLimit(error: string): boolean {
-  return (
-    /^429(\D|$)/.test(error.trim()) ||
-    /\bexceeded(?: [a-z-]+){0,4} quota\b(?! project)|\bquota (?:has been |was )?exceeded\b/i.test(
-      error,
-    )
-  );
+// Returns the HTTP status a Pi error names, or null when it names none. Pi gives no status of its
+// own, only text, and each of its provider APIs puts the status in one place: first, as in
+// "429: ..." or Anthropic's "429 {...}", after the provider's name, as in "openrouter API error (429): ...",
+// or in Google's body, which comes alone, as in {"error":{"code":429,...}}.
+function httpStatus(error: string): number | null {
+  const said = error.trim();
+  const first = /^(\d{3})(?:: | \{)/.exec(said) ?? /^[\w.-]+ API error \((\d{3})\): /.exec(said);
+  if (first) return Number(first[1]);
+  try {
+    const code = field(field(JSON.parse(said), "error"), "code");
+    return typeof code === "number" ? code : null;
+  } catch {
+    return null;
+  }
 }
+
+// Reports whether a Pi error says a usage limit was reached: the provider answered 429, as it does
+// for a rate limit and for a quota used up. Its words never decide, so an error that only mentions
+// a quota, or a 429 elsewhere, such as in a request ID, is no limit.
+export const isUsageLimit = (error: string): boolean => httpStatus(error) === 429;
 
 // Returns the credentials Pi may send: the key and headers it resolved for the model it runs, from
 // its login, a key it ran a command for or the environment, and every key or token in the
