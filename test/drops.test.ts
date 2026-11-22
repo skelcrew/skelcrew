@@ -697,3 +697,14 @@ test("a screen that closes while a drop is still being copied or sent leaves no 
   );
   expect(mine).toEqual([]);
 });
+
+test("a screen opens when your temporary folder is missing", async () => {
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = join(home, "no-such-folder");
+  try {
+    expect(await runWithDrops(["true"], { where: async () => null, put: async () => [] })).toBe(0);
+  } finally {
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+  }
+});

@@ -134,10 +134,14 @@ export type Dropped = { path: string; snapshot: string };
 const snapshotsStart = "skelcrew-drop-";
 
 // Deletes the snapshots a screen left in your temporary folder, such as one that was killed
-// before it could. `ended` says whether a screen with that process ID has ended, so a screen
+// before it could. A temporary folder that is missing or can't be read has none. `ended` says whether a screen with that process ID has ended, so a screen
 // running in another terminal keeps the drops it is sending.
 function clearSnapshots(ended: (pid: number) => boolean): void {
-  for (const name of readdirSync(tmpdir())) {
+  let names: string[] = [];
+  try {
+    names = readdirSync(tmpdir());
+  } catch {}
+  for (const name of names) {
     const pid = Number(name.match(/^skelcrew-drop-(\d+)-/)?.[1]);
     if (!pid || !ended(pid)) continue;
     const folder = join(tmpdir(), name);
