@@ -348,7 +348,7 @@ const decided = [];
 const before = [];
 for (const pick of ["a", "b", "c"]) {
   record(db, "app-12", { ...limit, handed: null });
-  await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, pick, async () => { before.push(thread().decisions.length); return "ran"; });
+  await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, pick, async () => { before.push([thread().decisions.length, notes().length]); return "ran"; });
   decided.push(thread().decisions.length);
 }
 record(db, "app-12", { ...limit, handed: null });
@@ -363,15 +363,20 @@ record(db, "app-12", { erred: false, asking: true, said: "CSV or JSON?" });
 await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", async () => "ran");
 console.log(JSON.stringify({ decided, before, refused, afterRefused, decisions: thread().decisions, notes: notes() }));`);
   expect(seen.decided).toEqual([1, 2, 3, 4]);
-  // The decision is saved before its command runs, so a daemon that stops in between still has
-  // it, and a command that is refused takes it back.
-  expect(seen.before).toEqual([1, 2, 3]);
+  // The decision and the lead's note are saved before the command runs, so a daemon that stops
+  // in between still has both. A command that is refused takes the decision back and tells the lead.
+  expect(seen.before).toEqual([
+    [1, 1],
+    [2, 2],
+    [3, 3],
+  ]);
   expect(seen.refused).toBe("CI failed");
   expect(seen.afterRefused).toBe(3);
+  expect((seen.notes as string[])[4]).toBe("The human's pick on APP-12 didn't run: CI failed");
   const told = (seen.notes as string[]).map((note) =>
     note.endsWith("as the human's decision on the task."),
   );
-  expect(told).toEqual([true, true, true, true, false, false, false]);
+  expect(told).toEqual([true, true, true, true, false, true, false, false, false]);
   const decisions = seen.decisions as { by: string; text: string; words: string }[];
   expect(decisions.map(({ by, text }) => ({ by, text }))).toEqual([
     {

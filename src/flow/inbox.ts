@@ -225,26 +225,38 @@ export async function pickOwnItem(
     text: `${option.label}, as the human picked on "${item.title}"`,
     words: told,
   };
-  if (decides) record(db, thread.folder, { decisions: [...thread.decisions, decision] }, words);
-  let said: string;
-  try {
-    said = handing ? `Handed ${name} to the lead.` : await run(option.act, thread);
-  } catch (error) {
-    if (decides) {
-      const { decisions } = readThread(db, thread.folder);
-      const kept = decisions.filter(({ at, words }) => at !== decision.at || words !== told);
-      record(db, thread.folder, { decisions: kept }, `the pick didn't run: ${words}`);
-    }
-    throw error;
-  }
   const recorded = decides
     ? "\n\nSkelcrew recorded this pick as the human's decision on the task."
     : "";
   db.transaction(() => {
     noteForLead(db, sessions, thread, `${told}${recorded}`, null, true);
     if (handing) record(db, thread.folder, { handed: handedKey(item) }, words);
-    else if (!decides) log(db, thread, words);
+    else if (decides)
+      record(db, thread.folder, { decisions: [...thread.decisions, decision] }, words);
+    else log(db, thread, words);
   })();
+  let said: string;
+  try {
+    said = handing ? `Handed ${name} to the lead.` : await run(option.act, thread);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    db.transaction(() => {
+      noteForLead(
+        db,
+        sessions,
+        thread,
+        `The human's pick on ${name} didn't run: ${why}`,
+        null,
+        true,
+      );
+      if (!decides) return;
+      const { decisions } = readThread(db, thread.folder);
+      const kept = decisions.filter(({ at, words }) => at !== decision.at || words !== told);
+      record(db, thread.folder, { decisions: kept }, `the pick didn't run: ${words}`);
+    })();
+    typeLeadNotes(db, sessions);
+    throw error;
+  }
   typeLeadNotes(db, sessions);
   return said;
 }
