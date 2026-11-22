@@ -5,8 +5,10 @@ import { dlopen, FFIType } from "bun:ffi";
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { dropReviewLogins } from "../agents/harness.ts";
 import {
   agentRuns,
   endExitedSession,
@@ -71,6 +73,7 @@ import {
 import { roundOf } from "./ledger.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
+import { keepAgentLogins } from "./logins.ts";
 import {
   agentsSaid,
   alreadyMerging,
@@ -1242,6 +1245,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // A task that left the queue but whose builder's start the stop cut short goes back to it
   // first, as it can't be brought back.
   backToQueue(db);
+  dropReviewLogins(homedir());
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -1276,6 +1280,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       ),
     exitLook,
   );
+  // The agents' logins are kept now, before any agent starts, and every ten seconds from here
+  // on. A session's copy goes as it ends, and the sweep removes one a kill left behind.
+  const keep = () => doing("keeping the agents' logins", () => keepAgentLogins(db, sessions));
+  keep();
+  setInterval(keep, 10_000);
   // From here on, the daemon also looks every two seconds for a working agent whose screen
   // shows it idle, where no hook said so. A session that ends during a look only ends that look.
   setInterval(() => {

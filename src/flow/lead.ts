@@ -27,6 +27,7 @@ import { cloneDir, leadPlaces, reposDir } from "../paths.ts";
 import { filesFor, type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
 import type { Settings } from "../settings.ts";
+import { takeSharedLoginWhenFree } from "./logins.ts";
 import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
@@ -274,7 +275,8 @@ export async function startLead(
     [owner, repo],
   );
   const files = filesFor(host);
-  const { argv, env } = await harness.start({
+  await takeSharedLoginWhenFree(db, sessions, lead.name);
+  const started = await harness.start({
     name: lead.name,
     socket: lead.socket,
     // A model name belongs to its harness, so a lead on another one than your config now names
@@ -302,14 +304,18 @@ export async function startLead(
   // crash. The role label tells a plugin's host this is the lead, such as for herdr to give it
   // its repository's first tab.
   const labels: Labels = { repository: `${owner}/${repo}`, role: "lead" };
-  const id = await startSession(host, lead.name, {
-    folder: lead.folder,
-    command: argv,
-    env,
-    labels,
-    keepOnExit: true,
-    files,
-  });
+  const { argv, env } = started;
+  // The harness may need to write something as the session starts, such as a login.
+  const run = () =>
+    startSession(host, lead.name, {
+      folder: lead.folder,
+      command: argv,
+      env,
+      labels,
+      keepOnExit: true,
+      files,
+    });
+  const id = await ("launch" in started ? started.launch(run) : run());
   db.run("UPDATE repositories SET lead_host_id = ? WHERE owner = ? AND repo = ?", [
     id,
     owner,
