@@ -26,6 +26,7 @@ type Message = z.infer<typeof Message>;
 const perHour: Record<MessageType, number> = { "needs-you": 10, asked: 5, digest: 2 };
 
 const hour = 60 * 60 * 1000;
+const callTimeout = 60_000;
 const kept = 2 * 24 * hour;
 const bodyLimit: Record<MessageType, number> = {
   "needs-you": 4000,
@@ -121,11 +122,10 @@ async function deliver(db: Database, id: number): Promise<string | null> {
         .get(type, Date.now() - hour),
     ).n;
   const end = (state: string, error: string | null) => {
-    db.run("UPDATE notifications SET state = ?, sent = ? WHERE id = ?", [
-      state,
-      state === "sent" ? Date.now() : null,
-      id,
-    ]);
+    db.run(
+      "UPDATE notifications SET state = ?, sent = CASE WHEN ? = 'sent' THEN sent END WHERE id = ?",
+      [state, state, id],
+    );
     return error;
   };
   if (taken >= perHour[type]) {
@@ -140,7 +140,7 @@ async function deliver(db: Database, id: number): Promise<string | null> {
   }
   db.run("UPDATE notifications SET state = 'delivering', sent = ? WHERE id = ?", [Date.now(), id]);
   try {
-    await callPlugin(db, via, { ask: "notify", type, ...message }, z.null());
+    await callPlugin(db, via, { ask: "notify", type, ...message }, z.null(), callTimeout);
     return end("sent", null);
   } catch (error) {
     console.log(`couldn't send a ${type} message through ${via}: ${errorText(error)}`);
@@ -236,6 +236,19 @@ export function digestDue(now: Date, at: string, last: number | null): boolean {
   return last < slot.getTime();
 }
 
+function savedPrLink(db: Database, thread: Thread): string | null {
+  return (
+    z
+      .object({ pr_link: z.string().nullable() })
+      .nullable()
+      .parse(
+        db
+          .query("SELECT pr_link FROM tasks WHERE owner = ? AND repo = ? AND task = ?")
+          .get(thread.owner, thread.repo, thread.task),
+      )?.pr_link ?? null
+  );
+}
+
 export function digestOf(db: Database, since: number): Message {
   const links: Message["links"] = [];
   const parts = repositories(db).map((r) => {
@@ -246,11 +259,15 @@ export function digestOf(db: Database, since: number): Message {
     const open = openTasks(db, r.owner, r.repo);
     const named = (thread: Thread, state: string) => {
       const name = threadName(db, thread);
-      const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
+      const pr = thread.pr === null ? null : `#${thread.pr}`;
+      const prLink =
+        thread.pr === null
+          ? null
+          : (prOf(db, thread.owner, thread.repo, thread.pr)?.link ?? savedPrLink(db, thread));
       const issue = open.find((item) => item.id === thread.task);
-      if (pr !== null) links.push({ name: `${name} #${pr.id}`, url: pr.link });
+      if (pr !== null && prLink) links.push({ name: `${name} ${pr}`, url: prLink });
       else if (issue) links.push({ name, url: issue.link });
-      return [name, state, pr === null ? "" : `#${pr.id}`].filter(Boolean).join(" · ");
+      return [name, state, pr ?? ""].filter(Boolean).join(" · ");
     };
     const merged = threads
       .filter((t) => t.status === "done" && t.merged && (t.changed ?? 0) >= since)

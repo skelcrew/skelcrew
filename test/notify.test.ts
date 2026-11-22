@@ -239,6 +239,26 @@ await notify.sendNotifications(db);`);
   expect(out).toContain("dropped a needs-you message, as github isn't an installed notifier");
 });
 
+test("a merged PR keeps its link in the digest once it has left Skelcrew's copy", () => {
+  const email = fakePlugin(home, "email", ["notifier"]);
+  config("notify:\n  digest: email\n  digest_at: '00:00'\n");
+  const link = "https://github.com/simon/app/pull/9";
+  const sql = threadSql({
+    task: "13",
+    status: "done",
+    merged: 1,
+    pr: 9,
+    pr_link: link,
+    changed: Date.now(),
+  });
+  run(`db.run(\`${sql}\`);
+notify.queueDigest(db);
+await notify.sendNotifications(db);`);
+  const [digest] = messages(email);
+  expect(digest?.body).toContain("APP-13 · merged · #9");
+  expect(digest?.links).toEqual([{ name: "APP-13 #9", url: link }]);
+});
+
 test("an issue opened again after its thread ended is back in the digest's backlog", () => {
   const email = fakePlugin(home, "email", ["notifier"]);
   config("notify:\n  digest: email\n  digest_at: '00:00'\n");
