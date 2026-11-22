@@ -85,7 +85,7 @@ export async function keepCommand(args: string[]): Promise<void> {
   const [command, named, ...items] = args;
   const { keepTrueOn } = await import("../client.ts");
   const task = splitTaskName(named);
-  if (!task || items.length === 0 || items.length > 4 || items.some((item) => !item.trim()))
+  if (!task || items.length < 2 || items.length > 4 || items.some((item) => !item.trim()))
     usage(command, named);
   console.log(await keepTrueOn(...task, items));
 }

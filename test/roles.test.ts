@@ -209,7 +209,7 @@ const boundsAdded = (text: string) =>
       .join(""),
   );
 const tradeOffs =
-  "When your change makes something worse on purpose, such as a slower start for a simpler setup, name that trade-off in your summary. The reviewer reads it.\n\n";
+  "When your change makes something worse on purpose, such as a slower start for a simpler setup, name that trade-off in your first summary, which becomes the PR's description that the reviewer reads. For one that comes up in a later round, ask the lead with sc tell lead.\n\n";
 
 // What the lead's file added with limits.threads: a start over the limit waits in a queue.
 const queue =

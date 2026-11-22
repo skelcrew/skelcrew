@@ -144,7 +144,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     command: z.literal("keep true"),
     repo: z.string(),
     task: TaskId,
-    items: z.array(z.string().regex(/\S/)).min(1).max(4),
+    items: z.array(z.string().regex(/\S/)).min(2).max(4),
   }),
   // `commit` is the PR's head you saw approved: the forge merges only while it is still the head.
   z.object({

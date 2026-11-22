@@ -387,7 +387,7 @@ export type PrPage = z.infer<typeof PrPage>;
 // approval · waiting on its checks`, or null with none, as the list's rows leave that out.
 // `filed` is who filed a task of the backlog and when, as an ISO time, or null for any other.
 // `item` is the lead's item on it in Needs you, with its options, or null with none.
-// `decisions` and `mustStayTrue` are what bounds its reviews, while its thread is current.
+// `decisions` and `mustStayTrue` are what bounds its reviews, kept once its thread is done.
 export const TaskView = z.object({
   task: z.string(),
   stage: Stage,
@@ -542,10 +542,8 @@ export function readTask(db: Database, which: Which): TaskView {
       text: removeControlCodes(item.text),
       options: item.options.map(removeControlCodes),
     },
-    decisions: current
-      ? thread.decisions.map(({ by, text }) => ({ by, text: safeText(text) }))
-      : [],
-    mustStayTrue: current ? thread.stay_true.map(safeText) : [],
+    decisions: (thread?.decisions ?? []).map(({ by, text }) => ({ by, text: safeText(text) })),
+    mustStayTrue: (thread?.stay_true ?? []).map(safeText),
   };
 }
 

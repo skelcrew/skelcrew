@@ -493,6 +493,7 @@ async function reviewRound(
           const summaries = (fresh.round_log ?? []).flatMap((event) =>
             event.kind === "submitted" ? [event.summary] : [],
           );
+          const opened = fresh.pr === null ? null : prOf(db, fresh.owner, fresh.repo, fresh.pr);
           const started = Date.now();
           const result = await review({
             ...given,
@@ -502,7 +503,7 @@ async function reviewRound(
             bounds: {
               decisions: fresh.decisions,
               stayTrue: fresh.stay_true,
-              summary: summaries.at(-1) ?? null,
+              description: opened?.body ?? summaries[0] ?? null,
             },
             base: from,
             test: repositoryCommands(thread).test,
@@ -621,23 +622,19 @@ async function actOnVerdict(
   const quiet = !neededYou(thread) && holds ? { noting: null } : {};
   // Without a forge the verdict is posted at once, with nothing to put on a PR, and its note is
   // saved with it.
+  const name = threadName(db, thread);
   db.transaction(() => {
     record(db, folder, { ...change, ...quiet }, why);
     noteLimit(db, sessions, folder, note);
+    if (choices !== null) noteForLead(db, sessions, repository, `${name}${choices}`);
   })();
   // A review that failed doesn't need you: the lead hears of it, with the error the harness
   // gave, and can run it again, or mark the thread if only you can fix what stops it.
   if (failed) {
-    const name = threadName(db, thread);
     const said =
       verdict.verdict === "failed" ? `'s review failed: ${verdict.body}` : `: ${verdict.body}`;
     const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
     noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`, null, true);
-  }
-  if (choices !== null) {
-    const name = threadName(db, thread);
-    record(db, folder, {}, "the reviewer left the lead a choice");
-    noteForLead(db, sessions, repository, `${name}${choices}`);
   }
   // The approved commit is kept for the next submit to compare with. It is written at once,
   // with no await since the save, so sc review, which deletes it as it asks for a review, never

@@ -10,7 +10,7 @@ Never change files under .github/: Skelcrew can't push a change to its workflows
 
 In the summary, put code, file names, commands and HTML in backticks, as GitHub would otherwise read some of them as HTML and hide them.
 
-When your change makes something worse on purpose, such as a slower start for a simpler setup, name that trade-off in your summary. The reviewer reads it.
+When your change makes something worse on purpose, such as a slower start for a simpler setup, name that trade-off in your first summary, which becomes the PR's description that the reviewer reads. For one that comes up in a later round, ask the lead with sc tell lead.
 
 When your work fixes a security hole, your summary and commit messages say what changed, never how the hole could be used.
 

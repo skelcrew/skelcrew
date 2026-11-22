@@ -75,6 +75,23 @@ console.log(JSON.stringify({ said, kept: thread().stay_true, shown: view.mustSta
   expect(seen.shown).toEqual(kept);
 });
 
+// The human and the lead can still see what finished work was reviewed against.
+test("sc show keeps both lists once the work is done or failed", () => {
+  for (const status of ["done", "failed"]) {
+    const seen = inProcess(
+      `
+db.run(\`UPDATE tasks SET decisions = '[{"by":"lead","at":1,"text":"Keep CSV."}]', stay_true = '["Fast.","Small."]'\`);
+const view = readTask(db, { repo: "app", task: "12" });
+console.log(JSON.stringify({ decisions: view.decisions, kept: view.mustStayTrue }));`,
+      status,
+    );
+    expect(seen).toEqual({
+      decisions: [{ by: "lead", text: "Keep CSV." }],
+      kept: ["Fast.", "Small."],
+    });
+  }
+});
+
 test("a task whose work is done takes neither, as its next start begins fresh", () => {
   const seen = inProcess(
     `
@@ -93,7 +110,7 @@ console.log(JSON.stringify({
 });
 
 // A builder must never change what it is reviewed against, so only the lead writes either list.
-test("only the lead may record a decision or what must stay true, and at most four of those", () => {
+test("only the lead may record a decision or what must stay true, and two to four of those", () => {
   for (const command of ["decide", "keep true"] as const) {
     expect(allowed.lead).toContain(command);
     expect(allowed.builder).not.toContain(command);
@@ -104,6 +121,8 @@ test("only the lead may record a decision or what must stay true, and at most fo
     DaemonRequest.safeParse({ command: "keep true", repo: "app", task: "12", items }).success;
   expect(keep(["a", "b", "c", "d"])).toBe(true);
   expect(keep(["a", "b", "c", "d", "e"])).toBe(false);
+  expect(keep(["a", "b"])).toBe(true);
+  expect(keep(["a"])).toBe(false);
   expect(keep([])).toBe(false);
-  expect(keep([" "])).toBe(false);
+  expect(keep(["a", " "])).toBe(false);
 });
