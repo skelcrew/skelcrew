@@ -22,6 +22,9 @@ import { dataDir } from "../paths.ts";
 // session, named by the session's name, a + and an ID, and one per review.
 const ownFolder = (home: string) => join(dataDir(home), "codex-own-login");
 const sharedFolder = (home: string) => join(dataDir(home), "codex-login");
+// Marks Skelcrew's own login as taken from the shared folder, so it is renewed at once: agents
+// from then knew its refresh token.
+const takenMark = (home: string) => join(ownFolder(home), "taken-from-shared");
 const sessionCopies = (home: string) => join(dataDir(home), "codex-logins");
 const reviewCopies = (home: string) => join(dataDir(home), "codex-review-logins");
 
@@ -71,6 +74,7 @@ export function ownLogin(home: string, codexHome: string): string {
     const aside = join(own, `.auth-${crypto.randomUUID()}.json`);
     writeFileSync(aside, readFileSync(shared), { flag: "wx", mode: 0o600 });
     renameSync(aside, join(own, "auth.json"));
+    writeFileSync(takenMark(home), "");
   }
   rmSync(sharedFolder(home), { recursive: true, force: true });
   for (const file of ["auth.json", "auth.lock"]) {
@@ -145,7 +149,7 @@ export function dropLogin(folder: string): void {
 // Returns whether a session was started without a copy of its own while Skelcrew has a login,
 // as a release before gave every agent one shared, writable login.
 export const startedShared = (home: string, name: string) =>
-  existsSync(join(ownFolder(home), "auth.json")) &&
+  [ownFolder(home), sharedFolder(home)].some((folder) => existsSync(join(folder, "auth.json"))) &&
   !sessionFolders(home).some((folder) => sessionOf(folder) === name);
 
 // Removes the copy of each session `runs` says doesn't run. A session still starting runs.
@@ -178,8 +182,9 @@ let renewing: Promise<void> | null = null;
 // every minute.
 let failedAt = 0;
 
-// Renews Skelcrew's login once it was last renewed a day ago, or its access token expires
-// within the hour, and writes the renewal into every agent's copy. Codex renews its own after
+// Renews Skelcrew's login once it was last renewed a day ago, its access token expires within
+// the hour, or it was just taken from the shared folder, and writes the renewal into every
+// agent's copy. Codex renews its own after
 // days, so an agent never needs to. A renewal that fails is logged, and the login stays as it
 // was.
 export function renewLogin(home: string): Promise<void> {
@@ -195,7 +200,8 @@ async function renewNow(home: string): Promise<void> {
   if (!own?.tokens || now - failedAt < 10 * 60_000) return;
   const last = Date.parse(own.last_refresh ?? "");
   const expires = expiry(own.tokens.access_token);
-  if (last > now - day && (expires === null || expires > now + hour)) return;
+  const taken = existsSync(takenMark(home));
+  if (!taken && last > now - day && (expires === null || expires > now + hour)) return;
   let renewed: z.infer<typeof Renewed>;
   try {
     const answer = await fetch(renewUrl(), {
@@ -228,6 +234,7 @@ async function renewNow(home: string): Promise<void> {
     last_refresh: new Date().toISOString(),
   };
   writeLogin(ownFolder(home), auth);
+  rmSync(takenMark(home), { force: true });
   for (const copies of [sessionCopies(home), reviewCopies(home)]) {
     if (!existsSync(copies)) continue;
     for (const name of readdirSync(copies)) {

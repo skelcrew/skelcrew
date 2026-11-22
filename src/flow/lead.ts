@@ -1,7 +1,7 @@
 // Each repository's lead: your agent session for that repository on this machine, in its own
 // folder, kept alive in a session of its own.
 import type { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
@@ -274,7 +274,7 @@ export async function startLead(
     [owner, repo],
   );
   const files = filesFor(host);
-  const { argv, env } = await harness.start({
+  const started = await harness.start({
     name: lead.name,
     socket: lead.socket,
     // A model name belongs to its harness, so a lead on another one than your config now names
@@ -302,14 +302,23 @@ export async function startLead(
   // crash. The role label tells a plugin's host this is the lead, such as for herdr to give it
   // its repository's first tab.
   const labels: Labels = { repository: `${owner}/${repo}`, role: "lead" };
-  const id = await startSession(host, lead.name, {
-    folder: lead.folder,
-    command: argv,
-    env,
-    labels,
-    keepOnExit: true,
-    files,
-  });
+  const { argv, env } = started;
+  // A lead that never started leaves nothing the harness made for it, such as a login.
+  let id: string;
+  try {
+    id = await startSession(host, lead.name, {
+      folder: lead.folder,
+      command: argv,
+      env,
+      labels,
+      keepOnExit: true,
+      files,
+    });
+  } catch (error) {
+    for (const made of "unstarted" in started ? started.unstarted : [])
+      rmSync(made, { recursive: true, force: true });
+    throw error;
+  }
   db.run("UPDATE repositories SET lead_host_id = ? WHERE owner = ? AND repo = ?", [
     id,
     owner,

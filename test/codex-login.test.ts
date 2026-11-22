@@ -168,7 +168,7 @@ test("the copies of sessions that ended go at once, and those of sessions that r
   expect(existsSync(ended)).toBe(false);
   // A review's copy goes only as the daemon starts, when no review runs.
   expect(existsSync(review)).toBe(true);
-  readyLogins(home);
+  await readyLogins(home);
   expect(existsSync(review)).toBe(false);
 });
 
@@ -181,19 +181,32 @@ test("a login Skelcrew can't read still lets the copies of ended sessions go", a
   expect(existsSync(copy)).toBe(false);
 });
 
-test("the login an earlier release shared moves where no agent from then can write it", async () => {
+test("the login an earlier release shared moves out of its agents' reach and is renewed", async () => {
   const shared = join(data(), "codex-login");
   mkdirSync(shared, { recursive: true });
-  writeFileSync(join(shared, "auth.json"), '{"tokens":null}');
+  const tokens = {
+    id_token: "id-1",
+    access_token: "a",
+    refresh_token: "refresh-1",
+    account_id: "acct",
+  };
+  const login = { tokens, last_refresh: new Date().toISOString() };
+  writeFileSync(join(shared, "auth.json"), JSON.stringify(login));
   // An agent from then linked the file to another name, to write it after it moves.
   linkSync(join(shared, "auth.json"), join(shared, "kept"));
   const sharedFile = statSync(join(shared, "auth.json")).ino;
-  readyLogins(home);
+  expect(startedShared(home, "app-12")).toBe(true);
+  await readyLogins(home);
   expect(existsSync(shared)).toBe(false);
-  expect(readFileSync(own(), "utf8")).toBe('{"tokens":null}');
   expect(statSync(own()).ino).not.toBe(sharedFile);
+  // Renewed at once, though fresh, as those agents knew its refresh token.
+  expect(sent).toEqual(["refresh-1"]);
+  expect(read(own()).tokens.refresh_token).toBe("refresh-2");
   // Codex run outside the sandbox finds it through Skelcrew's CODEX_HOME.
-  expect(readFileSync(join(data(), "codex", "auth.json"), "utf8")).toBe('{"tokens":null}');
+  expect(read(join(data(), "codex", "auth.json")).tokens.refresh_token).toBe("refresh-2");
+  // Once is enough.
+  await readyLogins(home);
+  expect(sent).toEqual(["refresh-1"]);
 });
 
 test("a session with no copy of its own started on the one shared login", async () => {

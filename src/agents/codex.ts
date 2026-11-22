@@ -317,7 +317,8 @@ async function checkModel(home: string, model: string, env: Record<string, strin
     throw new Error(`Codex doesn't offer the model ${model}. It offers ${models.join(", ")}`);
 }
 
-// Prepares a session's own CODEX_HOME and returns its sandbox command and environment, for the
+// Prepares a session's own CODEX_HOME and returns its sandbox command and environment, and the
+// folders to remove if the session never starts, for the
 // lead or a builder. It starts afresh with the first message in `prompt`, or brings back a
 // saved conversation with `resume`. A builder, given its thread's clone, works there; a lead
 // works in its own `folder`. Each sees nothing else but `origin`, Skelcrew's clone of its
@@ -345,7 +346,7 @@ async function startCommand(given: {
   skills?: SkillsFrom;
   files?: string | undefined;
   env?: Record<string, string | undefined>;
-}): Promise<{ argv: string[]; env: Record<string, string> }> {
+}): Promise<{ argv: string[]; env: Record<string, string>; unstarted: string[] }> {
   const { name, socket, model, thread, folder, origin, repositories, prompt, system, resume } =
     given;
   const { skills, files } = given;
@@ -415,20 +416,21 @@ async function startCommand(given: {
   const path = env.PATH ?? "";
   // A login left from before, its own or a link to one shared, never stays. Codex renews by
   // renaming a new file beside the one a link leads to, so the copy has a folder of its own.
-  // It is made last, so nothing after it can fail and leave it behind.
+  // It is made last, and removed if a step after it fails. The caller removes it too if the
+  // session never starts, and the session removes it as it ends.
   for (const file of ["auth.json", "auth.lock"])
     rmSync(join(sessionHome, file), { recursive: true, force: true });
   const login = sessionLogin(home, name);
   const loggedIn = await copyLogin(home, login);
-  if (loggedIn) {
-    symlinkSync(join(login, "auth.json"), join(sessionHome, "auth.json"));
-    mounts.push(...rw(login));
-  }
   // Codex starts through the step that turns off the skills in its folder's .agents/skills/,
   // put in after resume and --no-daemon. Only a builder has a thread. The lead is what you type
   // into, so it keeps its priority.
   let argv: string[];
   try {
+    if (loggedIn) {
+      symlinkSync(join(login, "auth.json"), join(sessionHome, "auth.json"));
+      mounts.push(...rw(login));
+    }
     argv = sandboxArgs({
       home,
       path,
@@ -444,7 +446,8 @@ async function startCommand(given: {
     dropLogin(login);
     throw error;
   }
-  return { argv: loggedIn ? removingOnEnd(login, argv) : argv, env: kept };
+  if (!loggedIn) return { argv, env: kept, unstarted: [] };
+  return { argv: removingOnEnd(login, argv), env: kept, unstarted: [login] };
 }
 
 // Returns `argv` run so that `folder` is removed once it ends, outside the sandbox, whether it

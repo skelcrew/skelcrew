@@ -537,7 +537,7 @@ async function startOnConfiguredHost(
   if (!restarting)
     db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
   const files = filesFor(host);
-  const { argv, env } = await harness.start({
+  const started = await harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
     model: role.harness === harness.name ? role.model : undefined,
@@ -553,8 +553,16 @@ async function startOnConfiguredHost(
     files,
     ...start,
   });
+  const { argv, env } = started;
   const on = { host, name: hostName };
-  await startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
+  // A builder that never started leaves nothing the harness made for it, such as a login.
+  try {
+    await startSessionOn(db, thread, on, { folder: clone, command: argv, env, files });
+  } catch (error) {
+    for (const made of "unstarted" in started ? started.unstarted : [])
+      rmSync(made, { recursive: true, force: true });
+    throw error;
+  }
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
 }
 

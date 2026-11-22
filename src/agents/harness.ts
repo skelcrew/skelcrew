@@ -36,9 +36,11 @@ export async function keepLogins(home: string, runs: (name: string) => Promise<b
 export const sharesLogin = (harness: HarnessName, home: string, name: string) =>
   harness === "codex" && startedShared(home, name);
 
-// Readies the logins as the daemon starts, before any agent or review runs: takes Skelcrew's own
-// out of reach of agents an earlier release started, and removes every review's copy.
-export function readyLogins(home: string): void {
-  ownLogin(home, codexHome(home));
+// Readies the logins as the daemon starts, before any agent or review runs: removes every
+// review's copy, and takes Skelcrew's own out of reach of agents an earlier release started,
+// then renews it, so the refresh token they knew is spent.
+export async function readyLogins(home: string): Promise<void> {
   sweepReviewLogins(home);
+  ownLogin(home, codexHome(home));
+  await renewLogin(home);
 }
