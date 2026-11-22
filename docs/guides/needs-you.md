@@ -60,7 +60,7 @@ It counts as your own words. The lead does exactly what you picked, nothing more
 
 ## Answering in the builder
 
-A question the builder asked in its own session is answered there. Press Enter on its row to attach to the builder, and answer it. Once you type to it, the mark goes.
+A question the builder asked in its own session is answered there. Press Enter on its row to attach to the builder, and answer it. If the lead has posted an item on that row, the first Enter opens the item. Press Enter again to attach to the builder, or Shift+Enter on the row to open it full screen. Once you type to it, the mark goes.
 
 An error is fixed in the builder too. For example, a lapsed Claude Code sign-in is fixed with `/login`.
 

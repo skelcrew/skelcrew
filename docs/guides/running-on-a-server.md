@@ -18,7 +18,7 @@ It sends your settings, your plugins and your agents' sign-in to the server. If 
 
 Each plugin's sign-in runs once on the server, such as GitHub's. On a server, the GitHub plugin prints its links instead of opening a browser. Open them on your laptop.
 
-Skelcrew runs there as a background service of your own user. It keeps running after you log out, and after a reboot.
+The install sets the server up, and starts nothing. Skelcrew starts there the first time you run `sc --remote simon@workbox`, as the next step does. It runs as a background service of your own user, and keeps running after you log out and after a reboot.
 
 ## Use it
 
