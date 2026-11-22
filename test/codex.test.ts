@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -201,6 +202,15 @@ function saveLogin(): void {
   const login = { tokens, last_refresh: new Date().toISOString() };
   writeFileSync(join(data(), "codex", "auth.json"), JSON.stringify(login));
 }
+
+// The folders of the agents' copies of the login, and those for the session with this name.
+const logins = () => join(data(), "codex-logins");
+const copiesOf = (name: string) =>
+  existsSync(logins())
+    ? readdirSync(logins())
+        .filter((folder) => folder.startsWith(`${name}+`))
+        .map((folder) => join(logins(), folder))
+    : [];
 
 // What this test's processes run with.
 const env = () => homeEnv(home);
@@ -564,26 +574,29 @@ describe.skipIf(insideSandbox)("codex", () => {
   test("each agent logs in with its own copy, and can't write another's or Skelcrew's", async () => {
     saveLogin();
     // A copy an earlier daemon left, whose session no longer runs.
-    const gone = join(data(), "codex-logins", "app-9");
+    const gone = join(logins(), "app-9+left");
     mkdirSync(gone, { recursive: true });
     writeFileSync(join(gone, "auth.json"), "{}");
     await startApp12();
     await until(() => !existsSync(gone));
-    const own = join(data(), "codex-login", "auth.json");
+    const own = join(data(), "codex-own-login", "auth.json");
     const saved = read(own);
     const leadCopy = read(join(lead(), "auth.json"));
     expect(JSON.parse(leadCopy).tokens.refresh_token).toBe("");
     expect(JSON.parse(read(join(builder(), "auth.json"))).tokens.access_token).toBe("access");
-    const leadLogin = join(data(), "codex-logins", leadPlaces("simon", "app").name, "auth.json");
+    const [leadLogin] = copiesOf(leadPlaces("simon", "app").name);
     const ownCodex = join(data(), "codex", "auth.json");
-    await act("tamper", [own, ownCodex, leadLogin, join(lead(), "auth.json")].join("\n"));
+    const targets = [own, ownCodex, join(leadLogin ?? "", "auth.json"), join(lead(), "auth.json")];
+    await act("tamper", targets.join("\n"));
     expect(read(own)).toBe(saved);
     expect(read(join(lead(), "auth.json"))).toBe(leadCopy);
     // A renewal in the builder stays in its own copy, and the next builder gets Skelcrew's login.
     await act("renew");
     expect(read(join(builder(), "auth.json"))).toBe("renewed\n");
     expect(read(own)).toBe(saved);
+    // The builder's copy goes as its session ends.
     expect((await skel(["stop", "app-12"])).err).toBe("");
+    await until(() => copiesOf("app-12").length === 0);
     rmSync(join(builder(), "args"));
     expect((await skel(["start", "app-12"])).err).toBe("");
     await until(() => read(join(builder(), "args")) !== "", 30_000);
@@ -597,15 +610,14 @@ describe.skipIf(insideSandbox)("codex", () => {
     const daemon = running.shift();
     daemon?.kill();
     await daemon?.exited;
-    rmSync(join(data(), "codex-logins", "app-12"), { recursive: true });
+    for (const copy of copiesOf("app-12")) rmSync(copy, { recursive: true });
     rmSync(join(builder(), "auth.json"));
     symlinkSync(join(data(), "codex-login", "auth.json"), join(builder(), "auth.json"));
     rmSync(join(builder(), "args"));
     startDaemon(socket, env(), running);
     await until(() => read(join(builder(), "args")) !== "");
     expect(args()[0]).toBe("resume");
-    expect(
-      JSON.parse(read(join(data(), "codex-logins", "app-12", "auth.json"))).tokens.refresh_token,
-    ).toBe("");
+    expect(JSON.parse(read(join(builder(), "auth.json"))).tokens.refresh_token).toBe("");
+    expect(copiesOf("app-12").length).toBe(1);
   }, 60_000);
 });

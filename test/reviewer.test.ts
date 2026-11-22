@@ -329,7 +329,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     // It renews as Codex does from 0.167: it follows the link to its login, writes the renewal
     // beside it and renames it over the old one, holding auth.lock in its own folder meanwhile.
     // Then it writes where Skelcrew keeps its own login.
-    const own = join(home, ".local", "share", "skelcrew", "codex-login");
+    const own = join(home, ".local", "share", "skelcrew", "codex-own-login");
     fakeCodex(approve, [
       'cat "$CODEX_HOME/auth.json" > "$CODEX_HOME/sessions/login"',
       'login=$(readlink -f "$CODEX_HOME/auth.json"); next="$(dirname "$login")/.auth-next"',

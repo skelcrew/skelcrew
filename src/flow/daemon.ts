@@ -8,7 +8,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { dropReviewLogins, keepLogins, sharesLogin } from "../agents/harness.ts";
+import { keepLogins, readyLogins, sharesLogin } from "../agents/harness.ts";
 import {
   agentRuns,
   endExitedSession,
@@ -35,7 +35,6 @@ import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
 import { closeTask, createTask, mergePr, trackerOf } from "../plugins/ask.ts";
-import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import { filedTask, fileTask, unfileTask } from "./backlog.ts";
@@ -128,7 +127,7 @@ import {
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { supervisor } from "./supervisor.ts";
+import { type Restarted, supervisor } from "./supervisor.ts";
 import {
   backToQueue,
   claimOwed,
@@ -281,51 +280,25 @@ const allRepositories = (db: Database) =>
     .parse(db.query("SELECT owner, repo FROM repositories").all());
 
 // Returns whether the lead or builder whose session has the given name may still run. One that
-// is starting runs, as does one whose host doesn't answer for now. One whose host plugin is
-// gone can't be reached, so it doesn't.
+// is starting runs, as does one whose host doesn't answer for now or whose host plugin is gone,
+// as it may still run there.
 async function agentNamedRuns(db: Database, sessions: string, name: string): Promise<boolean> {
   try {
     const thread = db.query("SELECT folder FROM task_threads WHERE folder = ?").get(name);
     if (thread) {
       if (supervisor(name).state().busy) return true;
-      const now = readThread(db, name);
-      if (hostNamed(db, sessions, now.host ?? "tmux") === null) return false;
-      const { host, id } = await builderSession(db, sessions, now);
+      const { host, id } = await builderSession(db, sessions, readThread(db, name));
       return await agentRuns(host, id);
     }
     for (const { owner, repo } of allRepositories(db)) {
       if (leadOf(db, owner, repo).name !== name) continue;
       if (leadAgent(owner, repo).state().busy) return true;
       const lead = await leadSession(db, sessions, owner, repo);
-      return lead !== null && (await agentRuns(lead.host, lead.id));
+      return lead === null || (await agentRuns(lead.host, lead.id));
     }
     return false;
   } catch {
     return true;
-  }
-}
-
-// Ends each Codex lead and builder still running from a release that gave every agent one
-// shared, writable login, before any agent comes back. Each then comes back with its own copy.
-async function endSharedLogins(db: Database, sessions: string): Promise<void> {
-  const agents: { name: string; reach: () => Promise<{ host: Host; id: string } | null> }[] = [];
-  for (const thread of liveThreads(db))
-    if (sharesLogin(builderHarness(thread).name, homedir(), thread.folder))
-      agents.push({ name: thread.folder, reach: () => builderSession(db, sessions, thread) });
-  for (const { owner, repo } of allRepositories(db)) {
-    const lead = leadOf(db, owner, repo);
-    if (lead.harness !== null && sharesLogin(lead.harness, homedir(), lead.name))
-      agents.push({ name: lead.name, reach: () => leadSession(db, sessions, owner, repo) });
-  }
-  for (const { name, reach } of agents) {
-    try {
-      const found = await reach();
-      if (found === null || !(await agentRuns(found.host, found.id))) continue;
-      await stopSession(found.host, found.id);
-      console.log(`Ended ${name}, which shared one login with every agent, to start it again.`);
-    } catch (error) {
-      console.log(`couldn't end ${name}, which shares one login: ${errorText(error)}`);
-    }
   }
 }
 
@@ -375,7 +348,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (!lock(`${path}.lock`))
     throw new Error("the daemon is already running. Run sc to attach to a lead.");
-  dropReviewLogins(homedir());
+  readyLogins(homedir());
   const db = openDb();
   moveToTasks(db);
   moveTurnEnded(db);
@@ -1227,7 +1200,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // A task that left the queue but whose builder's start the stop cut short goes back to it
   // first, as it can't be brought back.
   backToQueue(db);
-  await endSharedLogins(db, sessions);
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -1262,13 +1234,50 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       ),
     exitLook,
   );
+  // A Codex lead or builder still running from a release that shared one writable login with
+  // every agent is restarted, so it comes back with its own copy. One whose restart fails is
+  // tried again at the next look, until it no longer runs on the shared login.
+  const restarting = new Set<string>();
+  const restartOnce = async (name: string, restart: () => Promise<Restarted>) => {
+    if (restarting.has(name)) return;
+    restarting.add(name);
+    try {
+      const restarted = await restart();
+      if (typeof restarted === "object" && "failed" in restarted) throw restarted.failed;
+      console.log(`Restarted ${name}, which shared one login with every agent.`);
+    } catch (error) {
+      console.log(`couldn't restart ${name}, which shares one login: ${errorText(error)}`);
+    } finally {
+      restarting.delete(name);
+    }
+  };
+  const restartShared = async () => {
+    for (const thread of liveThreads(db)) {
+      if (!sharesLogin(builderHarness(thread).name, homedir(), thread.folder)) continue;
+      const { host, id } = await builderSession(db, sessions, thread);
+      if (await agentRuns(host, id))
+        restartOnce(thread.folder, () => restartBuilder(db, sessions, thread));
+    }
+    for (const repository of openedRepositories(db)) {
+      const { owner, repo } = repository;
+      const lead = leadOf(db, owner, repo);
+      if (lead.harness === null || !sharesLogin(lead.harness, homedir(), lead.name)) continue;
+      const found = await leadSession(db, sessions, owner, repo);
+      if (found === null || !(await agentRuns(found.host, found.id))) continue;
+      const tabOpen = () =>
+        db
+          .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
+          .get(owner, repo) !== null;
+      restartOnce(lead.name, () => leadAgent(owner, repo).restart(leadHost(repository), tabOpen));
+    }
+  };
   // The agents' logins are kept now, before any agent starts, and every ten seconds from here
-  // on, so a copy outlives its session by seconds.
+  // on. A session's copy goes as it ends, and the sweep removes one a kill left behind.
   const keep = () =>
     doing("keeping the agents' logins", () =>
-      keepLogins(homedir(), (name) => agentNamedRuns(db, sessions, name)).catch((error) =>
-        console.log(`couldn't keep the agents' logins: ${errorText(error)}`),
-      ),
+      restartShared()
+        .then(() => keepLogins(homedir(), (name) => agentNamedRuns(db, sessions, name)))
+        .catch((error) => console.log(`couldn't keep the agents' logins: ${errorText(error)}`)),
     );
   keep();
   setInterval(keep, 10_000);

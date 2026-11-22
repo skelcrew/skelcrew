@@ -4,11 +4,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,7 +25,7 @@ import {
   sessionLogin,
   startedShared,
 } from "../src/agents/codex-login.ts";
-import { dropReviewLogins, keepLogins } from "../src/agents/harness.ts";
+import { keepLogins, readyLogins } from "../src/agents/harness.ts";
 
 let home = "";
 let server: Server<undefined>;
@@ -31,7 +33,7 @@ let server: Server<undefined>;
 const sent: string[] = [];
 
 const data = () => join(home, ".local", "share", "skelcrew");
-const own = () => join(data(), "codex-login", "auth.json");
+const own = () => join(data(), "codex-own-login", "auth.json");
 const read = (file: string) => JSON.parse(readFileSync(file, "utf8"));
 
 // An access token that expires `inMs` from now, as OpenAI gives one.
@@ -151,28 +153,47 @@ test("Skelcrew renews a login a day old and writes the renewal into every agent'
 test("the copies of sessions that ended go at once, and those of sessions that run stay", async () => {
   saveLogin(0);
   // One an earlier daemon wrote, and two this one just wrote.
-  mkdirSync(sessionLogin(home, "app-12"), { recursive: true });
-  writeFileSync(join(sessionLogin(home, "app-12"), "auth.json"), "{}");
-  await copyLogin(home, sessionLogin(home, "app-13"));
-  await copyLogin(home, sessionLogin(home, "app-14"));
+  const left = sessionLogin(home, "app-12");
+  mkdirSync(left, { recursive: true });
+  writeFileSync(join(left, "auth.json"), "{}");
+  const running = sessionLogin(home, "app-13");
+  const ended = sessionLogin(home, "app-14");
+  await copyLogin(home, running);
+  await copyLogin(home, ended);
   const review = reviewLogin(home);
   await copyLogin(home, review);
   await keepLogins(home, async (name) => name === "app-13");
-  expect(existsSync(sessionLogin(home, "app-12"))).toBe(false);
-  expect(existsSync(sessionLogin(home, "app-13"))).toBe(true);
-  expect(existsSync(sessionLogin(home, "app-14"))).toBe(false);
+  expect(existsSync(left)).toBe(false);
+  expect(existsSync(running)).toBe(true);
+  expect(existsSync(ended)).toBe(false);
   // A review's copy goes only as the daemon starts, when no review runs.
   expect(existsSync(review)).toBe(true);
-  dropReviewLogins(home);
+  readyLogins(home);
   expect(existsSync(review)).toBe(false);
 });
 
 test("a login Skelcrew can't read still lets the copies of ended sessions go", async () => {
   saveLogin(0);
-  await copyLogin(home, sessionLogin(home, "app-12"));
+  const copy = sessionLogin(home, "app-12");
+  await copyLogin(home, copy);
   writeFileSync(own(), "not a login");
   await expect(keepLogins(home, async () => false)).rejects.toThrow("isn't a Codex login");
-  expect(existsSync(sessionLogin(home, "app-12"))).toBe(false);
+  expect(existsSync(copy)).toBe(false);
+});
+
+test("the login an earlier release shared moves where no agent from then can write it", async () => {
+  const shared = join(data(), "codex-login");
+  mkdirSync(shared, { recursive: true });
+  writeFileSync(join(shared, "auth.json"), '{"tokens":null}');
+  // An agent from then linked the file to another name, to write it after it moves.
+  linkSync(join(shared, "auth.json"), join(shared, "kept"));
+  const sharedFile = statSync(join(shared, "auth.json")).ino;
+  readyLogins(home);
+  expect(existsSync(shared)).toBe(false);
+  expect(readFileSync(own(), "utf8")).toBe('{"tokens":null}');
+  expect(statSync(own()).ino).not.toBe(sharedFile);
+  // Codex run outside the sandbox finds it through Skelcrew's CODEX_HOME.
+  expect(readFileSync(join(data(), "codex", "auth.json"), "utf8")).toBe('{"tokens":null}');
 });
 
 test("a session with no copy of its own started on the one shared login", async () => {

@@ -19,7 +19,14 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { copySkills, type SkillsFrom } from "../skills.ts";
-import { copyLogin, ownLogin, renewLogin, reviewLogin, sessionLogin } from "./codex-login.ts";
+import {
+  copyLogin,
+  dropLogin,
+  ownLogin,
+  renewLogin,
+  reviewLogin,
+  sessionLogin,
+} from "./codex-login.ts";
 import { editing, type Progress, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
 import {
@@ -370,19 +377,12 @@ async function startCommand(given: {
   // a start command past about 16 KB, and Linux an argument past 128 KB.
   if (system) writeFileSync(instructions, `developer_instructions = ${tomlString(system)}\n`);
   if (skills) copySkills(skills, join(sessionHome, "skills"), home);
-  // A login left from before, its own or a link to one shared, never stays. Codex renews by
-  // renaming a new file beside the one a link leads to, so the copy has a folder of its own.
-  for (const file of ["auth.json", "auth.lock"])
-    rmSync(join(sessionHome, file), { recursive: true, force: true });
-  const login = sessionLogin(home, name);
-  const loggedIn = await copyLogin(home, login);
-  if (loggedIn) symlinkSync(join(login, "auth.json"), join(sessionHome, "auth.json"));
   // The agent sees its own folder, its CODEX_HOME and its copy of the login, all writable, and
   // nothing else of yours.
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...rw(sessionHome), ...(loggedIn ? rw(login) : [])];
+  const mounts = [...rw(cwd), ...rw(sessionHome)];
   // Read-only at the same path, as for Claude Code.
   if (origin) {
     refuseCredentials(origin);
@@ -413,22 +413,50 @@ async function startCommand(given: {
   const kept = filterEnv(env, codex.keys);
   kept.CODEX_HOME = sessionHome;
   const path = env.PATH ?? "";
+  // A login left from before, its own or a link to one shared, never stays. Codex renews by
+  // renaming a new file beside the one a link leads to, so the copy has a folder of its own.
+  // It is made last, so nothing after it can fail and leave it behind.
+  for (const file of ["auth.json", "auth.lock"])
+    rmSync(join(sessionHome, file), { recursive: true, force: true });
+  const login = sessionLogin(home, name);
+  const loggedIn = await copyLogin(home, login);
+  if (loggedIn) {
+    symlinkSync(join(login, "auth.json"), join(sessionHome, "auth.json"));
+    mounts.push(...rw(login));
+  }
   // Codex starts through the step that turns off the skills in its folder's .agents/skills/,
   // put in after resume and --no-daemon. Only a builder has a thread. The lead is what you type
   // into, so it keeps its priority.
-  const argv = sandboxArgs({
-    home,
-    path,
-    mounts,
-    socket,
-    cwd,
-    command: withSkillsOff(resume ? 2 : 1, command.slice(1)),
-    programs: ["codex"],
-    normalPriority: !thread,
-    files,
-  });
-  return { argv, env: kept };
+  let argv: string[];
+  try {
+    argv = sandboxArgs({
+      home,
+      path,
+      mounts,
+      socket,
+      cwd,
+      command: withSkillsOff(resume ? 2 : 1, command.slice(1)),
+      programs: ["codex"],
+      normalPriority: !thread,
+      files,
+    });
+  } catch (error) {
+    dropLogin(login);
+    throw error;
+  }
+  return { argv: loggedIn ? removingOnEnd(login, argv) : argv, env: kept };
 }
+
+// Returns `argv` run so that `folder` is removed once it ends, outside the sandbox, whether it
+// exits or its session is ended. A kill that leaves no time for it leaves the folder to the
+// daemon's sweep.
+const removingOnEnd = (folder: string, argv: string[]): string[] => [
+  "/bin/sh",
+  "-c",
+  `trap 'rm -rf "$0"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; "$@"`,
+  folder,
+  ...argv,
+];
 
 // Returns Codex's review command, mounts and environment. The command reads the review's prompt
 // on stdin and the answer's shape from the review's folder. Every review shares Skelcrew's Codex
@@ -465,17 +493,6 @@ async function reviewCommand(given: {
   mounts.push("--bind", sessions, sessions);
   // A copy at another path can't have the real one mounted into it, so it links to it.
   if (at !== skelcrewCodexHome) symlinkSync(sessions, join(at, "sessions"));
-  // The links in Skelcrew's CODEX_HOME lead to its own login. In place, the review's copy is
-  // mounted there instead. A copy at another path links to the review's copy.
-  const login = reviewLogin(home);
-  if (await copyLogin(home, login)) {
-    if (at === skelcrewCodexHome) mounts.push("--bind", login, own);
-    else {
-      for (const file of ["auth.json", "auth.lock"]) rmSync(join(at, file), { force: true });
-      symlinkSync(join(login, "auth.json"), join(at, "auth.json"));
-      mounts.push(...rw(login));
-    }
-  }
   // --no-daemon belongs to codex itself, not to exec: without it Codex may start a
   // background server that outlives the review. The rest of exec's options follow the
   // setting that turns the branch's skills off.
@@ -486,6 +503,23 @@ async function reviewCommand(given: {
   options.push("-");
   const command = withSkillsOff(2, ["--no-daemon", "exec", ...options]);
   const skills = given.skills ? copySkills(given.skills, join(folder, "skills"), home) : [];
+  // The links in Skelcrew's CODEX_HOME lead to its own login. In place, the review's copy is
+  // mounted there instead. A copy at another path links to the review's copy. It is made last,
+  // and removed if a step after it fails, so a review that never started leaves none behind.
+  const login = reviewLogin(home);
+  try {
+    if (await copyLogin(home, login)) {
+      if (at === skelcrewCodexHome) mounts.push("--bind", login, own);
+      else {
+        for (const file of ["auth.json", "auth.lock"]) rmSync(join(at, file), { force: true });
+        symlinkSync(join(login, "auth.json"), join(at, "auth.json"));
+        mounts.push(...rw(login));
+      }
+    }
+  } catch (error) {
+    dropLogin(login);
+    throw error;
+  }
   return { command, mounts, env: { CODEX_HOME: at }, skills, login };
 }
 

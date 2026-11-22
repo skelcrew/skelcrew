@@ -2,8 +2,14 @@
 // a module of its own, so the flow never names one.
 import { z } from "zod";
 import { claude } from "./claude.ts";
-import { codex } from "./codex.ts";
-import { renewLogin, startedShared, sweepLogins, sweepReviewLogins } from "./codex-login.ts";
+import { codex, codexHome } from "./codex.ts";
+import {
+  ownLogin,
+  renewLogin,
+  startedShared,
+  sweepLogins,
+  sweepReviewLogins,
+} from "./codex-login.ts";
 
 // A harness's name, as your config and Skelcrew's database write it.
 export const HarnessName = z.enum(["claude", "codex"]);
@@ -30,5 +36,9 @@ export async function keepLogins(home: string, runs: (name: string) => Promise<b
 export const sharesLogin = (harness: HarnessName, home: string, name: string) =>
   harness === "codex" && startedShared(home, name);
 
-// Removes every review's copy of a login, as the daemon starts, before any review runs.
-export const dropReviewLogins = (home: string) => sweepReviewLogins(home);
+// Readies the logins as the daemon starts, before any agent or review runs: takes Skelcrew's own
+// out of reach of agents an earlier release started, and removes every review's copy.
+export function readyLogins(home: string): void {
+  ownLogin(home, codexHome(home));
+  sweepReviewLogins(home);
+}

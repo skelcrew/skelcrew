@@ -17,9 +17,11 @@ import { z } from "zod";
 import { errorText } from "../format.ts";
 import { dataDir } from "../paths.ts";
 
-// Skelcrew's own login, which no sandbox sees, and the folders of the agents' copies: one per
-// lead or builder session, by its name, and one per review.
-const ownFolder = (home: string) => join(dataDir(home), "codex-login");
+// Skelcrew's own login, which no sandbox sees, the folder an earlier release shared with every
+// agent, writable, and the folders of the agents' copies: one per start of a lead or builder
+// session, named by the session's name, a + and an ID, and one per review.
+const ownFolder = (home: string) => join(dataDir(home), "codex-own-login");
+const sharedFolder = (home: string) => join(dataDir(home), "codex-login");
 const sessionCopies = (home: string) => join(dataDir(home), "codex-logins");
 const reviewCopies = (home: string) => join(dataDir(home), "codex-review-logins");
 
@@ -54,11 +56,23 @@ const day = 24 * hour;
 
 // Moves a login the first run's codex login saved in `codexHome`, Skelcrew's own CODEX_HOME,
 // into Skelcrew's own login folder, and links it from there, for codex run outside the sandbox.
-// Returns that folder.
+// Returns that folder. A login an earlier release shared is copied into a new file there, and
+// the shared folder removed: an agent still running from then can write in that folder, and
+// could have linked the file there to another name.
 export function ownLogin(home: string, codexHome: string): string {
   const own = ownFolder(home);
   mkdirSync(codexHome, { recursive: true, mode: 0o700 });
   mkdirSync(own, { recursive: true, mode: 0o700 });
+  const shared = join(sharedFolder(home), "auth.json");
+  if (
+    !existsSync(join(own, "auth.json")) &&
+    lstatSync(shared, { throwIfNoEntry: false })?.isFile()
+  ) {
+    const aside = join(own, `.auth-${crypto.randomUUID()}.json`);
+    writeFileSync(aside, readFileSync(shared), { flag: "wx", mode: 0o600 });
+    renameSync(aside, join(own, "auth.json"));
+  }
+  rmSync(sharedFolder(home), { recursive: true, force: true });
   for (const file of ["auth.json", "auth.lock"]) {
     const at = join(codexHome, file);
     const found = lstatSync(at, { throwIfNoEntry: false });
@@ -95,8 +109,17 @@ function writeLogin(folder: string, auth: Auth): void {
 const withoutRenewal = (auth: Auth): Auth =>
   auth.tokens ? { ...auth, tokens: { ...auth.tokens, refresh_token: "" } } : auth;
 
-// Returns the folder for the copy of a lead's or builder's session, by its name.
-export const sessionLogin = (home: string, name: string) => join(sessionCopies(home), name);
+// Returns a new folder for the copy of a lead's or builder's session, by its name. Each start
+// gets its own, so the end of a session before never removes the copy of the one after.
+export const sessionLogin = (home: string, name: string) =>
+  join(sessionCopies(home), `${name}+${crypto.randomUUID()}`);
+
+// Returns the name of the session a copy's folder is for.
+const sessionOf = (folder: string) => folder.slice(0, folder.lastIndexOf("+"));
+
+// Returns the folders of the copies of every lead's or builder's session.
+const sessionFolders = (home: string) =>
+  existsSync(sessionCopies(home)) ? readdirSync(sessionCopies(home)) : [];
 
 // Returns a new folder for a review's copy.
 export const reviewLogin = (home: string) => join(reviewCopies(home), crypto.randomUUID());
@@ -122,18 +145,16 @@ export function dropLogin(folder: string): void {
 // Returns whether a session was started without a copy of its own while Skelcrew has a login,
 // as a release before gave every agent one shared, writable login.
 export const startedShared = (home: string, name: string) =>
-  existsSync(join(ownFolder(home), "auth.json")) && !existsSync(sessionLogin(home, name));
+  existsSync(join(ownFolder(home), "auth.json")) &&
+  !sessionFolders(home).some((folder) => sessionOf(folder) === name);
 
 // Removes the copy of each session `runs` says doesn't run. A session still starting runs.
 export async function sweepLogins(
   home: string,
   runs: (name: string) => Promise<boolean>,
 ): Promise<void> {
-  const folder = sessionCopies(home);
-  if (!existsSync(folder)) return;
-  for (const name of readdirSync(folder)) {
-    if (!(await runs(name))) dropLogin(join(folder, name));
-  }
+  for (const folder of sessionFolders(home))
+    if (!(await runs(sessionOf(folder)))) dropLogin(join(sessionCopies(home), folder));
 }
 
 // Removes every review's copy. As the daemon starts, no review runs yet.
