@@ -201,7 +201,7 @@ const boundsAdded = (text: string) =>
       .split("\n")
       .filter(
         (line) =>
-          line.startsWith("- Each time you start a thread, right after") ||
+          line.startsWith("- Each time you start a thread, give what") ||
           line.startsWith("- Record each decision on a thread") ||
           line.startsWith("- A reviewer that thinks a decision is wrong"),
       )

@@ -506,6 +506,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       return { started: said };
     };
     const before = threadOn(db, request.repo, request.task);
+    const keep = request.keep;
+    if (before && keep && before.status !== "done" && before.status !== "failed")
+      keepTrue(db, request.repo, request.task, keep);
     const atWork = before !== null && ["working", "waiting", "queued"].includes(before.status);
     const switching = before !== null && request.flow !== undefined && request.flow !== before.flow;
     const startNowFromQueue = (queued: Thread) => {
@@ -587,6 +590,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
       if (!before && started)
         return done(`Started ${threadName(db, started)}.`, () => {
+          if (keep) keepTrue(db, request.repo, request.task, keep);
           if (request.flow && request.flow !== started.flow)
             switchFlow(started, request.flow, request.short);
           else if (request.short)

@@ -147,6 +147,7 @@ export async function startOn(
   short?: string,
   flow?: string,
   now?: true,
+  keep: string[] = [],
 ): Promise<string> {
   const reply = await request({
     command: "start",
@@ -156,6 +157,7 @@ export async function startOn(
     ...(short ? { short } : {}),
     ...(flow ? { flow } : {}),
     ...(now ? { now } : {}),
+    ...(keep.length > 0 ? { keep } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
@@ -169,6 +171,7 @@ export async function startNew(
   body: string,
   short?: string,
   flow?: string,
+  keep: string[] = [],
 ): Promise<string> {
   const reply = await request({
     command: "start new",
@@ -177,6 +180,7 @@ export async function startNew(
     body,
     ...(short ? { short } : {}),
     ...(flow ? { flow } : {}),
+    ...(keep.length > 0 ? { keep } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }

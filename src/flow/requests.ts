@@ -16,6 +16,9 @@ const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 // blanks is refused. A body that passes keeps its spaces as they were.
 const TaskBody = z.string().regex(/\S/);
 
+// What a task's change must keep true: two to four properties, none blank.
+const KeepTrue = z.array(z.string().regex(/\S/)).min(2).max(4);
+
 // A thread's short title for the sidebar, which says nothing when blank, so one is refused.
 const ShortTitle = z.string().trim().min(1);
 
@@ -65,6 +68,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     from: Branch.optional(),
     short: ShortTitle.optional(),
     flow: FlowName.optional(),
+    keep: KeepTrue.optional(),
     // Starts it at once, over the repository's limits.threads, for sc start --now.
     now: z.literal(true).optional(),
   }),
@@ -75,6 +79,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     body: TaskBody,
     short: ShortTitle.optional(),
     flow: FlowName.optional(),
+    keep: KeepTrue.optional(),
   }),
   z.object({
     command: z.literal("review"),
@@ -144,7 +149,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     command: z.literal("keep true"),
     repo: z.string(),
     task: TaskId,
-    items: z.array(z.string().regex(/\S/)).min(2).max(4),
+    items: KeepTrue,
   }),
   // `commit` is the PR's head you saw approved: the forge merges only while it is still the head.
   z.object({

@@ -103,7 +103,7 @@ function boundsTold({ decisions, stayTrue, description }: Bounds): string | null
         : `- ${text.trim()} (the human decided, in their words: ${JSON.stringify(words ?? "")})`,
     );
     parts.push(
-      "## Decisions\n\nThese are settled already, with why. Never ask for changes that reopen one. If you think one is wrong, say so in `choices`, never in `findings`.",
+      "## Decisions\n\nThese are settled already, with why, the latest last. A later decision replaces an earlier one it contradicts. Never ask for changes that reopen one. If you think one is wrong, say so in `choices`, never in `findings`.",
       listed.join("\n"),
     );
   }

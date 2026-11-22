@@ -110,14 +110,17 @@ export async function startCommand(args: string[]): Promise<void> {
   const { at: shortAt, value: short } = option("--short");
   const { at: flowAt, value: flow } = option("--flow");
   const nowAt = rest.indexOf("--now");
+  const keepAts = rest.flatMap((word, at) => (word === "--keep" ? [at] : []));
+  const keep = keepAts.map((at) => rest[at + 1] ?? "");
+  if (keep.some((item) => !item.trim()) || keep.length === 1 || keep.length > 4) usage("start");
   const taken = [
-    ...[shortAt, flowAt].flatMap((at) => (at === -1 ? [] : [at, at + 1])),
+    ...[shortAt, flowAt, ...keepAts].flatMap((at) => (at === -1 ? [] : [at, at + 1])),
     ...(nowAt === -1 ? [] : [nowAt]),
   ];
   const words = rest.filter((_, i) => !taken.includes(i));
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
   if (words.length > 0 && !from) return usage("start");
-  console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true));
+  console.log(await startOn(...task, from, short, flow, nowAt === -1 ? undefined : true, keep));
 }
 
 async function removeCommand(task: [string, string], rest: string[]): Promise<void> {

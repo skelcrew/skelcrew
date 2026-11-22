@@ -89,6 +89,7 @@ const sections: [string, [string, string][]][] = [
       ["--start", "Start the task at once, not filing it, on add"],
       ['--short "<words>"', "A thread's short title for the sidebar, on start or --start"],
       ["--flow <name>", "The flow a task runs, from .agents/flows/, on start or --start"],
+      ['--keep "<property>"', "One of 2 to 4 things it must keep true, on start or --start"],
       ["--now", "Start a task at once, over its repository's limits.threads"],
       ["--issue", "Open the task as an issue in the tracker too, on add"],
       ["--keep-issue", "Keep its issue open, to start it over, on rm"],

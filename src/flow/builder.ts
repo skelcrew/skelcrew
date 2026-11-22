@@ -85,6 +85,7 @@ export function startThread(
         from?: string | undefined;
         short?: string | undefined;
         flow?: string | undefined;
+        keep?: string[] | undefined;
         now?: boolean | undefined;
       }
     | {
@@ -93,6 +94,7 @@ export function startThread(
         body: string;
         short?: string | undefined;
         flow?: string | undefined;
+        keep?: string[] | undefined;
       },
   claimed = false,
 ): Promise<Thread> {
@@ -241,7 +243,7 @@ async function recordThread(
       changed: null,
       updates: [],
       decisions: [],
-      stay_true: [],
+      stay_true: (given.keep ?? []).map((item) => item.trim()),
       state: null,
       host: before?.host ?? null,
       host_id: before?.host_id ?? null,
@@ -288,8 +290,8 @@ async function recordThread(
     db.run(
       `INSERT OR REPLACE INTO tasks
         (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow,
-          queued_since)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)`,
+          queued_since, stay_true)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -303,6 +305,7 @@ async function recordThread(
         thread.agents,
         thread.flow,
         thread.queued_since,
+        JSON.stringify(thread.stay_true),
       ],
     );
     const claims = [owner, repo, task];

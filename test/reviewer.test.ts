@@ -892,7 +892,7 @@ describe("what the reviewer is told of the task's decisions and what must stay t
   test("each decision comes with who made it, and reopening one is a choice for the lead", () => {
     const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", [], bounds);
     expect(prompt).toContain(
-      '## Decisions\n\nThese are settled already, with why. Never ask for changes that reopen one. If you think one is wrong, say so in `choices`, never in `findings`.\n\n- Retry three times, as the lead decided. (the lead decided)\n- Never save provider text. (the human decided, in their words: "don\'t save it")',
+      '## Decisions\n\nThese are settled already, with why, the latest last. A later decision replaces an earlier one it contradicts. Never ask for changes that reopen one. If you think one is wrong, say so in `choices`, never in `findings`.\n\n- Retry three times, as the lead decided. (the lead decided)\n- Never save provider text. (the human decided, in their words: "don\'t save it")',
     );
     expect(prompt).toContain(
       "Each choice goes to the lead, not the builder, and never counts as changes. When choices are all you found, approve with no findings.",

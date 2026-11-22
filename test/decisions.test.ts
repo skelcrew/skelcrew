@@ -1,7 +1,7 @@
 // A task's decisions and what its change must keep true, recorded by the lead in a process of the
 // test's own against its own database, and shown by sc show.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowed, DaemonRequest } from "../src/flow/requests.ts";
@@ -130,6 +130,36 @@ console.log(JSON.stringify({
   });
 });
 
+// The list is set before the builder starts, so its first submit can't reach a reviewer without it.
+test("a thread started with what must stay true holds it from the start, and a restart starts fresh", () => {
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  Bun.spawnSync(["git", "init", "-q", clone]);
+  Bun.spawnSync(["git", "init", "-q", "--bare", join(home, "app.git")]);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, opened, remote, claimed) VALUES ('app', 'simon', 'app', 1, ?, 1)", [${JSON.stringify(`file://${join(home, "app.git")}`)}]);
+const keep = [" Old exports still open. ", "Exports stay under a second."];
+const thread = await startThread(db, { repo: "app", title: "Add export", body: "As JSON", keep });
+const first = readThread(db, thread.folder).stay_true;
+record(db, thread.folder, { status: "done" }, "done");
+await Bun.sleep(5);
+const again = await startThread(db, { repo: "app", task: "t1" });
+console.log(JSON.stringify({ first, again: readThread(db, again.folder).stay_true }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home, XDG_RUNTIME_DIR: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString().trim().split("\n").at(-1) ?? "{}")).toEqual({
+    first: ["Old exports still open.", "Exports stay under a second."],
+    again: [],
+  });
+});
+
 // A builder must never change what it is reviewed against, so only the lead writes either list.
 test("only the lead may record a decision or what must stay true, and two to four of those", () => {
   for (const command of ["decide", "keep true"] as const) {
@@ -140,6 +170,10 @@ test("only the lead may record a decision or what must stay true, and two to fou
   }
   const keep = (items: string[]) =>
     DaemonRequest.safeParse({ command: "keep true", repo: "app", task: "12", items }).success;
+  const start = (items: string[]) =>
+    DaemonRequest.safeParse({ command: "start", repo: "app", task: "12", keep: items }).success;
+  expect(start(["a", "b"])).toBe(true);
+  expect(start(["a"])).toBe(false);
   expect(keep(["a", "b", "c", "d"])).toBe(true);
   expect(keep(["a", "b", "c", "d", "e"])).toBe(false);
   expect(keep(["a", "b"])).toBe(true);
