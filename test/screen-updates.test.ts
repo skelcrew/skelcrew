@@ -91,14 +91,14 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
 // visibility, and mouse reports. Any other code stays, as does any other text.
 function shownBy(turn: string): string {
   const esc = "\x1b";
-  const kept = `${esc}(\\[[0-9;]*[ABCDGHdmr]|\\[\\?(2026|12|25|1000|1002|1003|1006)[hl]|\\(B)`;
+  const kept = `${esc}(\\[[0-9;]*[ABCDGHfdmr]|\\[\\?(2026|12|25|1000|1002|1003|1006)[hl]|\\(B)`;
   return turn.replaceAll(new RegExp(kept, "g"), "");
 }
 
 // A spinner on the mark of an agent at work turns about four times a second. Each turn is a
 // frame of its own that rewrites its cell alone, the same codes every time, so the rest of the
 // screen stays as it was, however many turns fall in the time watched. The copy of what the
-// screen sends can start or stop inside a turn, so only whole turns count. Over
+// screen sends starts and ends between turns, so every byte it holds belongs to a whole turn. Over
 // sc --remote it stays still, as each turn would cost a write over a slow link, and the screen
 // then sends nothing.
 test("the lead at work has a spinner that turns by its cell alone, and stays still over sc --remote", async () => {
@@ -116,16 +116,18 @@ test("the lead at work has a spinner that turns by its cell alone, and stays sti
   const before = stillScreen();
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
+  const sentSoFar = () => (existsSync(written) ? readFileSync(written, "utf8") : "");
+  await until(() => sentSoFar().endsWith("\x1b[?2026l"), "a whole turn");
+  writeFileSync(written, "");
   await Bun.sleep(1500);
   let sent = "";
   await until(() => {
-    sent = existsSync(written) ? readFileSync(written, "utf8") : "";
+    sent = sentSoFar();
     return sent.endsWith("\x1b[?2026l");
   }, "a whole turn");
   expect(stillScreen()).toBe(before);
   const [beforeFirst, ...turns] = sent.split("\x1b[?2026h");
-  if (beforeFirst) expect(beforeFirst).toEndWith("\x1b[?2026l");
-  expect(beforeFirst?.length ?? 0).toBeLessThan(250);
+  expect(beforeFirst).toBe("");
   expect(turns.length).toBeGreaterThan(0);
   for (const turn of turns) {
     expect(shownBy(turn)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
