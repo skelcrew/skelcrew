@@ -1,6 +1,7 @@
 // A tracker and forge for tests, run as a plugin's call command: it keeps each question it is
 // asked in its settings folder, in `asked`, and answers from a file there named after the
-// question, such as `changed.json`, or else as a plugin with nothing to say would. An answer in
+// question, such as `changed.json`, or else as a plugin with nothing to say would, though it
+// opens PR 7 and edits a PR's description as GitHub does. An answer in
 // `<question>.once.json` goes first, once. A held question fails, if it is to, once it is let go. For claims,
 // that file maps each remote it claims to its answer. With a file `fail-<question>`, it fails
 // with that file's words, and with `setup-<question>` it fails the same way with exit code 2,
@@ -50,6 +51,7 @@ const answers: Record<string, () => unknown> = {
   claims: () => null,
   changed: () => ({ items: [], next: null }),
   "open-pr": () => ({ number: 7 }),
+  "edit-pr": () => ({ edited: true }),
   review: reviewed,
   log: () => ({ log: "expected 2, got 3" }),
   assign: () => {

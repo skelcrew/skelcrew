@@ -538,6 +538,7 @@ A tracker or forge is asked by running its `call` command with one JSON question
 | `assign` with a repository, issue, and on or off | Tracker | With on, `{ "assigned": true }` if this call assigned you, or `{ "assigned": false }` if you were already. With off, nothing. A tracker with no assignees answers `{ "assigned": false }` and does nothing. |
 | `seen` with a repository, PR, kind (comment or review) and ID | Forge | Nothing. GitHub reacts with 👀 |
 | `open pr` with a repository, branch, base, title and body | Forge | Its number, or the number of the PR already open from that branch |
+| `edit pr` with a repository, PR and body | Forge | `{ "edited": true }` once the forge replaced the PR's description with the body, or `{ "edited": false }` if it can't. `null`, from an older plugin, and an error count as can't, so the PR keeps its description and the builder hears so |
 | `merge pr` with a repository, PR and the commit you saw approved | Forge | Nothing, or why it couldn't merge. GitHub merges only if the PR's head is still that commit, with the first method the repository allows, of a merge commit, squash and rebase |
 | `close pr` with a repository, PR, branch, and a comment or none | Forge | Nothing. GitHub posts the comment, closes the PR, and deletes the branch |
 | `close task` with a repository, issue, and a comment or none | Tracker | Nothing. GitHub posts the comment and closes the issue as not planned |

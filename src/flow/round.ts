@@ -11,6 +11,7 @@ import { errorText } from "../format.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import {
   askWhatChanged,
+  editPr,
   editReview,
   failedLog,
   forgeOf,
@@ -70,7 +71,8 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 
 // Fetches the thread's branch from its clone into Skelcrew's clone and pushes the commit it got
 // to the thread's branch on the repository's remote, then, with a forge, opens the PR if there
-// is none yet, with the line that closes its task at the end of its body. Returns the commit.
+// is none yet, or else replaces its description, with the line that closes its task at the end
+// of its body. Returns the commit.
 // git never runs inside the thread's clone: the builder controls everything there, .git
 // included, and a planted setting would run with your rights. A push refused for changing a
 // workflow file, or because the branch moved on the forge without the builder, throws saying
@@ -151,18 +153,52 @@ async function push(
   }
   // The forge answers with the PR already open from the branch, such as one opened before the
   // daemon stopped and could save it.
-  let { pr } = thread;
+  const { title, closes } = threadTask(db, thread);
+  const body = closes ? `${summary}\n\n${closes}` : summary;
+  const { pr } = thread;
   if (pr === null) {
-    const { title, closes } = threadTask(db, thread);
-    pr = await openPr(db, repository, {
+    const opened = await openPr(db, repository, {
       branch: thread.branch,
       base: baseOf(thread),
       title,
-      body: closes ? `${summary}\n\n${closes}` : summary,
+      body,
     });
+    record(db, folder, { pr: opened }, `pushed ${sha} to ${thread.branch}, for #${opened}`);
+    return sha;
   }
   record(db, folder, { pr }, `pushed ${sha} to ${thread.branch}, for #${pr}`);
+  if (!signal.aborted) await describePr(db, sessions, folder, pr, body);
   return sha;
+}
+
+// Replaces the PR's description with the round's summary and the line that closes its task, so
+// the reviewer, who reads it as the review starts, and sc show see this round's. A forge that
+// can't keeps the one before, and the builder hears so, as its round goes on.
+async function describePr(
+  db: Database,
+  sessions: string,
+  folder: string,
+  pr: number,
+  body: string,
+): Promise<void> {
+  const thread = readThread(db, folder);
+  const repository = repositoryOf(db, thread);
+  const edited = await editPr(db, repository, { pr, body }).catch(errorText);
+  if (edited === true) {
+    const copied = prOf(db, thread.owner, thread.repo, pr);
+    if (copied) saveItems(db, thread.owner, thread.repo, [{ ...copied, body }], []);
+    record(db, folder, {}, `replaced PR #${pr}'s description`);
+    return;
+  }
+  const why = edited === false ? "the forge can't edit it" : edited;
+  const text = `Skelcrew couldn't replace PR #${pr}'s description with your new summary, so it still shows the one before: ${why}`;
+  record(db, folder, {}, text);
+  queueMessage(db, sessions, folder, {
+    sender: "skelcrew",
+    text,
+    said: `it couldn't replace PR #${pr}'s description`,
+    typed_in: [],
+  });
 }
 
 // How long a review waits for a first check when nothing says CI runs: no workflows and no CI
