@@ -993,7 +993,7 @@ test("every section has its heading with its count, only open ones show rows, an
     "   ◆ Lead · Claude Code                                              ○ starting",
     "",
     "─".repeat(79),
-    "   1 running · 1 queued · 1 ready · 1 needs you",
+    "   1 running · 1 ready · 1 needs you",
     "",
     "   Needs you  2",
     " ▸ ● 12  Rate limit the API",
@@ -1297,14 +1297,13 @@ test("the lead heads the list with its state and step, then a line across and th
     `${"   ◆ Lead · Claude Code".padEnd(41)}○ working`,
     "     Reading rows.ts",
     "─".repeat(50),
-    "   1 running · 1 queued · 1 ready · 1 needs you",
+    "   1 running · 1 ready · 1 needs you",
     "",
     "   Needs you  2",
   ]);
   expect(targets.slice(0, 5)).toEqual([{ row: 0 }, { row: 0 }, null, null, null]);
   // Each count is in the colour of what it counts, and the line across is dim.
   expect(lines[2]).toStartWith("\x1b[90m─");
-  expect(lines[3]).toContain("\x1b[90m1 queued");
   // APP-14 waits only for you to merge it, so it counts as ready, though it shows under Needs you.
   expect(lines[3]).toContain("\x1b[38;5;34m1 ready");
   expect(lines[3]).toContain("\x1b[38;5;136m1 needs you");
@@ -1571,7 +1570,7 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
     "   ◆ Lead · Claude Code                                              ○ starting",
     "",
     "─".repeat(79),
-    "   11 running · 1 queued · 1 ready · 1 needs you",
+    "   11 running · 1 ready · 1 needs you",
     "",
     " ↑ 11 more   Needs you 2   Task queue 1   Backlog 1   Building 11",
     "   ○ 57  Task 57",
@@ -1690,9 +1689,7 @@ test("the summary counts as running only the builders at work, and a review wait
   const opened = new Set<Section>(["needs you", "building", "reviewing", "checks"]);
   const shown = shownRows(all, opened, false);
   const { lines } = drawRows(shown, sectionHeadings(all, opened), 0, 0, 80, 60);
-  expect(Bun.stripANSI(lines[3] ?? "").trimEnd()).toBe(
-    "   7 running · 1 queued · 1 ready · 1 needs you",
-  );
+  expect(Bun.stripANSI(lines[3] ?? "").trimEnd()).toBe("   7 running · 1 ready · 1 needs you");
   sql("UPDATE threads SET status = 'waiting' WHERE folder = 'app-7';");
   const fewer = rows();
   const drawn = drawRows(
