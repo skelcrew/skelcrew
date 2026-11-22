@@ -269,7 +269,7 @@ export function digestOf(db: Database, since: number): Message {
         thread.pr === null
           ? null
           : (prOf(db, thread.owner, thread.repo, thread.pr)?.link ?? savedPrLink(db, thread));
-      const issue = open.find((item) => item.id === thread.task);
+      const issue = open.find((item) => item.id === thread.issue);
       if (pr !== null && prLink) links.push({ name: `${name} ${pr}`, url: prLink });
       else if (issue) links.push({ name, url: issue.link });
       return [name, state, pr ?? ""].filter(Boolean).join(" · ");
@@ -289,7 +289,7 @@ export function digestOf(db: Database, since: number): Message {
     ];
     const underWay = live.filter((t) => waitsFor(t) === null).map((t) => named(t, t.status));
     const issues = open
-      .filter((item) => !live.some((t) => t.task === item.id))
+      .filter((item) => !live.some((t) => t.issue === item.id))
       .map((item) => {
         const name = taskName(r.name, item.id);
         links.push({ name, url: item.link });
