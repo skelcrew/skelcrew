@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -1089,6 +1090,27 @@ test("init pins the forge's plugin at its newest version, and installs nothing",
   // The plugin is the repository's, never yours, and isn't on this machine.
   expect(existsSync(join(home, ".config", "skelcrew", "skelcrew.lock"))).toBe(false);
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "github"))).toBe(false);
+});
+
+// sc init writes into the repository alone, so on a machine where Skelcrew never ran it leaves
+// no state of Skelcrew's behind, not even the clone it reads the plugin's pin from.
+test("init on a machine where Skelcrew never ran writes nothing outside the repository", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const commit = publishGitHubPlugin();
+  const data = join(home, ".local", "share", "skelcrew");
+  rmSync(data, { recursive: true });
+  const before = readdirSync(tmpdir());
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(parse(readFileSync(join(checkout, "skelcrew.lock"), "utf8"))).toEqual({
+    "skelcrew/skelcrew-github": { name: "github", version: "0.1.0", commit },
+  });
+  expect(existsSync(data)).toBe(false);
+  const left = readdirSync(tmpdir()).filter(
+    (name) => name.startsWith("skelcrew-plugin-") && !before.includes(name),
+  );
+  expect(left).toEqual([]);
 });
 
 // A skelcrew.yaml from sc init has setup: and test: only as comments, so the lead is told

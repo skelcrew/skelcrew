@@ -10,7 +10,7 @@ import { openDb } from "../db.ts";
 import { checkoutTop, repositories } from "../flow/repo.ts";
 import { errorText } from "../format.ts";
 import { originHere } from "../machine/origin.ts";
-import { cloneDir } from "../paths.ts";
+import { cloneDir, dataDir } from "../paths.ts";
 import {
   eachAsked,
   installPlugin,
@@ -184,8 +184,13 @@ function nameAndPin(folder: string, source: string, locked: Locked): void {
 
 // Names `source` in the skelcrew.yaml in `folder` and pins it in its skelcrew.lock, for sc init,
 // installing nothing: at the version installed here from the same source, or else at its newest.
+// A machine where Skelcrew never ran has no plugins, so its state is read only when it is there,
+// and sc init leaves nothing on the machine.
 export function pinRepositoryPlugin(folder: string, source: string): void {
-  const here = installedPlugins(openDb()).find((plugin) => plugin.source === source);
+  const ran = existsSync(join(dataDir(), "skelcrew.db"));
+  const here = ran
+    ? installedPlugins(openDb()).find((plugin) => plugin.source === source)
+    : undefined;
   const locked = here
     ? lockedAs(readManifest(here.folder), commitOf(here.folder))
     : newestLocked(source);
