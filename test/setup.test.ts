@@ -1402,8 +1402,6 @@ test("plain sc and install keep plugins after config and lock are deleted", asyn
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(true);
 });
 
-// A plugin a repository uses as its forge, and so its tracker, is never removed: the repository
-// would lose its tasks and PRs. Your files stay as they are, as only you make a plugin yours.
 test("sc install keeps a plugin a repository uses that your files don't name, and leaves your files", async () => {
   noGitHubPlugin();
   fakeGitHub();
@@ -1421,7 +1419,7 @@ test("sc install keeps a plugin a repository uses that your files don't name, an
   writeFileSync(lock(), "");
   const configBefore = configText();
   expect((await skel("", bin, main(), home, {}, ["plugin", "ls"])).out).toBe(
-    "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other.\n",
+    "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other; the forge of other.\n",
   );
   writeFileSync(join(home, "calls"), "");
   const run = await install();
@@ -1434,8 +1432,6 @@ test("sc install keeps a plugin a repository uses that your files don't name, an
   expect(readFileSync(lock(), "utf8")).toBe("");
 });
 
-// Only a lock makes a plugin yours, so a machine with none pins nothing. A plugin a repository
-// uses is still kept: as its tracker or forge, or as one its skelcrew.yaml names.
 test("sc install on a machine with no lock pins nothing, and keeps the plugins repositories use", async () => {
   noGitHubPlugin();
   fakeGitHub();
@@ -1451,7 +1447,6 @@ test("sc install on a machine with no lock pins nothing, and keeps the plugins r
   );
   db.close();
   cloneEach();
-  // The repository's own files, in Skelcrew's clone of it, name team at the commit installed.
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "other");
   const team = git(join(home, "github", "simon", "skelcrew-team"), "rev-parse", "v0.1.0^{commit}");
   writeFileSync(join(clone, "skelcrew.yaml"), "plugins: [simon/skelcrew-team]\n");
@@ -1464,7 +1459,7 @@ test("sc install on a machine with no lock pins nothing, and keeps the plugins r
   const configBefore = configText();
   expect((await skel("", bin, main(), home, {}, ["plugin", "ls"])).out).toBe(
     [
-      "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other.",
+      "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other; the forge of other.",
       "spare 0.1.0 io: tracker. unused.",
       "team 0.1.0 io: tracker",
       "",
