@@ -95,7 +95,7 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
   await until(
     () =>
       footer() ===
-      "  ↑↓ move  w/⌥W close  ⏎ to lead  ⇧⏎/a full screen  0-6 sections  R restart  q/⌥Q quit",
+      "  ↑↓ move  w/⌥W close  ⏎ to lead  ⇧⏎ full screen  0-6 sections  R restart  q/⌥Q quit",
     "the sidebar's keys",
   );
   expect(selected()).toMatch(/^▸ ◆ Lead\b/);
@@ -183,38 +183,53 @@ test("Enter on a task gives its builder your typing, and Ctrl-\\ brings it back 
   await until(typingToSidebar, "the sidebar to take your typing");
   expect(selected()).toMatch(/ 7\b/);
   // The footer is a pane of its own, told what to say a moment after the sidebar redraws.
-  await until(() => footer().includes("⏎ attach  ⇧⏎/a full screen"), "the sidebar's footer");
+  await until(() => footer().includes("⏎ attach  ⇧⏎ full screen"), "the sidebar's footer");
 });
 
-for (const [key, how] of [
-  ["S-Enter", "Shift-Enter"],
-  ["a", "a"],
-] as const)
-  test(`${how} on the lead's row gives the lead the whole terminal, and Ctrl-\\ comes back`, async () => {
-    given.extendedKeys = true;
-    open("lead");
-    await ready("lead");
-    press("C-\\");
-    await until(typingToSidebar, "the sidebar to take your typing");
-    press(key);
-    await until(fullScreen, "the lead to fill the terminal");
-    await until(() => !seen().includes("Needs you"), "the sidebar to hide");
-    await until(topLit, "the top of the boxes to light up");
-    type("hi\r");
-    await until(() => read("lead.typed") === "hi\n", "the typing to reach the lead");
-    press("C-\\");
-    await until(() => !fullScreen() && typingToSidebar(), "the sidebar again");
-    await until(() => !topLit(), "the corners again");
-    expect(read("lead.typed")).toBe("hi\n");
-  });
+test("Shift-Enter on the lead's row gives the lead the whole terminal, and Ctrl-\\ comes back", async () => {
+  given.extendedKeys = true;
+  open("lead");
+  await ready("lead");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar to take your typing");
+  press("S-Enter");
+  await until(fullScreen, "the lead to fill the terminal");
+  await until(() => !seen().includes("Needs you"), "the sidebar to hide");
+  await until(topLit, "the top of the boxes to light up");
+  type("hi\r");
+  await until(() => read("lead.typed") === "hi\n", "the typing to reach the lead");
+  press("C-\\");
+  await until(() => !fullScreen() && typingToSidebar(), "the sidebar again");
+  await until(() => !topLit(), "the corners again");
+  expect(read("lead.typed")).toBe("hi\n");
+});
 
-test("a on a task's row attaches full screen to its builder, and Ctrl-\\ comes back to its details", async () => {
+// The person pressed a to pick option a and landed in the agent instead, so no letter attaches.
+test("a letter that picks nothing does nothing, on the lead's row and on a task's", async () => {
+  open("lead");
+  await ready("lead");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar to take your typing");
+  for (const letter of ["a", "b", "c", "d", "r"]) type(letter);
+  press("M-S-Down");
+  press("M-Down");
+  await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
+  for (const letter of ["a", "b", "c", "d", "r"]) type(letter);
+  await Bun.sleep(500);
+  expect(fullScreen()).toBe(false);
+  expect(onDetails() && typingToSidebar()).toBe(true);
+  expect(read("lead.typed")).toBe("");
+  expect(read("app-7.typed")).toBe("");
+});
+
+test("Shift-Enter on a task's row attaches full screen to its builder, and Ctrl-\\ comes back to its details", async () => {
+  given.extendedKeys = true;
   open("lead");
   await ready("lead");
   press("M-S-Down");
   press("M-Down");
   await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
-  type("a");
+  press("S-Enter");
   await until(() => fullScreen() && seen().includes("I am app-7"), "app-7 full screen");
   await until(topLit, "the top of the boxes to light up");
   type("go\r");
@@ -308,12 +323,13 @@ for (const [key, how] of [
   });
 
 test("Alt-Tab from a builder full screen comes back to its details, and again goes back to it full screen", async () => {
+  given.extendedKeys = true;
   open("lead");
   await ready("lead");
   press("M-S-Down");
   press("M-Down");
   await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
-  type("a");
+  press("S-Enter");
   await until(() => fullScreen() && seen().includes("I am app-7"), "app-7 full screen");
   press("M-Tab");
   await until(() => !fullScreen() && onDetails() && typingToSidebar(), "app-7's details");

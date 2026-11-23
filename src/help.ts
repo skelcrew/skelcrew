@@ -108,9 +108,8 @@ const sections: [string, [string, string][]][] = [
   // The screen's keys, in words, read as "alt + q to quit, agents run on". Ctrl + \ brings your
   // typing to the sidebar from anywhere, which a Mac needs, as there Option with a digit types a
   // character. Those that work anywhere come first, then those for the sidebar, where the list's
-  // keys work without Alt. a does what shift + enter does, for a terminal that sends that as
-  // plain Enter. Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't
-  // send Option as Alt. alt + w works anywhere, and w only in the sidebar.
+  // keys work without Alt. Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal
+  // that doesn't send Option as Alt. alt + w works anywhere, and w only in the sidebar.
   [
     "KEYS",
     [
@@ -123,7 +122,7 @@ const sections: [string, [string, string][]][] = [
       ["alt + q", "quit, agents run on"],
       ["↑/↓, 0-6", "in the sidebar: move, open or close a section"],
       ["enter", "open the row you are on: its item, its agent, or a stage"],
-      ["shift + enter, a", "type to the row's agent full screen"],
+      ["shift + enter", "type to the row's agent full screen"],
       ["shift + ↑/↓", "move a queued task in the task queue"],
       ["s", "start or queue a task in the backlog"],
       ["f", "start a queued task now, over the limit"],
