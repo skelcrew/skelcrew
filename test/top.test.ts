@@ -106,7 +106,7 @@ test("a header too wide for its part takes the room the tabs leave, so nothing i
 
 test("a narrow sidebar shows the longest name of the version that fits", () => {
   const versions = ["6f1c2ab* (checkout, * = uncommitted changes)", "checkout 6f1c2ab+changes"];
-  const wide = { sidebar: 58, right: 99 };
+  const wide = { sidebar: 48, right: 99 };
   expect(above({ versions }, wide)).toBe("Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)");
   const usual = { sidebar: 35, right: tight };
   expect(above({ versions }, usual)).toBe("Skelcrew checkout 6f1c2ab+changes");

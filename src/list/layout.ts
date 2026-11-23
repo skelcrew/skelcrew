@@ -47,9 +47,10 @@ export type Size = { width: number; height: number };
 
 // How wide the list is, in its own window or as the screen's sidebar: a little over a quarter of
 // the terminal, so the pane or the right side has the room for the agent at work. It never gets
-// narrower than a row's name, short title and word need, nor wider than a task's two lines do,
-// such as `changes · Editing rows.ts · #40 ✓ r2 · 4m`.
-export const listShare = { percent: 28, least: 40, most: 58 };
+// narrower than a row's name, short title and word need, nor wider than a busy task's second line,
+// such as `changes · Editing rows.ts · #40 ✓ r2 · 4m`, so it never stands half empty. A longer
+// step is cut to fit.
+export const listShare = { percent: 28, least: 40, most: 48 };
 
 // Returns how many columns the list takes in a terminal `width` columns wide.
 export const listWidth = (width: number) =>
@@ -403,14 +404,12 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   const plainStart = `${pointer(here)}${row.mark.sign} `;
   const indent = " ".repeat(Bun.stringWidth(plainStart));
   const room = Math.max(width - indent.length, 0);
-  // The first line: on a terminal too narrow for the mark, it is cut without its colours.
   const named = `${filled(row.label, Math.min(nameWidth, room))}  ${row.title}`;
   const top = fitted(named, room);
   const first =
     width < indent.length
       ? fitted(`${plainStart}${top}`, width)
       : `${markStart(row, here)} ${here ? tinted(here, bright, top) : top}`;
-  // The PR, CI and review go together, apart only by spaces, such as `#40 ✓ r2`.
   const ci = row.ci === null ? [] : [ciMarks[row.ci]];
   const review = row.review
     ? [{ sign: `r${row.review.round}`, code: markColours[row.review.colour] }]
@@ -418,28 +417,27 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   const pr = [...(row.pr ? [{ sign: row.pr, code: grey }] : []), ...ci, ...review].flatMap(
     (piece, at) => (at === 0 ? [piece] : [{ sign: " ", code: grey }, piece]),
   );
-  // A word the stage's heading already says, such as working under Building, is left out. The
-  // step its builder is on then comes first, in the word's colour, as what is happening beyond
-  // the stage. Under Needs you or Task queue the word is what the row is there for, so it stays.
-  // A row with an item says instead the item's short title and how it is answered.
   const repeats = row.section === row.part && stageWords[row.part] === row.says;
-  const said = row.ask
-    ? [
-        [{ sign: row.ask.title, code: markColours[row.colour] }],
-        [{ sign: answeredBy(row.ask), code: grey }],
-      ]
-    : [
-        [{ sign: repeats ? "" : row.says, code: markColours[row.colour] }],
-        [{ sign: row.step, code: repeats ? markColours[row.colour] : grey }],
-        pr,
-        [{ sign: row.when, code: grey }],
-      ];
-  const groups = said.filter((group) => group.some((piece) => piece.sign));
-  const pieces = groups.flatMap((group, at) =>
-    at === 0 ? group : [{ sign: " · ", code: grey }, ...group],
-  );
-  // The line is cut as plain text, then each piece takes its part of what is left, in its
-  // colour, so the … lands where the cut does. Pieces of one colour side by side go as one.
+  const said = (step: string) =>
+    row.ask
+      ? [
+          [{ sign: row.ask.title, code: markColours[row.colour] }],
+          [{ sign: answeredBy(row.ask), code: grey }],
+        ]
+      : [
+          [{ sign: repeats ? "" : row.says, code: markColours[row.colour] }],
+          [{ sign: step, code: repeats ? markColours[row.colour] : grey }],
+          pr,
+          [{ sign: row.when, code: grey }],
+        ];
+  const piecesOf = (step: string) =>
+    said(step)
+      .filter((group) => group.some((piece) => piece.sign))
+      .flatMap((group, at) => (at === 0 ? group : [{ sign: " · ", code: grey }, ...group]));
+  const whole = piecesOf(row.step);
+  const over = Bun.stringWidth(whole.map((piece) => piece.sign).join("")) - room;
+  const stepRoom = Bun.stringWidth(row.step) - over;
+  const pieces = over > 0 && stepRoom > 0 ? piecesOf(fitted(row.step, stepRoom)) : whole;
   let doing = fitted(pieces.map((piece) => piece.sign).join(""), room);
   const cut: { sign: string; code: string }[] = [];
   for (const { sign, code } of pieces) {
