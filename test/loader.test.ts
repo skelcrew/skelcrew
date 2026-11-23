@@ -641,3 +641,16 @@ test("many bad role values below an override that decides the role stop nothing,
   );
   expect(Date.now() - worst).toBeLessThan(3_000);
 });
+
+test("repository roles set the harness unless your repository override replaces it", () => {
+  files(
+    "roles: { builder: { harness: claude } }\n",
+    "roles: { builder: { harness: codex, model: gpt } }\n",
+  );
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+  files(
+    "repos: { simon/app: { roles: { builder: { harness: claude } } } }\n",
+    "roles: { builder: { harness: codex, model: gpt } }\n",
+  );
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude" });
+});

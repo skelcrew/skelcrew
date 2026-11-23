@@ -343,7 +343,10 @@ function roleOf(name: RoleName, run: string, repository: Repository | undefined)
     const role = `.agents/roles/${run}.md in ${repository.owner}/${repository.repo} isn't valid`;
     says.push(sayIn(repositoryRole(run, repository).frontmatter, [], role));
     const shared = repositoryData(repository);
-    says.push(...line(shared, "the repository's skelcrew.yaml isn't valid"));
+    says.push(
+      sayIn(shared, ["roles", run], "the repository's skelcrew.yaml isn't valid"),
+      ...line(shared, "the repository's skelcrew.yaml isn't valid"),
+    );
   }
   says.push(sayIn(yours, ["roles", run], yourFile), ...line(yours, yourFile));
   const top = sayIn(yours, [], yourFile);
