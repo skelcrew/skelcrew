@@ -114,7 +114,7 @@ test("on the agent's side q reaches the agent and never leaves", async () => {
   expect(existsSync(join(home, "left-one"))).toBe(false);
 });
 
-test("on a narrow screen a tap on ‹ sidebar shows the sidebar, and a tap on a row shows its agent", async () => {
+test("on a narrow screen a tap on ‹ sidebar shows the sidebar, a tap on the lead shows it, and a second tap on a task shows its agent", async () => {
   open("lead", "one", "xterm-256color", "60");
   await tapBackOnceShown();
   await until(() => showing() === "sidebar", "the sidebar alone");
@@ -128,6 +128,10 @@ test("on a narrow screen a tap on ‹ sidebar shows the sidebar, and a tap on a 
   const task = seen()
     .split("\n")
     .findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/.test(line));
+  click(10, task + 1);
+  await until(() => /▸ \S+ 12\b/.test(seen()), "app-12 selected");
+  await Bun.sleep(300);
+  expect(showing()).toBe("sidebar");
   click(10, task + 1);
   await until(() => showing() === "agent" && seen().includes("I am app-12"), "app-12 alone");
   await tapBackOnceShown();
