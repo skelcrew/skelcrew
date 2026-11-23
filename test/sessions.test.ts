@@ -736,3 +736,13 @@ test("idle means a quiet pane showing the prompt, and not busy", async () => {
   expect(await idle(socket, "drawing", claude.marks, { moment })).toBe(false);
   expect(await idle(socket, "other", claude.marks, { moment })).toBe(false);
 });
+
+test("message delivery waits at a Codex startup menu even with a stale input prompt", async () => {
+  const menu = `${codex.marks.prompt}\nFolder access\n/tmp/clone\nTrust this folder?\n› 1. Trust and continue\n  2. Quit`;
+  await start("lead", ["sh", "-c", 'printf "%s\\n" "$1"; cat > received.txt', "sh", menu]);
+  await showing("lead", "Trust and continue");
+  await expect(
+    deliver(socket, "lead", codex.marks, "hello", { moment, timeout: 300 }),
+  ).rejects.toThrow("Codex is asking to trust its folder");
+  expect(read("received.txt")).toBe("");
+});

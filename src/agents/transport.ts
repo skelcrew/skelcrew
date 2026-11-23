@@ -1,10 +1,5 @@
-// The transport module: gets text into an agent and says when the agent is idle. The built-in
-// works on any host's sessions, as it uses only the sessions module's paste, keys and read. It
-// tells idle from the screen: the harness's status line isn't live and a bare prompt shows,
-// which also shows a person's unsent draft. It delivers one message at a time per session, as a
-// paste then Enter. A runtime plugin that provides the transport is asked instead, for the
-// sessions on its own host: its `idle` says whether the agent is idle, and its `deliver` types a
-// message once it is, never on top of a person's draft.
+// Gets messages into agents through their session host, waiting for an idle prompt.
+// Unsent drafts and startup questions keep messages waiting.
 import { z } from "zod";
 import { askHost, type Host, type PluginHost } from "../plugins/runtime.ts";
 import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
@@ -39,7 +34,24 @@ export type Typed = "typed" | "left unsent" | "not typed";
 const statusLineWatch = 1500;
 // What a harness's screen shows: `busy` while a turn runs, and a line holding only `prompt`
 // once it is ready for a message.
-export type Marks = { busy: string; prompt: string };
+export type Marks = {
+  busy: string;
+  prompt: string;
+  startupQuestions?: readonly { heading: string; reason: string }[];
+};
+
+export function startupQuestion(screen: string, marks: Marks): string | null {
+  const lines = Bun.stripANSI(screen)
+    .split("\n")
+    .map((line) => line.trim());
+  const menu = lines.findLastIndex((line) => /^[›>] \d+\. /.test(line));
+  if (menu < 0 || lines.slice(menu + 1).includes(marks.prompt)) return null;
+  return (
+    marks.startupQuestions?.find(({ heading }) =>
+      lines.slice(0, menu).some((line) => line === heading || line.startsWith(`${heading} `)),
+    )?.reason ?? null
+  );
+}
 
 // The reason typing gives for waiting while a person has unsent text at the agent's prompt.
 export const draftReason = "an unsent draft is at its prompt";
@@ -60,10 +72,11 @@ export const midTurn = "it is mid-turn";
 // busy mark only names the reason here: Claude Code and Codex show their input mid-turn too,
 // so whether a turn runs is told by whyBusy, from two looks.
 function notReady(shown: string, marks: Marks) {
+  const question = startupQuestion(shown, marks);
+  if (question !== null) return question;
   const lines = shown.split("\n").map((line) => line.trim());
   if (lines.includes(marks.prompt)) return "";
   if (shown.includes(marks.busy)) return `${midTurn} (it shows ${marks.busy})`;
-  // The mark alone, without Codex's placeholder, which a draft replaces.
   const mark = marks.prompt.split(" ")[0] ?? marks.prompt;
   const input = lines.findLast((line) => line.startsWith(`${mark} `));
   if (input !== undefined && !/^\S+ \d+\. /.test(input)) return draftReason;
@@ -90,6 +103,7 @@ function statusLineLive(before: string, after: string, busy: string): boolean {
 // still at a bare prompt, as the agent's own text. A live status line redraws every second.
 // The status module's screen check uses it, by the same rule as typing.
 export function quietSince(before: string | undefined, after: string, marks: Marks): boolean {
+  if (startupQuestion(after, marks) !== null) return false;
   if (!after.includes(marks.busy)) return true;
   if (before === undefined || notReady(after, marks) !== "") return false;
   return !statusLineLive(before, after, marks.busy);
