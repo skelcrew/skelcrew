@@ -415,6 +415,11 @@ const noRemoteLine =
 // With no forge to say you can push to it, Skelcrew can't vouch for what is in it.
 test("asks about a repository no forge claims, and does nothing in one with no origin", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
+  // git reaches the same repository at gitlab.com, which no forge here claims.
+  appendFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${home}/github/"]\n\tinsteadOf = https://gitlab.com/\n`,
+  );
   git(checkout, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
   const elsewhere = await skel([], "", checkout);
   expect(elsewhere.err).toBe("");
@@ -444,16 +449,19 @@ test("--from brings in the repository it names, wherever Skelcrew runs", async (
   expect(attached()).toBe(true);
 });
 
-test("--from says why it can't bring a repository in, and attaches to the one you opened last", async () => {
+// sc checks the repository it is asked for before anything else, so one it can't tell stops it,
+// rather than opening another repository's lead as if Skelcrew had ignored the request.
+test("--from stops, saying why, for a repository it can't bring in", async () => {
   const none = await skel(["--from", "nobody/none"]);
-  expect(none.code).toBe(0);
+  expect(none.code).toBe(1);
   expect(none.err).toContain("nobody/none");
   expect(calls()).not.toContain("daemon lead");
   await skel([], "", onGitHub("simon/app", "WRITE"));
+  writeFileSync(join(home, "calls"), "");
   const run = await skel(["--from", "nobody/none"]);
-  expect(run.code).toBe(0);
+  expect(run.code).toBe(1);
   expect(run.err).toContain("nobody/none");
-  expect(attached()).toBe(true);
+  expect(attached()).toBe(false);
 });
 
 // Exiting each lead closes every tab, on purpose, so plain sc outside a repository opens none and
@@ -2006,12 +2014,12 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     expect(calls()).not.toContain("daemon lead");
   }, 60_000);
 
-  test("a setup that fails says why, and sc goes on without the repository", async () => {
+  test("a setup that fails says why, and sc stops without the repository", async () => {
     const checkout = onGitHub("simon/app", "WRITE");
     needsSetup(true);
     const screen = await atTerminal(checkout);
     expect(screen).toContain("GitHub is unreachable");
-    expect(screen).toContain(hint);
+    expect(screen).not.toContain(hint);
     expect(existsSync(clone("simon/app"))).toBe(false);
     expect(calls()).not.toContain("daemon lead");
   }, 60_000);
@@ -2020,7 +2028,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     const checkout = onGitHub("simon/app", "WRITE");
     needsSetup();
     const run = await skel([], "\n", checkout);
-    expect(run.code).toBe(0);
+    expect(run.code).toBe(1);
     expect(run.err).toBe(
       "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc plugin setup github to set it up again.\n",
     );

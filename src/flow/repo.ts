@@ -6,11 +6,13 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
@@ -40,6 +42,7 @@ import {
   lockStart,
   namePlugin,
   pinRepositoryPlugin,
+  pluginsToInstall,
   repositoryNeeds,
   repositoryPlugins,
 } from "../plugins/repository.ts";
@@ -77,6 +80,64 @@ async function requireSkelcrewYaml(db: Database, repository: Repository): Promis
   );
   if (!onDefaultBranch) throw new Error(noSkelcrewYaml);
   if (!hasSkelcrewYaml(repository)) await refreshClone(db, repository);
+}
+
+// Throws, naming them and sc install, when the repository's files in `folder` name plugins this
+// machine lacks, so a repository never comes in without its forge.
+function requirePlugins(folder: string): void {
+  let lacked: { name: string }[];
+  try {
+    lacked = pluginsToInstall(folder);
+  } catch {
+    throw new Error(
+      "This repository's skelcrew.yaml or skelcrew.lock can't be read. Run sc install to see why, then sc again.",
+    );
+  }
+  if (lacked.length > 0)
+    throw new Error(
+      `This repository's skelcrew.yaml names plugins this machine doesn't have: ${lacked.map((plugin) => plugin.name).join(", ")}. Run sc install, then sc again.`,
+    );
+}
+
+// Checks the repository plain sc runs for before anything else, so sc says what to run before it
+// sets anything up. One Skelcrew has needs a skelcrew.yaml on its default branch. A new one is
+// cloned to a temporary folder, with its forge's login when an installed forge claims it, as
+// bringing it in would, and also needs the plugins its files name. Returns what Skelcrew found of
+// a new one, for bringInFrom, so its forge is asked once. Throws, stopping sc, when it can't tell
+// which repository that is, such as when a forge fails or needs a setup no one is there to run.
+export async function checkRepository(from: string | undefined): Promise<RepositoryDetails | null> {
+  const named = from ?? originHere();
+  if (!named) return null;
+  const db = openDb();
+  const known = repositoryAt(db, named);
+  if (known) {
+    await requireSkelcrewYaml(db, known);
+    return null;
+  }
+  const details = await identifyRepository(db, named);
+  const { owner, repo, remote, claimed } = details;
+  const repository = {
+    name: `${owner}/${repo}`,
+    owner,
+    repo,
+    forge: claimed?.forge ?? null,
+    remote,
+  };
+  const temporary = mkdtempSync(join(tmpdir(), "skelcrew-check-"));
+  try {
+    const folder = join(temporary, "repository");
+    await cloneRepository(db, repository, folder).catch((error) => {
+      throw new Error(
+        `Skelcrew couldn't read this repository's default branch, to see its skelcrew.yaml: ${errorText(error)}`,
+      );
+    });
+    if (!lstatSync(join(folder, "skelcrew.yaml"), { throwIfNoEntry: false }))
+      throw new Error(noSkelcrewYaml);
+    requirePlugins(folder);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+  return details;
 }
 
 // Returns the file of trusted repositories, kept with your settings so a clone can't bring
@@ -351,7 +412,12 @@ export function refreshClones(db: Database): Promise<void> {
 
 // What Skelcrew knows of a repository it is bringing in: from the forge that claims its remote,
 // or, with none, its remote alone.
-type RepositoryDetails = { owner: string; repo: string; remote: string; claimed: Claimed | null };
+export type RepositoryDetails = {
+  owner: string;
+  repo: string;
+  remote: string;
+  claimed: Claimed | null;
+};
 
 // Returns the owner, name and remote of a repository given as a remote URL, or as its
 // owner/name on its forge. A forge that claims it gives the answer. Otherwise a URL's own path
@@ -437,6 +503,12 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
     throw new Error(noSkelcrewYaml);
   }
   if (known) return;
+  try {
+    requirePlugins(cloneDir(owner, repo));
+  } catch (error) {
+    rmSync(cloneDir(owner, repo), { recursive: true, force: true });
+    throw error;
+  }
   if (claimed === null)
     await checkPush(db, repository, cloneDir(owner, repo)).catch((error) => {
       rmSync(cloneDir(owner, repo), { recursive: true, force: true });
@@ -456,21 +528,23 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
 
 // Brings in the repository you ran sc from, so its lead can open. `from` is a checkout's
 // remote URL or a repository's owner/name on its forge. Without it, the checkout you are in is
-// used. A failure is printed rather than thrown, so sc still attaches. Returns the repository's
-// owner/repo once Skelcrew has it, so sc opens its lead. A repository you didn't trust isn't
+// used. `details` are what checkRepository found of a new one. A failure is printed rather than
+// thrown, so sc still attaches. Returns the repository's owner/repo once Skelcrew has it, so sc opens its lead. A repository you didn't trust isn't
 // in, so nothing is returned for it. A repository Skelcrew has already costs no call to a
-// forge, only a fetch of its default branch's tip, so a skelcrew.yaml deleted there since the
-// daemon's last look still stops sc. A folder with no remote gets no complaint. Throws
-// noSkelcrewYaml for a repository whose default branch has no skelcrew.yaml.
-export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
+// forge. A folder with no remote gets no complaint. Throws the lines that stop sc, which start
+// with "This repository": one with no skelcrew.yaml on its default branch, or whose files name
+// plugins this machine lacks. checkRepository has checked both, so these come only when the
+// default branch changed in between.
+export async function bringInFrom(
+  from: string | undefined,
+  details: RepositoryDetails | null,
+): Promise<string | undefined> {
   const db = openDb();
   const named = from ?? originHere();
   let opened = named ? repositoryAt(db, named) : undefined;
-  if (opened) await requireSkelcrewYaml(db, opened);
   try {
     if (opened && !agentsAnswered(opened)) askAboutAgents(opened, opened.name);
-    if (named && !opened) {
-      const details = await identifyRepository(db, named);
+    if (named && !opened && details) {
       await bringIn(db, details);
       opened = repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
       if (opened && oldRemoteOf(named, opened))
@@ -481,7 +555,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
         ]);
     }
   } catch (error) {
-    if (errorText(error) === noSkelcrewYaml) throw error;
+    if (errorText(error).startsWith("This repository")) throw error;
     console.error(`Skelcrew: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);

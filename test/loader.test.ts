@@ -57,7 +57,6 @@ const all = [
   "reviewMinutes",
   "yourHarness",
   "yourReviewer",
-  "declined",
   "plugins",
   "host",
   "leadCanMerge",
@@ -76,7 +75,6 @@ test("with an empty skelcrew.yaml, every setting that has a default is the built
     reviews: quarter,
     checks: eighth,
     reviewMinutes: 30,
-    declined: [],
     plugins: [],
     host: "tmux",
     leadCanMerge: true,
@@ -126,7 +124,6 @@ test("your config goes over the built-in defaults", () => {
     checks: eighth,
     reviewMinutes: 30,
     yourHarness: "codex",
-    declined: [],
     plugins: ["simon/herdr"],
     host: "herdr",
     leadCanMerge: true,
@@ -152,7 +149,6 @@ test("your config overrides repository role settings", () => {
     tracker: "none",
     reviewMinutes: 30,
     yourHarness: "claude",
-    declined: [],
     plugins: [],
     host: "tmux",
     leadCanMerge: true,
@@ -185,7 +181,6 @@ test("a file sets only what is its own", () => {
     reviews: quarter,
     checks: eighth,
     reviewMinutes: 30,
-    declined: [],
     plugins: [],
     host: "tmux",
     leadCanMerge: true,
@@ -241,16 +236,12 @@ test("a fallback counts only under reviewer:", () => {
 // The first run asks for what you haven't picked, so it must tell your choice from the default.
 test("what your config saved reads apart from the defaults", () => {
   files(null, "reviewer: { harness: codex }\n");
-  expect(read(["yourHarness", "yourReviewer", "declined"]).settings).toMatchObject({
-    declined: [],
-  });
   expect(read(["yourHarness"]).settings?.yourHarness).toBeUndefined();
   expect(read(["yourReviewer"]).settings?.yourReviewer).toBeUndefined();
-  files("harness: codex\nreviewer: { harness: claude }\ngithub_declined: [simon/app]\n", "");
-  expect(read(["yourHarness", "yourReviewer", "declined"]).settings).toMatchObject({
+  files("harness: codex\nreviewer: { harness: claude }\n", "");
+  expect(read(["yourHarness", "yourReviewer"]).settings).toMatchObject({
     yourHarness: "codex",
     yourReviewer: "claude",
-    declined: ["simon/app"],
   });
 });
 

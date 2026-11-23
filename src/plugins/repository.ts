@@ -20,7 +20,6 @@ import {
   newestLocked,
   refuseOtherName,
   refusePersonal,
-  type Shown,
   updatePlugin,
 } from "./install.ts";
 import { type Lock, type Locked, readLockAt, writeBoth, yourLock, yourPlugins } from "./lock.ts";
@@ -28,14 +27,6 @@ import { commitOf, installedPlugins, type Plugin, readManifest } from "./plugin.
 
 // The GitHub plugin, the forge of every repository on github.com.
 export const githubPlugin = "skelcrew/skelcrew-github";
-
-// Returns how Skelcrew names the GitHub plugin when it offers it for a repository on GitHub, given
-// as owner/name, and what it says first: why it needs the plugin, in plain words. Plain sc and sc
-// init offer it the same way.
-export const gitHubShown = (repository: string): Shown => ({
-  title: "GitHub",
-  intro: `This is a GitHub repository (${repository}). Skelcrew needs its GitHub plugin to read issues, open pull requests and merge them.`,
-});
 
 // What Skelcrew reads of a repository's skelcrew.yaml here: only plugins:, by the GitHub
 // repository each comes from, such as skelcrew/skelcrew-github. The rest is the loader's, in
@@ -220,7 +211,7 @@ export function pinRepositoryPlugin(folder: string, source: string): void {
   );
 }
 
-export function addRepositoryPlugin(given: string, shown: Shown = {}): string | null {
+export function addRepositoryPlugin(given: string): string | null {
   if (given.startsWith(".") || given.startsWith("/"))
     throw new Error(
       `a plugin from a folder is on this machine only, so a repository can't name it. sc plugin add -g ${given} adds it as yours`,
@@ -234,7 +225,7 @@ export function addRepositoryPlugin(given: string, shown: Shown = {}): string | 
   const db = openDb();
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
   const fresh = !installed();
-  if (fresh && !installPlugin(given, { remote: originHere(top), pin: false, io: true, shown }))
+  if (fresh && !installPlugin(given, { remote: originHere(top), pin: false, io: true }))
     return null;
   const plugin = installed();
   if (!plugin) throw new Error(`${given} isn't installed after all`);
@@ -412,37 +403,34 @@ export function installRepositoryPlugins(needs: Need[]): { changed: boolean; mis
   return { changed, missing: missing || left.length > 0 };
 }
 
-// Reports whether the skelcrew.yaml of the checkout you are in names `source`, so plain sc
-// leaves that plugin to sc install, at the version the repository pins. Files that can't be read
-// name nothing here, as sc install says what is wrong with them.
-export function checkoutNames(source: string): boolean {
-  const top = checkoutTop();
-  if (top === null) return false;
-  try {
-    return repositoryPlugins(top).plugins.includes(source);
-  } catch {
-    return false;
-  }
-}
-
-// Reports whether the repository Skelcrew keeps in `folder` needs you to run sc install: its files
-// name a plugin this machine lacks at the version and commit its skelcrew.lock pins, one with no
-// pin, one sc install refuses, such as a runtime plugin, or can't be read, which sc install then
-// says. The daemon can't install anything itself, as
-// only a yes at your terminal can, so the repository's row in sc repo ls says to.
-export function needsInstall(folder: string): boolean {
-  try {
-    const db = openDb();
-    const { plugins, lock } = repositoryPlugins(folder);
-    return plugins.some((source) => {
-      if (db.query("SELECT 1 FROM removed_plugins WHERE source = ?").get(source)) return false;
+// Returns the plugins the repository's files in `folder` name that this machine lacks at the
+// version and commit its skelcrew.lock pins, each by its source and the name the lock gives it:
+// ones not installed, removed with sc plugin rm, at another pin, with no pin, or ones sc install
+// refuses, such as a runtime plugin. Throws when the files can't be read.
+export function pluginsToInstall(folder: string): { source: string; name: string }[] {
+  const db = openDb();
+  const { plugins, lock } = repositoryPlugins(folder);
+  return plugins
+    .filter((source) => {
       const locked = lock[source];
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
       if (!locked || !here || !matchesLock(here, locked)) return true;
-      // Installed as yours at the pin, it still doesn't count when sc install would refuse it.
       const manifest = readManifest(here.folder);
       return manifest.kind === "runtime" || manifest.name !== locked.name;
-    });
+    })
+    .map((source) => ({ source, name: lock[source]?.name ?? source }));
+}
+
+// Reports whether the repository Skelcrew keeps in `folder` needs you to run sc install: it names
+// plugins this machine lacks, or its files can't be read, which sc install then says. A plugin you
+// removed with sc plugin rm doesn't count, so its tasks still start. The daemon can't install
+// anything itself, as only a yes at your terminal can, so the repository's row in sc repo ls says
+// to.
+export function needsInstall(folder: string): boolean {
+  try {
+    const removed = (source: string) =>
+      openDb().query("SELECT 1 FROM removed_plugins WHERE source = ?").get(source) !== null;
+    return pluginsToInstall(folder).some(({ source }) => !removed(source));
   } catch {
     return true;
   }
