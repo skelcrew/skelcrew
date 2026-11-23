@@ -1152,6 +1152,33 @@ test("a crew with Claude for the lead and Codex for reviewers asks for both on t
   expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });
 
+test("asks for no reviewer's login when no flow of the repository has a review", async () => {
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 4 }\nroles: { lead: { harness: claude }, builder: { harness: claude }, reviewer: { harness: codex } }\n",
+  );
+  mkdirSync(join(clone, ".agents", "flows"), { recursive: true });
+  writeFileSync(join(clone, ".agents", "flows", "default.yaml"), "build: {}\n");
+  const inClone = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+      stdout: "pipe",
+    })
+      .stdout.toString()
+      .trim();
+  inClone("init", "-q");
+  inClone("add", ".");
+  inClone("commit", "-qm", "agents");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  const tree = inClone("rev-parse", "HEAD:.agents");
+  writeFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), `simon/app: ${tree}\n`);
+  const run = await skel("sk-ant-oat01-good\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("Codex");
+  expect(run.out).not.toContain("npm install -g @openai/codex");
+});
+
 test("with only Claude Code installed, asks nothing about harnesses and uses the default", async () => {
   const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);

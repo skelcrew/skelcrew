@@ -9,7 +9,7 @@ import { piHome } from "../agents/pi-login.ts";
 import { approvedAgents } from "../approved-agents.ts";
 import { agentRole } from "../config.ts";
 import { openDb } from "../db.ts";
-import { repositoryFlows } from "../flows.ts";
+import { flowRoles, repositoryFlows } from "../flows.ts";
 import { toRun } from "../format.ts";
 import { claudeTokenFile, configDir, dataDir, setUpFile } from "../paths.ts";
 import { promptSecret } from "./secret.ts";
@@ -199,7 +199,9 @@ function crewHarnesses(place: {
   const stage = (role: "builder" | "reviewer") =>
     flows.flatMap((flow) => {
       try {
-        return [agentRole(role, { ...place, agents, flow }).harness];
+        const unreviewed =
+          role === "reviewer" && flowRoles({ ...place, agents, flow }).review === null;
+        return unreviewed ? [] : [agentRole(role, { ...place, agents, flow }).harness];
       } catch {
         return [];
       }
