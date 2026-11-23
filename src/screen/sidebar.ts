@@ -1,9 +1,5 @@
-// The sidebar: the live left pane of the screen, which is the list of the open repository. Its
-// lead is on top, then Needs you and the six stages, as sc --list shows them. The right side
-// follows the row you are on: the lead's session on the lead's row, a task's details on a task's.
-// The spinners on the marks of agents at work turn here. The sidebar also keeps the top rows up
-// to date, the header with its tabs and the top of the boxes, tells the footer what to say,
-// switches tabs, and closes or removes the open repository when you ask.
+// The screen's sidebar keeps the lead, Needs you and tasks by stage, with the selected row marked.
+// Items and task details show on the right; keys here answer items and steer the screen.
 import {
   attachCommand,
   attachThen,
@@ -381,7 +377,7 @@ export async function runSidebar(
   };
   const follow = () => {
     const row = rows[here];
-    if (row) show(row.part === "lead" || row.part === "ask" ? open.lead : detailsOf(row.name));
+    if (row) show(row.part === "lead" ? open.lead : detailsOf(row.name));
   };
 
   // Returns the session of the agent the right side is about: the lead or an agent shown, or on a
@@ -474,8 +470,9 @@ export async function runSidebar(
     const keys = narrow && !typingRight ? keyLines(lastFooter, room) : [];
     const rowsHeight = Math.max(height - 1 - keys.length, 1);
     const onRow = rows[here];
-    const read = item !== null && onRow?.ask ? drawItem(onRow, here, room, rowsHeight, item) : null;
-    item = read?.scroll ?? null;
+    const read =
+      narrow && item !== null && onRow?.ask ? drawItem(onRow, here, room, rowsHeight, item) : null;
+    if (narrow || !onRow?.ask) item = read?.scroll ?? null;
     const drawn = closing
       ? { lines: questionLines(closingText(closing).lines, room), targets: [], top, spins: [] }
       : read
@@ -928,6 +925,10 @@ export async function runSidebar(
   // open full-size, the wheel scrolls it a line, and a tap on its ↑ more or ↓ more a page.
   const click = (button: string, column: number, line: number) => {
     if ((button === "64" || button === "65") && item !== null) {
+      if (!narrow) {
+        screenTmux(agents, ["send-keys", "-t", rightPane, button === "64" ? "Up" : "Down"]);
+        return;
+      }
       item += button === "64" ? -1 : 1;
       return;
     }
@@ -962,6 +963,15 @@ export async function runSidebar(
     if (item !== null && !asking) {
       const by = { up: -1, down: 1, "page up": -10, "page down": 10 }[name];
       if (by !== undefined) {
+        if (!narrow) {
+          screenTmux(agents, [
+            "send-keys",
+            "-t",
+            rightPane,
+            name === "up" ? "Up" : name === "down" ? "Down" : by < 0 ? "PPage" : "NPage",
+          ]);
+          return;
+        }
         item += by;
         return;
       }
@@ -994,7 +1004,11 @@ export async function runSidebar(
     said = null;
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
-    const pick = itemKey(row, here, targets, key);
+    const visible =
+      !narrow && item !== null && row?.ask && /^[a-dr]$/.test(key)
+        ? screenTmux(agents, ["capture-pane", "-p", "-t", rightPane]).out.split("\n")
+        : [];
+    const pick = itemKey(row, here, targets, key, visible);
     if (pick && row) return pickOn(row, pick);
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
     if ((name === "earlier" || name === "later") && row)

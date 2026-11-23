@@ -1,7 +1,5 @@
-// The list as lines for your terminal: the top line with Skelcrew and every repository's tab, the
-// lead's block that heads the repository, each section's heading in its colour with the rows of
-// those that are open, and the bottom line with the keys and the machine's load. It reads
-// nothing, so what you see can be tested without a terminal.
+// The list's rows, sections and item boxes as terminal lines, without reading outside state.
+// Wide lists keep their selected row beside the item's details.
 import { yesNo } from "../flow/inbox.ts";
 import { letters } from "../flow/requests.ts";
 import {
@@ -782,7 +780,7 @@ export function drawRows(
 // the terminal is wide enough. The rows then take the columns left of it, and the top and bottom
 // lines the whole width. The pane takes the same room on every row, so the list never moves as
 // you do. With `item`, the scroll of the lead's item you opened on the row at `here`, that item
-// shows full-size in place of the lead and the sections, as drawItem lays it out, and `item` comes
+// shows on the right when the pane is present, or in place of the list on a narrow screen. It comes
 // back as far as it could scroll.
 export function drawList(
   rows: Row[],
@@ -801,25 +799,26 @@ export function drawList(
   const head = [topParts(frame, whole).line, ...notice, ""];
   const room = size.height - head.length - 2;
   const opened = rows[here];
-  const read = item !== null && opened?.ask ? drawItem(opened, here, width, room, item) : null;
+  const read =
+    beside === 0 && item !== null && opened?.ask ? drawItem(opened, here, width, room, item) : null;
   const drawn = read
     ? { lines: read.lines, targets: read.targets, top }
     : drawRows(rows, headings, here, top, width, room);
-  // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
-  // way first.
   const bottom = fitted(` ${frame.bottom}`, whole);
   const load = frame.load;
   const gap = whole - Bun.stringWidth(bottom) - Bun.stringWidth(Bun.stripANSI(load));
   const last = gap > 1 ? `${paint(grey, bottom)}${" ".repeat(gap)}${load}` : paint(grey, bottom);
-  // The pane goes beside every line between the top line and the bottom two, each of the list's
-  // lines filled out to its width so the pane's edge stays straight.
   const middle = [...head.slice(1), ...drawn.lines, ""].map((line, at) =>
     beside > 0 && pane !== null
       ? `${filled(line, width)}${paint(grey, paneEdge)}${pane[at] ?? ""}`
       : line,
   );
   const lines = [head[0] ?? "", ...middle, last];
-  // The head and the bottom two reach nothing.
   const targets: Target[] = [...head.map(() => null), ...drawn.targets, null, null];
-  return { lines, targets, top: drawn.top, item: read?.scroll ?? null };
+  return {
+    lines,
+    targets,
+    top: drawn.top,
+    item: beside > 0 && opened?.ask ? item : (read?.scroll ?? null),
+  };
 }

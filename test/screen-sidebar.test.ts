@@ -237,30 +237,30 @@ test("f on a queued task in the task queue asks to start it now over the limit, 
   expect(read("lead.typed")).toBe("");
 });
 
-// Enter opens the lead's item full-size, and Esc alone, with no key after it, brings the list
-// back, as the footer says.
 test("an item opened full-size closes with a lone Esc", async () => {
-  sql(`INSERT INTO asks (owner, repo, task, text, options, posted)
-    VALUES ('simon', 'app', '', 'Add simon/web too?', '["yes","no"]', 1)`);
+  sql(`INSERT INTO asks (owner, repo, task, title, text, options, posted)
+    VALUES ('simon', 'app', 't12', 'Add web?', 'Add simon/web too?', '["yes","no"]', 1)`);
   open("lead");
   await ready("lead");
   press("C-\\");
   await until(typingToSidebar, "the sidebar's typing");
   press("Down");
   press("Down");
-  await until(() => selected().startsWith("▸ ● app"), "the item's row");
+  await until(() => /^▸ \S 12\b/.test(selected()), "the item's row");
   press("Enter");
   await until(() => footer().includes("esc back"), "the item open full-size");
-  expect(left().join("\n")).not.toContain("Needs you");
-  expect(left().join("\n")).toContain("a) yes");
+  expect(left().join("\n")).toContain("Needs you");
+  expect(selected()).toMatch(/^▸ \S 12\b/);
+  expect(left().join("\n")).not.toContain("a) yes");
+  expect(left().join("\n")).not.toContain("Add simon/web too?");
+  await until(() => seen().includes("a) yes"), "the item on the right");
+  expect(seen()).toContain("Add simon/web too?");
   press("Escape");
-  await until(() => left().join("\n").includes("Needs you"), "the list back");
+  await until(() => !footer().includes("esc back"), "the item closed");
   expect(footer()).not.toContain("esc back");
 });
 
-// A phone has taps alone, so a tap on ↓ more scrolls an item too long for the screen to its
-// options.
-test("a tap on an opened item's ↓ more scrolls it to its options", async () => {
+test("an opened item scrolls on the right while its row stays selected", async () => {
   // Numbered, so each page of it reads differently.
   const text = Array.from({ length: 400 }, (_, at) => `w${at}`).join(" ");
   sql(`INSERT INTO asks (owner, repo, task, text, options, posted)
@@ -274,14 +274,14 @@ test("a tap on an opened item's ↓ more scrolls it to its options", async () =>
   await until(() => selected().startsWith("▸ ● app"), "the item's row");
   press("Enter");
   await until(() => footer().includes("esc back"), "the item open full-size");
-  expect(left().join("\n")).not.toContain("r) reply");
-  for (let tap = 0; tap < 20 && !left().join("\n").includes("r) reply"); tap++) {
-    const at = left().findIndex((line) => line.includes("↓ more")) + 1;
-    expect(at).toBeGreaterThan(0);
-    const before = left().join("\n");
-    click(5, at);
-    await until(() => left().join("\n") !== before, "the item to scroll");
+  expect(seen()).not.toContain("r) reply");
+  for (let tap = 0; tap < 20 && !seen().includes("r) reply"); tap++) {
+    const before = seen();
+    press("PageDown");
+    await until(() => seen() !== before, "the item to scroll");
   }
-  expect(left().join("\n")).toContain("b) no");
-  expect(left().join("\n")).toContain("r) reply");
+  expect(left().join("\n")).toContain("Needs you");
+  expect(selected()).toStartWith("▸ ● app");
+  expect(seen()).toContain("b) no");
+  expect(seen()).toContain("r) reply");
 });

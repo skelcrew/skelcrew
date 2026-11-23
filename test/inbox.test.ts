@@ -625,6 +625,13 @@ console.log(JSON.stringify({ section: row("APP-12").section, says: row("APP-12")
 // The lead already asks you, so hearing the thread needs you for the same thing again would only
 // make it repeat the question. A new review round is news, so it still reaches the lead, as does a
 // question its builder asks.
+test("the round limit title uses the review number after earlier changes were allowed", () => {
+  const seen =
+    inProcess(`record(db, "app-12", { status: "waiting", rounds: 4, review_round: 5, verdict: "changes", held: "Fix it.", needs_you: true });
+console.log(JSON.stringify({ title: row("APP-12").ask.title }));`);
+  expect(seen.title).toBe("Review still wants changes after 5 rounds");
+});
+
 test("while an item is open, the round limit brings no note, but a new round and a question do", () => {
   const seen = inProcess(`
 record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", held: "Fix it." });
@@ -714,6 +721,29 @@ const ours = plain.filter((_, line) => narrow.targets[line] && narrow.targets[li
 console.log(JSON.stringify({ ours, widest: Math.max(...plain.map((line) => Bun.stringWidth(line))) }));`);
   expect(seen.ours).toEqual([" ▸ ● 12  Add export", "     Pi sign-ins expire…"]);
   expect(seen.widest).toBeLessThanOrEqual(24);
+});
+
+test("opening an item beside the list keeps its selected row and puts the text on the right", () => {
+  const seen = inProcess(`
+const { drawList } = await import(${JSON.stringify(source("list/layout.ts"))});
+const { itemKey } = await import(${JSON.stringify(source("list/actions.ts"))});
+const { drawPane } = await import(${JSON.stringify(source("list/pane.ts"))});
+const { readDetails } = await import(${JSON.stringify(source("list/details.ts"))});
+ask("app", "t12", "The full decision text belongs on the right.", ["Go ahead", "Wait"], "Decision needed");
+const rows = shownRows(all(), sections, true);
+const at = rows.findIndex((r) => r.name === "APP-12");
+const selectedRow = rows[at];
+const pane = drawPane(selectedRow, readDetails(db, open, selectedRow.task, Date.now(), selectedRow.changed), null, 80, 35);
+const frame = drawList(rows, sectionHeadings(all(), sections), at, 0, { versions: ["test"], where: "", name: "app", tabs: [], notice: "", bottom: "", load: "" }, { width: 160, height: 40 }, pane.lines, 0);
+const frameLines = frame.lines.map(Bun.stripANSI);
+console.log(JSON.stringify({ left: frameLines.map((line) => line.split(" │ ")[0]).join("\\n"), right: pane.lines.map(Bun.stripANSI).join("\\n"), pick: itemKey(selectedRow, at, frame.targets, "b", pane.lines) }));`);
+  expect(seen.left).toContain("Needs you");
+  expect(seen.left).toContain("▸ ● 12");
+  expect(seen.left).not.toContain("The full decision text");
+  expect(seen.right).toContain("The full decision text belongs on the right.");
+  expect(seen.right).toContain("a) Go ahead");
+  expect(seen.right).toContain("b) Wait");
+  expect(seen.pick).toBe("b");
 });
 
 // Enter opens the item full-size, where scrolling reaches every line however short the screen,

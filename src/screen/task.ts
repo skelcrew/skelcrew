@@ -1,6 +1,5 @@
-// The screen's right side on a task's row: the task's details alone, scrollable, as the list's
-// details pane shows them. Enter attaches to the builder there instead, and Ctrl-\ or the builder
-// ending comes back to the details.
+// The screen's right pane shows the item and task details, with scrolling.
+// Enter attaches to the builder; leaving the builder returns to the details.
 import { attachUntilEnded } from "../agents/sessions.ts";
 import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
@@ -16,7 +15,7 @@ import { attachedMark, panes, skelcrewCommand, zoomIn } from "./screen.ts";
 // What the details pane scrolls by: Page Up, as 5, or Page Down, as 6, then the wheel up, as 64,
 // or down, as 65, as your terminal reports a press of the mouse.
 const esc = "\x1b";
-const scrollKeys = new RegExp(`${esc}\\[([56])~|${esc}\\[<(6[45]);\\d+;\\d+M`, "g");
+const scrollKeys = new RegExp(`${esc}\\[([56])~|${esc}\\[<(6[45]);\\d+;\\d+M|${esc}\\[([AB])`, "g");
 
 // Returns the command that runs a task's details in the screen's right pane, by the task's row
 // name, such as app-12, in the repository named by its owner/name.
@@ -130,9 +129,9 @@ export async function runTaskDetails(repository: string, name: string): Promise<
     process.stdin.setRawMode(true);
     process.stdout.write("\x1b[?1000h\x1b[?1006h");
     process.stdin.on("data", (bytes) => {
-      for (const [, pageKey, wheel] of bytes.toString().matchAll(scrollKeys)) {
-        const by = pageKey ? Math.max(room - 1, 1) : 3;
-        scroll += pageKey === "5" || wheel === "64" ? -by : by;
+      for (const [, pageKey, wheel, arrow] of bytes.toString().matchAll(scrollKeys)) {
+        const by = pageKey ? Math.max(room - 1, 1) : arrow ? 1 : 3;
+        scroll += pageKey === "5" || wheel === "64" || arrow === "A" ? -by : by;
       }
       draw();
     });

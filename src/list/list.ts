@@ -1,10 +1,5 @@
-// The list: what `sc --list` shows in your terminal. One repository's lead and tasks, by stage, as
-// a picker. Enter attaches you full screen to an agent through its session host, and leaving it
-// comes back here, on the same row. It also starts an issue, merges a task ready for review and
-// opens its PR, each asking first where it can't be taken back. The number keys open and close
-// the stages, under Needs you, which holds every task waiting on you. Task queue, the stage between
-// Backlog and Building, holds what waits for a builder, in the order it starts. Shift with an
-// arrow reorders that queue.
+// The live sc --list picker: Needs you and tasks by stage, beside their details.
+// Its keys answer items, attach to agents, and start or merge tasks.
 import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { answerItem, moveQueued, openRepository, startOrMerge } from "../client.ts";
@@ -211,7 +206,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     const beside = paneWidth(size.width);
     if (beside === 0) return null;
     const row = rows[here];
-    if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2).lines;
+    if (!row || row.task === null) {
+      const pane = drawPane(row, null, null, beside, size.height - 2, false, paneScroll);
+      paneScroll = pane.scroll;
+      paneRoom = pane.room;
+      return pane.lines;
+    }
     if (details?.name !== row.name)
       details = { name: row.name, read: readDetails(db, open, row.task, Date.now(), row.changed) };
     const note = liveNote(row);
@@ -574,6 +574,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if ((button === "64" || button === "65") && overPane)
       return scrollPane(button === "64" ? -3 : 3);
     if ((button === "64" || button === "65") && item !== null) {
+      if (beside > 0) return scrollPane(button === "64" ? -1 : 1);
       item += button === "64" ? -1 : 1;
       return draw();
     }
@@ -588,7 +589,6 @@ export async function runList(agents: string, repository: string): Promise<void>
       );
       return tab ? goTo(tab) : draw();
     }
-    // The pane beside the list is only to look at, so a click on it reaches nothing.
     if (overPane) return draw();
     const target = targets[Number(line) - 1] ?? null;
     if (target === null) return draw();
@@ -644,6 +644,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (item !== null && !asking) {
       const by = { up: -1, down: 1, "page up": -10, "page down": 10 }[key];
       if (by !== undefined) {
+        if (paneWidth(process.stdout.columns || 80) > 0) return scrollPane(by);
         item += by;
         return draw();
       }
@@ -663,7 +664,16 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     said = null;
     const row = rows[here];
-    const pick = itemKey(row, here, targets, key);
+    const pick = itemKey(
+      row,
+      here,
+      targets,
+      key,
+      item !== null
+        ? (paneFor({ width: process.stdout.columns || 80, height: process.stdout.rows || 24 }) ??
+            [])
+        : [],
+    );
     if (pick && row) return pickOn(row, pick);
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if ((key === "earlier" || key === "later") && row)
