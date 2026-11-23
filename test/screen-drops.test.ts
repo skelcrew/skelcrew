@@ -63,8 +63,8 @@ test("a file dropped onto the lead reaches it as a copy in the lead's folder", a
 // The row under the header, where the notice shows.
 const boxesRow = () => seen().split("\n")[1] ?? "";
 
-// The start of the notice that says a dropped file is on another machine.
-const elsewhere = "That file is on";
+// What every wording of the notice that a dropped file is on another machine says.
+const elsewhere = "sc --remote ";
 
 test("a file dropped from another machine's terminal reaches the agent as it came, and the screen says how to drop it", async () => {
   open("lead");
@@ -72,7 +72,6 @@ test("a file dropped from another machine's terminal reaches the agent as it cam
   drop("/Users/simon/Desktop/shot.png");
   expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
   await until(() => boxesRow().includes(elsewhere), "the notice that the file is elsewhere");
-  expect(boxesRow()).toContain("To drop files, run sc --remote");
 });
 
 test("the notice that a dropped file is elsewhere shows while the agent fills the terminal", async () => {

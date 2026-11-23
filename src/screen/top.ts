@@ -1,6 +1,7 @@
 // The two top rows of the screen. The header, across the whole width, says Skelcrew, its version
 // and, on a remote, where it runs, then has a tab for each repository. Under it is the top of the
-// box round each side, or for a while after a file dropped was on another machine, how to drop it.
+// box round each side, which for a while after a file dropped was on another machine also says
+// how to drop it.
 import type { Tab } from "../list/rows.ts";
 import { fitted, removeControlCodes } from "./look.ts";
 import { dim, lit } from "./screen.ts";
@@ -196,24 +197,30 @@ export function drawTop(top: Top, size: Size): { header: string; boxes: string }
   const after = " ".repeat(Math.max(width - split - tabs.width, 0));
   const [left, right] = top.fullScreen ? [lit, lit] : top.typingRight ? [dim, lit] : [lit, dim];
   const [outer, corner] = top.fullScreen ? [lit, "─"] : [dim, "┬"];
+  const rightEdge =
+    top.elsewhere === null
+      ? inColour(right, `${"─".repeat(Math.max(size.right, 0))}${corner}`)
+      : `${elsewhereLine(top.elsewhere, size.right, right)}${inColour(right, corner)}`;
   const boxes = [
     inColour(outer, "─"),
     inColour(left, `${corner}${"─".repeat(Math.max(size.sidebar, 0))}`),
     inColour(lit, corner),
-    inColour(right, `${"─".repeat(Math.max(size.right, 0))}${corner}`),
+    rightEdge,
     inColour(outer, "─"),
   ].join("");
   return {
     header: `${header(top.where, split, top.versions, side)}${tabs.text}${after}`,
-    boxes: top.elsewhere === null ? boxes : elsewhereRow(top.elsewhere, width),
+    boxes:
+      top.fullScreen && top.elsewhere !== null ? elsewhereLine(top.elsewhere, width, lit) : boxes,
   };
 }
 
-// Returns the boxes' row, `width` columns wide, while a dropped file was on another machine: lit
-// line round the longest way of saying how to drop it that fits. `machine` is this one as
-// sc --remote takes it, or empty when unknown. The command is never cut while it fits, as half a
-// name would be another machine.
-function elsewhereRow(machine: string, width: number): string {
+// Returns a line `width` columns wide in `colour`, with the longest way of saying how to drop a file
+// from another machine that fits in it. It goes along the right side's box, or along the whole
+// row while one side fills the terminal, so the box your typing goes to still shows. `machine` is
+// this one as sc --remote takes it, or empty when unknown. The command is cut only when it is
+// wider than the line, as half a name would be another machine.
+function elsewhereLine(machine: string, width: number, colour: string): string {
   const command = `sc --remote ${removeControlCodes(machine) || "<user@host>"}`;
   const said = [
     `That file is on another machine. To drop files, run ${command} from that machine.`,
@@ -222,10 +229,10 @@ function elsewhereRow(machine: string, width: number): string {
     `To drop files: ${command}`,
     command,
   ];
-  const room = Math.max(width - 4, 0);
+  const line = (length: number) => inColour(colour, "─".repeat(length));
+  if (width < 4) return line(Math.max(width, 0));
+  const room = width - 4;
   const text = said.find((one) => Bun.stringWidth(one) <= room) ?? fitted(command, room);
-  const rest = Math.max(width - 4 - Bun.stringWidth(text), 0);
-  const line = (length: number) => inColour(lit, "─".repeat(length));
-  if (width < 4) return line(width);
+  const rest = Math.max(room - Bun.stringWidth(text), 0);
   return `${line(2)} #[fg=colour231]${escaped(text)}#[default] ${line(rest)}`;
 }

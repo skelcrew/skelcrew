@@ -282,25 +282,38 @@ test("on a phone-wide screen with many tabs, the way back to the sidebar still s
   expect(seen(line)).toHaveLength(terminal(given));
 });
 
-test("after a drop from another machine, the boxes' row says how to drop it, and the header keeps its tabs", () => {
+test("after a drop from another machine, the right box's edge says how to drop it, and the rest stays", () => {
   const drawn = top({ elsewhere: "simon@workbox" });
   expect(seen(drawn.boxes)).toMatch(
-    /^── That file is on another machine\. To drop files, run sc --remote simon@workbox from that machine\. ─+$/,
+    new RegExp(
+      `^─┬─{${size.sidebar}}┬── That file is on another machine\\. To drop files, run sc --remote simon@workbox there\\. ─*┬─$`,
+    ),
   );
   expect(Bun.stringWidth(seen(drawn.boxes))).toBe(terminal(size));
   expect(drawn.header).toBe(headerRow());
 });
 
-test("on a narrow screen the notice says it shorter, never cuts the command, and keeps the way back", () => {
-  for (const width of [80, 60, 45, 30]) {
+test("the notice keeps the box your typing goes to lit, and the other dim", () => {
+  const [lit, dim] = ["#[fg=colour33]", "#[fg=brightblack]"];
+  const toRight = boxRow({ elsewhere: "simon@workbox" });
+  expect(toRight).toStartWith(`${dim}─#[default]${dim}┬─`);
+  expect(toRight).toContain(`${lit}┬#[default]${lit}──#[default] #[fg=colour231]`);
+  const toSidebar = boxRow({ elsewhere: "simon@workbox", typingRight: false });
+  expect(toSidebar).toStartWith(`${dim}─#[default]${lit}┬─`);
+  expect(toSidebar).toContain(`${lit}┬#[default]${dim}──#[default] #[fg=colour231]`);
+});
+
+test("on a narrow screen the notice says it shorter along the whole row, and keeps the way back", () => {
+  for (const width of [79, 60, 45, 30]) {
     const given = { sidebar: 0, right: width - 5 };
-    const drawn = top({ elsewhere: "simon@workbox", side: "lead" }, given);
+    const drawn = top({ elsewhere: "simon@workbox", side: "lead", fullScreen: true }, given);
     expect(seen(drawn.boxes)).toContain("sc --remote simon@workbox");
     expect(Bun.stringWidth(seen(drawn.boxes))).toBe(width);
+    expect(drawn.boxes).not.toContain("brightblack");
     expect(seen(drawn.header)).toContain("‹ sidebar");
   }
-  const phone = seen(top({ elsewhere: "simon@workbox" }, { sidebar: 0, right: 15 }).boxes);
-  expect(Bun.stringWidth(phone)).toBe(20);
+  const split = seen(top({ elsewhere: "simon@workbox" }, { sidebar: 27, right: 48 }).boxes);
+  expect(split).toContain("sc --remote simon@workbox");
 });
 
 test("without this machine's name, the notice says where to fill it in", () => {
