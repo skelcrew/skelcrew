@@ -466,29 +466,43 @@ console.log(JSON.stringify(out));`);
 });
 
 // Starting a builder again that isn't running stops it first, which clears what it needed you for.
-// When the start then fails, the thread is kept stopped with what it had before the pick, so its
-// item comes back with the reason, to pick again.
-test("a start again that fails keeps its item, with the reason, to pick again", () => {
+// When the start then fails, whether it marks the thread failed or asks for a login, the thread is
+// kept stopped with what it had before the pick, so its item comes back as it was, with the
+// reason, to pick again.
+test("a start again that fails brings its item back as it was, with the reason", () => {
   const seen = inProcess(`
 const { keepToStartAgain } = await import(${JSON.stringify(source("flow/builder.ts"))});
-record(db, "app-12", { erred: true, said: "OAuth token has expired" });
-const item = row("APP-12").ask;
-const failed = await pickOwnItem(db, "none", "app", "t12", item, "a", async (act, before) => {
-  record(db, "app-12", { status: "stopped", needs_you: false, asking: false, turn_ended: false, erred: false });
-  record(db, "app-12", { status: "failed" });
-  keepToStartAgain(db, before);
-  throw new Error("APP-12's builder couldn't start again: no sandbox");
-}).catch((error) => error.message);
-const back = row("APP-12");
-console.log(JSON.stringify({ failed, status: thread().status, section: back.section, ask: back.ask }));`);
-  expect(seen.failed).toBe("APP-12's builder couldn't start again: no sandbox");
-  expect(seen.status).toBe("stopped");
-  expect(seen.section).toBe("needs you");
-  expect(seen.ask).toMatchObject({
-    title: "Its harness stopped on an error",
-    options: ["Start it again", "Open the builder"],
-    failed: "APP-12's builder couldn't start again: no sandbox",
-  });
+const { loginInstruction } = await import(${JSON.stringify(source("agents/login.ts"))});
+const fresh = { status: "working", erred: false, turn_ended: false, asking: false, said: null, host: "tmux", needs_you_for: null, pick_failed: null };
+const cases = {
+  error: [{ erred: true, said: "OAuth token has expired" }, { status: "failed" }],
+  login: [{ erred: true, said: "OAuth token has expired" }, { status: "working", needs_you_for: loginInstruction("claude") }],
+  host: [{ host: "herdr", needs_you_for: "run sc install: its session host herdr is missing" }, { status: "failed", needs_you_for: null }],
+};
+const out = {};
+for (const [kind, [mark, after]] of Object.entries(cases)) {
+  record(db, "app-12", { ...fresh, ...mark });
+  const item = row("APP-12").ask;
+  const failed = await pickOwnItem(db, "none", "app", "t12", item, "a", async (act, before) => {
+    record(db, "app-12", { status: "stopped", needs_you: false, asking: false, turn_ended: false, erred: false });
+    record(db, "app-12", after);
+    keepToStartAgain(db, before);
+    throw new Error("APP-12's builder couldn't start again: no sandbox");
+  }).catch((error) => error.message);
+  const back = row("APP-12");
+  out[kind] = { failed, item, status: thread().status, section: back.section, ask: back.ask };
+}
+console.log(JSON.stringify(out));`);
+  for (const kind of ["error", "login", "host"]) {
+    const { item, ...back } = seen[kind] as { item: object };
+    const why = "APP-12's builder couldn't start again: no sandbox";
+    expect(back).toEqual({
+      failed: why,
+      status: "stopped",
+      section: "needs you",
+      ask: { ...item, failed: why },
+    });
+  }
 });
 
 // A pick acts only on what you saw: once the thread needs you for something else, it is refused.

@@ -783,14 +783,17 @@ export async function refuseSecondBuilder(
 }
 
 // Keeps a thread whose start again, picked on its item, failed: stopped, as its builder isn't
-// running, with the marks it had before the pick, which a stop on the way cleared. So its item
-// comes back, to pick again. A thread that ended or started over meanwhile is left as it is.
+// running, as it was before the pick, which a stop on the way cleared. A start that failed marks
+// the thread failed, or asks for a login while it works, and either is put back. So its item
+// comes back as it was, to pick again. A thread that ended or started over meanwhile, or whose
+// builder may still run, is left as it is.
 export function keepToStartAgain(db: Database, before: Thread): void {
   const now = readThread(db, before.folder);
-  if (now.started !== before.started || (now.status !== "failed" && now.status !== "stopped"))
-    return;
-  const { needs_you, asking, turn_ended, erred, limited, limit_reset } = before;
-  const marks = { needs_you, asking, turn_ended, erred, limited, limit_reset };
+  const login = now.needs_you_for !== before.needs_you_for && now.needs_you_for !== null;
+  const ended = now.status === "failed" || now.status === "stopped";
+  if (now.started !== before.started || !(ended || (now.status === "working" && login))) return;
+  const { needs_you, asking, turn_ended, erred, limited, limit_reset, needs_you_for } = before;
+  const marks = { needs_you, asking, turn_ended, erred, limited, limit_reset, needs_you_for };
   record(db, before.folder, { status: "stopped", ...marks }, "kept stopped, to start again");
 }
 

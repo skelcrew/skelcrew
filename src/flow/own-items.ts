@@ -92,8 +92,11 @@ export function pickRequests(
 // one, such as another question, shows.
 export const handedKey = (item: OwnItem) => `${item.title}\n${item.text}`;
 
+// A stopped thread's word says only that it stopped, so its item is told by what it would say at
+// work, such as an error it stopped on.
 function itemFor(thread: Thread): OwnItem {
-  const word = threadWord(thread, limitOf(thread));
+  const asLive = thread.status === "stopped" ? { ...thread, status: "working" as const } : thread;
+  const word = threadWord(asLive, limitOf(asLive));
   const said = thread.said?.split("\n").map(removeControlCodes).join("\n").trim() || null;
   const round = roundOf(thread);
   const pr = thread.pr === null ? "Its branch" : `#${thread.pr}`;
@@ -118,8 +121,7 @@ function itemFor(thread: Thread): OwnItem {
       text: said ?? "Its builder asked a question in its session.",
       options: [...toBuilder],
     };
-  const stoppedOnError = thread.status === "stopped" && thread.erred && !thread.limited;
-  if (word === "error" || stoppedOnError)
+  if (word === "error")
     return {
       title: "Its harness stopped on an error",
       text: said ?? "Its builder's harness stopped on an error.",
