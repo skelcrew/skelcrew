@@ -162,8 +162,7 @@ function logInPi(env: Env, line: string): void {
 }
 
 export function prepareMachine(): void {
-  const env = { ...process.env, PATH: loginPath() };
-  process.env.PATH = env.PATH;
+  const env = { ...process.env };
   if (!existsSync(setUpFile()) && !existsSync(serviceFile())) {
     if (process.platform === "darwin") checkMacTools(env);
     else checkLinuxTools(env);

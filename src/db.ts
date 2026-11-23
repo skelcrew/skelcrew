@@ -385,9 +385,11 @@ export function nextSequence(db: Database): number {
   return z.object({ seq: z.number() }).parse(row.get()).seq;
 }
 
+export const dbFile = () => join(dataDir(), "skelcrew.db");
+
 export function openDb(): Database {
   mkdirSync(dataDir(), { recursive: true });
-  const db = new Database(join(dataDir(), "skelcrew.db"), { strict: true });
+  const db = new Database(dbFile(), { strict: true });
   // The daemon and Skelcrew run in your terminal can use the file at once. Without a wait, a
   // write that meets another one fails with "database is locked" at once.
   db.run("PRAGMA busy_timeout = 5000");

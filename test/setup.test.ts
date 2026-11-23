@@ -176,9 +176,8 @@ async function skel(
 
 // The service is set up the first time sc runs where there is a repository, not before.
 test("outside a repository, with none yet, sets up nothing and says where to run sc", async () => {
-  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
-openDb().run("DELETE FROM repositories");`;
-  expect(Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } }).success).toBe(true);
+  const state = join(home, ".local", "share", "skelcrew");
+  rmSync(state, { recursive: true });
   const run = await skel("sk-ant-oat01-good\n");
   expect(run).toEqual({
     out: "Skelcrew has no repositories yet. Run sc inside a git repository.\n",
@@ -189,6 +188,13 @@ openDb().run("DELETE FROM repositories");`;
   expect(calls()).not.toContain("daemon");
   expect(existsSync(unit())).toBe(false);
   expect(existsSync(token())).toBe(false);
+  expect(existsSync(state)).toBe(false);
+  // A machine that has run Skelcrew, but has no repository, gets the same.
+  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+openDb();`;
+  expect(Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } }).success).toBe(true);
+  expect(await skel()).toEqual(run);
+  expect(existsSync(unit())).toBe(false);
 });
 
 test("takes every step on the first run, and none on the second", async () => {
