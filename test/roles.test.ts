@@ -20,14 +20,14 @@ const fetching = `\nBefore you compare your branch with its base branch or merge
 const waiting =
   " When the builder can't take it yet, sc tell says why, and sc ps counts the messages still waiting. If one still waits after 10 minutes, Skelcrew tells you why. When the builder is mid-turn, you may ask the human to press Esc in that thread if it shouldn't finish its turn first.";
 
-// What the lead's file says of the repository's setup and test commands, once every repository
-// had to have a complete skelcrew.yaml: what keeps builders from starting goes to the human first.
+// What the lead's file says of the repository's setup and test commands: while they aren't set,
+// the lead proposes them and starts the setup thread, and anything else that keeps builders
+// from starting goes to the human first.
 const settling =
-  "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. The end of these instructions says what they were when this session started, and the skelcrew.yaml in the clone shows any change since. When it says something keeps builders from starting, such as a line skelcrew.yaml lacks, tell the human first, in plain words, with the line to add. No thread can fix it, as no builder starts until the fix is on the default branch, so the human makes that change.\n";
+  "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. The end of these instructions says what they were when this session started, and the skelcrew.yaml in the clone shows any change since. A bare setup: or test:, or none at all, means it isn't decided yet, and [] means the repository needs none. While either isn't decided, no builder starts but the setup thread: find the commands in the repository and propose them, as the end of these instructions says, then on the human's yes start the setup thread with --setup. When it says something else keeps builders from starting, such as a line skelcrew.yaml lacks, tell the human first, in plain words, with the line to add. No thread can fix that, as no builder starts until the fix is on the default branch, so the human makes that change.\n";
 // What the lead's file added once a lead's first start brought it an opening turn, so it speaks
 // first to a human who doesn't know to.
-const opening =
-  '\nOn your very first start, before the human has written anything, Skelcrew types a note starting "Skelcrew: this is your first start". It comes from Skelcrew, not the human. Greet the human in a line or two, then do what it says: tell them what keeps builders from starting, as below, or say what you can do here and ask what to work on.\n';
+const opening = `\nOn your very first start, before the human has written anything, Skelcrew types a note starting "Skelcrew: this is your first start". It comes from Skelcrew, not the human. Greet the human in a line or two, then do what it says: propose the repository's setup and test commands, tell them what keeps builders from starting, as below, or say what you can do here and ask what to work on.\n`;
 // What the lead's file added once a lead came back after a restart without its conversation:
 // it looks at Skelcrew's state before anything else.
 const restarted =
