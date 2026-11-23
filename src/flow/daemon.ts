@@ -21,7 +21,14 @@ import {
   stopSession,
 } from "../agents/sessions.ts";
 import { agentsUnanswered } from "../approved-agents.ts";
-import { checkFlow, leadCanMerge, repositoryCommands } from "../config.ts";
+import {
+  checkFlow,
+  cloneSkelcrewYaml,
+  commitSkelcrewYaml,
+  leadCanMerge,
+  repositoryCommands,
+  threadTest,
+} from "../config.ts";
 import {
   finishUpgrade,
   marksToItems,
@@ -144,6 +151,7 @@ import {
 } from "./task-queue.ts";
 import {
   builderSession,
+  cloneOf,
   findThread,
   liveThreads,
   readThread,
@@ -1213,7 +1221,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const { host, id } = await builderSession(db, sessions, now);
         return agentRuns(host, id);
       };
-      holdCheckSlot(connection, repositoryCommands(repository).test, {
+      const test =
+        thread === null
+          ? repositoryCommands(repository).test
+          : threadTest(thread, () => {
+              if (!reviewer) return cloneSkelcrewYaml(cloneOf(thread));
+              const commit = readThread(db, thread.folder).reviewing;
+              return commit === null
+                ? null
+                : commitSkelcrewYaml(cloneDir(thread.owner, thread.repo), commit);
+            });
+      holdCheckSlot(connection, test, {
         holder,
         repository: `${repository.owner}/${repository.repo}`,
         runs,

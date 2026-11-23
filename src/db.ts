@@ -236,7 +236,8 @@ const threadColumns = {
 // so once the issue has left Skelcrew's copy, or null from a plugin that didn't say.
 // `alias` is the name a task had before every task took a number of Skelcrew's, such as 12 or
 // wr4, which still reaches it. `setup_thread` marks the lead's setup thread, started with
-// --setup while the repository's setup or test isn't set yet, which runs without them.
+// --setup while the repository's setup or test isn't set yet, which runs only the ones its own
+// branch sets.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",

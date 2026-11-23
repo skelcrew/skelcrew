@@ -1106,7 +1106,6 @@ test("signs Pi in when a repository's role runs on it, though agents run on Clau
     config(),
     "harness: claude\nrepos:\n  simon/app:\n    roles: { builder: { harness: pi } }\n",
   );
-  requestLogin("pi");
   const missing = await skel("sk-ant-oat01-good\n");
   expect(missing.code).toBe(1);
   expect(missing.out).toContain("npm install -g @earendil-works/pi-coding-agent@1.6.0");
@@ -1151,7 +1150,6 @@ test("signs Pi in when a flow's own role runs on it, and asks to install Pi once
     `[ "$1 $2" = "auth login" ] && echo '{"anthropic":{"type":"api_key","key":"k"}}' > "$PI_CODING_AGENT_DIR/auth.json"
 exit 0`,
   );
-  requestLogin("pi");
   const run = await skel("sk-ant-oat01-good\nanthropic\n");
   expect(run.code).toBe(0);
   expect(calls()).toContain("pi auth login anthropic --no-browser");
@@ -1160,6 +1158,58 @@ exit 0`,
   const gone = await skel();
   expect(gone.code).toBe(1);
   expect(gone.out).toContain("npm install -g @earendil-works/pi-coding-agent@1.6.0");
+});
+
+// A fresh machine signs in every harness the repository's crew uses, so its first review can
+// start while you are away.
+test("a crew with Claude for the lead and Codex for reviewers asks for both on the first sc", async () => {
+  fakeCodex();
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 4 }\nroles: { lead: { harness: claude }, builder: { harness: claude }, reviewer: { harness: codex } }\n",
+  );
+  const run = await skel("sk-ant-oat01-good\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Sign in to Claude.");
+  expect(run.out).toContain("Sign in to Codex. Press Enter to start.\nSigned in to Codex.\n");
+  expect(run.out.indexOf("Sign in to Claude")).toBeLessThan(run.out.indexOf("Sign in to Codex"));
+  expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
+  expect(existsSync(join(codexHome(), "auth.json"))).toBe(true);
+
+  writeFileSync(join(home, "calls"), "");
+  const again = await skel();
+  expect(again.code).toBe(0);
+  expect(again.out).not.toContain("Sign in");
+  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+});
+
+test("asks for no reviewer's login when no flow of the repository has a review", async () => {
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 4 }\nroles: { lead: { harness: claude }, builder: { harness: claude }, reviewer: { harness: codex } }\n",
+  );
+  mkdirSync(join(clone, ".agents", "flows"), { recursive: true });
+  writeFileSync(join(clone, ".agents", "flows", "default.yaml"), "build: {}\n");
+  const inClone = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+      stdout: "pipe",
+    })
+      .stdout.toString()
+      .trim();
+  inClone("init", "-q");
+  inClone("add", ".");
+  inClone("commit", "-qm", "agents");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  const tree = inClone("rev-parse", "HEAD:.agents");
+  writeFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), `simon/app: ${tree}\n`);
+  const run = await skel("sk-ant-oat01-good\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("Codex");
+  expect(run.out).not.toContain("npm install -g @openai/codex");
 });
 
 test("with only Claude Code installed, asks nothing about harnesses and uses the default", async () => {
@@ -2016,7 +2066,7 @@ test("sc install refuses a repository that names a runtime plugin installed as y
   const run = await atTerminal("", app, ["install"]);
   expect(run.code).toBe(1);
   expect(run.err).toContain(
-    "fake is a runtime plugin, which is always yours and never a repository's",
+    "fake is a runtime plugin, so it is always yours and never a repository's",
   );
   expect(run.out).not.toContain("Nothing to install");
 });

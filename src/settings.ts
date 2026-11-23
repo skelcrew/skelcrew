@@ -514,6 +514,30 @@ function overrideEntry(repository: Repository): unknown {
   return entry;
 }
 
+// Returns the setup and test commands the skelcrew.yaml on the lead's setup thread's branch sets,
+// as `text` holds it, with your config over it as over any repository's. One it doesn't set yet,
+// or no file at all, is none. Throws, naming it, when the file isn't valid.
+export function setupThreadCommands(
+  repository: Repository,
+  text: string | null,
+): { setup: string[]; test: string[] } {
+  const keys: Key[] = ["setup", "test"];
+  const problem = "the skelcrew.yaml on the thread's branch isn't valid";
+  let data: unknown;
+  try {
+    data = text === null ? undefined : parse(text);
+  } catch (error) {
+    throw new Error(`${problem}: ${error instanceof Error ? error.message : error}`);
+  }
+  const layers = [
+    readOverrides(keys, repository),
+    readYourFile(keys),
+    check(pick(data, keys), problem),
+  ];
+  const { setup, test } = mergeSettings(layers, {}, () => {});
+  return { setup: setup ?? [], test: test ?? [] };
+}
+
 // Returns the repository's skelcrew.yaml, holding only `keys`, checked, or nothing when it has
 // none. It is read from Skelcrew's clone, which is at the default branch, so a change counts once
 // it is pushed there. A link is refused, since it could point at any file of yours.

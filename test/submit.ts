@@ -47,7 +47,8 @@ export const script = (name: string, body: string) => writeScript(home, name, bo
 // While the file busy is in its config folder after a round, it looks busy, as Claude Code does
 // mid-turn, and its turn ends once the file is gone. Once a round's
 // Stop hooks have run, the file ended holds its number. A ci.yml there goes into each round as
-// the repository's first workflow. With docs-only there, a round changes only the file it names, else docs/change.md,
+// the repository's first workflow, and a skelcrew.yaml there replaces the clone's. With check there,
+// it runs sc check before it commits, and keeps what it printed in checked-n. With docs-only there, a round changes only the file it names, else docs/change.md,
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
 // it approves, unless the file claude-limit beside it says limit: then it says its usage
 // limit is reached until 3 seconds from when it runs, as Claude Code did. Its
@@ -85,6 +86,8 @@ round() {
   else echo "$n" > change; fi
   test -e "$CLAUDE_CONFIG_DIR/code-to-docs" && mkdir -p docs && git mv src/app.ts docs/app.md
   test -e "$CLAUDE_CONFIG_DIR/ci.yml" && mkdir -p .github/workflows && cp "$CLAUDE_CONFIG_DIR/ci.yml" .github/workflows/
+  test -e "$CLAUDE_CONFIG_DIR/skelcrew.yaml" && cp "$CLAUDE_CONFIG_DIR/skelcrew.yaml" .
+  test -e "$CLAUDE_CONFIG_DIR/check" && sc check > "$CLAUDE_CONFIG_DIR/checked-$n" 2>&1
   git add -A && git commit -qm "round $n"
   sc submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
   while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
@@ -107,7 +110,7 @@ exec sleep 300`,
 
 // Stands in for Codex. Review n answers with the verdict in Skelcrew's Codex folder's verdict-n,
 // and fails without one. With check-n there, it first runs sc check, as a reviewer runs the
-// tests, and notes in the sessions folder that it did. With linger-n there, it leaves a process
+// tests, and notes in the sessions folder that it did, and then what it printed, in checked-n. With linger-n there, it leaves a process
 // in a session of its own that holds its output open, and notes its ID in linger-n there. It sleeps first when slow-n is there, and while held-n is there it
 // waits for the test to put go-n in the sessions folder. With error-n there, it echoes its
 // prompt and then that error, as codex exec does, and fails. What it was given, the branches it
@@ -126,7 +129,7 @@ cat > "$s/prompt-$n.new"
 f=$(grep -o '/[^ ]*/since-last-round\\.diff' "$s/prompt-$n.new" | head -1)
 test -z "$f" || cp "$f" "$s/since-$n"
 mv "$s/prompt-$n.new" "$s/prompt-$n"
-test -e "$CODEX_HOME/check-$n" && { touch "$s/checking-$n"; sc check > /dev/null 2>&1; }
+test -e "$CODEX_HOME/check-$n" && { touch "$s/checking-$n"; sc check > "$s/checked-$n.new" 2>&1; mv "$s/checked-$n.new" "$s/checked-$n"; }
 test -e "$CODEX_HOME/linger-$n" && { setsid sleep 600 & echo $! > "$s/linger-$n"; }
 test -e "$CODEX_HOME/slow-$n" && sleep 30
 i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
