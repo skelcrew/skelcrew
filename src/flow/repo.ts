@@ -684,6 +684,7 @@ async function newSkelcrewYaml(): Promise<string> {
     ...threadsLine,
     "# Keeps this repository on git alone, with no tracker.",
     "# tracker: none",
+    "# A role can take a model: line, such as model: <name>. Without one, its harness's own default runs.",
     stringify({ roles }),
   ].join("\n");
 }
@@ -714,7 +715,7 @@ async function completeSkelcrewYaml(root: string): Promise<string[]> {
   if (lacked.length === 0) return [];
   console.log(`skelcrew.yaml has no ${lacked.join(", ")}, which every repository needs.`);
   const { chooseCrew } = await import("../machine/crew.ts");
-  const asked = missingRoles.length > 0 ? chooseCrew([...missingRoles], harnessOf("builder")) : {};
+  const asked = missingRoles.length > 0 ? chooseCrew([...missingRoles]) : {};
   const { setSkelcrewLine } = await import("../plugins/repository.ts");
   const set = (key: string, value: unknown) => {
     try {

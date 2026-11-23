@@ -192,8 +192,8 @@ function onGitHub(
 }
 
 async function skel(args: string[], typed = "", cwd = home, more: Record<string, string> = {}) {
-  // sc init asks for each role's harness and model, then setup, test and the thread limit.
-  if (args[0] === "init" && typed === "") typed = "\n\n\n\n\n\nnone\nnone\n\n";
+  // sc init asks for each role's harness.
+  if (args[0] === "init" && typed === "") typed = "\n\n\n";
   const run = Bun.spawn([process.execPath, main, ...args], {
     cwd,
     env: {
@@ -1084,13 +1084,14 @@ test:
 limits: {threads: 3}
 # Keeps this repository on git alone, with no tracker.
 # tracker: none
+# A role can take a model: line, such as model: <name>. Without one, its harness's own default runs.
 roles:
   lead:
     harness: claude
   builder:
     harness: claude
   reviewer:
-    harness: codex
+    harness: claude
 plugins:
   - skelcrew/skelcrew-github
 `,
@@ -1179,7 +1180,7 @@ test("init at a terminal commits only its own files and pushes them to the defau
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
-    "Wrote skelcrew.yaml, skelcrew.lock and .agents/. Commit and push them to main? [Y/n]",
+    "Wrote skelcrew.yaml, skelcrew.lock and .agents/.\nCommit and push them to main? [Y/n]",
   );
   expect(run.out).toContain("Committed them and pushed them to main.");
   expect(git(bare(), "log", "-1", "--format=%s", "main").trim()).toBe("Set up Skelcrew");
@@ -1381,7 +1382,7 @@ test("init writes a skelcrew.lock that pins nothing for a repository that isn't 
     roles: {
       lead: { harness: "claude" },
       builder: { harness: "claude" },
-      reviewer: { harness: "codex" },
+      reviewer: { harness: "claude" },
     },
   });
 });
@@ -2278,23 +2279,50 @@ test("sc says once that rounds: replaces max_rounds: in your config.yaml, here a
   expect(readFileSync(file, "utf8")).toBe(yours);
 });
 
+// With one harness installed, sc init asks nothing about the crew and says which one it found.
+test("init with one harness installed puts every role on it and says so", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  githubInstalledAsYours();
+  rmSync(join(home, "bin", "codex"));
+  const run = await skel(["init"], "", checkout);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Claude Code is the only coding agent installed, so every role runs on it.",
+  );
+  expect(run.out).not.toContain("Choose the coding agent");
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).roles).toEqual({
+    lead: { harness: "claude" },
+    builder: { harness: "claude" },
+    reviewer: { harness: "claude" },
+  });
+});
+
+// Every role is offered the same list, in the same order, and no model is asked: each role runs
+// its harness's own default until skelcrew.yaml gives it a model: line.
 test("init writes the chosen crew without changing personal settings or logins", async () => {
   const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   fake("codex", "exit 0");
   const config = join(home, ".config", "skelcrew", "config.yaml");
   const before = readFileSync(config, "utf8");
-  const typed = "\nmy-lead\nj\nmy-builder\n\nmy-reviewer\n";
-  const run = await skel(["init"], typed, checkout);
+  const run = await skel(["init"], "j\n\n\n", checkout);
   expect(run.code).toBe(0);
-  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toMatchObject({
-    limits: { threads: 3 },
-    roles: {
-      lead: { harness: "claude", model: "my-lead" },
-      builder: { harness: "codex", model: "my-builder" },
-      reviewer: { harness: "claude", model: "my-reviewer" },
-    },
+  const text = readFileSync(join(checkout, "skelcrew.yaml"), "utf8");
+  expect(parse(text)).toMatchObject({ limits: { threads: 3 } });
+  expect(parse(text).roles).toEqual({
+    lead: { harness: "codex" },
+    builder: { harness: "claude" },
+    reviewer: { harness: "claude" },
   });
+  expect(text).toContain("# A role can take a model: line, such as model: <name>.");
+  expect(run.out).not.toContain("model (Enter");
+  expect(run.out).not.toContain("second opinion");
+  const lists = run.out.split("Choose the coding agent for ").slice(1);
+  expect(lists.map((list) => list.indexOf("Claude Code") < list.indexOf("Codex"))).toEqual([
+    true,
+    true,
+    true,
+  ]);
   expect(readFileSync(config, "utf8")).toBe(before);
   expect(run.out).not.toContain("Sign in");
 });

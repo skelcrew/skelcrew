@@ -81,7 +81,7 @@ export async function offerCommit(root: string, remote: string, files: string[])
     byHand(files, base ?? "main");
     return;
   }
-  if (!yes(`${wrote} Commit and push them to ${base}?`)) return byHand(files, base);
+  if (!yes(`${wrote}\nCommit and push them to ${base}?`)) return byHand(files, base);
   const added = git(root, ["add", "--", ...files]);
   const committed = added.ok
     ? git(root, ["commit", "-q", "-m", message, "--only", "--", ...files])
