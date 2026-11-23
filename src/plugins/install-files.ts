@@ -28,12 +28,11 @@ export function installFiles(from?: string): boolean {
     if (root !== null && !from && originHere(root)) {
       const git = (args: string[]) =>
         Bun.spawnSync(["git", "-C", root, ...args], { stdout: "pipe", stderr: "pipe" });
-      const fetched = git(["fetch", "--quiet", "origin", "HEAD"]);
-      if (!fetched.success)
-        throw new Error(
-          `Skelcrew couldn't read the repository's default branch: ${fetched.stderr.toString().trim()}`,
+      if (!git(["fetch", "--quiet", "origin", "HEAD"]).success)
+        console.log(
+          "Skelcrew couldn't read the repository's default branch, so it went by this checkout's skelcrew.yaml.",
         );
-      if (!git(["cat-file", "-e", "FETCH_HEAD:skelcrew.yaml"]).success)
+      else if (!git(["cat-file", "-e", "FETCH_HEAD:skelcrew.yaml"]).success)
         throw new Error(noSkelcrewYaml);
     }
     const unreadable: string[] = [];

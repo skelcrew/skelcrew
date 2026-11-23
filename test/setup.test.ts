@@ -1767,7 +1767,10 @@ test("sc install in a checkout installs the plugins its skelcrew.lock pins after
   cloneEach();
   const second = await atTerminal("", app, ["install"]);
   expect(second.err).toBe("");
-  expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  // Its remote is out of reach, so sc install goes by the checkout.
+  expect(second.out).toBe(
+    "Skelcrew couldn't read the repository's default branch, so it went by this checkout's skelcrew.yaml.\nNothing to install: this machine has everything your files ask for.\n",
+  );
   expect(calls()).toBe("");
   // Your own plugins and lock never take it in, even read later on a machine with no lock.
   await atTerminal("", home, ["plugin", "ls"]);
@@ -1788,7 +1791,10 @@ test("sc install in a checkout asks nothing for a plugin of yours the repository
   cloneEach();
   const run = await atTerminal("", app, ["install"]);
   expect(run.err).toBe("");
-  expect(run.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  // Its remote is out of reach, so sc install goes by the checkout.
+  expect(run.out).toBe(
+    "Skelcrew couldn't read the repository's default branch, so it went by this checkout's skelcrew.yaml.\nNothing to install: this machine has everything your files ask for.\n",
+  );
 });
 
 // A machine holds one version of a plugin, so a repository pinning another version than yours

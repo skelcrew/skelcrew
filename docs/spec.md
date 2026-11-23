@@ -367,7 +367,7 @@ Every command an agent can run answers quickly, as Claude Code moves a shell com
 
 ### Installing
 
-`sc install` installs only plugins. In a checkout it reads that checkout's `skelcrew.yaml` and `skelcrew.lock`, plus your personal `~/.config/skelcrew/skelcrew.lock`, and stops with the line of **`skelcrew.yaml`** when the repository's default branch, which it fetches, or the checkout has no `skelcrew.yaml`. Outside a checkout it installs only your personal plugins. It installs exactly the versions and commits those locks pin, asking before running a new or changed plugin's build and setup, as **Trust** says. Conflicting pins are reported and left alone. A repository plugin without a lock entry is left out until it is pinned.
+`sc install` installs only plugins. In a checkout it reads that checkout's `skelcrew.yaml` and `skelcrew.lock`, plus your personal `~/.config/skelcrew/skelcrew.lock`, and stops with the line of **`skelcrew.yaml`** when the repository's default branch, which it fetches, or the checkout has no `skelcrew.yaml`. When it can't fetch, such as offline, it says so and goes by the checkout's. Outside a checkout it installs only your personal plugins. It installs exactly the versions and commits those locks pin, asking before running a new or changed plugin's build and setup, as **Trust** says. Conflicting pins are reported and left alone. A repository plugin without a lock entry is left out until it is pinned.
 
 It asks no harness questions, logs no agent in, installs no service, starts no daemon, adds no repository, and writes no user config. Plugin setup may ask for that plugin's own login. A later `sc` starts Skelcrew and brings the repository in.
 
