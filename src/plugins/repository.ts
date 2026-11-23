@@ -13,7 +13,6 @@ import { errorText } from "../format.ts";
 import { originHere } from "../machine/origin.ts";
 import { cloneDir, dataDir } from "../paths.ts";
 import {
-  addedAsYours,
   eachAsked,
   installPlugin,
   lockedAs,
@@ -227,27 +226,33 @@ export function addRepositoryPlugin(given: string): string | null {
       `a plugin from a folder is on this machine only, so a repository can't name it. sc plugin add -g ${given} adds it as yours`,
     );
   const top = checkoutTop();
-  if (top === null)
-    throw new Error(
-      "sc plugin add without -g adds a plugin to the repository you are in, and this folder isn't in a checkout of one. sc plugin add -g adds it as yours",
-    );
-  repositoryPlugins(top);
+  const outside =
+    "sc plugin add without -g adds a plugin to the repository you are in, and this folder isn't in a checkout of one. sc plugin add -g adds it as yours";
+  if (top !== null) repositoryPlugins(top);
   const db = openDb();
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
   const fresh = !installed();
-  const options = { remote: originHere(top), pin: false, io: true, orYours: true };
+  const options = {
+    remote: originHere(top ?? "."),
+    pin: false,
+    io: true,
+    orYours: true,
+    ...(top === null ? { onlyYours: outside } : {}),
+  };
   if (fresh && !installPlugin(given, options)) return null;
   const plugin = installed();
   if (!plugin) throw new Error(`${given} isn't installed after all`);
   const manifest = readManifest(plugin.folder);
   const kind = personalKind(manifest);
-  if (kind && fresh) return null;
+  const asYours = `${manifest.name} is ${kind}, so it's added as yours, not the repository's.`;
+  if (kind && fresh) return asYours;
   if (kind && yourPlugins().includes(given))
     return `${manifest.name} is ${kind}, so it's yours, not the repository's, and installed already.`;
   if (kind) {
     writeBoth(() => setLocked(given, lockedAs(manifest, commitOf(plugin.folder))));
-    return addedAsYours(manifest, kind);
+    return asYours;
   }
+  if (top === null) throw new Error(outside);
   writeBoth(
     () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
     [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],

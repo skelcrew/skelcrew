@@ -345,6 +345,7 @@ type Options = {
   pin?: boolean;
   io?: boolean;
   orYours?: boolean;
+  onlyYours?: string;
   called?: string;
 };
 
@@ -364,10 +365,6 @@ export function personalKind(manifest: Manifest): string | null {
   if (manifest.provides.includes("notifier")) return "a notifier, which reaches you";
   return null;
 }
-
-// Returns the line sc plugin add says when it adds a plugin as yours, as it can't be a repository's.
-export const addedAsYours = (manifest: Manifest, kind: string) =>
-  `${manifest.name} is ${kind}, so it's added as yours, not the repository's.`;
 
 export function refusePersonal(manifest: Manifest, io: boolean | undefined): void {
   const kind = personalKind(manifest);
@@ -418,10 +415,10 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   try {
     const kind = personalKind(manifest);
     if (io && options.orYours && kind) {
-      console.log(addedAsYours(manifest, kind));
       io = false;
       pin = true;
     }
+    if (io && options.onlyYours !== undefined && !kind) throw new Error(options.onlyYours);
     const here = installedPlugins(db).find((plugin) => plugin.name === manifest.name);
     if (here?.source && here.source !== given && process.stdin.isTTY) {
       checkSkelcrewVersion(manifest);

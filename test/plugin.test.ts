@@ -1161,6 +1161,8 @@ test("sc plugin add without -g refuses outside a checkout, and for a folder, and
   expect(outside.err).toContain(
     "this folder isn't in a checkout of one. sc plugin add -g adds it as yours",
   );
+  expect(outside.out).not.toContain("[Y/n]");
+  expect(existsSync(join(plugins(), "fake"))).toBe(false);
   const app = appCheckout();
   const folder = await skel(["plugin", "add", "./skelcrew-fake"], "", "", {}, app);
   expect(folder.code).toBe(1);
@@ -1327,7 +1329,7 @@ test("sc plugin ls says what sc install would change for the repository you are 
   );
 });
 
-test("sc plugin add adds a runtime plugin as yours, as a repository can't name one", async () => {
+test("sc plugin add adds a runtime plugin as yours, in a checkout or outside one", async () => {
   const folder = onGitHub("skelcrew/skelcrew-runtime");
   fakePlugin(folder, "0.1.0", "session: [sh, session.sh]\nattach: [sh, attach.sh]\n");
   const manifest = join(folder, "skelcrew-plugin.yaml");
@@ -1343,7 +1345,10 @@ test("sc plugin add adds a runtime plugin as yours, as a repository can't name o
   git(folder, "commit", "-q", "-m", "0.1.0");
   git(folder, "tag", "v0.1.0");
   const app = appCheckout();
-  const fresh = await skel(["plugin", "add", "skelcrew/skelcrew-runtime"], "y\n", "", {}, app);
+  const no = await skel(["plugin", "add", "skelcrew/skelcrew-runtime"], "n\n", "", {}, app);
+  expect(no.out).toContain("Skelcrew didn't install fake.");
+  expect(no.out).not.toContain("added as yours");
+  const fresh = await skel(["plugin", "add", "skelcrew/skelcrew-runtime"], "y\n");
   expect(fresh.code).toBe(0);
   expect(fresh.out).toContain(
     "fake is a runtime plugin, so it's added as yours, not the repository's.\n",
