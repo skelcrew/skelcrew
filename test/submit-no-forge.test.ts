@@ -52,14 +52,12 @@ describe.skipIf(insideSandbox)("with no tracker and no forge", () => {
   test("a thread on what you said is pushed with git, reviewed in Skelcrew, and ends once merged", async () => {
     const bare = addAppOnGit();
     verdict(1, "approve", "Ready to merge.");
-    // Polling every 200 milliseconds, so the merge is seen soon.
     const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)}, 200);`;
     running.push(
       Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "ignore", stderr: "ignore" }),
     );
     await untilCloned();
-    // It has no tracker to open an issue in, and the backlog is named instead.
     const create = await skel(["add", "app", "Add export", "As JSON", "--issue"]);
     expect(create.err).toContain("app has no tracker, so --issue can't open an issue there");
     expect(create.err).toContain("Without --issue, sc add files the task");
@@ -79,18 +77,15 @@ await serve(${JSON.stringify(socket)}, 200);`;
         db.close();
       }
     };
+    await until(() => Object(row()).needs_you === 1);
     expect(row()).toEqual({ task: `t1`, status: "waiting", needs_you: 1, pr: null });
-    // No forge, so no PR, check or review was asked for.
     expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
-    // You merge it yourself, with a squash, and Skelcrew sees the branch has nothing left.
     const work = join(home, "work", "app");
     git(work, "pull", "-q", bare, "main");
     git(work, "fetch", "-q", bare, `skelcrew/1-add-export`);
     git(work, "merge", "--squash", "-q", "FETCH_HEAD");
     git(work, "commit", "-q", "-m", "Add export");
     git(work, "push", "-q", bare, "main");
-    // The thread's row changes a moment before its log has the line, so the test waits on the
-    // log, which comes last.
     await until(() => log().includes("is merged into main"), 30_000);
     expect(row()).toMatchObject({ status: "done" });
     await until(() =>
