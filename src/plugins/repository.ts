@@ -397,7 +397,7 @@ export function installRepositoryPlugins(needs: Need[]): { changed: boolean; mis
         io: true,
       };
       if (here) updatePlugin(db, here, pinned);
-      else installPlugin(source, pinned);
+      else installPlugin(source, { ...pinned, ask: false });
     },
   );
   const left = needs.filter(({ source, locked, conflict }) => {

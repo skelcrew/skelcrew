@@ -368,7 +368,9 @@ export function refusePersonal(manifest: Manifest, io: boolean | undefined): voi
 
 // Installs a plugin and returns whether it did. `given` is either owner/repo, installed from that
 // GitHub repository's newest version tag or the one `tag` names, or a path to a folder of yours,
-// used where it is. It shows what the plugin runs and asks first. Then it runs the plugin's build
+// used where it is. It shows what the plugin runs and asks first, unless `ask` is false, as for
+// sc install, where running it is your yes: then it says in a line what it installs. Either way
+// it installs only at a terminal. Then it runs the plugin's build
 // and setup, and writes your lock when `pin` says to, before the plugin counts as
 // installed. A write that fails leaves the files as they were and the plugin not installed.
 export function installPlugin(given: string, options: Options = {}): boolean {
@@ -403,7 +405,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   const { staged, manifest } = cloned;
   try {
     const here = installedPlugins(db).find((plugin) => plugin.name === manifest.name);
-    if (here?.source && here.source !== given && ask && process.stdin.isTTY) {
+    if (here?.source && here.source !== given && process.stdin.isTTY) {
       checkSkelcrewVersion(manifest);
       refusePersonal(manifest, io);
       refuseOtherName(manifest, called);
@@ -427,13 +429,18 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     checkSkelcrewVersion(manifest);
     refusePersonal(manifest, io);
     refuseOtherName(manifest, called);
-    const answer = ask ? confirmPlugin(manifest, given, "Install", shown) : true;
+    const answer = ask
+      ? confirmPlugin(manifest, given, "Install", shown)
+      : process.stdin.isTTY || null;
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
     if (!answer) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return false;
     }
-    if (!ask) console.log(`Installing ${manifest.name} ${manifest.version} from ${given}...`);
+    if (!ask)
+      console.log(
+        `Installing ${manifest.name} ${manifest.version} from ${given} (runs as you, outside the agents' sandbox).`,
+      );
     const folder = join(pluginsDir(), manifest.name, manifest.version);
     rmSync(dirname(folder), { recursive: true, force: true });
     mkdirSync(dirname(folder), { recursive: true });
@@ -774,7 +781,7 @@ export function installYourPlugins(
       changed = true;
       const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
       if (here) updatePlugin(db, here, pinned);
-      else installPlugin(source, pinned);
+      else installPlugin(source, { ...pinned, ask: false });
     },
   );
   const left = Object.entries(lock)

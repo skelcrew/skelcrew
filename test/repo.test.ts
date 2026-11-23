@@ -1251,7 +1251,10 @@ test("install after init and its push installs only the forge plugin and plain s
   const run = await installAtTerminal(checkout, "y\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Install the github plugin? [Y/n]");
+  expect(run.out).toContain(
+    "Installing github 0.1.0 from skelcrew/skelcrew-github (runs as you, outside the agents' sandbox).",
+  );
+  expect(run.out).not.toContain("[Y/n]");
   expect(run.out).toContain("Installed github 0.1.0.");
   expect(run.out).not.toContain("Adding simon/app to Skelcrew...");
   expect(run.out).not.toContain("Approve");
@@ -1432,11 +1435,14 @@ test("init on a fresh machine leaves the plugins it wrote installed, and ends by
   const checkout = checkoutWithOwnChanges();
   const commit = publishGitHubPlugin();
   rmSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
-  const run = await initAtTerminal(checkout, "y\ny\n");
+  const run = await initAtTerminal(checkout, "y\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain("Committed them and pushed them to main.");
-  expect(run.out).toContain("Install the github plugin? [Y/n]");
+  expect(run.out).toContain(
+    "Installing github 0.1.0 from skelcrew/skelcrew-github (runs as you, outside the agents' sandbox).",
+  );
+  expect(run.out).not.toContain("Install the github plugin");
   expect(run.out).toContain("Installed github 0.1.0.");
   expect(run.out).not.toContain("sc install");
   expect(run.out.replace(/\r/g, "")).toEndWith("\n\nRun sc and tell your lead what to build.\n");

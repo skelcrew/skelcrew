@@ -50,7 +50,7 @@ It asks which coding agent the lead, builders and reviewers use. Then it writes 
 
 Skelcrew's agents read these files only from the default branch. So `sc init` offers to commit and push them. Say yes, or run the git commands it prints.
 
-Then it installs the plugins the files name. It asks before installing the GitHub plugin. Say yes. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository. From then on, Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It ends with:
+Then it installs the plugins the files name, such as the GitHub plugin. Running `sc init` is your yes, so it asks nothing. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository. From then on, Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It ends with:
 
 ```
 Run sc and tell your lead what to build.

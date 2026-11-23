@@ -34,7 +34,7 @@ sc init
 
 Skelcrew's agents read these files only from the default branch, and `sc` stops until `skelcrew.yaml` is there. So `sc init` offers to commit only its own files and push them to your default branch. Say yes, or run the git commands it prints.
 
-`sc init` then installs the plugins the files name, as `sc install` would. It asks before installing the GitHub plugin, `skelcrew/skelcrew-github`: say yes. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It asks no machine questions and starts no service. It ends with `Run sc and tell your lead what to build.` Plain `sc` then adds the repository and opens its lead.
+`sc init` then installs the plugins the files name, as `sc install` would, such as the GitHub plugin, `skelcrew/skelcrew-github`. Running it is your yes, so it asks nothing. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It asks no machine questions and starts no service. It ends with `Run sc and tell your lead what to build.` Plain `sc` then adds the repository and opens its lead.
 
 A clone with `skelcrew.yaml` already needs `sc install` for its plugins, then `sc` to open it. Every repository Skelcrew works on needs one, so run `sc init` in any other.
 
