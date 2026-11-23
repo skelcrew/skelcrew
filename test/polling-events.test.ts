@@ -52,15 +52,15 @@ afterEach(tearDown);
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(insideSandbox)("polling a forge", () => {
-  // The lead works in Skelcrew's clone, which for an empty repository is a checkout of nothing.
-  test("an empty repository's lead starts and stays", async () => {
+  // A repository with no commits has no skelcrew.yaml, so its lead can't read its role. The
+  // daemon carries on polling all the same.
+  test("an empty repository's lead doesn't start, and the daemon carries on", async () => {
     addApp(true);
     changes([issue12()]);
     serve();
-    await until(() => existsSync(join(data(), "claude", leadName, "typed")));
     await morePolls();
     expect(read(daemonLog())).toContain("simon/app has no commits yet");
-    expect(read(daemonLog())).not.toContain("the lead exited");
+    expect(existsSync(join(data(), "claude", leadName, "typed"))).toBe(false);
   });
 
   test("a PR's checks are saved for the list, without Skelcrew's own review check", async () => {

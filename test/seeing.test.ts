@@ -134,6 +134,7 @@ async function openApp(): Promise<void> {
   const clone = join(data(), "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   Bun.spawnSync(["git", "-C", clone, "init", "-q"]);
+  writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
   await new Promise<void>((done) => {
     const connection = createConnection(join(home, "run", "skelcrew.sock"));
     connection.on("connect", () => connection.write('{"command":"lead","from":"simon/app"}\n'));

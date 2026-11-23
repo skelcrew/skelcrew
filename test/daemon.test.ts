@@ -259,6 +259,7 @@ function onGitHub(name: string): string {
   const work = join(home, "work", name);
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), `${name}\n`);
+  writeFileSync(join(work, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");

@@ -1706,8 +1706,8 @@ nameRepositories(db);`;
   }, 60_000);
 
   // Skelcrew never guesses a setup command from the repository's files, as a wrong guess
-  // would run unseen. The lead settles it with you instead.
-  test("without a skelcrew.yaml, no setup command runs, even where one could be guessed", async () => {
+  // would run unseen.
+  test("with setup: [], no setup command runs, even where one could be guessed", async () => {
     addApp({ "go.mod": "module app\n" });
     mkdirSync(join(home, "tools"));
     writeFileSync(join(home, "tools", "go"), '#!/bin/sh\necho "ran go $*" > ran\n', {
