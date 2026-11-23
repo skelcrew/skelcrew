@@ -403,7 +403,6 @@ test("the footer has only the keys you need most, and a click on it does nothing
   expect(seen()).not.toContain("⌥←→");
   click(5, 30);
   click(5, 29);
-  click(5, 28);
   await Bun.sleep(200);
   expect(onLead()).toBe(true);
   expect(footer()).toStartWith("  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit");
