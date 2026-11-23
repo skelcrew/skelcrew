@@ -465,6 +465,32 @@ console.log(JSON.stringify(out));`);
   });
 });
 
+// Starting a builder again that isn't running stops it first, which clears what it needed you for.
+// When the start then fails, the thread is kept stopped with what it had before the pick, so its
+// item comes back with the reason, to pick again.
+test("a start again that fails keeps its item, with the reason, to pick again", () => {
+  const seen = inProcess(`
+const { keepToStartAgain } = await import(${JSON.stringify(source("flow/builder.ts"))});
+record(db, "app-12", { erred: true, said: "OAuth token has expired" });
+const item = row("APP-12").ask;
+const failed = await pickOwnItem(db, "none", "app", "t12", item, "a", async (act, before) => {
+  record(db, "app-12", { status: "stopped", needs_you: false, asking: false, turn_ended: false, erred: false });
+  record(db, "app-12", { status: "failed" });
+  keepToStartAgain(db, before);
+  throw new Error("APP-12's builder couldn't start again: no sandbox");
+}).catch((error) => error.message);
+const back = row("APP-12");
+console.log(JSON.stringify({ failed, status: thread().status, section: back.section, ask: back.ask }));`);
+  expect(seen.failed).toBe("APP-12's builder couldn't start again: no sandbox");
+  expect(seen.status).toBe("stopped");
+  expect(seen.section).toBe("needs you");
+  expect(seen.ask).toMatchObject({
+    title: "Its harness stopped on an error",
+    options: ["Start it again", "Open the builder"],
+    failed: "APP-12's builder couldn't start again: no sandbox",
+  });
+});
+
 // A pick acts only on what you saw: once the thread needs you for something else, it is refused.
 test("a pick on Skelcrew's own item is refused once the item changed", () => {
   const seen = inProcess(`

@@ -43,6 +43,7 @@ import {
   builderStartOf,
   endEarlierBuilder,
   failThread,
+  keepToStartAgain,
   refuseSecondBuilder,
   restartBuilder,
   setUpThread,
@@ -569,8 +570,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           throw new Error(`${name}'s builder couldn't start again: ${errorText(failed)}`);
       }
     } catch (error) {
-      if (act === "restart" && readThread(db, thread.folder).status === "failed")
-        record(db, thread.folder, { status: "stopped" }, "kept stopped, to start again");
+      if (act === "restart") keepToStartAgain(db, thread);
       throw error;
     }
     if (act === "skip review") {

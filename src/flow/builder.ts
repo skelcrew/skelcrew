@@ -782,6 +782,18 @@ export async function refuseSecondBuilder(
   }
 }
 
+// Keeps a thread whose start again, picked on its item, failed: stopped, as its builder isn't
+// running, with the marks it had before the pick, which a stop on the way cleared. So its item
+// comes back, to pick again. A thread that ended or started over meanwhile is left as it is.
+export function keepToStartAgain(db: Database, before: Thread): void {
+  const now = readThread(db, before.folder);
+  if (now.started !== before.started || (now.status !== "failed" && now.status !== "stopped"))
+    return;
+  const { needs_you, asking, turn_ended, erred, limited, limit_reset } = before;
+  const marks = { needs_you, asking, turn_ended, erred, limited, limit_reset };
+  record(db, before.folder, { status: "stopped", ...marks }, "kept stopped, to start again");
+}
+
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what
 // stopped it and start it again. The lead hears of it in a note that goes ahead of routine
 // ones, such as "app-12 failed: its setup command failed", as the human should see it soon. A thread that sc stop stopped, or that its PR's merge or
