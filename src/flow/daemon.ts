@@ -541,8 +541,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Does what an option of Skelcrew's own item on a thread does, by the very requests its
   // command makes, each handled as yours, and returns what the last one said. Starting again
-  // waits until the builder is back, so a start that fails fails the pick. A merge without
-  // approval waits on its first try, as mergeSoon makes it.
+  // waits until the builder is back, so a start that fails fails the pick. One that joins the
+  // queue of limits.threads is done for the pick: a later failure is the thread's own. A merge
+  // without approval waits on its first try, as mergeSoon makes it. What an earlier start or
+  // merge left behind is dropped first, so the pick waits only on its own.
   const runPick = async (act: Act, thread: Thread, picking: Picking) => {
     const name = threadName(db, thread);
     if (act === "open") return `Opening ${name}'s builder.`;
@@ -552,6 +554,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     );
     const requests = pickRequests(act, thread, picking, runs);
     if (requests.length === 0) throw new Error(`${name} has nothing to ${act} now`);
+    comingBack.delete(thread.folder);
+    mergesSoon.delete(thread.folder);
     let said = "";
     for (const request of requests) {
       const reply = await handle(request, "you");

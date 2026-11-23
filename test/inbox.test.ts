@@ -482,6 +482,20 @@ console.log(JSON.stringify({ item, during, failed, section: back.section, ask: b
   expect(seen.ask).toEqual({ ...(seen.item as object), failed: why });
 });
 
+// A start picked while every builder is busy queues the task, which is done for the pick: the
+// task waits in the task queue, and its item goes, even one a stop doesn't clear, such as a
+// missing host plugin.
+test("a start picked that joins the queue takes its task out of Needs you", () => {
+  const seen = inProcess(`
+record(db, "app-12", { host: "herdr", needs_you_for: "run sc install: its session host herdr is missing" });
+const said = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "a", async () => {
+  record(db, "app-12", { status: "queued" });
+  return "APP-12 waits in the queue.";
+});
+console.log(JSON.stringify({ said, section: row("APP-12").section, ask: row("APP-12").ask }));`);
+  expect(seen).toEqual({ said: "APP-12 waits in the queue.", section: "task queue", ask: null });
+});
+
 // A pick acts only on what you saw: once the thread needs you for something else, it is refused.
 test("a pick on Skelcrew's own item is refused once the item changed", () => {
   const seen = inProcess(`

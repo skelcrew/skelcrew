@@ -36,11 +36,11 @@ export const pickingWord = (act: Act): string | null =>
         : null;
 
 // Returns the item for what Skelcrew sees the thread needs you for, or null when it needs you for
-// nothing, its item went to the lead, the lead posted its own, which `asked` says, or a merge
-// picked on it runs.
+// nothing, its item went to the lead, the lead posted its own, which `asked` says, a merge picked
+// on it runs, or it waits in the queue of limits.threads, as a start picked on it is then done.
 export function ownItem(thread: Thread, asked: boolean): OwnItem | null {
-  if (asked || thread.status === "done" || thread.picking === mergingWord || !needsYou(thread))
-    return null;
+  const gone = thread.status === "done" || thread.status === "queued";
+  if (asked || gone || thread.picking === mergingWord || !needsYou(thread)) return null;
   const item = itemFor(thread);
   return thread.handed === handedKey(item) ? null : item;
 }
