@@ -484,7 +484,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       "Someone edited PR #7's description on the forge, so Skelcrew kept it and left your new summary out.",
     );
     const note = read(join(lead(), "typed"));
-    expect(note).toContain("app-12: someone edited PR #7's description on the forge");
+    expect(note).toContain("APP-12: someone edited PR #7's description on the forge");
     expect(note).toMatch(/That summary:\n\nRound \d/);
     expect(read(join(data(), "threads", "app-12.log"))).toContain(
       "kept PR #7's description, which someone edited on the forge",
