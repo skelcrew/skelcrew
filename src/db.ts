@@ -235,7 +235,8 @@ const threadColumns = {
 // `issue_ref` is that issue as its tracker wrote it as the task started, such as #12, so it shows
 // so once the issue has left Skelcrew's copy, or null from a plugin that didn't say.
 // `alias` is the name a task had before every task took a number of Skelcrew's, such as 12 or
-// wr4, which still reaches it.
+// wr4, which still reaches it. `setup_thread` marks the lead's setup thread, started with
+// --setup while the repository's setup or test isn't set yet, which runs without them.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -284,6 +285,7 @@ export const taskColumns = {
   issue: "TEXT",
   alias: "TEXT",
   issue_ref: "TEXT",
+  setup_thread: "INTEGER NOT NULL DEFAULT 0",
 };
 
 // Saves its issue on each task named after it, from before tasks kept their issue apart: one

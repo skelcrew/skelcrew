@@ -136,8 +136,7 @@ function commandsOf(repository: Repository): Commands {
 const unsetCommands = (commands: Commands) =>
   !("problem" in commands) && (commands.setup === null || commands.test === null);
 
-const proposeCommands =
-  'Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README. Propose them to the human in plain words, such as "Setup installs the dependencies with bun install, and the tests run with bun run check", or none where it needs none. On a yes, start a small thread that writes them into skelcrew.yaml as setup: and test:, each a list of commands, [] for none, and opens a PR';
+const proposeCommands = `Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README. Propose them to the human in plain words, such as "Setup installs the dependencies with bun install, and the tests run with bun run check", or none where it needs none. On a yes, start the setup thread with sc add <repo> "<title>" "<body>" --start --setup, its body asking for just those lines in skelcrew.yaml: setup: and test:, each a list of commands, [] for none. It is the only thread that starts while they aren't set. It runs with no setup command and no test suite, so its PR's own CI is the only check of it. Once its PR merges, every other thread can start`;
 
 // Returns the lead's instructions: its role's, from `role`, then Skelcrew's rules for every lead
 // when the role is a repository's own, whether you let it arm a merge when ready and how, the

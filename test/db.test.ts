@@ -724,6 +724,58 @@ await startThread(db, { repo: "app", title: "One", body: "b" });`,
   60_000,
 );
 
+// The lead's setup thread, started with --setup, writes setup and test, so it is the one start
+// allowed while they aren't set. It runs with neither, and once both are set it is refused, as
+// any thread can start then.
+test("the lead's setup thread starts while setup and test are unset, with none, and is refused once they are set", async () => {
+  const { homes } = twoMachines();
+  const [laptop = ""] = homes;
+  const remote = join(home, "setup.git");
+  const work = join(home, "setup");
+  const git = (cwd: string, ...args: string[]) =>
+    Bun.spawnSync(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+  Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
+  Bun.spawnSync(["git", "init", "-q", "-b", "main", work]);
+  const crew =
+    "limits: { threads: 9 }\nroles: { builder: { harness: claude }, reviewer: { harness: claude } }\n";
+  writeFileSync(join(work, "skelcrew.yaml"), `setup:\ntest:\n${crew}`);
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "a");
+  git(work, "push", "-q", remote, "main");
+  const start = (code: string) =>
+    Bun.spawnSync(
+      [
+        process.execPath,
+        "-e",
+        `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+import { repositoryCommands } from ${JSON.stringify(source("config.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+db.run("INSERT OR IGNORE INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+${code}`,
+      ],
+      { env: { ...process.env, HOME: laptop }, stdout: "pipe", stderr: "pipe" },
+    );
+  const started =
+    start(`const thread = await startThread(db, { repo: "app", title: "Set up", body: "b", setup: true });
+console.log(JSON.stringify(repositoryCommands(readThread(db, thread.folder))));`);
+  expect(started.stderr.toString()).toBe("");
+  expect(JSON.parse(started.stdout.toString())).toEqual({ setup: [], test: [] });
+  const other = start(`await startThread(db, { repo: "app", title: "Other", body: "b" });`);
+  expect(other.stderr.toString()).toContain(
+    "app's setup and test aren't set yet. Ask the lead to set them up.",
+  );
+  const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(join(clone, "skelcrew.yaml"), `setup: []\ntest: [make test]\n${crew}`);
+  const late = start(
+    `await startThread(db, { repo: "app", title: "Again", body: "b", setup: true });`,
+  );
+  expect(late.stderr.toString()).toContain(
+    "app's setup and test are set already, so start it without --setup, as any other thread.",
+  );
+}, 60_000);
+
 // A repository with no commits yet, such as one just created, has no skelcrew.yaml, so a thread
 // there is refused before it claims a name, and the remote stays empty.
 test("a thread on an empty repository is refused, as it has no skelcrew.yaml, and claims no name", async () => {

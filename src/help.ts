@@ -98,6 +98,7 @@ const sections: [string, [string, string][]][] = [
       ["--flow <name>", "The flow a task runs, from .agents/flows/, on start or --start"],
       ['--keep "<property>"', "One of 2 to 4 things it must keep true, on start or --start"],
       ["--now", "Start a task at once, over its repository's limits.threads"],
+      ["--setup", "The lead's setup thread, while setup or test isn't set, on start or --start"],
       ["--issue", "Open the task as an issue in the tracker too, on add"],
       ["--keep-issue", "Keep its issue open, to start it over, on rm"],
       ["--from <remote>", "The repository you're in"],

@@ -87,12 +87,14 @@ export function reviewConfig(repository: Repository): {
 // Returns the repository's setup and test commands, from its skelcrew.yaml or your config over
 // it, an empty list when it needs none. Throws while either isn't decided yet, naming the
 // repository as `name` and the lead who sets them up, so every builder and reviewer uses the
-// same ones and none guesses.
+// same ones and none guesses. The lead's setup thread, which writes them, runs with none of
+// those not set yet.
 export function repositoryCommands(
-  repository: Repository,
+  repository: Repository & { setup_thread?: boolean | undefined },
   name = `${repository.owner}/${repository.repo}`,
 ): { setup: string[]; test: string[] } {
   const { setup, test } = readSettings(["setup", "test"], repository);
+  if (repository.setup_thread) return { setup: setup ?? [], test: test ?? [] };
   if (setup !== null && test !== null) return { setup, test };
   const unset =
     setup === null && test === null
