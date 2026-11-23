@@ -1017,7 +1017,7 @@ test("every section has its heading with its count, only open ones show rows, an
     "   ◆ Lead · Claude Code                                              ○ starting",
     "",
     "─".repeat(79),
-    "   1 running · 1 ready · 1 needs you",
+    "   1 running · 1 ready",
     "",
     "   Needs you  2",
     " ▸ ● 12  Rate limit the API",
@@ -1046,7 +1046,7 @@ test("every section has its heading with its count, only open ones show rows, an
   expect(lines).toHaveLength(29);
 });
 
-test("an open section shows its rows, and its heading is bright while a closed one is dim", () => {
+test("an open section shows its rows, and its heading is bold while a closed one is plain", () => {
   const lines = drawn(1, 26, 80, ["backlog", "ready"]);
   // A task in Backlog or Done takes one line, in columns: mark, name, title, when it changed.
   expect(lines.slice(7, 17).map((line) => line.trimEnd())).toEqual([
@@ -1063,7 +1063,7 @@ test("an open section shows its rows, and its heading is bright while a closed o
   ]);
   const coloured = drawnWith(1, frame, { width: 80, height: 24 }, ["backlog"]);
   expect(coloured).toContain(" \x1b[90m0\x1b[22;39m \x1b[1mBacklog   \x1b[22;39m 1");
-  expect(coloured).toContain(" \x1b[90m2\x1b[22;39m \x1b[38;5;69mBuilding  \x1b[22;39m 1");
+  expect(coloured).toContain(" \x1b[90m2\x1b[22;39m Building   1");
   // Needs you has no number key, and its count is yellow, as it shows only while a task waits
   // on you.
   expect(coloured).toContain(
@@ -1317,7 +1317,7 @@ test("each line drawn says what a click on it reaches", () => {
     targets[lines.findIndex((line) => Bun.stripANSI(line).includes(text))];
   expect(at("◆ Lead")).toEqual({ row: 0 });
   expect(at("─")).toBeNull();
-  expect(at("1 needs you")).toBeNull();
+  expect(at("1 ready")).toBeNull();
   expect(at("Backlog")).toEqual({ section: "backlog" });
   expect(at("Ready")).toEqual({ section: "ready" });
   expect(at("Login redirect")).toEqual({ row: shown.findIndex((row) => row.name === "APP-7") });
@@ -1346,9 +1346,9 @@ test("a row's word is in its colour, then its step and PR dim, its CI's mark and
   const { lines } = drawList(shown, headings, 1, 0, frame, size);
   const at = lines.findIndex((line) => line.includes("Login redirect"));
   expect(lines.slice(at, at + 3)).toEqual([
-    "   \x1b[38;5;69m○\x1b[22;39m 7   Login redirect",
+    "   \x1b[1m○\x1b[22;39m 7   Login redirect",
     "     \x1b[1mchanges\x1b[22;39m\x1b[90m · Editing rows.ts · #40 \x1b[22;39m\x1b[38;5;136m●\x1b[22;39m\x1b[90m \x1b[22;39m\x1b[38;5;136mr2\x1b[22;39m\x1b[90m · 5m\x1b[22;39m",
-    " \x1b[90m3\x1b[22;39m \x1b[38;5;171mReviewing \x1b[22;39m 0",
+    " \x1b[90m3\x1b[22;39m \x1b[90mReviewing \x1b[22;39m \x1b[90m0\x1b[22;39m",
   ]);
 });
 
@@ -1367,7 +1367,7 @@ test("the lead heads the list with its state and step, then a line across and th
     `${"   ◆ Lead · Claude Code".padEnd(41)}○ working`,
     "     Reading rows.ts",
     "─".repeat(50),
-    "   1 running · 1 ready · 1 needs you",
+    "   1 running · 1 ready",
     "",
     "   Needs you  2",
   ]);
@@ -1376,7 +1376,7 @@ test("the lead heads the list with its state and step, then a line across and th
   expect(lines[2]).toStartWith("\x1b[90m─");
   // APP-14 waits only for you to merge it, so it counts as ready, though it shows under Needs you.
   expect(lines[3]).toContain("\x1b[38;5;34m1 ready");
-  expect(lines[3]).toContain("\x1b[38;5;136m1 needs you");
+  expect(Bun.stripANSI(lines[3] ?? "")).not.toContain("needs you");
   // On the lead's row, both its lines are shaded. Narrow, its title gives way to its state.
   const narrow = drawRows(shown, sectionHeadings(all, opened), 0, 0, 30, 30).lines;
   expect(narrow[0]).toContain("\x1b[48;5;238m");
@@ -1397,6 +1397,17 @@ test("the lead heads the list with its state and step, then a line across and th
     `${"   ◆ Lead · Claude Code".padEnd(44)}○ idle`,
     "",
   ]);
+  // Selected while idle, the shade covers the lead's own line alone, not the blank one below it.
+  const chosen = drawRows(
+    shownRows(idle, opened, false),
+    sectionHeadings(idle, opened),
+    0,
+    0,
+    50,
+    30,
+  ).lines;
+  expect(chosen[0]).toContain("\x1b[48;5;238m");
+  expect(chosen[1]).toBe("");
 });
 
 // A spinner shows which agents are at work this moment: the lead's and each working builder's
@@ -1421,9 +1432,10 @@ test("with the spinner, the marks of agents at work are its first frame, and the
     "◆ Lead · Claude Code                            ⠋ working",
     "▸ ⠋ 7   Login redirect",
   ]);
-  // Each cell is drawn in its colours: Building's blue, on the grey of the row you are on.
-  expect(spins[1]?.cell).toBe("\x1b[48;5;238m\x1b[38;5;69m⠋\x1b[22;39m\x1b[49m");
-  expect(lines[spins[1]?.line ?? 0]).toContain("\x1b[48;5;238m ▸ \x1b[38;5;69m⠋\x1b[22;39m");
+  // Each cell is drawn in its colours: a working builder's bright white, on the grey of the row
+  // you are on.
+  expect(spins[1]?.cell).toBe("\x1b[48;5;238m\x1b[1;38;5;231m⠋\x1b[22;39m\x1b[49m");
+  expect(lines[spins[1]?.line ?? 0]).toContain("\x1b[48;5;238m ▸ \x1b[1;38;5;231m⠋\x1b[22;39m");
   // A builder still at work after its review failed spins in the failure's red, so it shows both.
   sql("UPDATE threads SET review_failed = 1 WHERE folder = 'app-7';");
   const failed = rows();
@@ -1450,10 +1462,9 @@ test("with the spinner, the marks of agents at work are its first frame, and the
   expect(still.lines.join("\n")).not.toContain("⠋");
 });
 
-// Each stage has a colour, which its heading and its tasks' marks share, so the stages sort at a
-// glance. Needs you stays yellow and what went wrong red, whatever the stage. The task queue and
-// Backlog keep the theme's own text, and a closed heading is dim.
-test("each stage's heading and its tasks' marks share its colour, and needs you and failures keep theirs", () => {
+// A stage has no colour of its own: its heading is plain while it has tasks and dim while it has
+// none, bold while open. Only what needs attention is coloured: needs you yellow, a failure red.
+test("a stage's heading is plain with tasks and dim when empty, and only needs you and failures are coloured", () => {
   sql(`${fourStagesSql()}
 ${threadSql({ task: "18", title: "Failed", status: "failed", pr: 48 })}
 ${threadSql({ task: "19", title: "Merged", status: "done", merged: 1, pr: 49 })}`);
@@ -1468,21 +1479,42 @@ ${threadSql({ task: "19", title: "Merged", status: "done", merged: 1, pr: 49 })}
     80,
   );
   const line = (text: string) => lines.find((one) => Bun.stripANSI(one).includes(text)) ?? "";
-  expect(line(" 2 Building")).toContain("\x1b[1;38;5;69mBuilding");
-  expect(line(" 3 Reviewing")).toContain("\x1b[1;38;5;171mReviewing");
-  expect(line(" 4 Checks")).toContain("\x1b[1;38;5;202mChecks");
-  expect(line(" 6 Done")).toContain("\x1b[1;90mDone");
+  expect(line(" 2 Building")).toContain("\x1b[1mBuilding");
+  expect(line(" 3 Reviewing")).toContain("\x1b[1mReviewing");
+  expect(line(" 4 Checks")).toContain("\x1b[1mChecks");
+  expect(line(" 6 Done")).toContain("\x1b[1mDone");
   expect(line("Needs you")).toContain("\x1b[1;38;5;136mNeeds you");
-  // A closed stage keeps its colour, not bold, so the stages sort while closed too.
-  expect(line(" 5 Ready")).toContain("\x1b[38;5;34mReady");
-  expect(line(" 1 Task queue")).toContain("\x1b[90mTask queue");
-  expect(line("Login redirect")).toContain("\x1b[38;5;69m○");
-  expect(line("Under review")).toContain("\x1b[38;5;171m○");
-  expect(line("Approved too")).toContain("\x1b[38;5;202m○");
+  // A closed stage with tasks is plain text, its name and its count.
+  expect(line(" 1 Task queue")).toContain("\x1b[22;39m Task queue 1");
+  // An empty stage is dim, its name and its count.
+  const empty = lines.find((one) => / 0$/.test(Bun.stripANSI(one).trimEnd())) ?? "";
+  const name = Bun.stripANSI(empty).trim().split(/ +/)[1] ?? "";
+  expect(name).not.toBe("");
+  expect(empty).toContain(`\x1b[90m${name}`);
+  expect(empty).toContain(" \x1b[90m0\x1b[22;39m");
+  // No stage's own hue colours a heading or a task's mark.
+  for (const hue of ["38;5;69", "38;5;171", "38;5;202"])
+    expect(lines.join("\n")).not.toContain(hue);
+  expect(line("Login redirect")).toContain("\x1b[1m○");
+  expect(line("Under review")).toContain("\x1b[90m○");
   expect(line("Merged")).toContain("\x1b[90m○");
   expect(line("Rate limit the API")).toContain("\x1b[38;5;136m●");
   expect(line("Fix the export header")).toContain("\x1b[38;5;34m●");
   expect(line("Failed")).toContain("\x1b[38;5;203m○");
+  // A failed check is still red, in the stage of its task.
+  const failing = all.map((row) =>
+    row.name === "APP-7" ? { ...row, pr: "#40", ci: "failed" as const } : row,
+  );
+  const checked = drawRows(
+    shownRows(failing, opened, false),
+    sectionHeadings(failing, opened),
+    0,
+    0,
+    80,
+    80,
+  ).lines;
+  const at = checked.findIndex((one) => one.includes("Login redirect"));
+  expect(checked[at + 1]).toContain("\x1b[38;5;203m✗");
   // Without colour, the shape still says it: filled needs you, hollow doesn't.
   expect(Bun.stripANSI(line("Rate limit the API"))).toContain("● 12");
 });
@@ -1641,7 +1673,7 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
     "   ◆ Lead · Claude Code                                              ○ starting",
     "",
     "─".repeat(79),
-    "   11 running · 1 ready · 1 needs you",
+    "   11 running · 1 ready",
     "",
     " ↑ 11 more   Needs you 2   Backlog 1   Task queue 1   Building 11",
     "   ○ 57  Task 57",
@@ -1760,7 +1792,7 @@ test("the summary counts as running only the builders at work, and a review wait
   const opened = new Set<Section>(["needs you", "building", "reviewing", "checks"]);
   const shown = shownRows(all, opened, false);
   const { lines } = drawRows(shown, sectionHeadings(all, opened), 0, 0, 80, 60);
-  expect(Bun.stripANSI(lines[3] ?? "").trimEnd()).toBe("   7 running · 1 ready · 1 needs you");
+  expect(Bun.stripANSI(lines[3] ?? "").trimEnd()).toBe("   7 running · 1 ready");
   sql("UPDATE threads SET status = 'waiting' WHERE folder = 'app-7';");
   const fewer = rows();
   const drawn = drawRows(
