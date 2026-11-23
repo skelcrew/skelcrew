@@ -44,7 +44,7 @@ const sections: [string, [string, string][]][] = [
       ["plugin add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
       ["plugin update -g [<name>]", "Move one, or all, to its newest version, after asking"],
       ["plugin setup <name>", "Run its setup again, such as to sign in again"],
-      ["plugin rm [-g] <name>", "Explain what changes, then ask before removing one"],
+      ["plugin rm [-g] <name>", "Remove one, after asking"],
       ["plugin ls", "Your plugins, and what install would change"],
     ],
   ],

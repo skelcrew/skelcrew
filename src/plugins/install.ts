@@ -1,5 +1,5 @@
 // Installing, updating, listing and explicitly removing plugins on this machine.
-// Personal pins stay in your lock; removal explains what changes and asks in your terminal.
+// Personal pins stay in your lock; removal asks for confirmation in your terminal.
 import type { Database } from "bun:sqlite";
 import {
   existsSync,
@@ -15,13 +15,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { hasTasks, openDb } from "../db.ts";
-import { openPrs } from "../flow/copy.ts";
-import { checkPush } from "../flow/git.ts";
 import { markMissingPlugin } from "../flow/missing-plugins.ts";
 import { repositories } from "../flow/repo.ts";
 import { liveThreads, taskName } from "../flow/thread.ts";
 import { originHere } from "../machine/origin.ts";
-import { cloneDir, configDir, dataDir } from "../paths.ts";
+import { configDir, dataDir } from "../paths.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { readSettings } from "../settings.ts";
 import { release } from "../version.ts";
@@ -694,7 +692,7 @@ export function addPlugin(given: string, remote = originHere(), shown: Shown = {
   return true;
 }
 
-export async function removeYourPlugin(given: string): Promise<void> {
+export function removeYourPlugin(given: string): void {
   const db = openDb();
   const lock = yourLock();
   const plugin = installedPlugins(db).find((one) => one.name === given || one.source === given);
@@ -703,37 +701,8 @@ export async function removeYourPlugin(given: string): Promise<void> {
   if (!plugin && source === undefined)
     throw new Error(`there is no plugin named ${given}: sc plugin ls lists them`);
   const name = plugin?.name ?? (source ? lock[source]?.name : undefined) ?? given;
-  const uses = plugin ? usesOf(db, plugin.name) : [];
-  const changes: string[] = [];
-  const forge = uses.find((use) => use.job === "forge");
-  const tracker = uses.find((use) => use.job === "tracker");
-  const host = uses.find((use) => use.job === "session host");
-  if (forge)
-    changes.push(
-      `${forge.names.join(", ")} ${forge.names.length === 1 ? "loses its" : "lose their"} forge: no PRs, pushes use your git login.`,
-    );
-  if (tracker) changes.push(`No issues in ${tracker.names.join(", ")}.`);
-  if (host) changes.push(`Skelcrew loses access to ${host.names.join(", ")}.`);
-  const notes: string[] = [];
-  for (const repository of repositories(db).filter((r) => r.forge === name)) {
-    const count = openPrs(db, repository.owner, repository.repo).length;
-    const where = forge?.names.length === 1 ? "" : ` in ${repository.name}`;
-    if (count > 0)
-      notes.push(
-        `${count} open PR${count === 1 ? "" : "s"}${where} stay${count === 1 ? "s" : ""} on ${name === "github" ? "GitHub" : name}, unfollowed.`,
-      );
-    try {
-      await checkPush(
-        db,
-        { ...repository, forge: null },
-        cloneDir(repository.owner, repository.repo),
-      );
-    } catch {
-      notes.push(`Your git login can't push to ${repository.name}.`);
-    }
-  }
-  const question = `Remove ${name}? ${changes.length > 0 ? `${changes.join(" ")} ` : ""}[y/N]`;
-  const answer = askLine(notes.length > 0 ? `${question}\n${notes.join(" ")}` : question);
+  const title = name === "github" ? "GitHub" : name;
+  const answer = askLine(`Remove ${title}? [y/N]`);
   if (answer === null)
     throw new Error(
       `removing ${name} needs your yes at a terminal. Run sc plugin rm ${name} in your terminal`,
