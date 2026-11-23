@@ -84,6 +84,8 @@ const working: Thread = {
   needs_you_for: null,
   said: null,
   handed: null,
+  picking: null,
+  pick_failed: null,
   limit_decided: false,
   review_failed: false,
   agents: null,

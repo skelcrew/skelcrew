@@ -88,6 +88,7 @@ import {
   cancelMerge,
   loginName,
   refuseWithoutForge,
+  takeBackFailedMerge,
   threadToMerge,
 } from "./merging.ts";
 import {
@@ -511,6 +512,22 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     );
     return `Merged ${found.name}#${pr}.`;
   };
+  // Polls the thread's repository twice at once, once a merge is armed, so a PR that is ready
+  // already merges now rather than at the polls to come: the first posts the record of who
+  // asked, and the second merges. One the forge refused or failed already tries no more here, so
+  // a pick sees that refusal. sc merge doesn't wait for it. A pick takes it, by the thread's
+  // folder, to wait for that one try and say when it failed.
+  const mergesSoon = new Map<string, Promise<void>>();
+  const mergeSoon = (thread: Thread) => {
+    const fullName = `${thread.owner}/${thread.repo}`;
+    const soon = polling.promise.then(async (poll) => {
+      await poll(fullName);
+      if (readThread(db, thread.folder).merge_waits?.startsWith("the forge, which ")) return;
+      await poll(fullName);
+    });
+    soon.catch((error) => console.log(errorText(error)));
+    mergesSoon.set(thread.folder, soon);
+  };
   // Restarts a running builder, keeping its conversation, and returns what to say.
   const restartThread = async (thread: Thread): Promise<string> => {
     const name = threadName(db, thread);
@@ -524,14 +541,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       return `${name} was stopped or removed meanwhile, so its builder stays ended.`;
     if ("failed" in restarted) {
       failThread(db, sessions, thread, restarted.failed);
-      return `${name}'s builder couldn't start again: ${errorText(restarted.failed)}`;
+      throw new Error(`${name}'s builder couldn't start again: ${errorText(restarted.failed)}`);
     }
     return restarted.gone === null
       ? `Restarted ${name}'s builder.`
       : `Skelcrew can't tell whether its builder runs, as ${restarted.gone}.`;
   };
   // Does what an option of Skelcrew's own item on a thread does, by the very requests its
-  // command makes, each handled as yours, and returns what the last one said.
+  // command makes, each handled as yours, and returns what the last one said. Starting again
+  // waits until the builder is back, so a start that fails fails the pick. One that joins the
+  // queue of limits.threads is done for the pick: a later failure is the thread's own. A merge
+  // without approval waits on its first try, as mergeSoon makes it. What an earlier start or
+  // merge left behind is dropped first, so the pick waits only on its own.
   const runPick = async (act: Act, thread: Thread, picking: Picking) => {
     const name = threadName(db, thread);
     if (act === "open") return `Opening ${name}'s builder.`;
@@ -541,6 +562,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     );
     const requests = pickRequests(act, thread, picking, runs);
     if (requests.length === 0) throw new Error(`${name} has nothing to ${act} now`);
+    comingBack.delete(thread.folder);
+    mergesSoon.delete(thread.folder);
     let said = "";
     for (const request of requests) {
       const reply = await handle(request, "you");
@@ -548,6 +571,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       said = stopped.success
         ? `Stopped ${stopped.data.stopped}.`
         : (Object.values(reply).find((value) => typeof value === "string") ?? said);
+    }
+    if (act === "restart") {
+      const failed = (await comingBack.get(thread.folder)) ?? null;
+      comingBack.delete(thread.folder);
+      if (failed !== null)
+        throw new Error(`${name}'s builder couldn't start again: ${errorText(failed)}`);
+    }
+    if (act === "skip review") {
+      const soon = mergesSoon.get(thread.folder) ?? Promise.resolve();
+      mergesSoon.delete(thread.folder);
+      const failed = await soon.then(
+        () => takeBackFailedMerge(db, thread, null),
+        (error) => takeBackFailedMerge(db, thread, errorText(error)),
+      );
+      if (failed !== null) throw new Error(failed);
     }
     return said;
   };
@@ -593,17 +631,24 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       );
     record(db, now.folder, { flow, ...(short ? { short } : {}) }, `given the flow ${flow}`);
   };
+  // A stopped thread coming back, by its folder, until its builder is back, with why it couldn't
+  // come back, or null. A pick that starts it again waits on it, to say when the start failed.
+  const comingBack = new Map<string, Promise<unknown>>();
   const resume = async (stopped: Thread, short?: string) => {
     const change = { status: statusOnceBack(stopped), ...(short ? { short } : {}) };
-    await comeBack(record(db, stopped.folder, change, "started again"));
+    const back = comeBack(record(db, stopped.folder, change, "started again"));
+    comingBack.set(stopped.folder, back);
+    await back;
   };
-  const comeBack = async (thread: Thread) => {
+  const comeBack = async (thread: Thread): Promise<unknown> => {
     try {
       await listenFor(thread);
       if ((await bringBack(db, sessions, thread)) !== "not wanted")
         resumeRound(db, sessions, thread.folder);
+      return null;
     } catch (error) {
       failThread(db, sessions, thread, error);
+      return error;
     }
   };
   // sc start names its task as typed, and the name is looked up here: once as it comes in, and
@@ -1040,7 +1085,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (leadOfCaller(caller) === null) {
           if (request.asked !== undefined)
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
-          return { said: armMerge(db, sessions, thread, { seen: request.seen }, skip) };
+          const said = armMerge(db, sessions, thread, { seen: request.seen }, skip);
+          mergeSoon(thread);
+          return { said };
         }
         if (!leadCanMerge())
           throw new Error(
@@ -1052,7 +1099,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           throw new Error(
             "give what the human asked with --asked-file, a file holding their exact words",
           );
-        return { said: armMerge(db, sessions, thread, { asked: request.asked }, skip) };
+        const said = armMerge(db, sessions, thread, { asked: request.asked }, skip);
+        mergeSoon(thread);
+        return { said };
       }
       case "merge cancel":
         return { said: cancelMerge(db, threadToMerge(db, request)) };
@@ -1285,6 +1334,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // A task that left the queue but whose builder's start the stop cut short goes back to it
   // first, as it can't be brought back.
   backToQueue(db);
+  // A pick the daemon's stop cut short runs no more, so its task needs you again.
+  db.run("UPDATE threads SET picking = NULL WHERE picking IS NOT NULL");
   dropReviewLogins(homedir());
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.

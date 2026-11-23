@@ -423,6 +423,24 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       );
     }, 90_000);
 
+    // A PR approved and green already merges as you arm it, rather than at the polls to come,
+    // which here are a minute away.
+    test("a merge armed on a PR approved and green already merges at once", async () => {
+      await approvedApp12();
+      const head = pushed();
+      pr({ head, reviews: [skelReview], checks: [approved, check(6, "passed")] });
+      await until(() => thread().needs_you === 1);
+      const first = running.splice(0, 1)[0];
+      first?.kill();
+      await first?.exited;
+      serve(60_000);
+      await morePolls(1);
+      await arm();
+      await until(() => merges().length === 1, 15_000);
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      await until(() => thread().status === "done", 15_000);
+    }, 90_000);
+
     // CI on another PR means CI may still be starting on this one, so an approved PR with no CI
     // check waits for its first check, as a review does. CI that never shows, as on a docs-only
     // PR it skips with a paths filter, ends the wait: no CI runs on it, and it merges.

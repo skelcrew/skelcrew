@@ -9,7 +9,7 @@ import { openTasks } from "./copy.ts";
 import { leadOf } from "./lead.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { noticeItem } from "./notify.ts";
-import { type Act, handedKey, ownItem } from "./own-items.ts";
+import { type Act, handedKey, ownItem, pickingWord } from "./own-items.ts";
 import { findRepository } from "./repo.ts";
 import { letters } from "./requests.ts";
 import { reportStatus } from "./status.ts";
@@ -228,12 +228,16 @@ export async function pickOwnItem(
   const recorded = decides
     ? "\n\nSkelcrew recorded this pick as the human's decision on the task."
     : "";
+  const picking = pickingWord(option.act);
   db.transaction(() => {
     noteForLead(db, sessions, thread, `${told}${recorded}`, null, true);
-    if (handing) record(db, thread.folder, { handed: handedKey(item) }, words);
-    else if (decides)
-      record(db, thread.folder, { decisions: [...thread.decisions, decision] }, words);
-    else log(db, thread, words);
+    const change = {
+      picking,
+      pick_failed: null,
+      ...(handing ? { handed: handedKey(item) } : {}),
+      ...(decides ? { decisions: [...thread.decisions, decision] } : {}),
+    };
+    record(db, thread.folder, change, words);
   })();
   let said: string;
   try {
@@ -249,14 +253,15 @@ export async function pickOwnItem(
         null,
         true,
       );
-      if (!decides) return;
       const { decisions } = readThread(db, thread.folder);
       const kept = decisions.filter(({ at, words }) => at !== decision.at || words !== told);
-      record(db, thread.folder, { decisions: kept }, `the pick didn't run: ${words}`);
+      const change = { picking: null, pick_failed: why, ...(decides ? { decisions: kept } : {}) };
+      record(db, thread.folder, change, `the pick didn't run: ${words}`);
     })();
     typeLeadNotes(db, sessions);
     throw error;
   }
+  if (picking !== null) record(db, thread.folder, { picking: null });
   typeLeadNotes(db, sessions);
   return said;
 }
