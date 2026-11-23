@@ -512,6 +512,38 @@ console.log(JSON.stringify({ before, during, refused, failed, box, again, cleare
   expect((seen.after as { ask: object }).ask).not.toHaveProperty("failed");
 });
 
+// A merge without approval arms a plan, which the forge can still refuse on its first try. The
+// pick then fails: the plan stops, and the round limit needs you again, so the item comes back with
+// the forge's reason, to pick again. One still waiting on its checks stays armed.
+test("a merge without approval the forge refuses at once brings its item back, unarmed", () => {
+  const seen = inProcess(`
+const { armMerge, takeBackFailedMerge } = await import(${JSON.stringify(source("flow/merging.ts"))});
+db.run(\`${itemSql("app", "pr", 7, "Add export", "2026-11-20T10:00:00Z", { head: "b".repeat(40) })}\`);
+db.run("UPDATE repositories SET forge = 'github'");
+record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", held: "Fix it.", needs_you: true, pr: 7 });
+const tryMerge = (waits) => async () => {
+  armMerge(db, "none", thread(), { seen: { pr: 7, started: thread().started, head: "b".repeat(40) } }, true);
+  record(db, "app-12", { merge_waits: waits });
+  const failed = takeBackFailedMerge(db, thread());
+  if (failed !== null) throw new Error(failed);
+  return "armed";
+};
+const refused = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", tryMerge("the forge, which refused: Pull Request is not mergeable")).catch((error) => error.message);
+const back = row("APP-12");
+const waiting = await pickOwnItem(db, "none", "app", "t12", back.ask, "b", tryMerge("its checks"));
+console.log(JSON.stringify({ refused, section: back.section, ask: back.ask, plan: thread().merge_plan, waiting }));`);
+  const why = "#7 didn't merge: the forge refused: Pull Request is not mergeable";
+  expect(seen.refused).toBe(why);
+  expect(seen.section).toBe("needs you");
+  expect(seen.ask).toMatchObject({
+    title: "Review still wants changes after 3 rounds",
+    options: ["Go on: fix the findings", "Merge without approval", "Stop the builder"],
+    failed: why,
+  });
+  expect(seen.waiting).toBe("armed");
+  expect(seen.plan).toBe("armed");
+});
+
 // On the screen every option of Skelcrew's own item goes to the daemon, so the lead hears it:
 // opening the builder then attaches, both merges ask y/n first, carrying the commit you saw
 // approved for the PR, and the rest go at once. Skelcrew's own item takes no reply.

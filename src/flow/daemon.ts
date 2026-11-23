@@ -81,6 +81,7 @@ import {
   cancelMerge,
   loginName,
   refuseWithoutForge,
+  takeBackFailedMerge,
   threadToMerge,
 } from "./merging.ts";
 import {
@@ -505,10 +506,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Polls the thread's repository twice at once, once a merge is armed, so a PR that is ready
   // already merges now rather than at the polls to come: the first posts the record of who
-  // asked, and the second merges. sc merge doesn't wait for it.
+  // asked, and the second merges. sc merge doesn't wait for it, and a pick does, so it can say
+  // when the forge refused.
   const mergeSoon = (thread: Thread) => {
     const fullName = `${thread.owner}/${thread.repo}`;
-    void polling.promise
+    return polling.promise
       .then(async (poll) => {
         await poll(fullName);
         await poll(fullName);
@@ -552,6 +554,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       said = stopped.success
         ? `Stopped ${stopped.data.stopped}.`
         : (Object.values(reply).find((value) => typeof value === "string") ?? said);
+    }
+    if (act === "skip review") {
+      await mergeSoon(thread);
+      const failed = takeBackFailedMerge(db, thread);
+      if (failed !== null) throw new Error(failed);
     }
     return said;
   };
@@ -1045,7 +1052,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           if (request.asked !== undefined)
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
           const said = armMerge(db, sessions, thread, { seen: request.seen }, skip);
-          mergeSoon(thread);
+          void mergeSoon(thread);
           return { said };
         }
         if (!leadCanMerge())
@@ -1059,7 +1066,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             "give what the human asked with --asked-file, a file holding their exact words",
           );
         const said = armMerge(db, sessions, thread, { asked: request.asked }, skip);
-        mergeSoon(thread);
+        void mergeSoon(thread);
         return { said };
       }
       case "merge cancel":

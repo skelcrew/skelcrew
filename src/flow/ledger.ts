@@ -533,6 +533,15 @@ export const notReviewed = (thread: Thread, sha: string, ready: string | null, n
 export const limitDecided = (thread: Thread, now: number) =>
   limitWaits(thread) ? logged(thread, { kind: "limit decided", at: now }) : {};
 
+// Takes back the latest decision about the round limit, as the merge that made it failed at once,
+// so the limit needs you again. Only while that decision is still the record's last event.
+export function limitUndecided(thread: Thread) {
+  const log = recordOf(thread);
+  if (log.at(-1)?.kind !== "limit decided") return {};
+  const round_log = log.slice(0, -1);
+  return { round_log, ...round_log.reduce(next, freshRound) } satisfies Partial<Thread>;
+}
+
 // You let a thread past the round limit go on, with sc start. Its held changes are to be typed
 // into the builder, as a round within the limit would have done. Its rounds of changes stand at
 // the limit, so it is no longer past it, but the next review asking for changes reaches it again.

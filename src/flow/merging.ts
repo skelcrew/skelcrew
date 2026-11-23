@@ -20,7 +20,7 @@ import {
 } from "./decide.ts";
 import { beingRemoved, endThread } from "./events.ts";
 import { itemOpen } from "./inbox.ts";
-import { limitDecided, roundMoved, roundOf } from "./ledger.ts";
+import { limitDecided, limitUndecided, roundMoved, roundOf } from "./ledger.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
@@ -251,6 +251,20 @@ export function cancelMerge(db: Database, thread: Thread): string {
   };
   record(db, thread.folder, none, "its armed merge was cancelled");
   return `${name} won't merge by itself. It waits for you to merge it.`;
+}
+
+// Takes back a merge without approval you picked on an item, once its first try failed on the
+// forge, and returns why, or null when it merged or still waits on its checks. The plan is
+// cancelled, so it tries no more, and the round limit needs you again, so the item comes back
+// for you to pick again.
+export function takeBackFailedMerge(db: Database, thread: Thread): string | null {
+  const now = readThread(db, thread.folder);
+  const waits = now.merge_waits;
+  if (now.merge_plan !== "armed" || !waits?.startsWith("the forge, which ")) return null;
+  cancelMerge(db, now);
+  const why = `#${now.pr} didn't merge: the forge ${waits.slice("the forge, which ".length)}`;
+  record(db, now.folder, limitUndecided(readThread(db, now.folder)), why);
+  return why;
 }
 
 // The threads whose PR the forge is merging now, by folder. A cancel meanwhile is refused, as
