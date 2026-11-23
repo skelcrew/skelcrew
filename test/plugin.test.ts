@@ -880,6 +880,52 @@ test("sc plugin add without -g pins a plugin installed here already at its versi
   );
 });
 
+test("a source replacement updates the forge in place and keeps personal settings", async () => {
+  publish("simon/old-fake", "0.1.0");
+  publish("simon/new-fake", "0.2.0");
+  writeFileSync(
+    join(onGitHub("simon/new-fake"), "build.ts"),
+    `
+import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
+const db = new Database(process.env.HOME + "/.local/share/skelcrew/skelcrew.db");
+const plugin = db.query("SELECT folder, source FROM plugins WHERE name = 'fake'").get();
+const repo = db.query("SELECT forge FROM repositories WHERE name = 'app'").get();
+if (plugin?.source !== "simon/old-fake" || !existsSync(plugin.folder) || repo?.forge !== "fake") process.exit(1);
+db.close();
+`,
+  );
+  git(onGitHub("simon/new-fake"), "add", ".");
+  git(onGitHub("simon/new-fake"), "commit", "-qm", "Check the forge during the build");
+  git(onGitHub("simon/new-fake"), "tag", "-f", "v0.2.0");
+  await skel(["plugin", "add", "-g", "simon/old-fake"], "y\n");
+  writeFileSync(join(settings("fake"), "preferences"), "keep me");
+  const db = new Database(join(home, ".local/share/skelcrew/skelcrew.db"));
+  db.run(
+    "INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon', 'app', 'app', 'fake')",
+  );
+  db.close();
+  const declined = await skel(["plugin", "add", "-g", "simon/new-fake"], "n\n");
+  expect(declined.out).not.toContain("moved from");
+  expect((await skel(["plugin", "ls"])).out).toContain("fake 0.1.0");
+  const moved = await skel(["plugin", "add", "-g", "simon/new-fake"], "y\ny\n");
+  expect(moved.code).toBe(0);
+  expect(moved.out).toContain("Replace fake from simon/old-fake with simon/new-fake?");
+  expect(moved.out).toContain("fake moved from simon/old-fake to simon/new-fake");
+  expect(readFileSync(join(settings("fake"), "preferences"), "utf8")).toBe("keep me");
+  expect(readFileSync(join(settings("fake"), "token"), "utf8")).toBe("secret\n");
+  expect(parse(readFileSync(yourLockFile(), "utf8"))).toEqual({
+    "simon/new-fake": {
+      name: "fake",
+      version: "0.2.0",
+      commit: tagCommit("simon/new-fake", "0.2.0"),
+    },
+  });
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual(["simon/new-fake"]);
+  const removed = await skel(["plugin", "rm", "-g", "fake"]);
+  expect(removed.err).toContain("so Skelcrew keeps it");
+});
+
 // One name can't be two plugins, and a folder has no version a repository could pin.
 test("sc plugin add without -g refuses a plugin whose name is installed here from a folder or another source", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");

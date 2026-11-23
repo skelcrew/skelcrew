@@ -535,6 +535,8 @@ Messages and the sandbox stay in core, between the two. Work comes in through an
 
 A runtime plugin is always personal, added with `sc plugin add -g`, since how you run and watch your agents is yours. So is a notifier, as it reaches you, and a repository's files can't name one. Any other I/O plugin is usually the repository's, in `plugins:`.
 
+When a GitHub plugin source changes, `sc plugin add` can replace its installed source after asking with both sources shown. This handles renamed repositories without uninstalling the plugin. It asks for the version as an update does. The plugin keeps its settings, sign-ins and jobs throughout. Its recorded source and any personal pin and plugin list move only after the update succeeds. Without approval, a different source with the same plugin name is refused.
+
 ### The manifest
 
 ```yaml

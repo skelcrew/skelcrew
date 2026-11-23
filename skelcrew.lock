@@ -1,0 +1,5 @@
+# Written by sc plugin add and sc plugin update. Commit it.
+skelcrew/skelcrew-github:
+  name: github
+  version: 0.9.0
+  commit: ead7abfa9dd6fdd3d65aa6e7fc34d7ca2190e1f1

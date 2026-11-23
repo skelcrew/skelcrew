@@ -1,6 +1,5 @@
-// Your personal plugins: sc install, and sc plugin add -g, rm -g, update -g, setup and ls. A
-// plugin comes from a version tag on GitHub, pinned in your own lock, or from a folder of yours.
-// Only you run these, in your own terminal.
+// Installs, updates and replaces plugin sources in your terminal, keeping settings and sign-ins.
+// Plugins come from GitHub versions pinned in a lock, or from a folder of yours.
 import type { Database } from "bun:sqlite";
 import {
   existsSync,
@@ -347,6 +346,7 @@ function refuseInstalled(db: Database, name: string, io: boolean | undefined): v
 // repository's lock gives it, which its manifest must give too. `shown` is how the question names
 // the plugin and what it starts with.
 type Options = {
+  source?: string;
   shown?: Shown;
   remote?: string | null;
   ask?: boolean;
@@ -394,8 +394,6 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   const remote = options.remote === undefined ? originHere() : options.remote;
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
-  // A folder of yours is used where it is, found by its real path so a link that moves later
-  // doesn't move the plugin.
   if (isPath) {
     const folder = realpathSync(resolve(given));
     const manifest = readManifest(folder);
@@ -417,15 +415,30 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
     return true;
   }
-  // A name starting with a dash would reach git as an option.
   if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given))
     throw new Error(`${given} is neither a folder, such as ./skelcrew-linear, nor owner/repo`);
-  // Nothing of the clone runs before the checks and your yes.
   const cloned = cloneTag(given, tag ?? newestTag(given), commit);
   const { staged, manifest } = cloned;
   try {
     if (options.skipMachines && reachesOnlyMachines(manifest))
       throw new OnlyReachesMachines(manifest.name);
+    const here = installedPlugins(db).find((plugin) => plugin.name === manifest.name);
+    if (here?.source && here.source !== given && ask && process.stdin.isTTY) {
+      checkSkelcrewVersion(manifest);
+      refusePersonal(manifest, io);
+      refuseOtherName(manifest, called);
+      const answer = askLine(`Replace ${manifest.name} from ${here.source} with ${given}? [y/N]`);
+      if (answer === null || !["y", "yes"].includes(answer.trim().toLowerCase())) return false;
+      updatePlugin(db, here, {
+        ...options,
+        source: given,
+        tag: `v${manifest.version}`,
+        commit: cloned.commit,
+      });
+      return installedPlugins(db).some(
+        (plugin) => plugin.name === manifest.name && plugin.source === given,
+      );
+    }
     refuseInstalled(db, manifest.name, io);
     checkSkelcrewVersion(manifest);
     refusePersonal(manifest, io);
@@ -437,13 +450,10 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       return false;
     }
     if (!ask) console.log(`Installing ${manifest.name} ${manifest.version} from ${given}...`);
-    // Anything left of an earlier install of the name goes, as the plugin isn't installed.
     const folder = join(pluginsDir(), manifest.name, manifest.version);
     rmSync(dirname(folder), { recursive: true, force: true });
     mkdirSync(dirname(folder), { recursive: true });
     renameSync(staged, folder);
-    // A build, setup or write of your files that fails takes the plugin's folder with it, so
-    // nothing half installed stays.
     try {
       buildAndSetUp(manifest, folder, true, remote);
       writeBoth(() => {
@@ -460,14 +470,12 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       given,
     ]);
     markUnclaimed(db, manifest);
-    // An offer's question named the plugin, and its version, so the answer names it the same way.
     const title = shown?.title;
     console.log(
       title ? `Installed the ${title} plugin.` : `Installed ${manifest.name} ${manifest.version}.`,
     );
     return true;
   } finally {
-    // Only a clone that never moved into place is still there.
     rmSync(staged, { recursive: true, force: true });
   }
 }
@@ -504,10 +512,9 @@ export function newestLocked(source: string): Locked {
 export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}): void {
   const { ask = true, tag: wanted, commit, pin = true, io, called } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
-  const { name, folder, source } = plugin;
+  const { name, folder } = plugin;
+  const source = options.source ?? plugin.source;
   const current = readManifest(folder);
-  // A folder of yours gets only its build again. When its commands differ from those you
-  // approved, it shows what it runs now and asks first. Its setup is for sc plugin setup.
   if (source === null) {
     const commands = approvalOf(current);
     const row = db.query("SELECT approved FROM plugins WHERE name = ?").get(name);
@@ -524,8 +531,6 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     return;
   }
   const tag = wanted ?? newestTag(source);
-  // At its newest version, the lock is pinned at what is installed, as a lock copied from
-  // another machine can pin an older one, which sc install would otherwise move back to.
   const atNewest = () => {
     setLocked(source, lockedAs(current, commitOf(folder)));
     console.log(`${name} is at its newest version, ${current.version}.`);
@@ -533,8 +538,6 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   const cloned = cloneTag(source, tag, commit);
   const { staged, manifest } = cloned;
   try {
-    // The newest tag can be the installed version moved to another commit, or an older version
-    // when a newer tag was deleted. Either is a change, shown and asked about like any other.
     if (!wanted && manifest.version === current.version && cloned.commit === commitOf(folder)) {
       atNewest();
       return;
@@ -550,24 +553,32 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
       console.log(`Skelcrew didn't update ${name}.`);
       return;
     }
-    // The new version gets a folder beside the old one, which keeps working until the new
-    // one is built and set up, and only then goes. A lock can move a plugin to another commit
-    // of the same version, whose folder gets the commit in its name so the two stay apart.
     const versionFolder = join(pluginsDir(), name, manifest.version);
     const newFolder =
       versionFolder === folder ? `${versionFolder}-${cloned.commit.slice(0, 12)}` : versionFolder;
     rmSync(newFolder, { recursive: true, force: true });
     renameSync(staged, newFolder);
-    // The lock moves before the new version counts as installed. When either fails, the old
-    // version stays, with the lock as it was.
     try {
       buildAndSetUp(manifest, newFolder, true, remote);
-      if (pin) writeBoth(() => setLocked(source, lockedAs(manifest, cloned.commit)));
+      writeBoth(() => {
+        if (
+          pin ||
+          (source !== plugin.source && plugin.source !== null && yourLock()[plugin.source])
+        )
+          setLocked(source, lockedAs(manifest, cloned.commit));
+        if (plugin.source !== null && source !== plugin.source) {
+          if (yourLock()[plugin.source]) setLocked(plugin.source, null);
+          const named = yourPlugins();
+          if (named.includes(plugin.source))
+            setYourPlugins(named.map((one) => (one === plugin.source ? source : one)));
+        }
+      });
     } catch (error) {
       rmSync(newFolder, { recursive: true, force: true });
       throw error;
     }
-    db.run("UPDATE plugins SET folder = ? WHERE name = ?", [newFolder, name]);
+    db.run("UPDATE plugins SET folder = ?, source = ? WHERE name = ?", [newFolder, source, name]);
+    if (source !== plugin.source) console.log(`${name} moved from ${plugin.source} to ${source}`);
     rmSync(folder, { recursive: true, force: true });
     console.log(`Updated ${name} from ${current.version} to ${manifest.version}.`);
   } finally {
