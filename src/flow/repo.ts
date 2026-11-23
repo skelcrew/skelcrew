@@ -812,19 +812,23 @@ export async function initRepo(): Promise<void> {
     const { offerCommit } = await import("../machine/init-commit.ts");
     await offerCommit(root, remote, wrote);
   }
-  const installed = installCheckoutPlugins(root);
+  const installed = installWrittenPlugins(root, forge === null ? [] : [githubPlugin]);
   console.log(
     `\n${installed ? "Run sc" : "Run sc install, then sc,"} and tell your lead what to build.`,
   );
 }
 
-// Installs the plugins the checkout's skelcrew.yaml names, at the versions its skelcrew.lock pins,
-// so sc install needn't follow sc init. Only a yes at a terminal installs one, so without a
-// terminal it touches nothing. Returns whether they all are installed now.
-function installCheckoutPlugins(root: string): boolean {
+// Installs the plugins this sc init wrote into the checkout's files, `written` by source, at the
+// versions its skelcrew.lock pins, so sc install needn't follow sc init. A plugin the files named
+// already is left to sc install, as you chose none of it here. Only a yes at a terminal installs
+// one, so without a terminal it touches nothing. Returns whether every plugin the files name is
+// installed now.
+function installWrittenPlugins(root: string, written: string[]): boolean {
   if (!process.stdin.isTTY) return false;
   try {
-    return !installRepositoryPlugins(repositoryNeeds(false, undefined, root)).missing;
+    const needs = repositoryNeeds(false, undefined, root);
+    installRepositoryPlugins(needs.filter(({ source }) => written.includes(source)));
+    return pluginsToInstall(root).length === 0;
   } catch (error) {
     console.log(`${errorText(error)}.`);
     return false;

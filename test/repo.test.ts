@@ -1679,6 +1679,31 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
 });
 
+// sc init installs only what you chose in it. A plugin the files named already runs nothing
+// here, even at a terminal, and is left to sc install, which its last line names.
+test("init at a terminal installs no plugin the files named before it, and says to run sc install", async () => {
+  const checkout = checkoutWithOwnChanges();
+  const file = join(checkout, "skelcrew.yaml");
+  writeFileSync(
+    file,
+    `setup: [make]\ntest: [make test]\n${limitAndCrew}plugins: [simon/skelcrew-other]\n`,
+  );
+  writeFileSync(
+    join(checkout, "skelcrew.lock"),
+    `simon/skelcrew-other: {name: other, version: 0.1.0, commit: ${"a".repeat(40)}}\n`,
+  );
+  git(checkout, "add", "skelcrew.yaml", "skelcrew.lock");
+  git(checkout, "commit", "-q", "-m", "files");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("Installing");
+  expect(run.out).not.toContain("other");
+  expect(run.out.replace(/\r/g, "")).toEndWith(
+    "\n\nRun sc install, then sc, and tell your lead what to build.\n",
+  );
+});
+
 // Being able to push isn't having read what a teammate wrote in .agents/, so init writes nothing
 // into one that is there, and install asks before approving it.
 test("init leaves an .agents/ that is there as it is, and install asks before approving it", async () => {
