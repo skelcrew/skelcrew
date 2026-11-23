@@ -38,12 +38,11 @@ import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
 import {
   githubPlugin,
-  installRepositoryPlugins,
+  installedReadOnly,
   lockStart,
   namePlugin,
   pinRepositoryPlugin,
   pluginsToInstall,
-  repositoryNeeds,
   repositoryPlugins,
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
@@ -684,6 +683,7 @@ async function newSkelcrewYaml(): Promise<string> {
     ...threadsLine,
     "# Keeps this repository on git alone, with no tracker.",
     "# tracker: none",
+    "# A role can take a model: line, such as model: <name>. Without one, your config's model or the harness's default runs.",
     stringify({ roles }),
   ].join("\n");
 }
@@ -714,7 +714,7 @@ async function completeSkelcrewYaml(root: string): Promise<string[]> {
   if (lacked.length === 0) return [];
   console.log(`skelcrew.yaml has no ${lacked.join(", ")}, which every repository needs.`);
   const { chooseCrew } = await import("../machine/crew.ts");
-  const asked = missingRoles.length > 0 ? chooseCrew([...missingRoles], harnessOf("builder")) : {};
+  const asked = missingRoles.length > 0 ? chooseCrew([...missingRoles]) : {};
   const { setSkelcrewLine } = await import("../plugins/repository.ts");
   const set = (key: string, value: unknown) => {
     try {
@@ -812,25 +812,17 @@ export async function initRepo(): Promise<void> {
     const { offerCommit } = await import("../machine/init-commit.ts");
     await offerCommit(root, remote, wrote);
   }
-  const installed = installWrittenPlugins(root, forge === null ? [] : [githubPlugin]);
   console.log(
-    `\n${installed ? "Run sc" : "Run sc install, then sc,"} and tell your lead what to build.`,
+    allInstalled(root)
+      ? "\nRun sc and tell your lead what to build."
+      : "\nNext, install the plugins it names:\n\n  sc install\n\nThen run sc and tell your lead what to build.",
   );
 }
 
-// Installs the plugins this sc init wrote into the checkout's files, `written` by source, at the
-// versions its skelcrew.lock pins, so sc install needn't follow sc init. A plugin the files named
-// already is left to sc install, as you chose none of it here. Only a yes at a terminal installs
-// one, so without a terminal it touches nothing. Returns whether every plugin the files name is
-// installed now.
-function installWrittenPlugins(root: string, written: string[]): boolean {
-  if (!process.stdin.isTTY) return false;
+function allInstalled(root: string): boolean {
   try {
-    const needs = repositoryNeeds(false, undefined, root);
-    installRepositoryPlugins(needs.filter(({ source }) => written.includes(source)));
-    return pluginsToInstall(root).length === 0;
-  } catch (error) {
-    console.log(`${errorText(error)}.`);
+    return pluginsToInstall(root, installedReadOnly()).length === 0;
+  } catch {
     return false;
   }
 }

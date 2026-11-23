@@ -30,11 +30,11 @@ git switch main
 sc init
 ```
 
-`sc init` asks which installed harnesses the lead, builders and reviewers use, offering the other harness for reviews as a second opinion. Each can name an optional model. It leaves the setup and test commands unset: the lead finds them in your repository and proposes them at its first start. It allows 3 builders at once, which you can change in `skelcrew.yaml`. It saves all of this in `skelcrew.yaml` and writes only repository files: `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow.
+`sc init` asks which installed harnesses the lead, builders and reviewers use, offering each the same list. It asks for no model, so each role runs your config's model or its harness's default, and a comment in `skelcrew.yaml` says a role can take a `model:` line. It leaves the setup and test commands unset: the lead finds them in your repository and proposes them at its first start. It allows 3 builders at once, which you can change in `skelcrew.yaml`. It saves all of this in `skelcrew.yaml` and writes only repository files: `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow.
 
 Skelcrew's agents read these files only from the default branch, and `sc` stops until `skelcrew.yaml` is there. So `sc init` offers to commit only its own files and push them to your default branch. Say yes, or run the git commands it prints.
 
-`sc init` then installs the plugins it wrote, as `sc install` would, such as the GitHub plugin, `skelcrew/skelcrew-github`. Running it is your yes, so it asks nothing. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It asks no machine questions and starts no service. It ends with `Run sc and tell your lead what to build.` Plain `sc` then adds the repository and opens its lead.
+`sc init` installs no plugin, asks no machine questions and starts no service. It ends by saying to run `sc install`, which installs the plugins the files name, such as the GitHub plugin, `skelcrew/skelcrew-github`. Running it is your yes, so it asks nothing. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. Plain `sc` then adds the repository and opens its lead.
 
 A clone with `skelcrew.yaml` already needs `sc install` for its plugins, then `sc` to open it. Every repository Skelcrew works on needs one, so run `sc init` in any other.
 

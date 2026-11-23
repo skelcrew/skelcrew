@@ -1,5 +1,5 @@
-// Machine tools and agent logins for plain sc. Harness choices belong to sc init;
-// the daemon never calls these terminal prompts.
+// Machine tools and agent logins for plain sc: it signs in every harness the opened
+// repository's crew uses. Harness choices belong to sc init; the daemon never prompts.
 import { existsSync, mkdirSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { z } from "zod";
 import { codexHome } from "../agents/codex.ts";
@@ -9,6 +9,7 @@ import { piHome } from "../agents/pi-login.ts";
 import { approvedAgents } from "../approved-agents.ts";
 import { agentRole } from "../config.ts";
 import { openDb } from "../db.ts";
+import { flowRoles, repositoryFlows } from "../flows.ts";
 import { toRun } from "../format.ts";
 import { claudeTokenFile, configDir, dataDir, setUpFile } from "../paths.ts";
 import { promptSecret } from "./secret.ts";
@@ -187,6 +188,27 @@ function signIn(harness: HarnessName): void {
     throw new Error(`${agent.title} has no login: ${loginInstruction(harness)}`);
 }
 
+function crewHarnesses(place: {
+  owner: string;
+  repo: string;
+  lead_harness: HarnessName | null;
+}): HarnessName[] {
+  const agents = approvedAgents(place);
+  const lead = place.lead_harness ?? agentRole("lead", { ...place, agents }).harness;
+  const flows = repositoryFlows({ ...place, agents });
+  const stage = (role: "builder" | "reviewer") =>
+    flows.flatMap((flow) => {
+      try {
+        const unreviewed =
+          role === "reviewer" && flowRoles({ ...place, agents, flow }).review === null;
+        return unreviewed ? [] : [agentRole(role, { ...place, agents, flow }).harness];
+      } catch {
+        return [];
+      }
+    });
+  return [...new Set([lead, ...stage("builder"), ...stage("reviewer")])];
+}
+
 export function signInForAgents(opened?: string): void {
   const db = openDb();
   const places = z
@@ -205,10 +227,7 @@ export function signInForAgents(opened?: string): void {
         .all(),
     );
   const place = opened ? places.find((r) => `${r.owner}/${r.repo}` === opened) : places[0];
-  if (place)
-    signIn(
-      place.lead_harness ?? agentRole("lead", { ...place, agents: approvedAgents(place) }).harness,
-    );
+  if (place) for (const harness of crewHarnesses(place)) signIn(harness);
   const pending = z
     .array(z.object({ needs_you_for: z.string() }))
     .parse(
