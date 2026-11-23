@@ -796,7 +796,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     const long = `${"x".repeat(64 * 1024)} the end of the instructions`;
     writeFileSync(
       join(work, "skelcrew.yaml"),
-      `tracker: github\ntest: [${JSON.stringify(long)}]\n`,
+      `tracker: github\nsetup: []\ntest: [${JSON.stringify(long)}]\nlimits: { threads: 9 }\n`,
     );
     git(work, "commit", "-qam", "A long test command");
     git(work, "push", "-q", "origin", "main");

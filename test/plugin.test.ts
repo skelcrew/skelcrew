@@ -564,7 +564,7 @@ for (const job of ["forge", "tracker"]) {
     publish("skelcrew/skelcrew-fake", "0.1.0");
     await skel(["plugin", "add", "-g", "skelcrew/skelcrew-fake"], "y\n");
     const remote = join(home, "app-remote");
-    git(home, "init", "--bare", "-q", remote);
+    git(home, "init", "--bare", "-q", "-b", "main", remote);
     const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
     mkdirSync(clone, { recursive: true });
     git(clone, "init", "-q", "-b", "main");
@@ -581,6 +581,9 @@ for (const job of ["forge", "tracker"]) {
       join(clone, "skelcrew.lock"),
       `skelcrew/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${tagCommit("skelcrew/skelcrew-fake", "0.1.0")} }\n`,
     );
+    git(clone, "add", "skelcrew.yaml");
+    git(clone, "commit", "-q", "-m", "Set up Skelcrew");
+    git(clone, "push", "-q", "origin", "main");
     const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
     db.run(
       "INSERT INTO repositories (owner, repo, name, forge, remote, claimed) VALUES ('simon', 'app', 'app', ?, ?, 1)",

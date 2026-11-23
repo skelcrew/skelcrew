@@ -551,21 +551,13 @@ export async function fetchBacklog(
 // Checks that Skelcrew can push to a repository with no forge on your own git login, as it will
 // for a thread: a dry run of a new branch from Skelcrew's clone in the folder. The daemon pushes
 // outside your terminal, with no SSH agent, so the check runs without yours. Throws what git
-// said when it refuses.
+// said when it refuses. The repository always has a commit, as its skelcrew.yaml is checked first.
 export async function checkPush(
   db: Database,
   repository: Repository,
   folder: string,
 ): Promise<void> {
-  // A clone of a repository with no commits yet has no HEAD to push. A commit of nothing, made
-  // only to name in the dry run, stands in, and is never pushed nor put on a branch.
-  let head = await headCommit(db, repository, folder);
-  if (head === "") {
-    const tree = await git(db, repository, ["-C", folder, "mktree"]);
-    const who = ["-c", "user.name=Skelcrew", "-c", "user.email=skelcrew@localhost"];
-    head = await git(db, repository, [...who, "-C", folder, "commit-tree", "-m", "check", tree]);
-  }
-  // Leave out your SSH agent, as the daemon won't have it when it pushes for real.
+  const head = await headCommit(db, repository, folder);
   const { SSH_AUTH_SOCK: _agent, ...env } = process.env;
   await git(
     db,

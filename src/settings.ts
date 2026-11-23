@@ -1,12 +1,11 @@
-// Reads settings from your repository overrides, your general overrides, repository files,
-// and built-in defaults. Your config.yaml is optional.
+// Reads settings from your repository overrides, your general overrides, the repository's files,
+// and built-in defaults. Your config.yaml is optional, and the repository's skelcrew.yaml isn't.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
-import { defaultHarness } from "./agents/login.ts";
 import {
   builtInRounds,
   flowRoles,
@@ -93,9 +92,10 @@ export type Role = { harness: HarnessName; model?: string };
 // the agents of that role. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
 // machine, `checks` how many test suites run at once through sc check, `threads` how many
-// builders run at once in the repository, or no limit when missing, and `setup` and `test` the commands that set up a thread's clone and run its whole
-// test suite. Each is missing when no file names it, and an empty list when a file says on purpose
-// that the repository needs none. `fallback` is the harness reviews run on
+// builders run at once in the repository, and `setup` and `test` the commands that set up a
+// thread's clone and run its whole test suite, an empty list when the repository needs none.
+// The roles, `threads`, `setup` and `test` have no default: a repository's must be set, in its
+// skelcrew.yaml or over it. `fallback` is the harness reviews run on
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
 // run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
@@ -111,9 +111,9 @@ export type Settings = {
   rounds: number;
   reviews: number;
   checks: number;
-  threads: number | undefined;
-  setup: string[] | undefined;
-  test: string[] | undefined;
+  threads: number;
+  setup: string[];
+  test: string[];
   tracker: string | undefined;
   fallback: HarnessName | undefined;
   reviewMinutes: number;
@@ -157,9 +157,9 @@ const keysOf: Record<Group, Key[]> = {
 // the repositories you declined the GitHub plugin for, your personal plugins and the session host
 // fit you, your account and your machine, so a repository can't set them. So do where messages
 // to you go, as their recipient is yours alone. Letting the lead merge grants an agent
-// what is yours, so only you can say whether it may, never a repository. The tracker belongs to the repository, so your
-// config doesn't. Setup and test can come from either: yours stand in for a repository you
-// don't want to commit a skelcrew.yaml to.
+// what is yours, so only you can say whether it may, never a repository. The tracker belongs to
+// the repository, so your config doesn't. Setup and test can come from either: yours go over
+// the repository's.
 const yourKeys: Key[] = [
   "harness",
   "model",
@@ -195,21 +195,19 @@ const overrideKeys: Key[] = [
   "review",
 ];
 
-// Returns the built-in defaults: Claude Code for every role, the built-in flow's rounds and 30
-// minutes for a review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
+// Returns the built-in defaults: the built-in flow's rounds and 30 minutes for a review. The
+// roles, the thread limit, setup, test and the tracker have none. Reviews default to a quarter of this machine's
 // cores, at least one, as a review of a commit CI doesn't run on runs the repository's whole test
 // suite, and many at once fight over the CPU. Checks default to half the cores divided by four,
 // at least one: a test suite usually runs about four processes of its own, so half the cores
 // stay free for the agents and the screen.
 function builtInDefaults(): {
-  harness: HarnessName;
   max_rounds: number;
   reviews: number;
   checks: number;
   reviewMinutes: number;
 } {
   return {
-    harness: defaultHarness(),
     max_rounds: builtInRounds(),
     reviews: Math.max(1, Math.floor(availableParallelism() / 4)),
     checks: Math.max(1, Math.floor(availableParallelism() / 2 / 4)),
@@ -220,15 +218,21 @@ function builtInDefaults(): {
 // Returns the settings in `groups`, for `repository` when there is one. Only the groups asked
 // for are read and checked, so a bad round limit stops a thread, not the lead. A file only
 // counts for the keys it may set. Throws, naming the file, when one isn't valid, rather than run
-// an agent on settings you didn't pick. The return type has only the groups asked for.
+// an agent on settings you didn't pick. Throws too when a setting a repository must have is
+// asked for and the repository has no skelcrew.yaml, as nothing stands in for it. The return
+// type has only the groups asked for.
 export function readSettings<G extends Group>(
   groups: G[],
   repository?: Repository,
 ): Pick<Settings, G> {
+  const required: Group[] = ["lead", "builder", "reviewer", "threads", "setup", "test"];
+  if (
+    repository &&
+    groups.some((group) => required.includes(group)) &&
+    repositoryData(repository) === undefined
+  )
+    throw new Error(missingFile(repository));
   const wanted = groups.flatMap((group) => keysOf[group]);
-  // Each layer is read from the one that wins first, and a setting a layer above decides isn't
-  // read again below it, so a bad value there can't stop a setting it doesn't decide.
-  // rounds and the old max_rounds are one setting, so either one decides both.
   const sameSetting = (k: Key): Key[] =>
     k === "rounds" || k === "max_rounds" ? ["rounds", "max_rounds"] : [k];
   const decidedBy = (layers: File[]) => (k: Key) =>
@@ -237,18 +241,12 @@ export function readSettings<G extends Group>(
   const general = readYourFile(
     wanted.filter((k) => yourKeys.includes(k) && !decidedBy([overrides])(k)),
   );
-  // The rounds of the task's flow, `default` unless it named another, go over max_rounds in
-  // skelcrew.yaml, which they replace. The flow file is checked even when your override decides
-  // the round limit, as its stages still say which roles run.
   const agentsFiles: File = {};
   if (repository && groups.some((group) => group === "rounds"))
     agentsFiles.max_rounds = repositoryRounds(
       repository,
       decidedBy([overrides, general])("max_rounds"),
     );
-  // The old max_rounds in skelcrew.yaml is the default flow's rounds only until the repository has a
-  // flow file, of any flow. From then on no flow takes it, though its file names no rounds: it
-  // gets yours or the built-in round limit, and a bad max_rounds, left unread, doesn't stop it.
   const aboveShared = decidedBy([overrides, general, agentsFiles]);
   const flowFiles = (place: Repository) =>
     repositoryFlows(place).length > 1 || hasFlowFile({ ...place, flow: "default" });
@@ -263,22 +261,31 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  // Only the roles asked for are read, so a mistake in one role's settings stops only its own
-  // agents. `builder` and `reviewer` are the roles the task's flow runs in the build and review
-  // stages, which are those two unless the flow names one of the repository's own, such as
-  // tester, whose settings are then read.
   const runs = { lead: "lead", builder: "builder", reviewer: "reviewer" };
   if (repository && groups.some((group) => group === "builder" || group === "reviewer")) {
     const stages = flowRoles(repository);
     runs.builder = stages.build;
-    // A flow with no review stage runs no reviewer, so the built-in one's settings stand.
     runs.reviewer = stages.review ?? "reviewer";
   }
   const roles: Partial<Record<RoleName, Role>> = {};
   for (const name of ["lead", "builder", "reviewer"] as const)
     if (groups.some((group) => group === name)) roles[name] = roleOf(name, runs[name], repository);
-  return mergeSettings([overrides, general, agentsFiles, shared], roles);
+  return mergeSettings([overrides, general, agentsFiles, shared], roles, (group) => {
+    if (!repository || !groups.some((g) => g === group)) return;
+    throw new Error(`${repository.owner}/${repository.repo}'s skelcrew.yaml ${missingLine[group]}`);
+  });
 }
+
+const missingFile = ({ owner, repo }: { owner: string; repo: string }) =>
+  `${owner}/${repo} has no skelcrew.yaml. Run sc init in a checkout of it to create one, then commit and push it.`;
+
+const missingLine: Partial<Record<Group, string>> = {
+  threads:
+    "has no limits: { threads: … } line. Add the most builders to run at once in it, such as limits: { threads: 4 }, then commit and push it.",
+  setup:
+    "has no setup: line. Add the commands that set up a fresh clone, such as setup: [bun install], or setup: [] when it needs none, then commit and push it.",
+  test: "has no test: line. Add the commands that run its whole test suite, such as test: [bun run check], or test: [] when it has none, then commit and push it.",
+};
 
 // One harness or model a file names for a role: its value, or nothing when the file names none,
 // or, when it isn't valid, what is wrong with it. A bad one stops the role only where it counts.
@@ -352,6 +359,14 @@ function roleOf(name: RoleName, run: string, repository: Repository | undefined)
   const all = outcomes(says, top, new Map());
   const [only] = all.values();
   if (all.size === 1 && only) return only;
+  if (all.size === 1 && only === null) {
+    const where = repository
+      ? `${repository.owner}/${repository.repo}'s skelcrew.yaml`
+      : join(configDir(), "config.yaml");
+    throw new Error(
+      `${where} names no harness for the ${run}. Add one under roles:, such as roles: { ${run}: { harness: claude } }, naming claude, codex or pi${repository ? ", then commit and push it" : ""}.`,
+    );
+  }
   for (const v of bad) {
     const pinned = choicesFor(v, says, top, new Map()).map((c) =>
       [...outcomes(says, top, new Map([[v, c]])).keys()].sort().join("|"),
@@ -389,14 +404,15 @@ function choicesFor(
 // harness be yours, which lets a layer's model for every role count, its model should it not,
 // and that layer's model, which a move back onto your harness brings along.
 type Merging = {
-  harness: HarnessName;
+  harness: HarnessName | undefined;
   mine: string | undefined;
   other: string | undefined;
   forEveryRole: string | undefined;
 };
 
 // Returns every role the says can give, by its text, with each bad value free to be any of its
-// choices but those `pinned`. With no bad value, there is one. The says are merged from the
+// choices but those `pinned`, or null for a role no say gives a harness. With no bad value,
+// there is one. The says are merged from the
 // bottom, and where the role can be so far is kept as a set, each say going over it in turn. A
 // harness has few values and a model matters only by which one it is, so the set stays small,
 // and the work grows with the says, never with every combination of their bad values.
@@ -410,16 +426,15 @@ function outcomes(
   says: Say[],
   top: Say,
   pinned: Map<object, string | undefined>,
-): Map<string, Role> {
+): Map<string, Role | null> {
   const choices = (v: Value<string>) => choicesFor(v, says, top, pinned);
-  const roles = new Map<string, Role>();
+  const roles = new Map<string, Role | null>();
   for (const yours of choices(top.harness))
     for (const yourModel of choices(top.model)) {
-      const yourHarness = HarnessName.optional().parse(yours) ?? builtInDefaults().harness;
+      const yourHarness = HarnessName.optional().parse(yours);
       let states: Merging[] = [
         { harness: yourHarness, mine: yourModel, other: yourModel, forEveryRole: undefined },
       ];
-      // From the last say to the first, so each one goes over what is below it.
       for (const say of [...says].reverse()) {
         const next = new Map<string, Merging>();
         for (const state of states)
@@ -435,7 +450,8 @@ function outcomes(
       }
       for (const { harness, mine, other } of states) {
         const model = harness === yourHarness ? mine : other;
-        const role = model === undefined ? { harness } : { harness, model };
+        const role =
+          harness === undefined ? null : model === undefined ? { harness } : { harness, model };
         roles.set(JSON.stringify(role), role);
       }
     }
@@ -443,24 +459,22 @@ function outcomes(
 }
 
 // Returns where a role is once a say naming `harness` and `model` goes over `state`. `yours`
-// is your harness and model. A say that moves the role to another harness drops the model below
-// it.
+// is your harness and model. A say that moves the role from one harness to another drops the
+// model below it, while the first harness a role is given keeps it.
 function merged(
   state: Merging,
   say: Say,
   harness: HarnessName | undefined,
   model: string | undefined,
-  yours: { harness: HarnessName; model: string | undefined },
+  yours: { harness: HarnessName | undefined; model: string | undefined },
 ): Merging {
   let { harness: on, mine, other, forEveryRole } = state;
-  if (harness !== undefined && harness !== on) {
-    on = harness;
-    mine = on === yours.harness ? (forEveryRole ?? yours.model) : undefined;
-    other = on === yours.harness ? yours.model : undefined;
+  if (harness !== undefined && on !== undefined && harness !== on) {
+    mine = harness === yours.harness ? (forEveryRole ?? yours.model) : undefined;
+    other = harness === yours.harness ? yours.model : undefined;
   }
+  on = harness ?? on;
   if (model === undefined) return { harness: on, mine, other, forEveryRole };
-  // A layer's model for every role, given without a harness, counts only should the last
-  // harness be yours.
   if (say.everyRole && harness === undefined)
     return { harness: on, mine: model, other, forEveryRole: model };
   return { harness: on, mine: model, other: model, forEveryRole };
@@ -598,25 +612,32 @@ function check(data: unknown, problem: string): File {
 }
 
 // Merges the files, the one that wins first, over the built-in defaults: each setting comes from
-// the first that sets it, key by key. The last layer is your config. `roles` are the roles read,
-// and a role not asked for is left at the built-in harness.
-function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): Settings {
+// the first that sets it, key by key. The last layer is your config. `roles` are the roles read.
+// `missing` throws for a setting with no default that no file sets, when it was asked for. One
+// not asked for holds a stand-in nobody reads.
+function mergeSettings(
+  layers: File[],
+  roles: Partial<Record<RoleName, Role>>,
+  missing: (group: Group) => void,
+): Settings {
   const defaults = builtInDefaults();
-  // The first value any layer sets for `get`.
   const first = <T>(get: (layer: File) => T | undefined | null) =>
     layers.map(get).find((value) => value !== undefined && value !== null);
-  const unread = { harness: defaults.harness };
+  const needed = <T>(group: Group, unread: T): T => {
+    missing(group);
+    return unread;
+  };
+  const unread: Role = { harness: "claude" };
   return {
     lead: roles.lead ?? unread,
     builder: roles.builder ?? unread,
     reviewer: roles.reviewer ?? unread,
-    // In each layer, rounds goes over the old max_rounds.
     rounds: first((l) => l.rounds ?? l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     checks: first((l) => l.limits?.checks) ?? defaults.checks,
-    threads: first((l) => l.threads),
-    setup: first((l) => l.setup),
-    test: first((l) => l.test),
+    threads: first((l) => l.threads) ?? needed("threads", 0),
+    setup: first((l) => l.setup) ?? needed("setup", []),
+    test: first((l) => l.test) ?? needed("test", []),
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,
@@ -625,7 +646,6 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     declined: first((l) => l.github_declined) ?? [],
     plugins: first((l) => l.plugins) ?? [],
     host: first((l) => l.session) ?? "tmux",
-    // In each layer, can_merge goes over its old name, may_arm_merges.
     leadCanMerge: first((l) => l.can_merge ?? l.may_arm_merges) ?? true,
     notify: {
       "needs-you": first((l) => l.notify?.["needs-you"]),

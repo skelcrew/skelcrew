@@ -3,7 +3,7 @@
 // can say it asks a question or stopped. The needsyou-*.test.ts files check the rest against a
 // running daemon, and inbox.test.ts the lead's items.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { source, threadSql } from "./harness.ts";
 import { home, serve, setUp, skel, tearDown, until } from "./needsyou.ts";
@@ -34,6 +34,9 @@ test("only an agent's hooks can say it is asking you a question, stopped, or sto
 // in it, and `thread()` reads app-12 back. Nothing runs the builder, so these run anywhere, a
 // sandbox included. Returns what the code printed last, as JSON.
 function inProcess(body: string): Record<string, unknown> {
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { needsYou, needsYouFor, threadWord, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { goOn, noteLimit, submitRound } from ${JSON.stringify(source("flow/round.ts"))};

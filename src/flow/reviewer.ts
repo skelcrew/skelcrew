@@ -137,12 +137,9 @@ export type Tests = { ci: string } | "run" | "docs only";
 
 // Returns what the reviewer does when it has to run the whole test suite: `run` it through sc
 // check, which runs the commands under test: in the repository's skelcrew.yaml or your config,
-// once one of the machine's check slots is free. With none named, or
-// with test configured as none, it reviews without running tests and says why. Skelcrew never
-// guesses a test command, as a wrong guess would pass for a real result.
-function runSuite(run: string, test: string[] | undefined): string {
-  if (test === undefined)
-    return "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
+// once one of the machine's check slots is free. With test configured as none, it reviews
+// without running tests and says why.
+function runSuite(run: string, test: string[]): string {
   if (test.length === 0)
     return "don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.";
   return `${run} with \`sc check\`, which runs \`${test.join(" && ")}\` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.`;
@@ -152,7 +149,7 @@ function runSuite(run: string, test: string[] | undefined): string {
 // and only when code changed, as several threads running it at once overload the machine. So
 // with CI on the commit the reviewer reads CI's result from its file, without CI it runs the
 // suite with `test`, and on a change to docs alone no one runs it.
-function testsTold(tests: Tests, test: string[] | undefined): string {
+function testsTold(tests: Tests, test: string[]): string {
   if (tests === "docs only")
     return "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.";
   if (tests === "run")
@@ -262,7 +259,7 @@ export function reviewerPrompt(
   issue: { title: string; body: string },
   base: string,
   tests: Tests,
-  test: string[] | undefined,
+  test: string[],
   strict: boolean,
   last?: { round: LastRound; file: string },
   bounds: Bounds = { decisions: [], stayTrue: [], description: null },
@@ -494,7 +491,7 @@ async function reviewNow(given: {
   issue: { title: string; body: string };
   bounds?: () => Promise<Bounds>;
   base: string;
-  test: string[] | undefined;
+  test: string[];
   commit: string;
   model?: string | undefined;
   harness: HarnessName;

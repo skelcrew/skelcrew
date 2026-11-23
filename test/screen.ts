@@ -221,7 +221,10 @@ export function startTest(): void {
   fakePlugin(home);
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
-  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\n");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "tracker: github\nsetup: []\ntest: []\nlimits: { threads: 9 }\n",
+  );
   sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session, forge)
   VALUES ('app', 'simon', 'app', 1, 's', 'github');
 ${threadSql({ task: "3", status: "done" })}

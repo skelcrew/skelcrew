@@ -262,7 +262,10 @@ export function addApp(files: Record<string, string> = {}): string {
     mkdirSync(dirname(join(work, path)), { recursive: true });
     writeFileSync(join(work, path), text);
   }
-  writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\ntest: [bun test]\n");
+  writeFileSync(
+    join(work, "skelcrew.yaml"),
+    "tracker: github\nsetup: []\ntest: [bun test]\nlimits: { threads: 9 }\n",
+  );
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");

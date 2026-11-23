@@ -16,7 +16,14 @@ import {
   stopSession,
 } from "../agents/sessions.ts";
 import { approvedAgents } from "../approved-agents.ts";
-import { agentRole, checkFlow, repositoryCommands, roundLimit, sessionHost } from "../config.ts";
+import {
+  agentRole,
+  builderSettings,
+  checkFlow,
+  repositoryCommands,
+  roundLimit,
+  sessionHost,
+} from "../config.ts";
 import { flowRoles } from "../flows.ts";
 import { errorText } from "../format.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
@@ -116,10 +123,12 @@ async function recordThread(
 ): Promise<Thread> {
   const repository = findRepository(db, given.repo);
   const { owner, repo, name } = repository;
+  if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
   const tracked = trackerOf(db, repository) !== null;
   const agents = approvedAgents({ owner, repo });
   const flow = given.flow ?? "default";
   checkFlow({ owner, repo, agents }, name, flow);
+  builderSettings({ owner, repo, agents, flow });
   const refuseMissingPlugins = () => {
     if (needsInstall(cloneDir(owner, repo)))
       throw new Error(
@@ -468,17 +477,15 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   // Make sure no git login reached the clone's settings before the builder can read them,
   // then run the repository's setup commands in the sandbox.
   refuseCredentials(clone);
-  for (const command of repositoryCommands(thread).setup ?? []) {
+  for (const command of repositoryCommands(thread).setup) {
     const { argv, env } = setupCommand(clone, command);
     await mustRun(argv, `the setup command "${command}"`, env);
   }
 }
 
 // Returns the builder's instructions: its role's, from `role`, then the setup and test commands the
-// repository's skelcrew.yaml or your config names, each on its own, or that none is configured.
-// The builder can't read your config from its sandbox, so it is told. A builder told one it
-// needs isn't configured asks the lead rather than guess, as a guessed command is often wrong
-// and nobody would see it was a guess.
+// repository's skelcrew.yaml or your config names, each on its own, or that it has none. The
+// builder can't read your config from its sandbox, so it is told.
 export function builderInstructions(
   role: string,
   commands: Pick<Settings, "setup" | "test">,
@@ -486,20 +493,14 @@ export function builderInstructions(
   const instructions = role.replace(/\n$/, "");
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
-  // A missing command is one the builder may need to ask about. An empty list says on purpose
-  // that there is none, so the builder isn't sent to the lead for it.
   const setupTold =
-    setup === undefined
-      ? "No setup command is configured."
-      : setup.length === 0
-        ? "Setup is configured as none, so Skelcrew ran no setup command."
-        : `Skelcrew set up your clone with ${shown(setup)}.`;
+    setup.length === 0
+      ? "Setup is configured as none, so Skelcrew ran no setup command."
+      : `Skelcrew set up your clone with ${shown(setup)}.`;
   const testTold =
-    test === undefined
-      ? "No test command is configured."
-      : test.length === 0
-        ? "Test is configured as none, so the repository has no test suite to run."
-        : `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. If you ever must, run \`sc check\`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`;
+    test.length === 0
+      ? "Test is configured as none, so the repository has no test suite to run."
+      : `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. If you ever must, run \`sc check\`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`;
   return `${instructions}\n\n${setupTold} ${testTold}\n`;
 }
 

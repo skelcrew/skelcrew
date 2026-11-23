@@ -29,11 +29,11 @@ export function counted(db: Database, { owner, repo }: { owner: string; repo: st
 
 // Returns whether a task of the repository starting now waits in the queue: as many of its
 // builders run as its limits.threads allows, or tasks already wait there, which go first. Throws
-// when the file that sets the limit isn't valid, which refuses the start, so a task never waits
-// on a limit nobody can read.
+// when the repository has no skelcrew.yaml, or the limit isn't set or valid, which refuses the
+// start, so no builder starts on a repository without one and a task never waits on a limit
+// nobody can read.
 export function joinsQueue(db: Database, repository: { owner: string; repo: string }): boolean {
   const limit = threadLimit(repository);
-  if (limit === undefined) return false;
   const { running, queued } = counted(db, repository);
   return queued > 0 || running >= limit;
 }
@@ -108,14 +108,13 @@ export function leaveQueue(db: Database, skip: (folder: string) => boolean): Thr
       FROM task_threads t WHERE status = 'queued' ORDER BY queued_since, rowid`)
     .all()
     .map((row) => ({ thread: Thread.parse(row), ...Owes.parse(row) }));
-  // The repositories whose queue waits on a claim, as owner/repo.
   const held = new Set<string>();
   const leaving: Thread[] = [];
   for (const { thread, owes } of queued) {
     const repository = `${thread.owner}/${thread.repo}`;
     if (owes || skip(thread.folder)) held.add(repository);
     if (held.has(repository)) continue;
-    let limit: number | undefined;
+    let limit: number;
     try {
       limit = threadLimit(thread);
     } catch (error) {
@@ -124,7 +123,7 @@ export function leaveQueue(db: Database, skip: (folder: string) => boolean): Thr
       told.add(why);
       continue;
     }
-    if (limit !== undefined && counted(db, thread).running >= limit) continue;
+    if (counted(db, thread).running >= limit) continue;
     const status = thread.session === null ? "working" : statusOnceBack(thread);
     leaving.push(
       record(db, thread.folder, { status }, "its turn came in the queue of limits.threads"),

@@ -54,6 +54,12 @@ beforeEach(() => {
   writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
   writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
+  for (const repo of ["app", "site"]) {
+    const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", repo);
+    mkdirSync(clone, { recursive: true });
+    Bun.spawnSync(["git", "-C", clone, "init", "-q"]);
+    writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
+  }
 });
 afterEach(async () => {
   for (const serve of running.splice(0)) {
@@ -129,6 +135,7 @@ async function openApp(): Promise<void> {
   const clone = join(data(), "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   Bun.spawnSync(["git", "-C", clone, "init", "-q"]);
+  writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
   await new Promise<void>((done) => {
     const connection = createConnection(join(home, "run", "skelcrew.sock"));
     connection.on("connect", () => connection.write('{"command":"lead","from":"simon/app"}\n'));

@@ -1,5 +1,5 @@
-// The arrow-key picker the first run asks its questions with, such as which coding agent agents
-// run on: ↑ and ↓ move between the choices, and Enter takes the one marked.
+// The questions sc init asks: the arrow-key picker, such as for which coding agent agents run
+// on, where ↑ and ↓ move between the choices and Enter takes the one marked, and a line typed.
 import { readSync, writeSync } from "node:fs";
 import { colorful } from "../format.ts";
 
@@ -94,4 +94,17 @@ export function pick(question: string, choices: Choice[]): number | null {
   // 130 is what a shell reports for a program Ctrl-C stopped.
   if (key === "stop") process.exit(130);
   return key === "enter" ? at : null;
+}
+
+export function askLine(question: string): string | null {
+  writeSync(1, question);
+  const byte = Buffer.alloc(1);
+  let line = "";
+  while (true) {
+    if (readSync(0, byte) === 0) return line === "" ? null : line.trim();
+    const key = byte.toString();
+    if (key === "\n" || key === "\r") return line.trim();
+    if (key === "\x03") process.exit(130);
+    line += key;
+  }
 }

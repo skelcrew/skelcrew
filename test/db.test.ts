@@ -398,18 +398,12 @@ function twoMachines(): { remote: string; homes: string[] } {
   mkdirSync(work);
   git(home, "init", "-q", "--bare", "-b", "main", remote);
   git(work, "init", "-q", "-b", "main");
-  git(
-    work,
-    "-c",
-    "user.name=t",
-    "-c",
-    "user.email=t@t",
-    "commit",
-    "-q",
-    "--allow-empty",
-    "-m",
-    "a",
+  writeFileSync(
+    join(work, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 9 }\nroles: { builder: { harness: claude }, reviewer: { harness: claude } }\n",
   );
+  git(work, "add", ".");
+  git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a");
   git(work, "push", "-q", remote, "main");
   const homes = ["laptop", "lapdog"].map((name) => join(home, name));
   for (const machine of homes) {
@@ -649,43 +643,68 @@ exec ${Bun.which("git") ?? "git"} "$@"
   60_000,
 );
 
-// A name claimed on a repository with no commits yet, such as one just created, is a ref of the
-// remote all the same. The repository must still count as empty, so starting a thread there
-// says it has no commits, rather than failing in git's words.
-test("a name claimed on an empty repository leaves it empty", async () => {
+// A start reads every line its builder and reviewer need before it claims a name, so one whose
+// builder has no harness is refused at once, rather than once the task is recorded.
+test("a thread whose builder has no harness is refused before it claims a name", async () => {
   const { homes } = twoMachines();
   const [laptop = ""] = homes;
-  const remote = join(home, "empty.git");
+  const remote = join(home, "roleless.git");
+  const work = join(home, "roleless");
+  const git = (cwd: string, ...args: string[]) =>
+    Bun.spawnSync(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
   Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
-  const check = `import { hasNoCommits } from ${JSON.stringify(source("flow/repo.ts"))};
-import { fetchBranch } from ${JSON.stringify(source("flow/git.ts"))};
-import { cloneDir } from ${JSON.stringify(source("paths.ts"))};
-const [repository] = db.query("SELECT * FROM repositories").all();
-const fetched = await fetchBranch(db, repository, cloneDir("simon", "app"), null).then(() => "fetched", (error) => error.message);
-console.log(JSON.stringify([await hasNoCommits(db, repository), fetched]));`;
+  Bun.spawnSync(["git", "init", "-q", "-b", "main", work]);
+  writeFileSync(join(work, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "a");
+  git(work, "push", "-q", remote, "main");
   const run = Bun.spawn(
     [
       process.execPath,
       "-e",
       `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
-import { threadName } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
-console.log(threadName(db, await startThread(db, { repo: "app", title: "One", body: "b" })));
-${check}`,
+await startThread(db, { repo: "app", title: "One", body: "b" });`,
     ],
     { env: { ...process.env, HOME: laptop }, stdout: "pipe", stderr: "pipe" },
   );
-  const [out, err] = [await new Response(run.stdout).text(), await new Response(run.stderr).text()];
-  expect(err).toBe("");
-  // Making the clone logs that the repository is empty first.
-  const [name = "", result = ""] = out.trim().split("\n").slice(-2);
-  expect(name).toBe("APP-1");
-  expect(JSON.parse(result)).toEqual([
-    true,
-    "simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.",
-  ]);
+  const err = await new Response(run.stderr).text();
+  expect(await run.exited).toBe(1);
+  expect(err).toContain(
+    "simon/app's skelcrew.yaml names no harness for the builder. Add one under roles:",
+  );
+  const refs = Bun.spawnSync(["git", "-C", remote, "for-each-ref"], { stdout: "pipe" });
+  expect(refs.stdout.toString()).not.toContain("refs/skelcrew/names");
+}, 60_000);
+
+// A repository with no commits yet, such as one just created, has no skelcrew.yaml, so a thread
+// there is refused before it claims a name, and the remote stays empty.
+test("a thread on an empty repository is refused, as it has no skelcrew.yaml, and claims no name", async () => {
+  const { homes } = twoMachines();
+  const [laptop = ""] = homes;
+  const remote = join(home, "empty.git");
+  Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
+  const run = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+await startThread(db, { repo: "app", title: "One", body: "b" });`,
+    ],
+    { env: { ...process.env, HOME: laptop }, stdout: "pipe", stderr: "pipe" },
+  );
+  const err = await new Response(run.stderr).text();
+  expect(await run.exited).toBe(1);
+  expect(err).toContain(
+    "simon/app has no skelcrew.yaml. Run sc init in a checkout of it to create one, then commit and push it.",
+  );
+  const refs = Bun.spawnSync(["git", "-C", remote, "for-each-ref"], { stdout: "pipe" });
+  expect(refs.stdout.toString()).toBe("");
 }, 60_000);
 
 // No task is named after its issue, so an issue keeps its place in the copy whatever its ID,

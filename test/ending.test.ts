@@ -1,6 +1,6 @@
 // Ending a thread, run against a database of the test's own, with no daemon, tracker or forge.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { source } from "./harness.ts";
@@ -15,8 +15,29 @@ beforeEach(() => {
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   Bun.spawnSync(["git", "init", "-q", clone]);
-  // The repository's remote, where a thread with no issue claims its name.
-  Bun.spawnSync(["git", "init", "-q", "--bare", join(home, "app.git")]);
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 9 }\nroles: { builder: { harness: claude }, reviewer: { harness: claude } }\n",
+  );
+  // The repository's remote, where a thread with no issue claims its name, with the skelcrew.yaml
+  // a clone made again reads.
+  Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", join(home, "app.git")]);
+  Bun.spawnSync(["git", "-C", clone, "checkout", "-q", "-b", "main"]);
+  Bun.spawnSync(["git", "-C", clone, "add", "skelcrew.yaml"]);
+  Bun.spawnSync([
+    "git",
+    "-C",
+    clone,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-q",
+    "-m",
+    "a",
+  ]);
+  Bun.spawnSync(["git", "-C", clone, "push", "-q", join(home, "app.git"), "main"]);
 });
 afterEach(() => {
   // Ending the server leaves its socket file behind.

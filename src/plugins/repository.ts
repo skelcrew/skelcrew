@@ -158,6 +158,14 @@ function setKey(file: string, start: string, key: string, value: unknown): void 
   writeFileSync(file, document.toString(asWritten));
 }
 
+export const setSkelcrewLine = (folder: string, key: string, value: unknown) =>
+  setKey(
+    join(folder, "skelcrew.yaml"),
+    "# Shared with everyone who works on this repository. Never put a secret here.\n",
+    key,
+    value,
+  );
+
 // Names `source` under plugins: in the skelcrew.yaml in `folder`, unless it is there already.
 // sc init uses it alone for a plugin the repository's skelcrew.lock pins already, whose pin it
 // keeps.

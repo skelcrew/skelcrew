@@ -259,6 +259,7 @@ function onGitHub(name: string): string {
   const work = join(home, "work", name);
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), `${name}\n`);
+  writeFileSync(join(work, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
@@ -1443,7 +1444,9 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await open();
     await until(() => existsSync(join(leadFolder(), "seen")));
     await until(() => readFileSync(join(leadFolder(), "seen"), "utf8").includes("hidden"));
-    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe("README\nsocket\ntoken-hidden\n");
+    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe(
+      "README\nskelcrew.yaml\nsocket\ntoken-hidden\n",
+    );
     expect(claudeLines()[0]).toContain("--model opus");
   });
 
