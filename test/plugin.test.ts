@@ -1327,7 +1327,7 @@ test("sc plugin ls says what sc install would change for the repository you are 
   );
 });
 
-test("a repository can't name a runtime plugin", async () => {
+test("sc plugin add adds a runtime plugin as yours, as a repository can't name one", async () => {
   const folder = onGitHub("skelcrew/skelcrew-runtime");
   fakePlugin(folder, "0.1.0", "session: [sh, session.sh]\nattach: [sh, attach.sh]\n");
   const manifest = join(folder, "skelcrew-plugin.yaml");
@@ -1343,26 +1343,28 @@ test("a repository can't name a runtime plugin", async () => {
   git(folder, "commit", "-q", "-m", "0.1.0");
   git(folder, "tag", "v0.1.0");
   const app = appCheckout();
-  // Refused before it asks, so nothing of it runs.
   const fresh = await skel(["plugin", "add", "skelcrew/skelcrew-runtime"], "y\n", "", {}, app);
-  expect(fresh.code).toBe(1);
-  expect(fresh.out).not.toContain("[Y/n]");
-  expect(fresh.err).toContain(
-    "fake is a runtime plugin, which is always yours and never a repository's. sc plugin add -g adds it as yours",
+  expect(fresh.code).toBe(0);
+  expect(fresh.out).toContain(
+    "fake is a runtime plugin, so it's added as yours, not the repository's.\n",
   );
-  expect(existsSync(join(plugins(), "fake"))).toBe(false);
-  // Installed as yours, it still can't go into the repository's files.
-  await skel(["plugin", "add", "-g", "skelcrew/skelcrew-runtime"], "y\n");
-  const yours = await skel(["plugin", "add", "skelcrew/skelcrew-runtime"], "", "", {}, app, false);
-  expect(yours.code).toBe(1);
-  expect(yours.err).toContain("fake is a runtime plugin");
+  expect(fresh.out).toContain("Installed fake 0.1.0.");
+  expect(parse(readFileSync(yourLockFile(), "utf8"))["skelcrew/skelcrew-runtime"].version).toBe(
+    "0.1.0",
+  );
   expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
     "# Shared.\nsetup: [bun install]\n",
   );
   expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+  const again = await skel(["plugin", "add", "skelcrew/skelcrew-runtime"], "", "", {}, app, false);
+  expect(again.code).toBe(0);
+  expect(again.out).toBe(
+    "fake is a runtime plugin, so it's yours, not the repository's, and installed already.\n",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
 });
 
-test("a repository can't name a notifier, as it reaches you", async () => {
+test("sc plugin add adds a notifier as yours, as it reaches you", async () => {
   const folder = onGitHub("skelcrew/skelcrew-email");
   fakePlugin(folder, "0.1.0");
   const manifest = join(folder, "skelcrew-plugin.yaml");
@@ -1376,12 +1378,28 @@ test("a repository can't name a notifier, as it reaches you", async () => {
   git(folder, "tag", "v0.1.0");
   const app = appCheckout();
   const added = await skel(["plugin", "add", "skelcrew/skelcrew-email"], "y\n", "", {}, app);
-  expect(added.code).toBe(1);
-  expect(added.out).not.toContain("[Y/n]");
-  expect(added.err).toContain(
-    "fake is a notifier, which reaches you, so it is always yours and never a repository's. sc plugin add -g adds it as yours",
+  expect(added.code).toBe(0);
+  expect(added.out).toContain(
+    "fake is a notifier, which reaches you, so it's added as yours, not the repository's.\n",
+  );
+  expect(parse(readFileSync(yourLockFile(), "utf8"))["skelcrew/skelcrew-email"].version).toBe(
+    "0.1.0",
   );
   expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+});
+
+test("a plugin git can't read without a login says to make it public or sign git in", async () => {
+  using github = Bun.serve({ port: 0, fetch: () => new Response("", { status: 401 }) });
+  writeFileSync(
+    join(home, ".gitconfig"),
+    `[url "http://127.0.0.1:${github.port}/"]\n\tinsteadOf = https://github.com/\n`,
+  );
+  const run = await skel(["plugin", "add", "-g", "skelcrew/skelcrew-herdr"], "y\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "Skelcrew couldn't read skelcrew/skelcrew-herdr on GitHub: it isn't public, or doesn't exist. Make it public, or sign git in to GitHub on this machine, then run this again",
+  );
+  expect(run.err).not.toContain("fatal");
 });
 
 test("a failed repository file write retains the installed plugin and its tokens", async () => {

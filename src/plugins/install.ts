@@ -50,6 +50,16 @@ function newer(a: string, b: string): boolean {
   return false;
 }
 
+// Returns why git couldn't read a plugin's repository on GitHub, from what git said. GitHub
+// answers a private or missing repository alike, so both read as one, with what to do.
+function unreadable(source: string, said: string): Error {
+  if (/could not read Username|Repository not found/.test(said))
+    return new Error(
+      `Skelcrew couldn't read ${source} on GitHub: it isn't public, or doesn't exist. Make it public, or sign git in to GitHub on this machine, then run this again`,
+    );
+  return new Error(`git couldn't reach ${source} on GitHub: ${said}`);
+}
+
 // Returns the newest version tag of a GitHub repository, such as v0.2.0, asking GitHub only
 // for its tags. Tags that aren't versions are passed over.
 function newestTag(source: string): string {
@@ -59,8 +69,7 @@ function newestTag(source: string): string {
     ["git", "ls-remote", "--tags", "--refs", `https://github.com/${source}`],
     { stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
   );
-  if (!listed.success)
-    throw new Error(`git couldn't reach ${source} on GitHub: ${listed.stderr.toString().trim()}`);
+  if (!listed.success) throw unreadable(source, listed.stderr.toString().trim());
   // Each line ends with the tag's ref, such as refs/tags/v0.2.0.
   const versions = listed.stdout
     .toString()
@@ -89,8 +98,11 @@ function cloneTag(
     });
   if (commit === undefined) {
     const cloned = git(["clone", "--quiet", "--depth", "1", "--branch", tag, url, staged]);
-    if (!cloned.success)
-      throw new Error(`git couldn't clone ${source} at ${tag}: ${cloned.stderr.toString().trim()}`);
+    if (!cloned.success) {
+      const said = cloned.stderr.toString().trim();
+      if (/could not read Username|Repository not found/.test(said)) throw unreadable(source, said);
+      throw new Error(`git couldn't clone ${source} at ${tag}: ${said}`);
+    }
   } else {
     const said = (run: { stderr: Buffer }) => run.stderr.toString().trim();
     const local = (run: { stderr: Buffer }) => {
@@ -332,6 +344,7 @@ type Options = {
   commit?: string;
   pin?: boolean;
   io?: boolean;
+  orYours?: boolean;
   called?: string;
 };
 
@@ -344,14 +357,23 @@ export function refuseOtherName(manifest: Manifest, called: string | undefined):
     );
 }
 
+// Returns what makes a plugin yours only, such as "a runtime plugin", or null when a repository
+// can name it.
+export function personalKind(manifest: Manifest): string | null {
+  if (manifest.kind === "runtime") return "a runtime plugin";
+  if (manifest.provides.includes("notifier")) return "a notifier, which reaches you";
+  return null;
+}
+
+// Returns the line sc plugin add says when it adds a plugin as yours, as it can't be a repository's.
+export const addedAsYours = (manifest: Manifest, kind: string) =>
+  `${manifest.name} is ${kind}, so it's added as yours, not the repository's.`;
+
 export function refusePersonal(manifest: Manifest, io: boolean | undefined): void {
-  if (io && manifest.kind === "runtime")
+  const kind = personalKind(manifest);
+  if (io && kind)
     throw new Error(
-      `${manifest.name} is a runtime plugin, which is always yours and never a repository's. sc plugin add -g adds it as yours`,
-    );
-  if (io && manifest.provides.includes("notifier"))
-    throw new Error(
-      `${manifest.name} is a notifier, which reaches you, so it is always yours and never a repository's. sc plugin add -g adds it as yours`,
+      `${manifest.name} is ${kind}, so it is always yours and never a repository's. sc plugin add -g adds it as yours`,
     );
 }
 
@@ -363,7 +385,8 @@ export function refusePersonal(manifest: Manifest, io: boolean | undefined): voi
 // and setup, and writes your lock when `pin` says to, before the plugin counts as
 // installed. A write that fails leaves the files as they were and the plugin not installed.
 export function installPlugin(given: string, options: Options = {}): boolean {
-  const { ask = true, tag, commit, pin = true, io, called } = options;
+  const { ask = true, tag, commit, called } = options;
+  let { pin = true, io = false } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
@@ -393,6 +416,12 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   const cloned = cloneTag(given, tag ?? newestTag(given), commit);
   const { staged, manifest } = cloned;
   try {
+    const kind = personalKind(manifest);
+    if (io && options.orYours && kind) {
+      console.log(addedAsYours(manifest, kind));
+      io = false;
+      pin = true;
+    }
     const here = installedPlugins(db).find((plugin) => plugin.name === manifest.name);
     if (here?.source && here.source !== given && process.stdin.isTTY) {
       checkSkelcrewVersion(manifest);
@@ -406,6 +435,8 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       }
       updatePlugin(db, here, {
         ...options,
+        io,
+        pin,
         source: given,
         tag: `v${manifest.version}`,
         commit: cloned.commit,

@@ -13,16 +13,26 @@ import { errorText } from "../format.ts";
 import { originHere } from "../machine/origin.ts";
 import { cloneDir, dataDir } from "../paths.ts";
 import {
+  addedAsYours,
   eachAsked,
   installPlugin,
   lockedAs,
   matchesLock,
   newestLocked,
+  personalKind,
   refuseOtherName,
   refusePersonal,
   updatePlugin,
 } from "./install.ts";
-import { type Lock, type Locked, readLockAt, writeBoth, yourLock, yourPlugins } from "./lock.ts";
+import {
+  type Lock,
+  type Locked,
+  readLockAt,
+  setLocked,
+  writeBoth,
+  yourLock,
+  yourPlugins,
+} from "./lock.ts";
 import { commitOf, installedPlugins, type Plugin, readManifest } from "./plugin.ts";
 
 // The GitHub plugin, the forge of every repository on github.com.
@@ -225,12 +235,19 @@ export function addRepositoryPlugin(given: string): string | null {
   const db = openDb();
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
   const fresh = !installed();
-  if (fresh && !installPlugin(given, { remote: originHere(top), pin: false, io: true }))
-    return null;
+  const options = { remote: originHere(top), pin: false, io: true, orYours: true };
+  if (fresh && !installPlugin(given, options)) return null;
   const plugin = installed();
   if (!plugin) throw new Error(`${given} isn't installed after all`);
   const manifest = readManifest(plugin.folder);
-  refusePersonal(manifest, true);
+  const kind = personalKind(manifest);
+  if (kind && fresh) return null;
+  if (kind && yourPlugins().includes(given))
+    return `${manifest.name} is ${kind}, so it's yours, not the repository's, and installed already.`;
+  if (kind) {
+    writeBoth(() => setLocked(given, lockedAs(manifest, commitOf(plugin.folder))));
+    return addedAsYours(manifest, kind);
+  }
   writeBoth(
     () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
     [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],

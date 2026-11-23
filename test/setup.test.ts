@@ -1983,7 +1983,7 @@ test("sc install refuses a repository that names a runtime plugin installed as y
   const run = await atTerminal("", app, ["install"]);
   expect(run.code).toBe(1);
   expect(run.err).toContain(
-    "fake is a runtime plugin, which is always yours and never a repository's",
+    "fake is a runtime plugin, so it is always yours and never a repository's",
   );
   expect(run.out).not.toContain("Nothing to install");
 });
