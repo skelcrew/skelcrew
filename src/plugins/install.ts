@@ -17,6 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { openDb } from "../db.ts";
 import { repositories } from "../flow/repo.ts";
+import { taskName } from "../flow/thread.ts";
 import { originHere } from "../machine/origin.ts";
 import { configDir, dataDir } from "../paths.ts";
 import { removeControlCodes } from "../screen/look.ts";
@@ -600,17 +601,34 @@ export function updatePlugins(name?: string): void {
   );
 }
 
-// Returns what the plugin does for the repositories Skelcrew has, such as "the tracker of app",
-// or null when it is no repository's tracker or forge. Such a plugin is never removed, as its
-// repositories would lose their tasks, or their PRs and their login for pushing.
+// Returns what uses the plugin, or null when no repository or session needs it.
 function jobOf(db: Database, name: string): string | null {
-  // The repositories that use it as their tracker, then as their forge. The first job found is
-  // enough to say why it stays.
   for (const [job, usingIt] of [
     ["tracker", repositories(db).filter((r) => trackerOf(db, r) === name)],
     ["forge", repositories(db).filter((r) => r.forge === name)],
   ] as const)
     if (usingIt.length > 0) return `the ${job} of ${usingIt.map((r) => r.name).join(", ")}`;
+  const builders = z.array(z.object({ name: z.string(), task: z.number() })).parse(
+    db
+      .query(`SELECT repositories.name, threads.task FROM threads
+      JOIN repositories ON repositories.owner = threads.owner AND repositories.repo = threads.repo
+      WHERE threads.host = ? ORDER BY repositories.name, threads.task`)
+      .all(name),
+  );
+  const leads = z
+    .array(z.object({ name: z.string() }))
+    .parse(
+      db
+        .query(
+          "SELECT name FROM repositories WHERE lead_host = ? AND lead_session IS NOT NULL AND tab_closed = 0 ORDER BY name",
+        )
+        .all(name),
+    );
+  const sessions = [
+    ...builders.map((thread) => taskName(thread.name, String(thread.task))),
+    ...leads.map((lead) => `the lead of ${lead.name}`),
+  ];
+  if (sessions.length > 0) return `the session host of ${sessions.join(", ")}`;
   return null;
 }
 
@@ -673,6 +691,10 @@ export function removeYourPlugin(given: string, needs: Need[]): void {
   const lock = yourLock();
   const named = yourPlugins();
   const plugin = installedPlugins(db).find((one) => one.name === given || one.source === given);
+  if (plugin) {
+    const job = jobOf(db, plugin.name);
+    if (job !== null) throw new Error(`${plugin.name} is ${job}, so Skelcrew keeps it`);
+  }
   const yours = plugin && (plugin.source === null || named.includes(plugin.source));
   if (plugin && !yours)
     throw new Error(

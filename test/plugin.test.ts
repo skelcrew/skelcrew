@@ -520,6 +520,27 @@ test("rm removes a plugin's folders and settings, and refuses for a repository's
   expect(existsSync(settings("fake"))).toBe(false);
 });
 
+test("rm keeps a plugin used by a builder or lead", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["plugin", "add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run(
+    "INSERT INTO repositories (owner, repo, name, lead_session, lead_host) VALUES ('simon', 'app', 'app', 'lead', 'fake')",
+  );
+  db.run(
+    "INSERT INTO threads (owner, repo, task, folder, branch, status, host) VALUES ('simon', 'app', 12, 'app-12', 'branch', 'working', 'fake')",
+  );
+  const refused = await skel(["plugin", "rm", "-g", "fake"]);
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("APP-12");
+  expect(refused.err).toContain("lead of app");
+  expect(existsSync(join(settings("fake"), "token"))).toBe(true);
+  db.run("UPDATE threads SET host = NULL");
+  db.run("UPDATE repositories SET tab_closed = 1");
+  db.close();
+  expect((await skel(["plugin", "rm", "-g", "fake"])).code).toBe(0);
+});
+
 test("setup runs an installed plugin's setup again in your terminal, and nothing else", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");
   await skel(["plugin", "add", "-g", "skelcrew/skelcrew-fake"], "y\n");
