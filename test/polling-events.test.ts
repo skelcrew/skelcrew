@@ -456,14 +456,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     submitRound2();
     await until(() => thread().submitting === null);
     rmSync(join(plugin, "hold-log"));
-    // Check 901's ID is seen only until the next poll, which no longer shows the check, so
-    // the wait is on the thread's log, whose line keeps the thread as it was once handled.
     const told = () =>
       read(join(data(), "threads", "app-12.log"))
         .split("\n")
         .find((line) => line.includes("told the builder: test failed"));
     await until(() => told() !== undefined);
     expect(JSON.parse(told() ?? "{}").seen).toContain("901");
+    await until(() => waiting() === 1, 30_000);
     expect(waiting()).toBe(1);
     rmSync(join(builder(), "busy"));
     await until(() => typed().includes("Also CSV."));
