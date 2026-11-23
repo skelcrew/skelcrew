@@ -557,22 +557,7 @@ function edgeLine(
 // the spinner's first, in its colours and the row's background.
 export type Spin = { line: number; column: number; cell: string };
 
-// Returns the lead's block, which heads the list as the repository's header. Its first line is
-// `◆ Lead · Claude Code`, its harness, with its mark and state on the right, such as `○ idle`.
-// Its title is cut first to fit. The second says what the lead is doing while it works, and is
-// blank while it doesn't, outside the shade of the row you are on, so the shade fits the row. Then a
-// line across, a line of how many tasks are running or ready, such as `9 running · 2 ready`, with
-// only those that have any. What needs you is left out, as the Needs you heading counts it. Running
-// are those whose builder is at work this moment, and a task waiting only for you to merge it
-// counts as ready, though it shows under Needs you. Then a
-// blank line. Gives the lines, and where its mark is. On a place too short for all of them, its
-// last lines give way, so the row you are on still shows.
-function leadBlock(
-  row: Row,
-  here: boolean,
-  headings: Heading[],
-  width: number,
-): { lines: string[]; mark: Spin | null } {
+function leadBlock(row: Row, here: boolean, width: number): { lines: string[]; mark: Spin | null } {
   const start = pointer(here);
   const colour = markColours[row.mark.colour];
   const state = `${row.mark.sign} ${row.says}`;
@@ -590,27 +575,11 @@ function leadBlock(
   const indent = " ".repeat(Bun.stringWidth(start) + 2);
   const step = fitted(row.step, width - indent.length);
   const second = step ? `${indent}${tinted(here, colour, step)}` : "";
-  const count = (section: Section) =>
-    headings.find((heading) => heading.section === section)?.count ?? 0;
-  const merges = headings.find((heading) => heading.section === "needs you")?.merges ?? 0;
-  const running = headings.reduce((sum, heading) => sum + heading.working, 0);
-  const parts = [
-    { count: running, word: "running" },
-    { count: count("ready") + merges, word: "ready" },
-  ].filter((part) => part.count > 0);
-  const said = parts.map((part) => `${part.count} ${part.word}`);
-  const plain = `   ${said.join(" · ") || "nothing under way"}`;
-  const summary =
-    Bun.stringWidth(plain) > width || parts.length === 0
-      ? paint(grey, fitted(plain, width))
-      : `   ${said.join(paint(grey, " · "))}`;
   return {
     lines: [
       ...marked(second ? [first, second] : [first], here, width),
       ...(second ? [] : [""]),
       paint(grey, "─".repeat(width)),
-      summary,
-      "",
     ],
     mark: row.working ? mark : null,
   };
@@ -654,7 +623,7 @@ export function drawRows(
   const leadAt = rows.findIndex((row) => row.part === "lead");
   const blankLine = { text: "", row: null, target: null };
   const leadRow = rows[leadAt];
-  const block = leadRow ? leadBlock(leadRow, leadAt === here, headings, width) : null;
+  const block = leadRow ? leadBlock(leadRow, leadAt === here, width) : null;
   const lead = (block?.lines ?? []).slice(0, Math.max(height - 1, 0));
   const leadTargets: Target[] = lead.map((_, at) => (at < 2 ? { row: leadAt } : null));
   const room = Math.max(height - lead.length, 1);
