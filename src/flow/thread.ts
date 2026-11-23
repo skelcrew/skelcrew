@@ -244,6 +244,10 @@ export const Thread = z.object({
   // Skelcrew's own item you handed to the lead, by its title and text, which then no longer
   // shows. Null when none was.
   handed: z.string().nullable(),
+  // What a pick on Skelcrew's own item is doing while it runs, such as `merging…`, which takes the
+  // thread out of Needs you meanwhile, and why the last pick failed, which its item shows in red.
+  picking: z.string().nullable(),
+  pick_failed: z.string().nullable(),
   // Whether you decided about the round limit, with sc start or a merge, so the thread no longer
   // needs you for it. The next review asks again.
   limit_decided: z.coerce.boolean(),
@@ -422,10 +426,12 @@ export function record(
   const before = readThread(db, folder);
   let { noting } = change;
   // A thread that no longer needs you forgets the item it handed to the lead, so the next time it
-  // needs you, the same words show again.
+  // needs you, the same words show again, and why a pick on its item failed.
   if (!needsYou({ ...before, ...change })) {
     noting = null;
     if (change.handed === undefined && before.handed !== null) change = { ...change, handed: null };
+    if (change.pick_failed === undefined && before.pick_failed !== null)
+      change = { ...change, pick_failed: null };
   } else if (!needsYou(before) && noting === undefined)
     noting =
       change.needs_you === true &&

@@ -21,10 +21,22 @@ const toBuilder = [
   { label: "Let the lead handle it", act: "lead" },
 ] as const;
 
+// What a task says while a pick on its item runs, by what the pick does. Opening the builder and
+// handing the item to the lead are done at once, so they have none.
+export const pickingWords: Partial<Record<Act, string>> = {
+  "go on": "going on…",
+  "skip review": "merging…",
+  stop: "stopping…",
+  merge: "merging…",
+  restart: "starting…",
+};
+
 // Returns the item for what Skelcrew sees the thread needs you for, or null when it needs you for
-// nothing, its item went to the lead, or the lead posted its own, which `asked` says.
+// nothing, its item went to the lead, the lead posted its own, which `asked` says, or a pick on it
+// runs.
 export function ownItem(thread: Thread, asked: boolean): OwnItem | null {
-  if (asked || thread.status === "done" || !needsYou(thread)) return null;
+  if (asked || thread.status === "done" || thread.picking !== null || !needsYou(thread))
+    return null;
   const item = itemFor(thread);
   return thread.handed === handedKey(item) ? null : item;
 }

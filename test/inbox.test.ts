@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DaemonRequest } from "../src/flow/requests.ts";
+import { red } from "../src/screen/look.ts";
 import { insideSandbox, itemSql, read, runSkel, source, threadSql } from "./harness.ts";
 import {
   addApp,
@@ -469,6 +470,46 @@ console.log(JSON.stringify({ said, notes: notes() }));`);
     said: "what APP-12 needs you for changed as you answered, so read it again",
     notes: [],
   });
+});
+
+// A pick shows at once: while it runs, its task leaves Needs you for its stage, saying what the
+// pick does, and its tab counts it no more. One that fails comes back with its reason in red in
+// the box, until the next pick or until the thread no longer needs you.
+test("a pick takes its task out of Needs you while it runs, and a failure comes back in red", () => {
+  const seen = inProcess(`
+const { repositoryTabs } = await import(${JSON.stringify(source("list/rows.ts"))});
+const { itemBox } = await import(${JSON.stringify(source("list/layout.ts"))});
+const ready = { status: "waiting", verdict: "approve", needs_you: true, reviewed_commit: "abcdef1234567890" };
+record(db, "app-12", ready);
+const look = () => { const r = row("APP-12"); return { section: r.section, says: r.says, needsYou: r.needsYou, ask: r.ask, badge: repositoryTabs(db, null)[0].needYou + repositoryTabs(db, null)[0].ready }; };
+const before = look();
+let during = null;
+const refused = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "a", async () => { during = look(); throw new Error("GitHub refused: not mergeable"); }).catch((error) => error.message);
+const failed = look();
+const box = itemBox(failed.ask, 60).map((line) => line.text).join("\\n");
+let again = null;
+await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "a", async () => { again = look(); throw new Error("still not"); }).catch(() => {});
+record(db, "app-12", { needs_you: false });
+const cleared = thread().pick_failed;
+record(db, "app-12", { needs_you: true });
+console.log(JSON.stringify({ before, during, refused, failed, box, again, cleared, after: look() }));`);
+  expect(seen.before).toMatchObject({ section: "needs you", badge: 1 });
+  expect(seen.during).toEqual({
+    section: "ready",
+    says: "merging…",
+    needsYou: false,
+    ask: null,
+    badge: 0,
+  });
+  expect(seen.refused).toBe("GitHub refused: not mergeable");
+  expect(seen.failed).toMatchObject({
+    section: "needs you",
+    ask: { title: "Ready to merge", failed: "GitHub refused: not mergeable" },
+  });
+  expect(seen.box).toContain(`\x1b[${red}mGitHub refused: not mergeable`);
+  expect(seen.again).toMatchObject({ section: "ready", says: "merging…" });
+  expect(seen.cleared).toBeNull();
+  expect((seen.after as { ask: object }).ask).not.toHaveProperty("failed");
 });
 
 // On the screen every option of Skelcrew's own item goes to the daemon, so the lead hears it:

@@ -1868,16 +1868,18 @@ function daemon(): void {
     commit: z.string().default(""),
     by: z.number().default(0),
     now: z.boolean().default(false),
+    pick: z.string().default(""),
   });
   standIn = createServer((connection) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, now } = Request.parse(
+      const { command, from, tab, repo, task, pr, commit, by, now, pick } = Request.parse(
         JSON.parse(data.toString()),
       );
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
       if (command === "start") asked.push(`start ${repo} ${task}${now ? " now" : ""}`);
       if (command === "merge") asked.push(`merge ${repo} ${pr} ${commit}`);
       if (command === "queue move") asked.push(`queue move ${repo} ${task} ${by}`);
+      if (command === "pick") asked.push(`pick ${repo} ${task} ${pick}`);
       const said =
         command === "lead"
           ? leadAnswer
@@ -2644,6 +2646,27 @@ test("a merge whose checks failed while its question was open merges nothing, an
     "why it didn't merge",
   );
   expect(asked.filter((line) => line.startsWith("merge"))).toEqual([]);
+});
+
+// A pick that merges asks y/n in the item's box too, where you picked: any other key leaves the
+// item as it was, and y sends the pick to the daemon.
+test("a merge picked on an item asks in its box, any other key leaves it, and y sends it", async () => {
+  await open();
+  press("Down");
+  await until(() => here().startsWith("▸ ● 14 "), "the ready row");
+  press("Enter");
+  await until(() => seen().includes("a) Merge it"), "the item");
+  const inBox = () => seen().includes("│ Merge app#41 into main? y/n");
+  type("a");
+  await until(inBox, "the question in the box");
+  type("n");
+  await until(() => !inBox(), "the question to go");
+  expect(seen()).toContain("a) Merge it");
+  expect(asked.filter((line) => line.startsWith("pick"))).toEqual([]);
+  type("a");
+  await until(inBox, "the question in the box again");
+  type("y");
+  await until(() => asked.includes("pick simon/app 14 a"), "the pick");
 });
 
 test("m on a task ready for review asks first, and y merges it at the commit you saw", async () => {

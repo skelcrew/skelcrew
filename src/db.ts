@@ -153,7 +153,9 @@ function heardInLog(folder: string, round: number): string | null {
 // null. `said` is what the builder last said for what Skelcrew marked itself: the question it
 // asked, its last message once it stopped without submitting, or the error its harness stopped
 // on. `handed` is Skelcrew's own item on the thread that you handed to the lead, by its title and
-// text, so it no longer shows. `limit_decided` is whether you decided the round limit, so it stops needing you for it
+// text, so it no longer shows. `picking` is what a pick on Skelcrew's own item is doing while it
+// runs, such as `merging…`, and `pick_failed` why the last one failed, while the thread needs you.
+// `limit_decided` is whether you decided the round limit, so it stops needing you for it
 // until the next review. `review_failed` is whether the latest review or round failed, which the
 // lead hears of and can run again. `ended_at` and `ended_said` are no longer used, and stay so
 // the view keeps its columns in place for a screen of an earlier release still running.
@@ -196,6 +198,8 @@ const threadColumns = {
   needs_you_for: "TEXT",
   said: "TEXT",
   handed: "TEXT",
+  picking: "TEXT",
+  pick_failed: "TEXT",
   limit_decided: "INTEGER NOT NULL DEFAULT 0",
   ended_at: "INTEGER",
   ended_said: "TEXT",

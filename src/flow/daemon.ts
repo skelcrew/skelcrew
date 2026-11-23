@@ -503,6 +503,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     );
     return `Merged ${found.name}#${pr}.`;
   };
+  // Polls the thread's repository twice at once, once a merge is armed, so a PR that is ready
+  // already merges now rather than at the polls to come: the first posts the record of who
+  // asked, and the second merges. sc merge doesn't wait for it.
+  const mergeSoon = (thread: Thread) => {
+    const fullName = `${thread.owner}/${thread.repo}`;
+    void polling.promise
+      .then(async (poll) => {
+        await poll(fullName);
+        await poll(fullName);
+      })
+      .catch((error) => console.log(errorText(error)));
+  };
   // Restarts a running builder, keeping its conversation, and returns what to say.
   const restartThread = async (thread: Thread): Promise<string> => {
     const name = threadName(db, thread);
@@ -1032,7 +1044,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (leadOfCaller(caller) === null) {
           if (request.asked !== undefined)
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
-          return { said: armMerge(db, sessions, thread, { seen: request.seen }, skip) };
+          const said = armMerge(db, sessions, thread, { seen: request.seen }, skip);
+          mergeSoon(thread);
+          return { said };
         }
         if (!leadCanMerge())
           throw new Error(
@@ -1044,7 +1058,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           throw new Error(
             "give what the human asked with --asked-file, a file holding their exact words",
           );
-        return { said: armMerge(db, sessions, thread, { asked: request.asked }, skip) };
+        const said = armMerge(db, sessions, thread, { asked: request.asked }, skip);
+        mergeSoon(thread);
+        return { said };
       }
       case "merge cancel":
         return { said: cancelMerge(db, threadToMerge(db, request)) };
@@ -1267,6 +1283,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // A task that left the queue but whose builder's start the stop cut short goes back to it
   // first, as it can't be brought back.
   backToQueue(db);
+  // A pick the daemon's stop cut short runs no more, so its task needs you again.
+  db.run("UPDATE threads SET picking = NULL WHERE picking IS NOT NULL");
   dropReviewLogins(homedir());
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.

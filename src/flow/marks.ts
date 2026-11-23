@@ -33,8 +33,10 @@ export function markOf(status: Status, word: string): Mark {
 }
 
 // Returns what a list shows of a thread: its word, given the rounds of changes it may have, its
-// status and its mark.
+// status and its mark. While a pick on its item runs, it says what the pick does, as at work.
 export function shownOf(thread: Thread, maxRounds: number, now = Date.now()): Shown {
+  if (thread.picking !== null)
+    return { word: thread.picking, status: "working", mark: { sign: "○", colour: "bright" } };
   const word = threadWord(thread, maxRounds, now);
   const status = statusOf(thread, maxRounds, now);
   return { word, status, mark: markOf(status, word) };
