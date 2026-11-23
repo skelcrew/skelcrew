@@ -21,7 +21,7 @@ const base: Top = {
   typingRight: true,
   fullScreen: false,
   side: "",
-  notice: "",
+  elsewhere: null,
 };
 // Returns the header and the boxes' row as tmux formats, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
@@ -282,18 +282,31 @@ test("on a phone-wide screen with many tabs, the way back to the sidebar still s
   expect(seen(line)).toHaveLength(terminal(given));
 });
 
-test("a notice takes the tabs' place after Skelcrew, cut to fit, and the row stays as wide", () => {
-  const notice = "That file is on another machine.";
-  expect(seen(headerRow({ notice }))).toStartWith(`    Skelcrew ${notice}`);
-  expect(headerRow({ notice })).not.toContain("app");
-  for (const sidebar of [0, 5, 20]) {
-    const given = { sidebar, right: 10 };
-    const line = seen(headerRow({ notice }, given));
-    expect(Bun.stringWidth(line)).toBe(terminal(given));
-  }
-  expect(seen(headerRow({ notice }, { sidebar: 20, right: 10 }))).toContain("…");
+test("after a drop from another machine, the boxes' row says how to drop it, and the header keeps its tabs", () => {
+  const drawn = top({ elsewhere: "simon@workbox" });
+  expect(seen(drawn.boxes)).toMatch(
+    /^── That file is on another machine\. To drop files, run sc --remote simon@workbox from that machine\. ─+$/,
+  );
+  expect(Bun.stringWidth(seen(drawn.boxes))).toBe(terminal(size));
+  expect(drawn.header).toBe(headerRow());
 });
 
-test("a notice is shown, never read as a format", () => {
-  expect(seen(headerRow({ notice: "#(touch x) 100%" }))).toContain("#(touch x) 100%%");
+test("on a narrow screen the notice says it shorter, never cuts the command, and keeps the way back", () => {
+  for (const width of [80, 60, 45, 30]) {
+    const given = { sidebar: 0, right: width - 5 };
+    const drawn = top({ elsewhere: "simon@workbox", side: "lead" }, given);
+    expect(seen(drawn.boxes)).toContain("sc --remote simon@workbox");
+    expect(Bun.stringWidth(seen(drawn.boxes))).toBe(width);
+    expect(seen(drawn.header)).toContain("‹ sidebar");
+  }
+  const phone = seen(top({ elsewhere: "simon@workbox" }, { sidebar: 0, right: 15 }).boxes);
+  expect(Bun.stringWidth(phone)).toBe(20);
+});
+
+test("without this machine's name, the notice says where to fill it in", () => {
+  expect(seen(boxRow({ elsewhere: "" }))).toContain("sc --remote <user@host>");
+});
+
+test("the machine's name in the notice is shown, never read as a format", () => {
+  expect(seen(boxRow({ elsewhere: "#(touch x)%" }))).toContain("sc --remote #(touch x)%%");
 });

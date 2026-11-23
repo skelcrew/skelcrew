@@ -1,7 +1,6 @@
 // The two top rows of the screen. The header, across the whole width, says Skelcrew, its version
 // and, on a remote, where it runs, then has a tab for each repository. Under it is the top of the
-// box round each side. A notice, such as that a dropped file is on another machine, takes the
-// tabs' place while it shows.
+// box round each side, or for a while after a file dropped was on another machine, how to drop it.
 import type { Tab } from "../list/rows.ts";
 import { fitted, removeControlCodes } from "./look.ts";
 import { dim, lit } from "./screen.ts";
@@ -148,8 +147,8 @@ function drawTabs(tabs: Tab[], open: string, width: number): { text: string; wid
 // any, the names of the version of the Skelcrew running here, longest first, such as v0.4.2, and
 // whether your typing goes to the right side, whose box is then the lit one, whether the right
 // side fills the whole terminal, and on a screen that shows one side at a time the name of the
-// side that shows, sidebar or the agent's, or empty, and a notice that takes the tabs' place while
-// it shows, such as that a dropped file is on another machine, or empty.
+// side that shows, sidebar or the agent's, or empty, and while a dropped file was on another
+// machine, this one as sc --remote takes it, such as simon@workbox, empty when unknown, or null.
 export type Top = {
   tabs: Tab[];
   open: string;
@@ -158,7 +157,7 @@ export type Top = {
   typingRight: boolean;
   fullScreen: boolean;
   side: string;
-  notice: string;
+  elsewhere: string | null;
 };
 
 // Returns the screen's two top rows as tmux formats, given what they show and how wide the
@@ -204,13 +203,29 @@ export function drawTop(top: Top, size: Size): { header: string; boxes: string }
     inColour(right, `${"─".repeat(Math.max(size.right, 0))}${corner}`),
     inColour(outer, "─"),
   ].join("");
-  if (top.notice && width > 13) {
-    const notice = fitted(removeControlCodes(top.notice), width - 13);
-    const rest = " ".repeat(Math.max(width - 13 - Bun.stringWidth(notice), 0));
-    return { header: `    ${skelName} #[fg=${lit}]${escaped(notice)}#[default]${rest}`, boxes };
-  }
   return {
     header: `${header(top.where, split, top.versions, side)}${tabs.text}${after}`,
-    boxes,
+    boxes: top.elsewhere === null ? boxes : elsewhereRow(top.elsewhere, width),
   };
+}
+
+// Returns the boxes' row, `width` columns wide, while a dropped file was on another machine: lit
+// line round the longest way of saying how to drop it that fits. `machine` is this one as
+// sc --remote takes it, or empty when unknown. The command is never cut while it fits, as half a
+// name would be another machine.
+function elsewhereRow(machine: string, width: number): string {
+  const command = `sc --remote ${removeControlCodes(machine) || "<user@host>"}`;
+  const said = [
+    `That file is on another machine. To drop files, run ${command} from that machine.`,
+    `That file is on another machine. To drop files, run ${command} there.`,
+    `File on another machine? Run ${command} there.`,
+    `To drop files: ${command}`,
+    command,
+  ];
+  const room = Math.max(width - 4, 0);
+  const text = said.find((one) => Bun.stringWidth(one) <= room) ?? fitted(command, room);
+  const rest = Math.max(width - 4 - Bun.stringWidth(text), 0);
+  const line = (length: number) => inColour(lit, "─".repeat(length));
+  if (width < 4) return line(width);
+  return `${line(2)} #[fg=colour231]${escaped(text)}#[default] ${line(rest)}`;
 }

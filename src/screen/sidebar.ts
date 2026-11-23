@@ -548,9 +548,9 @@ export async function runSidebar(
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
     // anything is drawn, as the top rows and the footer show it.
     // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it, and
-    // the last notice that a dropped file is on another machine.
+    // when a dropped file was last on another machine, and this machine's name for sc --remote.
     const format = `#{pane_active} #{window_zoomed_flag} #{window_width} #{${dropNoticeOption}}`;
-    const [active, zoomed, across, given = "0", ...dropNotice] = doing(
+    const [active, zoomed, across, droppedAt = "0", machine = ""] = doing(
       "asking tmux where your typing goes",
       () => screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim().split(" "),
     );
@@ -621,7 +621,7 @@ export async function runSidebar(
       typingRight,
       fullScreen,
       side: narrow ? (typingRight ? name : "sidebar") : "",
-      notice: Date.now() - Number(given) < dropNoticeFor ? dropNotice.join(" ") : "",
+      elsewhere: Date.now() - Number(droppedAt) < dropNoticeFor ? machine : null,
     };
     const top = drawTop(look, { sidebar, right });
     if (`${top.header}\n${top.boxes}` !== lastTop) {
@@ -1115,7 +1115,7 @@ function keyLines(keys: string, room: number): string[] {
 }
 
 // How long, in milliseconds, the notice that a dropped file is on another machine shows.
-const dropNoticeFor = 10_000;
+const dropNoticeFor = 30_000;
 
 // Returns the lines that go above the rest of the sidebar for a notice, such as a release installed
 // in the background, or none without one. Cut at words to fit a sidebar `width` columns wide, and

@@ -80,15 +80,14 @@ export const attachedMark = "skelcrew-attached";
 const toSidebar = `:.${panes.sidebar}`;
 const toRight = `:.${panes.right}`;
 
-// Returns what the screen says when a dropped file is on another machine: how to drop files onto
-// this one, by the user and hostname you would type to reach it.
-function elsewhereNotice(): string {
+// Returns this machine as you would type it after sc --remote, such as simon@workbox, or empty
+// when its user or hostname isn't known.
+function thisMachine(): string {
   let user = "";
   try {
     user = userInfo().username;
   } catch {}
-  const here = user && hostname() ? `${user}@${hostname()}` : "<user@host>";
-  return `That file is on another machine. To drop files, run sc --remote ${here} from that machine.`;
+  return user && hostname() ? `${user}@${hostname()}` : "";
 }
 
 // Returns the name of the screen's session in one terminal. sc --remote picks the name on your
@@ -447,7 +446,7 @@ export async function openScreen(
     },
     put: async (folder, files) => copyDrops(folder, files),
     elsewhere: () => {
-      const notice = `${Date.now()} ${elsewhereNotice()}`;
+      const notice = `${Date.now()} ${thisMachine()}`;
       const set = ["set", "-t", `=${name}:`, dropNoticeOption, notice];
       Bun.spawn(["tmux", "-L", screenSocket(agents), ...set], { env, stderr: "ignore" });
     },

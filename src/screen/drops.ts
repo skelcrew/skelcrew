@@ -28,8 +28,8 @@ export const dropSignalColumn = 9998;
 export const dropAsk = "\x1b]skel-drop\x07";
 export const dropAnswerOption = "@drop-answer";
 
-// The option on the screen's session that holds the last notice that a dropped file is on another
-// machine, after the time it was given, in milliseconds, so the sidebar shows it for a while.
+// The option on the screen's session set when a dropped file was on another machine: the time, in
+// milliseconds, then this machine as sc --remote takes it, so the screen shows how for a while.
 export const dropNoticeOption = "@drop-notice";
 
 // How long, in milliseconds, the screen's tmux waits for the rest of a sequence cut off after

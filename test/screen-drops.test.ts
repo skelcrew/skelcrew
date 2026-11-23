@@ -21,7 +21,6 @@ import {
   seen,
   sidebarRefreshedTwice,
   startTest,
-  tabRow,
   tmux,
   type,
   until,
@@ -61,6 +60,9 @@ test("a file dropped onto the lead reaches it as a copy in the lead's folder", a
   expect(seen()).not.toContain(elsewhere);
 });
 
+// The row under the header, where the notice shows.
+const boxesRow = () => seen().split("\n")[1] ?? "";
+
 // The start of the notice that says a dropped file is on another machine.
 const elsewhere = "That file is on";
 
@@ -69,8 +71,8 @@ test("a file dropped from another machine's terminal reaches the agent as it cam
   await ready("lead");
   drop("/Users/simon/Desktop/shot.png");
   expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
-  await until(() => tabRow().includes(elsewhere), "the notice that the file is elsewhere");
-  expect(tabRow()).toContain("To drop files, run sc --remote");
+  await until(() => boxesRow().includes(elsewhere), "the notice that the file is elsewhere");
+  expect(boxesRow()).toContain("To drop files, run sc --remote");
 });
 
 test("the notice that a dropped file is elsewhere shows while the agent fills the terminal", async () => {
@@ -85,7 +87,7 @@ test("the notice that a dropped file is elsewhere shows while the agent fills th
   await until(() => zoomed().trim() === "1", "app-12 full screen");
   drop("/Users/simon/Desktop/shot.png");
   expect(await got("app-12")).toBe("/Users/simon/Desktop/shot.png");
-  await until(() => tabRow().includes(elsewhere), "the notice over the full-screen agent");
+  await until(() => boxesRow().includes(elsewhere), "the notice over the full-screen agent");
 });
 
 test("a file dropped onto a builder you attached to reaches it in its clone", async () => {
