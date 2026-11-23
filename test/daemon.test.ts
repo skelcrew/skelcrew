@@ -1444,7 +1444,9 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await open();
     await until(() => existsSync(join(leadFolder(), "seen")));
     await until(() => readFileSync(join(leadFolder(), "seen"), "utf8").includes("hidden"));
-    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe("README\nsocket\ntoken-hidden\n");
+    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe(
+      "README\nskelcrew.yaml\nsocket\ntoken-hidden\n",
+    );
     expect(claudeLines()[0]).toContain("--model opus");
   });
 

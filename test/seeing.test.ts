@@ -57,6 +57,7 @@ beforeEach(() => {
   for (const repo of ["app", "site"]) {
     const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", repo);
     mkdirSync(clone, { recursive: true });
+    Bun.spawnSync(["git", "-C", clone, "init", "-q"]);
     writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
   }
 });
