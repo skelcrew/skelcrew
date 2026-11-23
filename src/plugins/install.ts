@@ -428,7 +428,11 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       refusePersonal(manifest, io);
       refuseOtherName(manifest, called);
       const answer = askLine(`Replace ${manifest.name} from ${here.source} with ${given}? [y/N]`);
-      if (answer === null || !["y", "yes"].includes(answer.trim().toLowerCase())) return false;
+      if (answer === null) throw unanswered(`replacing ${manifest.name}`);
+      if (!["y", "yes"].includes(answer.trim().toLowerCase())) {
+        console.log(`Skelcrew didn't replace ${manifest.name}.`);
+        return false;
+      }
       updatePlugin(db, here, {
         ...options,
         source: given,
@@ -568,10 +572,16 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
           setLocked(source, lockedAs(manifest, cloned.commit));
         if (plugin.source !== null && source !== plugin.source) {
           if (yourLock()[plugin.source]) setLocked(plugin.source, null);
-          const named = yourPlugins();
-          if (named.includes(plugin.source))
-            setYourPlugins(named.map((one) => (one === plugin.source ? source : one)));
         }
+        const named = yourPlugins();
+        if (
+          options.name ||
+          (source !== plugin.source && plugin.source !== null && named.includes(plugin.source))
+        )
+          setYourPlugins([
+            ...named.filter((one) => one !== plugin.source && one !== source),
+            source,
+          ]);
       });
     } catch (error) {
       rmSync(newFolder, { recursive: true, force: true });

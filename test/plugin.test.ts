@@ -906,7 +906,7 @@ db.close();
   );
   db.close();
   const declined = await skel(["plugin", "add", "-g", "simon/new-fake"], "n\n");
-  expect(declined.out).not.toContain("moved from");
+  expect(declined.out).toContain("Skelcrew didn't replace fake.");
   expect((await skel(["plugin", "ls"])).out).toContain("fake 0.1.0");
   const moved = await skel(["plugin", "add", "-g", "simon/new-fake"], "y\ny\n");
   expect(moved.code).toBe(0);
@@ -924,6 +924,58 @@ db.close();
   expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual(["simon/new-fake"]);
   const removed = await skel(["plugin", "rm", "-g", "fake"]);
   expect(removed.err).toContain("so Skelcrew keeps it");
+});
+
+test("a repository plugin can become personal when replacing its source", async () => {
+  publish("simon/old-fake", "0.1.0");
+  publish("simon/new-fake", "0.2.0");
+  const app = appCheckout();
+  expect((await skel(["plugin", "add", "simon/old-fake"], "y\n", "", {}, app)).code).toBe(0);
+  writeFileSync(join(settings("fake"), "preferences"), "keep me");
+  expect((await skel(["plugin", "add", "-g", "simon/new-fake"], "y\ny\n")).code).toBe(0);
+  expect(existsSync(yourConfig())).toBe(true);
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual(["simon/new-fake"]);
+  expect((await skel(["plugin", "ls"])).out).not.toContain("sc install removes it");
+  expect(readFileSync(join(settings("fake"), "preferences"), "utf8")).toBe("keep me");
+});
+
+test("a checkout replacement pins the new source and keeps personal settings", async () => {
+  publish("simon/old-fake", "0.1.0");
+  publish("simon/new-fake", "0.2.0");
+  await skel(["plugin", "add", "-g", "simon/old-fake"], "y\n");
+  writeFileSync(join(settings("fake"), "preferences"), "keep me");
+  const app = appCheckout();
+  const moved = await skel(["plugin", "add", "simon/new-fake"], "y\ny\n", "", {}, app);
+  expect(moved.code).toBe(0);
+  expect(parse(readFileSync(join(app, "skelcrew.yaml"), "utf8")).plugins).toContain(
+    "simon/new-fake",
+  );
+  expect(parse(readFileSync(join(app, "skelcrew.lock"), "utf8"))["simon/new-fake"]).toEqual({
+    name: "fake",
+    version: "0.2.0",
+    commit: tagCommit("simon/new-fake", "0.2.0"),
+  });
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual(["simon/new-fake"]);
+  expect(readFileSync(join(settings("fake"), "preferences"), "utf8")).toBe("keep me");
+});
+
+test("a failed checkout pin keeps a replaced plugin and its settings", async () => {
+  publish("simon/old-fake", "0.1.0");
+  publish("simon/new-fake", "0.2.0");
+  await skel(["plugin", "add", "-g", "simon/old-fake"], "y\n");
+  writeFileSync(join(settings("fake"), "preferences"), "keep me");
+  const app = appCheckout();
+  writeFileSync(
+    join(onGitHub("simon/new-fake"), "setup.sh"),
+    `mkdir "${join(app, "skelcrew.lock")}"\n`,
+  );
+  git(onGitHub("simon/new-fake"), "add", ".");
+  git(onGitHub("simon/new-fake"), "commit", "-qm", "Make the checkout pin fail");
+  git(onGitHub("simon/new-fake"), "tag", "-f", "v0.2.0");
+  const moved = await skel(["plugin", "add", "simon/new-fake"], "y\ny\n", "", {}, app);
+  expect(moved.code).toBe(1);
+  expect((await skel(["plugin", "ls"])).out).toContain("fake 0.2.0");
+  expect(readFileSync(join(settings("fake"), "preferences"), "utf8")).toBe("keep me");
 });
 
 // One name can't be two plugins, and a folder has no version a repository could pin.

@@ -226,6 +226,7 @@ export function addRepositoryPlugin(given: string, shown: Shown = {}): string | 
   repositoryPlugins(top);
   const db = openDb();
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
+  const before = installedPlugins(db);
   const fresh = !installed();
   if (fresh && !installPlugin(given, { remote: originHere(top), pin: false, io: true, shown }))
     return null;
@@ -239,7 +240,7 @@ export function addRepositoryPlugin(given: string, shown: Shown = {}): string | 
       [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],
     );
   } catch (error) {
-    if (fresh)
+    if (!before.some((one) => one.name === plugin.name))
       try {
         removePlugin(manifest.name);
       } catch {}
