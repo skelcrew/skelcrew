@@ -144,7 +144,7 @@ test("a builder is told each command configured as none, and asks the lead rathe
 // has no tests: once its branch sets test, sc check runs it.
 test("the setup thread's builder is told it sets setup and test, and that sc check runs its branch's", () => {
   expect(builderInstructions(instructions, { setup: [], test: [] }, true)).toEndWith(
-    "\n\nThis thread sets the repository's setup and test commands, under setup: and test: in skelcrew.yaml, so Skelcrew ran no setup command. Once the skelcrew.yaml in your clone sets test, `sc check` runs it once one of this machine's check slots is free, and your reviewer runs the one your commit sets. Until then, and with test: [], it runs nothing.\n",
+    "\n\nThis thread sets the repository's setup and test commands, under setup: and test: in skelcrew.yaml, so Skelcrew ran no setup command. Once the skelcrew.yaml in your clone sets test, `sc check` runs its setup and then its test, once one of this machine's check slots is free, and your reviewer runs the ones your commit sets. Until then, and with test: [], it runs nothing.\n",
   );
 });
 
@@ -287,7 +287,9 @@ test("a lead whose repository has no code yet lets the first thread that adds co
   expect(told).toContain(
     'Start the first thread that adds code, on the human\'s yes, with sc add <repo> "<title>" "<body>" --start --setup',
   );
-  expect(told).toContain("Once its branch sets them, its sc check and its reviewer run them.");
+  expect(told).toContain(
+    "Once its branch sets them, its sc check and its reviewer run its setup and then its test.",
+  );
   expect(told).not.toContain("read the repository to find them");
 });
 

@@ -495,7 +495,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 // Returns the builder's instructions: its role's, from `role`, then the setup and test commands the
 // repository's skelcrew.yaml or your config names, each on its own, or that it has none. The
 // builder can't read your config from its sandbox, so it is told. The lead's setup thread is told
-// instead that it sets them, and that sc check runs the test its branch sets.
+// instead that it sets them, and that sc check runs the setup and test its branch sets.
 export function builderInstructions(
   role: string,
   commands: { setup: string[]; test: string[] },
@@ -503,7 +503,7 @@ export function builderInstructions(
 ): string {
   const instructions = role.replace(/\n$/, "");
   if (setupThread)
-    return `${instructions}\n\nThis thread sets the repository's setup and test commands, under setup: and test: in skelcrew.yaml, so Skelcrew ran no setup command. Once the skelcrew.yaml in your clone sets test, \`sc check\` runs it once one of this machine's check slots is free, and your reviewer runs the one your commit sets. Until then, and with test: [], it runs nothing.\n`;
+    return `${instructions}\n\nThis thread sets the repository's setup and test commands, under setup: and test: in skelcrew.yaml, so Skelcrew ran no setup command. Once the skelcrew.yaml in your clone sets test, \`sc check\` runs its setup and then its test, once one of this machine's check slots is free, and your reviewer runs the ones your commit sets. Until then, and with test: [], it runs nothing.\n`;
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
   const setupTold =

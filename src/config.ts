@@ -116,15 +116,17 @@ export function repositoryCommands(
   throw new Error(`${name}'s ${unset} set yet. Ask the lead to set ${them} up.`);
 }
 
-// Returns the test commands a thread's sc check and its reviewer run: the repository's. The
-// lead's setup thread runs those the skelcrew.yaml on its branch sets, as `branch` reads it,
-// or none while it sets none. So the first code a repository gets is tested before it merges.
+// Returns the commands a thread's sc check and its reviewer run: the repository's test. The
+// lead's setup thread runs the setup and then the test that the skelcrew.yaml on its branch
+// sets, as `branch` reads it, or nothing while it sets no test. Its clone started with no setup,
+// so the setup runs first, and the first code a repository gets is tested before it merges.
 export function threadTest(
   thread: Repository & { setup_thread?: boolean | undefined },
   branch: () => string | null,
 ): string[] {
   if (!thread.setup_thread) return repositoryCommands(thread).test;
-  return setupThreadCommands(thread, branch()).test;
+  const { setup, test } = setupThreadCommands(thread, branch());
+  return test.length === 0 ? [] : [...setup, ...test];
 }
 
 // Returns the skelcrew.yaml a builder's clone holds now, saved or not, or null with none. The

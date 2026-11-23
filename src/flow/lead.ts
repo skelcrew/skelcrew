@@ -136,8 +136,9 @@ function commandsOf(repository: Repository): Commands {
   }
 }
 
-// Returns whether the clone holds anything to set up or test: a file that isn't docs, Markdown,
-// a licence, git's own or Skelcrew's, such as a package file, a build file, CI or a source. A
+// Returns whether the clone holds anything to set up or test: a file that isn't Markdown, a
+// README, a licence, git's own or Skelcrew's, such as a package file, a build file, CI or a
+// source, wherever it is, docs/ included, as a docs site has a package to set up too. A
 // clone git can't list counts as code, so its lead still proposes the commands.
 function hasCode(clone: string): boolean {
   const listed = Bun.spawnSync(["git", "-C", clone, "ls-files", "-z"], {
@@ -147,7 +148,6 @@ function hasCode(clone: string): boolean {
   if (!listed.success) return true;
   const notCode = (file: string) =>
     file.endsWith(".md") ||
-    file.startsWith("docs/") ||
     file.startsWith(".agents/") ||
     ["skelcrew.yaml", "skelcrew.lock", ".gitignore", ".gitattributes"].includes(file) ||
     /^(readme|license|licence|copying)(\.\w+)?$/i.test(file);
@@ -162,9 +162,9 @@ function hasCode(clone: string): boolean {
 const unsetCommands = (commands: Commands) =>
   !("problem" in commands) && (commands.setup === null || commands.test === null);
 
-const proposeCommands = `Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README. Propose them to the human in plain words, such as "Setup installs the dependencies with bun install, and the tests run with bun run check", or none where it needs none. On a yes, start the setup thread with sc add <repo> "<title>" "<body>" --start --setup, its body asking for just those lines in skelcrew.yaml: setup: and test:, each a list of commands, [] for none. It is the only thread that starts while they aren't set. It runs no setup command. Once its branch sets test, its sc check and its reviewer run it, and with test: [] they run nothing. Once its PR merges, every other thread can start`;
+const proposeCommands = `Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README. Propose them to the human in plain words, such as "Setup installs the dependencies with bun install, and the tests run with bun run check", or none where it needs none. On a yes, start the setup thread with sc add <repo> "<title>" "<body>" --start --setup, its body asking for just those lines in skelcrew.yaml: setup: and test:, each a list of commands, [] for none. It is the only thread that starts while they aren't set. It runs no setup command. Once its branch sets test, its sc check and its reviewer run its setup and then its test, and with test: [] they run nothing. Once its PR merges, every other thread can start`;
 
-const waitForCode = `The repository has no code yet to set up or test: no package files, build files, CI or sources. So don't propose a setup thread now. Say in a line that setup and test can wait until there's code, and ask what to build. Start the first thread that adds code, on the human's yes, with sc add <repo> "<title>" "<body>" --start --setup, as it is the only thread that starts while they aren't set. Say in its body that it also sets setup: and test: in skelcrew.yaml, in the same PR, to the commands that set up and test the code it adds, each a list of commands, [] for none. Once its branch sets them, its sc check and its reviewer run them. Once its PR merges, every other thread can start`;
+const waitForCode = `The repository has no code yet to set up or test: no package files, build files, CI or sources. So don't propose a setup thread now. Say in a line that setup and test can wait until there's code, and ask what to build. Start the first thread that adds code, on the human's yes, with sc add <repo> "<title>" "<body>" --start --setup, as it is the only thread that starts while they aren't set. Say in its body that it also sets setup: and test: in skelcrew.yaml, in the same PR, to the commands that set up and test the code it adds, each a list of commands, [] for none. Once its branch sets them, its sc check and its reviewer run its setup and then its test. Once its PR merges, every other thread can start`;
 
 // Returns the lead's instructions: its role's, from `role`, then Skelcrew's rules for every lead
 // when the role is a repository's own, whether you let it arm a merge when ready and how, the

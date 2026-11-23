@@ -1897,9 +1897,9 @@ process.exit(0);`,
 
 // A new human sees only the harness's banner until they speak, and shouldn't have to know to. A
 // skelcrew.yaml whose setup and test aren't decided yet keeps every builder from starting, so the
-// lead proposes them first.
+// lead proposes them first. A package under docs/, such as a docs site's, is code to set up too.
 test("a lead's first start brings it Skelcrew's opening turn, proposing setup and test while they are unset", () => {
-  const typed = typedAfterStart("", { files: { "package.json": "{}\n" } });
+  const typed = typedAfterStart("", { files: { "docs/package.json": "{}\n" } });
   expect(typed).toContain("Skelcrew: this is your first start");
   expect(typed).toContain("propose the repository's setup and test commands");
   expect(typed).toContain("last note");

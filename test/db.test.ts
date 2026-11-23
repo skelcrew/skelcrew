@@ -762,8 +762,8 @@ ${code}`,
 console.log(JSON.stringify(repositoryCommands(readThread(db, thread.folder))));`);
   expect(started.stderr.toString()).toBe("");
   expect(JSON.parse(started.stdout.toString())).toEqual({ setup: [], test: [] });
-  // Its sc check runs the test the skelcrew.yaml in its clone sets, once it sets one, and none
-  // while it sets none. One it can't read as a plain file is refused, never followed.
+  // Its sc check runs the setup and then the test the skelcrew.yaml in its clone sets, once it
+  // sets a test, and nothing while it sets none, as its clone started with no setup. One it can't read as a plain file is refused, never followed.
   const branch =
     start(`import { cloneSkelcrewYaml, commitSkelcrewYaml, threadTest } from ${JSON.stringify(source("config.ts"))};
 import { cloneOf } from ${JSON.stringify(source("flow/thread.ts"))};
@@ -794,7 +794,7 @@ console.log(JSON.stringify(seen));`);
   expect(branch.stderr.toString()).toBe("");
   expect(JSON.parse(branch.stdout.toString())).toEqual([
     [],
-    ["make test"],
+    ["make", "make test"],
     [],
     [],
     "the skelcrew.yaml on the thread's branch isn't a plain file, so Skelcrew won't read it",
