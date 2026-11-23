@@ -110,25 +110,29 @@ test("w in the sidebar asks, c then y closes app's tab, ending only its lead, an
   expect(asked.filter((one) => one.includes("simon/app"))).toEqual([]);
 });
 
-test("Alt-W from a lead in full screen asks in the sidebar, and Esc gives the lead back full screen", async () => {
-  open("lead");
-  await ready("lead");
-  press("C-\\");
-  await until(typingToSidebar, "the sidebar's typing");
-  type("a");
-  await until(zoomed, "the lead full screen");
-  press("M-w");
-  await until(() => seen().includes("Close app?") && !zoomed(), "the question beside the lead");
-  press("Escape");
-  await until(zoomed, "the lead full screen again");
-  await until(() => !seen().includes("Close app?"), "the question to go");
-  type("hello\r");
-  await until(() => read("lead.typed").includes("hello"), "the typing to reach the lead");
-  // Alt-W never reached the lead, and nothing closed.
-  expect(read("lead.typed")).toBe("hello\n");
-  expect(appRow()).toEqual({ tab_closed: 0 });
-  expect(leadRuns()).toBe(true);
-});
+for (const [key, how] of [
+  ["Escape", "Esc"],
+  ["M-Tab", "Alt-Tab"],
+] as const)
+  test(`Alt-W from a lead in full screen asks in the sidebar, and ${how} gives the lead back full screen`, async () => {
+    open("lead");
+    await ready("lead");
+    press("C-\\");
+    await until(typingToSidebar, "the sidebar's typing");
+    type("a");
+    await until(zoomed, "the lead full screen");
+    press("M-w");
+    await until(() => seen().includes("Close app?") && !zoomed(), "the question beside the lead");
+    press(key);
+    await until(zoomed, "the lead full screen again");
+    await until(() => !seen().includes("Close app?"), "the question to go");
+    type("hello\r");
+    await until(() => read("lead.typed").includes("hello"), "the typing to reach the lead");
+    // Alt-W never reached the lead, and nothing closed.
+    expect(read("lead.typed")).toBe("hello\n");
+    expect(appRow()).toEqual({ tab_closed: 0 });
+    expect(leadRuns()).toBe(true);
+  });
 
 test("n at the confirm closes nothing and gives the lead its typing back", async () => {
   open("lead");

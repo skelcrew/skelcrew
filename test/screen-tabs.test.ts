@@ -33,6 +33,7 @@ import {
   terminal,
   tmux,
   type,
+  typingToSidebar,
   until,
 } from "./screen.ts";
 
@@ -83,6 +84,24 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   );
   press("M-S-Left");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead again");
+});
+
+test("in the sidebar Tab and Shift-Tab switch repositories, and Alt-Tab switches your typing", async () => {
+  addSite();
+  daemon();
+  open("lead");
+  await ready("lead");
+  press("M-Tab");
+  await until(typingToSidebar, "the sidebar to take your typing");
+  press("Tab");
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  press("BTab");
+  await until(() => seen().includes("I am lead"), "app's lead again");
+  expect(typingToSidebar()).toBe(true);
+  press("M-Tab");
+  await until(() => !typingToSidebar(), "the lead to take your typing");
+  type("hi\r");
+  await until(() => read("lead.typed") === "hi\n", "the typing to reach app's lead");
 });
 
 test("a lead on a plugin's host shows through that host from its tab, and comes back once it ends", async () => {

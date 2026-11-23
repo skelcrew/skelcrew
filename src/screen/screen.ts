@@ -73,8 +73,8 @@ const padCommand = ["sh", "-c", "exec cat >/dev/null"];
 // a light theme as on a dark one. The dim lines are the theme's own grey.
 export const [lit, dim] = [tmuxYellow, "brightblack"];
 
-// A word in the command of a right side attached to a builder. The screen's tmux finds it there,
-// so Ctrl-\ ends only that attachment, never the lead or a task's details.
+// A word in the command of a right side attached to a builder. The sidebar finds it there, so a
+// switch to the sidebar ends only that attachment, never the lead or a task's details.
 export const attachedMark = "skelcrew-attached";
 
 // The sidebar's pane and the right side's, as tmux targets in the session a command runs in.
@@ -119,15 +119,13 @@ const config = [
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
-  // Mac terminal that doesn't send Option as Alt. Ctrl-\ never reaches a pane: left to reach the
-  // agents' server or a host's own client, it would detach it and leave the right side empty.
-  // It brings your typing back to the sidebar instead. On a builder you attached to on the right
-  // side, found by the mark in the right pane's command, it ends that attachment, and the pane
-  // goes back to the task's details with your typing in the sidebar. Anywhere else it tells the
-  // sidebar, as the byte Ctrl-\ sends, and the sidebar takes your typing. It looks at the right
-  // pane, not the one you type to, so it ends an attachment with your typing in the sidebar too.
-  // Ctrl-4 does the same: a terminal sending extended keys sends it as a key of its own, which
-  // tmux would hand on to the pane as Ctrl-\'s byte.
+  // Mac terminal that doesn't send Option as Alt. Alt-Tab, Ctrl-\ and Ctrl-4 switch your typing
+  // between the sidebar and the right side, from either side. They never reach a pane: Ctrl-\
+  // would detach the agents' server or a host's own client and leave the right side empty. tmux
+  // types Ctrl-\'s byte into the sidebar, which decides where your typing goes. Ctrl-4 is there
+  // as a terminal sending extended keys sends it as a key of its own, which tmux would hand on
+  // to the pane as Ctrl-\'s byte. Alt-Tab is what a terminal sends as Esc then Tab, so Esc then
+  // Tab typed very fast switches too.
   // Each key that leaves ends your terminal's session rather than detaching from it. tmux 3.6
   // crashed about one time in five when a detach met another command, such as the sidebar's,
   // ending at that moment, and every terminal on the server lost its screen.
@@ -136,17 +134,15 @@ const config = [
   ["unbind", "-a", "-T", "root"],
   ["bind", "-n", "M-q", "kill-session"],
   ["bind", "-n", "C-q", "kill-session"],
-  ...["C-\\", "C-4"].map((key) => [
+  ...["M-Tab", "C-\\", "C-4"].map((key) => [
     "bind",
     "-n",
     key,
-    "if",
-    "-F",
+    "send-keys",
     "-t",
-    toRight,
-    `#{m:*${attachedMark}*,#{pane_start_command}}`,
-    `run-shell -t ${toRight} 'pkill -P #{pane_pid}'`,
-    `send-keys -t ${toSidebar} -H 1c`,
+    toSidebar,
+    "-H",
+    "1c",
   ]),
   // Shift-Enter in the sidebar attaches full screen to the agent of the row you are on. tmux reads
   // it from your terminal as a key of its own, by the extended keys below, but hands the sidebar

@@ -32,7 +32,7 @@ Each task shows once, in one section. A task that is approved and green, and wai
 
 ## Moving around
 
-Press Ctrl+\ to bring your typing to the sidebar. Then:
+Press Alt+Tab (⌥Tab on a Mac) or Ctrl+\ to bring your typing to the sidebar. Then:
 
 | Key | What it does |
 | --- | --- |
@@ -56,6 +56,7 @@ Some keys work from anywhere, even while you type to an agent:
 | Alt+Shift+↑ ↓ | Jump to the next or previous section |
 | Alt+0 to Alt+6 | Open or close a section |
 | Alt+Shift+← → | Switch to another repository's tab |
+| Alt+Tab, or Ctrl+\ | Switch your typing between the sidebar and the right side |
 | Alt+Q | Leave the screen |
 
 You can also click. A click on a row opens it, and a click on a section's heading opens or closes it.
@@ -72,17 +73,46 @@ Enter on a task opens it:
 
 Moving to a task without pressing Enter shows its details on the right: its stage, CI, review and recent events, with its agent live beside them. Nothing you type there reaches the agent.
 
-## Getting back
+## Switching your typing
 
-Ctrl+\ always brings your typing back to the sidebar. From a builder you attached to, it also detaches you, and the right side shows the task's details again.
+Alt+Tab switches your typing between the sidebar and the right side, both ways. From the lead or a builder it brings your typing to the sidebar. From the sidebar it gives it back to where it was. A builder you attached to is detached when you leave it, and the right side shows the task's details again. Alt+Tab attaches you to it again.
 
-Pressing it once too often does nothing. It never leaves the screen.
+On a task's details, with no agent to go back to, your typing stays in the sidebar. It never leaves the screen.
 
-If backslash is awkward on your keyboard, Ctrl+4 does the same in most terminals.
+Ctrl+\ does the same as Alt+Tab, and needs no Alt key. If backslash is awkward on your keyboard, Ctrl+4 does the same in most terminals.
+
+Plain Tab and Shift+Tab are not switches. On the right they reach the agent. In the sidebar they switch repositories.
+
+Esc then Tab typed very fast in an agent's prompt looks the same as Alt+Tab to the screen, so it switches too.
+
+## Alt keys on a Mac
+
+The Alt keys, such as ⌥Tab, ⌥↑ and ⌥Q, need your terminal to send ⌥ as Alt. Most Mac terminals don't by default. Set it once:
+
+| Terminal | Setting |
+| --- | --- |
+| Ghostty | `macos-option-as-alt = true` in its config |
+| iTerm2 | Settings > Profiles > Keys > General: Left Option key: Esc+ |
+| Terminal.app | Settings > Profiles > Keyboard: Use Option as Meta key |
+| kitty | `macos_option_as_alt yes` in `kitty.conf` |
+| WezTerm | The left ⌥ is Alt by default. For the right one too, set `config.send_composed_key_when_right_alt_is_pressed = false` |
+| Alacritty | `option_as_alt = "Both"` under `[window]` |
+
+Do you use ⌥ to type characters, such as `@` or `€`? Then leave the setting off, and map ⌥Tab, or any key you like, to send Ctrl+\ instead. Ctrl+\ is the byte `\x1c`:
+
+| Terminal | Mapping |
+| --- | --- |
+| Ghostty | `keybind = alt+tab=text:\x1c` |
+| iTerm2 | Settings > Profiles > Keys > Key Mappings: add ⌥Tab, action Send Hex Code, `0x1c` |
+| Terminal.app | Settings > Profiles > Keyboard: add Tab with Option, action Send Text, `\034` |
+| kitty | `map alt+tab send_text all \x1c` |
+| WezTerm | `{ key = 'Tab', mods = 'ALT', action = wezterm.action.SendString '\x1c' }` in `config.keys` |
+
+On Linux and Windows, the desktop usually takes Alt+Tab to switch windows. Use Ctrl+\ there, or map a free key to send it.
 
 ## Full screen
 
-Shift+Enter, or `a`, gives the row's agent the whole terminal. Ctrl+\ brings the sidebar back.
+Shift+Enter, or `a`, gives the row's agent the whole terminal. Alt+Tab or Ctrl+\ brings the sidebar back, and pressed again gives the agent the whole terminal again.
 
 In an item you opened from Needs you, `a` answers it with option a. Esc back to the list first.
 
@@ -112,4 +142,4 @@ On a terminal under 80 columns wide, such as a phone's, the screen shows one sid
 
 - The sidebar fills the screen, with its keys listed at the bottom.
 - Tap a row, or press Enter, to open it. The lead or the builder then fills the screen.
-- Ctrl+\ brings the sidebar back.
+- Alt+Tab or Ctrl+\ brings the sidebar back.

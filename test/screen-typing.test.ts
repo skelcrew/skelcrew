@@ -1,7 +1,7 @@
-// Where your typing goes on the screen: Ctrl-\ brings it to the sidebar, Enter gives it to the
-// agent of the row you are on, Shift-Enter or a gives that agent the whole terminal, plain keys
-// work in the sidebar as in sc --list, Enter on a stage's heading opens or closes it, and the
-// screen always shows which side has your typing.
+// Where your typing goes on the screen: Alt-Tab and Ctrl-\ switch it between the sidebar and the
+// agent, Enter gives it to the agent of the row you are on, Shift-Enter or a gives that agent the
+// whole terminal, plain keys work in the sidebar as in sc --list, Enter on a stage's heading opens
+// or closes it, and the screen always shows which side has your typing.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -84,7 +84,7 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
   await until(() => litBox() === "right", "the right side's box");
   await until(
     () =>
-      footer() === "  typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
+      footer() === "  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
     "the footer under the lead",
   );
   expect(cursorShows()).toBe(true);
@@ -172,7 +172,7 @@ test("Enter on a task gives its builder your typing, and Ctrl-\\ brings it back 
   open("lead");
   await ready("lead");
   await toSecondThread();
-  await until(() => footer().startsWith("  typing to APP-7 · ⌃\\ to list"), "the agent's footer");
+  await until(() => footer().startsWith("  typing to APP-7 · ⌥Tab switch"), "the agent's footer");
   await until(() => litBox() === "right", "the right side's box to light up");
   expect(fullScreen()).toBe(false);
   // Digits typed to the agent reach it.
@@ -286,4 +286,52 @@ test("Enter on a stage's heading closes it, keeping you there, and opens it on i
   await until(() => isOpen("2 Building") && / 12\b/.test(selected()), "Building on APP-12");
   expect(read("lead.typed")).toBe("");
   expect(read("app-12.typed")).toBe("");
+});
+
+// Alt-Tab and Ctrl-\ each switch your typing both ways: to the sidebar from the agent, and from
+// the sidebar back to it. Alt-Tab comes as the Esc then Tab a terminal sends for it.
+for (const [key, how] of [
+  ["M-Tab", "Alt-Tab"],
+  ["\x1b\t", "Esc then Tab"],
+  ["C-\\", "Ctrl-\\"],
+] as const)
+  test(`${how} switches your typing to the sidebar and back to the lead`, async () => {
+    open("lead");
+    await ready("lead");
+    const switchTyping = () => (key === "\x1b\t" ? type(key) : press(key));
+    switchTyping();
+    await until(typingToSidebar, "the sidebar to take your typing");
+    switchTyping();
+    await until(() => !typingToSidebar(), "the lead to take your typing again");
+    type("hi\r");
+    await until(() => read("lead.typed") === "hi\n", "the typing to reach the lead");
+  });
+
+test("Alt-Tab from a builder full screen comes back to its details, and again goes back to it full screen", async () => {
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  press("M-Down");
+  await until(() => / 7\b/.test(selected()) && onDetails(), "APP-7's details");
+  type("a");
+  await until(() => fullScreen() && seen().includes("I am app-7"), "app-7 full screen");
+  press("M-Tab");
+  await until(() => !fullScreen() && onDetails() && typingToSidebar(), "app-7's details");
+  press("M-Tab");
+  await until(() => fullScreen() && seen().includes("I am app-7"), "app-7 full screen again");
+  type("go\r");
+  await until(() => read("app-7.typed") === "go\n", "the typing to reach the builder");
+});
+
+// Plain Tab and Shift-Tab are the agent's, as Claude Code takes them in its prompt.
+test("Tab and Shift-Tab typed to the lead reach it, and leave your typing there", async () => {
+  open("lead");
+  await ready("lead");
+  type("x");
+  press("Tab");
+  press("BTab");
+  type("\r");
+  // tmux hands Shift-Tab on in the extended form the agents' server asked for.
+  await until(() => read("lead.typed") === "x\t\x1b[9;2u\n", "the keys to reach the lead");
+  expect(typingToSidebar()).toBe(false);
 });
