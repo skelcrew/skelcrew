@@ -163,6 +163,7 @@ async function push(
   const pr =
     known ??
     (await openPr(db, repository, { branch: thread.branch, base: baseOf(thread), title, body }));
+  if (forgeOf(db, repository) === null) return sha;
   record(db, folder, { pr }, `pushed ${sha} to ${thread.branch}, for #${pr}`);
   if (known !== null || submittedBefore(thread))
     await describePr(db, sessions, folder, pr, body, signal);
@@ -944,6 +945,7 @@ async function postOrEdit(
     edited && editing !== null
       ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
+  if (forgeOf(db, repository) === null) return;
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
   const post = { pr, id, verdict, findings, notBlocking, round };
   record(db, folder, reviewOnPr(readThread(db, folder), post, Date.now()), `${how} on PR #${pr}`);
@@ -958,8 +960,9 @@ async function refreshPr(
   pr: number,
 ): Promise<PullRequest | null> {
   const forge = forgeOf(db, repository);
-  if (forge === null) throw new Error(`${repository.name} has no forge`);
+  if (forge === null) return null;
   const { items } = await askWhatChanged(db, forge, repository, ["forge"], null, [pr]);
+  if (forgeOf(db, repository) !== forge) return null;
   const shown = items.flatMap((item) =>
     item.kind === "pr" && item.id === String(pr) ? [item] : [],
   );

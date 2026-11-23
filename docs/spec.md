@@ -339,7 +339,7 @@ The folder only names the repository: agents never work in your checkout, and Sk
 
 ## Commands
 
-Files describe what a repository needs, as in npm. `sc init` writes the crew and plugin files, and `sc install` installs the plugins they name. Every other plugin command is under `sc plugin`: `sc plugin add`, `sc plugin rm` and `sc plugin update` change the files and the machine together.
+Files describe what a repository needs, as in npm. `sc init` writes the crew and plugin files, and `sc install` installs the plugins they name. Every other plugin command is under `sc plugin`: `sc plugin add` and `sc plugin update` record what they install. `sc plugin rm` removes it from this machine and your personal lock after confirmation, leaving repository files unchanged.
 
 Every command that lists or shows something takes `--json`. Commands that do something print one line or fail with a clear message and a non-zero exit. A command Skelcrew shows you to run reads as a step to take, and only a real error looks like one.
 
@@ -348,7 +348,11 @@ Every command that lists or shows something takes `--json`. Commands that do som
 - **The lead's, for its tasks:** `sc decide` records a decision on a task, and `sc keep` sets what its change must keep true. Builders and reviewers can't run them.
 - **The agents':** `sc notify` for the lead, to send you a message you asked for, `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc review` for a builder's own task and never another's, and `sc check`, which reviewers and you can run too.
 
-**Plugins.** `sc plugin add` refuses a second plugin of the same name, and a plugin of yours from a folder, which has no version to pin. `sc plugin rm` refuses the tracker or forge of a repository Skelcrew has, or a session host used by a live builder or an open lead, naming those uses, and removes a plugin's settings and tokens from the machine once nothing else uses it.
+**Plugins.** `sc plugin add` refuses a second plugin of the same name, and a plugin of yours from a folder, which has no version to pin. `sc plugin rm <name>`, also accepted with `-g`, can remove any plugin. It names every affected repository, live lead and thread, explains what changes and asks `[y/N]`, defaulting to no. Without a terminal it refuses, prints the same explanation and gives the command to run in your terminal.
+
+A repository whose forge is removed carries on without one: no PRs or CI, and pushes use your own git login. The prompt counts open PRs that stay on the forge but Skelcrew stops following. It checks your git login with the same dry-run push used when adding a repository without a forge, without your SSH agent, and says whether it succeeds. A failure names what to fix, but you can still confirm removal. Without its tracker, the repository carries on with local tasks, and its existing issues stay on the tracker. Neither removal alone makes a thread need the human. Removing a session host leaves its sessions out of reach, so those threads need the human with the missing-host item.
+
+A yes removes the plugin and its settings, tokens and personal lock entry. Repository plugin files stay unchanged. This machine remembers your explicit removal, so those files do not prevent local tasks from starting; a later `sc install` can install the plugin again.
 
 **Tasks.** A task is never filed or started with an empty description. Each `sc add` files a task of its own, the same words twice included, but a filing whose answer the remote lost is never filed twice: it fails, saying to run the same command again once the remote is back. Run again, it first asks the remote whether the earlier try's claim is there, and when it is, names that task and files nothing more. A claim Skelcrew couldn't look up is never taken for another machine's, and filings on one machine run one at a time per repository, each noting its own try. `sc review` refuses while a review of that commit already waits or runs.
 
@@ -540,7 +544,7 @@ A runtime plugin is always personal, added with `sc plugin add -g`, since how yo
 
 Personal plugins are recorded only in `~/.config/skelcrew/skelcrew.lock`, written by `sc plugin add -g` and plugin installation. `config.yaml` does not control what is installed. A legacy `plugins:` line is read for `sc plugin ls`, which can name an uninstalled entry and show `sc plugin add -g` to add it. Without a personal lock entry it installs nothing. Editing or deleting config never installs or uninstalls a plugin.
 
-An installed plugin no file names stays installed, with its settings and tokens. `sc plugin ls` may call it unused. Removal happens only through `sc plugin rm`, and is refused while it serves a repository as tracker or forge or hosts a live builder or open lead. Stopped and done threads do not keep a session host in use.
+An installed plugin no file names stays installed, with its settings and tokens. `sc plugin ls` may call it unused. Removal happens only through an explicit `sc plugin rm` and a yes in your terminal, after it explains the changes. Live leads and threads on its session host are named; stopped and done threads are not. Threads keep running with git alone when their tracker or forge is removed. Only a missing session host prevents reaching a builder, with an item such as `run sc install: its session host herdr is missing`. Install and setup never remove a plugin automatically, including after a repository file write fails.
 
 ### The manifest
 

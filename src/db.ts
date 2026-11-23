@@ -982,6 +982,7 @@ function prepareTables(db: Database): void {
     folder TEXT NOT NULL,
     source TEXT
   )`);
+  db.run("CREATE TABLE IF NOT EXISTS removed_plugins (source TEXT PRIMARY KEY)");
   // The commands you approved for a plugin from a folder of yours, as JSON, so building it again
   // asks only when they change. Null for a plugin from GitHub, and for one installed before
   // Skelcrew kept them, which is asked about once more.

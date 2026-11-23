@@ -22,10 +22,9 @@ export async function pluginCommand(args: string[], json: boolean): Promise<void
     if (added) console.log(added);
     return;
   }
-  if ((command === "rm" || command === "update") && !yours) {
-    const verb = command === "rm" ? "remove" : "update";
+  if (command === "update" && !yours) {
     throw new Error(
-      `sc plugin ${command} without -g is for a repository's plugins, which Skelcrew can't ${verb} yet. sc plugin ${command} -g is for your own`,
+      `sc plugin ${command} without -g is for a repository's plugins, which Skelcrew can't update yet. sc plugin ${command} -g is for your own`,
     );
   }
   if (command === "add" && name && more.length === 0) {
@@ -33,8 +32,7 @@ export async function pluginCommand(args: string[], json: boolean): Promise<void
     return;
   }
   if (command === "rm" && name && more.length === 0) {
-    const { repositoryNeeds } = await import("../plugins/repository.ts");
-    return removeYourPlugin(name, repositoryNeeds(true));
+    return removeYourPlugin(name);
   }
   if (command === "update" && more.length === 0) return updatePlugins(name);
   if (command === "setup" && rest[0] && rest.length === 1) {

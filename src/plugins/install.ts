@@ -1,6 +1,5 @@
-// Your personal plugins: sc install, and sc plugin add -g, rm -g, update -g, setup and ls. A
-// plugin comes from a version tag on GitHub, pinned in your own lock, or from a folder of yours.
-// Only you run these, in your own terminal.
+// Installing, updating, listing and explicitly removing plugins on this machine.
+// Personal pins stay in your lock; removal explains what changes and asks in your terminal.
 import type { Database } from "bun:sqlite";
 import {
   existsSync,
@@ -15,11 +14,14 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { openDb } from "../db.ts";
+import { hasTasks, openDb } from "../db.ts";
+import { openPrs } from "../flow/copy.ts";
+import { checkPush } from "../flow/git.ts";
+import { markMissingPlugin } from "../flow/missing-plugins.ts";
 import { repositories } from "../flow/repo.ts";
-import { taskName } from "../flow/thread.ts";
+import { liveThreads, taskName } from "../flow/thread.ts";
 import { originHere } from "../machine/origin.ts";
-import { configDir, dataDir } from "../paths.ts";
+import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { readSettings } from "../settings.ts";
 import { release } from "../version.ts";
@@ -444,6 +446,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       folder,
       given,
     ]);
+    db.run("DELETE FROM removed_plugins WHERE source = ?", [given]);
     markUnclaimed(db, manifest);
     // An offer's question named the plugin, and its version, so the answer names it the same way.
     const title = shown?.title;
@@ -585,13 +588,15 @@ export function updatePlugins(name?: string): void {
   );
 }
 
-// Returns what uses the plugin, or null when no repository or session needs it.
-function jobOf(db: Database, name: string): string | null {
+type PluginUse = { job: "tracker" | "forge" | "session host"; names: string[] };
+
+function usesOf(db: Database, name: string): PluginUse[] {
+  const jobs: PluginUse[] = [];
   for (const [job, usingIt] of [
     ["tracker", repositories(db).filter((r) => trackerOf(db, r) === name)],
     ["forge", repositories(db).filter((r) => r.forge === name)],
   ] as const)
-    if (usingIt.length > 0) return `the ${job} of ${usingIt.map((r) => r.name).join(", ")}`;
+    if (usingIt.length > 0) jobs.push({ job, names: usingIt.map((r) => r.name) });
   const builders = z.array(z.object({ name: z.string(), task: z.coerce.string() })).parse(
     db
       .query(`SELECT repositories.name, threads.task FROM threads
@@ -612,25 +617,53 @@ function jobOf(db: Database, name: string): string | null {
     ...builders.map((thread) => taskName(thread.name, String(thread.task))),
     ...leads.map((lead) => `the lead of ${lead.name}`),
   ];
-  if (sessions.length > 0) return `the session host of ${sessions.join(", ")}`;
-  return null;
+  if (sessions.length > 0) jobs.push({ job: "session host", names: sessions });
+  return jobs;
 }
 
-// Removes a plugin and its settings, tokens, and personal lock entry unless it is in use.
-export function removePlugin(name: string): void {
+function removePlugin(name: string): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
-  const job = jobOf(db, name);
-  if (job !== null) throw new Error(`${name} is ${job}, so Skelcrew keeps it`);
-  // Your files change first. A write that fails puts both back and removes nothing, so the
-  // plugin stays installed and named, and a retry starts over.
   const { source } = plugin;
-  if (source !== null)
-    writeBoth(() => {
-      setLocked(source, null);
-    });
-  db.run("DELETE FROM plugins WHERE name = ?", [name]);
-  // The settings folder is the one settingsDir makes.
+  const forges = repositories(db).filter((r) => r.forge === name);
+  const trackers = repositories(db).filter((r) => trackerOf(db, r) === name);
+  if (source !== null) writeBoth(() => setLocked(source, null));
+  const table = hasTasks(db) ? "tasks" : "threads";
+  db.transaction(() => {
+    if (source !== null)
+      db.run("INSERT OR IGNORE INTO removed_plugins (source) VALUES (?)", [source]);
+    db.run("DELETE FROM plugins WHERE name = ?", [name]);
+    for (const repository of forges) {
+      const key = [repository.owner, repository.repo];
+      db.run(
+        `UPDATE ${table} SET pr = NULL, pr_link = NULL, checks = NULL, ci_passed = 0, conflicts = NULL WHERE owner = ? AND repo = ? AND task IN (SELECT task FROM threads WHERE owner = ? AND repo = ? AND status != 'done')`,
+        [...key, ...key],
+      );
+      db.run(
+        "DELETE FROM items WHERE owner = ? AND repo = ? AND kind = 'pr' AND state = 'open'",
+        key,
+      );
+      db.run("DELETE FROM pr_agents WHERE owner = ? AND repo = ?", key);
+      db.run(
+        "UPDATE repositories SET forge = NULL, author = NULL, open_prs = 0 WHERE owner = ? AND repo = ?",
+        key,
+      );
+    }
+    for (const repository of trackers) {
+      const key = [repository.owner, repository.repo];
+      db.run(
+        `UPDATE ${table} SET issue = NULL, issue_ref = NULL, issue_link = NULL, closes = NULL, assigned = 0 WHERE owner = ? AND repo = ? AND task IN (SELECT task FROM threads WHERE owner = ? AND repo = ? AND status != 'done')`,
+        [...key, ...key],
+      );
+      db.run(
+        "DELETE FROM items WHERE owner = ? AND repo = ? AND kind = 'task' AND state = 'open'",
+        key,
+      );
+      db.run("DELETE FROM claims WHERE owner = ? AND repo = ?", key);
+      db.run("UPDATE repositories SET open_issues = 0 WHERE owner = ? AND repo = ?", key);
+    }
+  })();
+  for (const thread of liveThreads(db)) markMissingPlugin(db, thread);
   rmSync(join(configDir(), "plugins", name), { recursive: true, force: true });
   if (plugin.source !== null) rmSync(join(pluginsDir(), name), { recursive: true, force: true });
   console.log(`Removed ${name}, with its settings and tokens.`);
@@ -661,45 +694,58 @@ export function addPlugin(given: string, remote = originHere(), shown: Shown = {
   return true;
 }
 
-export function removeYourPlugin(given: string, needs: Need[]): void {
+export async function removeYourPlugin(given: string): Promise<void> {
   const db = openDb();
   const lock = yourLock();
-  const named = yourPlugins();
   const plugin = installedPlugins(db).find((one) => one.name === given || one.source === given);
-  if (plugin) {
-    const job = jobOf(db, plugin.name);
-    if (job !== null) throw new Error(`${plugin.name} is ${job}, so Skelcrew keeps it`);
-  }
-  const yours =
-    plugin &&
-    (plugin.source === null ||
-      named.includes(plugin.source) ||
-      !needs.some((need) => need.source === plugin.source));
-  if (plugin && !yours)
-    throw new Error(
-      `${given} isn't one of your plugins, as only a repository's skelcrew.yaml names it, so Skelcrew keeps it`,
-    );
-  const installed = yours ? plugin : undefined;
   const source =
-    installed?.source ??
-    yourPlugins().find((one) => one === given || lock[one]?.name === given) ??
-    null;
-  if (!installed && source === null)
+    plugin?.source ?? Object.keys(lock).find((one) => one === given || lock[one]?.name === given);
+  if (!plugin && source === undefined)
     throw new Error(`there is no plugin named ${given}: sc plugin ls lists them`);
-  const needed = needs.find((need) => need.source === source);
-  if (installed && !needed) {
-    removePlugin(installed.name);
+  const name = plugin?.name ?? (source ? lock[source]?.name : undefined) ?? given;
+  console.log(`Removing ${name} deletes its settings and tokens.`);
+  for (const { job, names } of plugin ? usesOf(db, plugin.name) : []) {
+    const change =
+      job === "forge"
+        ? "Skelcrew will work without a forge: no PRs or CI; pushes use your own git login"
+        : job === "tracker"
+          ? "Skelcrew will work without issues; existing issues stay on the tracker"
+          : "Skelcrew can no longer reach these sessions";
+    console.log(`${name} is the ${job} of ${names.join(", ")}. ${change}.`);
+  }
+  for (const repository of repositories(db).filter((r) => r.forge === name)) {
+    const count = openPrs(db, repository.owner, repository.repo).length;
+    console.log(
+      `${count} open PRs in ${repository.name} stay on ${name}; Skelcrew stops following them.`,
+    );
+    try {
+      await checkPush(
+        db,
+        { ...repository, forge: null },
+        cloneDir(repository.owner, repository.repo),
+      );
+      console.log(`${repository.name}: your git login can push without the forge.`);
+    } catch (error) {
+      console.log(
+        `${repository.name}: your git login cannot push without the forge: ${error instanceof Error ? error.message : String(error)}. Give the daemon a login it can use without you, such as a key with no passphrase or a credential helper.`,
+      );
+    }
+  }
+  console.log("Repository plugin files stay unchanged; sc install can install it again.");
+  const answer = askLine(`Remove the ${name} plugin? [y/N]`);
+  if (answer === null)
+    throw new Error(
+      `removing ${name} needs your yes at a terminal. Run sc plugin rm ${name} in your terminal`,
+    );
+  if (!["y", "yes"].includes(answer.trim().toLowerCase())) {
+    console.log(`Kept ${name}.`);
     return;
   }
-  if (source === null) return;
-  writeBoth(() => {
-    setLocked(source, null);
-  });
-  console.log(
-    installed && needed
-      ? `Removed ${given} from your plugins. It stays installed, as ${needed.where}'s skelcrew.yaml names it.`
-      : `Removed ${given} from your plugins.`,
-  );
+  if (plugin) removePlugin(plugin.name);
+  else if (source) {
+    writeBoth(() => setLocked(source, null));
+    console.log(`Removed ${name} from your plugins.`);
+  }
 }
 
 // Returns whether the plugin is installed at exactly the version and commit locked.
@@ -812,6 +858,7 @@ export function listPlugins(json: boolean, needs: Need[], needed: string[] | str
       locked?.version === manifest.version
         ? `${locked.version} at commit ${locked.commit.slice(0, 12)}`
         : locked?.version;
+    const uses = unused.includes(plugin.name) ? usesOf(db, plugin.name) : [];
     return {
       name: plugin.name,
       version: manifest.version,
@@ -822,8 +869,8 @@ export function listPlugins(json: boolean, needs: Need[], needed: string[] | str
       from: plugin.source ?? plugin.folder,
       // A disagreement goes first, as sc install then leaves the plugin as it is.
       change: unused.includes(plugin.name)
-        ? jobOf(db, plugin.name)
-          ? `sc install keeps it, as it is ${jobOf(db, plugin.name)}`
+        ? uses.length > 0
+          ? `sc install keeps it, as it is ${uses.map(({ job, names }) => `the ${job} of ${names.join(", ")}`).join("; ")}`
           : "unused"
         : plugin.source === null
           ? null

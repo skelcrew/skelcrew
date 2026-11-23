@@ -20,7 +20,6 @@ import {
   newestLocked,
   refuseOtherName,
   refusePersonal,
-  removePlugin,
   type Shown,
   updatePlugin,
 } from "./install.ts";
@@ -233,18 +232,10 @@ export function addRepositoryPlugin(given: string, shown: Shown = {}): string | 
   if (!plugin) throw new Error(`${given} isn't installed after all`);
   const manifest = readManifest(plugin.folder);
   refusePersonal(manifest, true);
-  try {
-    writeBoth(
-      () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
-      [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],
-    );
-  } catch (error) {
-    if (fresh)
-      try {
-        removePlugin(manifest.name);
-      } catch {}
-    throw error;
-  }
+  writeBoth(
+    () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
+    [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],
+  );
   const pinned = fresh ? "" : ", at the version installed here";
   return `Added ${manifest.name} ${manifest.version} to skelcrew.yaml and skelcrew.lock${pinned}. They count once you commit and push them.`;
 }
@@ -436,6 +427,7 @@ export function needsInstall(folder: string): boolean {
     const db = openDb();
     const { plugins, lock } = repositoryPlugins(folder);
     return plugins.some((source) => {
+      if (db.query("SELECT 1 FROM removed_plugins WHERE source = ?").get(source)) return false;
       const locked = lock[source];
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
       if (!locked || !here || !matchesLock(here, locked)) return true;
