@@ -76,7 +76,8 @@ test("on a narrow terminal the sidebar narrows, so the right side keeps half of 
 
 // Returns whether the boxes round the two sides are whole on a screen `height` rows high and
 // `width` wide: on each row, the lines at the sidebar's left, between the two sides and at the
-// right side's right, ┬ on the row under the header and ┴ on tmux's line above the footer. The sidebar is as
+// right side's right, ┬ then the lit right box's ┌ and ┐ on the row under the header, and ┴ on
+// tmux's line above the footer. The sidebar is as
 // wide as the list on a terminal `width` columns wide, or narrower, so the right side keeps half
 // of it, and the line the sides share is right after it.
 const boxesWhole = (height: number, width = 120) => {
@@ -86,7 +87,7 @@ const boxesWhole = (height: number, width = 120) => {
   const at = (line: string) => `${line[1]}${line[sidebarFor(width)]}${line[width - 2]}`;
   return lines.every((line, row) => {
     const shown = at(line);
-    if (row === 0) return shown === "┬┬┬";
+    if (row === 0) return shown === "┬┌┐";
     if (row === height - 3) return shown === "┴┴┴";
     return shown === "│││";
   });
@@ -115,16 +116,31 @@ const dividerAt = () =>
     .findIndex((line) => line[1] === "│" && line.includes("───"));
 const divider = () => (seen().split("\n")[dividerAt()] ?? "").slice(1, sidebar + 1);
 
-test("the divider under the lead stops short of the sidebar's box on both sides, whichever box is lit", async () => {
+// The boxes' row's corners: at the sidebar's left, over the line the sides share and at the right
+// side's right, each with the colour it is drawn in.
+const corners = () => {
+  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[1] ?? "";
+  let colour = "";
+  return row.split("\x1b[").flatMap((part, at) => {
+    const end = at === 0 ? -1 : part.indexOf("m");
+    if (end >= 0) colour = part.slice(0, end);
+    const cells = [...part.slice(end + 1)].filter((cell) => "┬┌┐".includes(cell));
+    return cells.map((cell) => `${cell}${colour}`);
+  });
+};
+
+test("the lit box has clean corners the grey lines stop at, and the divider under the lead stops short of it", async () => {
   open("lead");
   await ready("lead");
   const clean = `│ ${"─".repeat(sidebar - 4)} │`;
   await until(() => divider() === clean, "the divider");
   expect(litBox("one", dividerAt())).toBe("right");
+  expect(corners()).toEqual(["┬90", "┌38;5;33", "┐38;5;33"]);
   press("C-\\");
   await until(typingToSidebar, "the sidebar to take your typing");
   expect(divider()).toBe(clean);
   expect(litBox("one", dividerAt())).toBe("sidebar");
+  await until(() => corners().join(" ") === "┌38;5;33 ┐38;5;33 ┬90", "the sidebar's corners");
 });
 
 test("the boxes stay whole however the terminal is resized", async () => {
@@ -276,7 +292,7 @@ test("the header and the tabs share a row of their own, and the boxes start righ
   const lines = seen().split("\n");
   // Skelcrew and the tab on the top row, with no line of the boxes, then the boxes' whole top.
   expect(lines[0]?.trimEnd()).toMatch(/^ {4}Skelcrew \S.* {2}app$/);
-  expect(lines[1]).toBe(`─┬${"─".repeat(sidebar - 2)}┬${"─".repeat(120 - sidebar - 3)}┬─`);
+  expect(lines[1]).toBe(`─┬${"─".repeat(sidebar - 2)}┌${"─".repeat(120 - sidebar - 3)}┐─`);
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[2]?.indexOf("I am") ?? 0) + 2);
   expect(lines[2]).toContain("I am app-7");
@@ -351,7 +367,7 @@ test("the line the sides share runs from under the header down to the footer's l
       .slice(1, 29)
       .map((line) => line[lineAt])
       .join("");
-  const whole = `┬${"│".repeat(26)}┴`;
+  const whole = `┌${"│".repeat(26)}┴`;
   await until(() => column() === whole, "the line");
   for (const width of [150, 90, 120]) {
     lineAt = sidebarFor(width);

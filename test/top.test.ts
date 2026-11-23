@@ -125,18 +125,20 @@ test("the header has no lines of the boxes, and its tabs start where the right s
 test("under the header, the boxes' row is whole, with a corner over each of tmux's lines", () => {
   const line = seen(boxRow({ where: "simon@workbox", tabs: [tab("app"), tab("site", 2)] }));
   // A stub at each outer edge, a corner over each line, and only line between.
-  expect(line).toBe(`─┬${"─".repeat(size.sidebar)}┬${"─".repeat(size.right)}┬─`);
+  expect(line).toBe(`─┬${"─".repeat(size.sidebar)}┌${"─".repeat(size.right)}┐─`);
+  const toSidebar = seen(boxRow({ typingRight: false }));
+  expect(toSidebar).toBe(`─┌${"─".repeat(size.sidebar)}┐${"─".repeat(size.right)}┬─`);
 });
 
-test("the box your typing goes to is lit, the line the sides share always, and the rest dim", () => {
+test("the box your typing goes to is lit, with clean corners the dim lines stop at", () => {
   const [lit, dim] = ["#[fg=colour33]", "#[fg=brightblack]"];
   const toRight = boxRow();
   expect(toRight).toStartWith(`${dim}─#[default]${dim}┬─`);
-  expect(toRight).toContain(`${lit}┬#[default]`);
-  expect(toRight).toMatch(/#\[fg=colour33\]─+┬#\[default\]#\[fg=brightblack\]─#\[default\]$/);
+  expect(toRight).toContain(`─#[default]${lit}┌#[default]${lit}─`);
+  expect(toRight).toMatch(/#\[fg=colour33\]─+┐#\[default\]#\[fg=brightblack\]─#\[default\]$/);
   const toSidebar = boxRow({ typingRight: false });
-  expect(toSidebar).toStartWith(`${dim}─#[default]${lit}┬─`);
-  expect(toSidebar).toContain(`${lit}┬#[default]`);
+  expect(toSidebar).toStartWith(`${dim}─#[default]${lit}┌─`);
+  expect(toSidebar).toContain(`─#[default]${lit}┐#[default]${dim}─`);
   expect(toSidebar).toMatch(/#\[fg=brightblack\]─+┬#\[default\]#\[fg=brightblack\]─#\[default\]$/);
 });
 
@@ -243,7 +245,7 @@ test("at every width both rows are exactly as wide as the terminal, so the box's
           const { header, boxes } = top({ tabs, open, fullScreen }, given);
           expect(seen(header)).toHaveLength(terminal(given));
           expect(seen(boxes)).toHaveLength(terminal(given));
-          expect(seen(boxes).slice(-2)).toBe(fullScreen ? "──" : "┬─");
+          expect(seen(boxes).slice(-2)).toBe(fullScreen ? "──" : "┐─");
         }
       }
 });
@@ -286,7 +288,7 @@ test("after a drop from another machine, the right box's edge says how to drop i
   const drawn = top({ elsewhere: "simon@workbox" });
   expect(seen(drawn.boxes)).toMatch(
     new RegExp(
-      `^─┬─{${size.sidebar}}┬── That file is on another machine\\. To drop files, run sc --remote simon@workbox there\\. ─*┬─$`,
+      `^─┬─{${size.sidebar}}┌── That file is on another machine\\. To drop files, run sc --remote simon@workbox there\\. ─*┐─$`,
     ),
   );
   expect(Bun.stringWidth(seen(drawn.boxes))).toBe(terminal(size));
@@ -297,10 +299,10 @@ test("the notice keeps the box your typing goes to lit, and the other dim", () =
   const [lit, dim] = ["#[fg=colour33]", "#[fg=brightblack]"];
   const toRight = boxRow({ elsewhere: "simon@workbox" });
   expect(toRight).toStartWith(`${dim}─#[default]${dim}┬─`);
-  expect(toRight).toContain(`${lit}┬#[default]${lit}──#[default] #[fg=colour231]`);
+  expect(toRight).toContain(`${lit}┌#[default]${lit}──#[default] #[fg=colour231]`);
   const toSidebar = boxRow({ elsewhere: "simon@workbox", typingRight: false });
-  expect(toSidebar).toStartWith(`${dim}─#[default]${lit}┬─`);
-  expect(toSidebar).toContain(`${lit}┬#[default]${dim}──#[default] #[fg=colour231]`);
+  expect(toSidebar).toStartWith(`${dim}─#[default]${lit}┌─`);
+  expect(toSidebar).toContain(`${lit}┐#[default]${dim}──#[default] #[fg=colour231]`);
 });
 
 test("on a narrow screen the notice says it shorter along the whole row, and keeps the way back", () => {
