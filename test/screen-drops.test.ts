@@ -10,6 +10,7 @@ import {
   daemon,
   endTest,
   home,
+  noteRefreshes,
   onDetails,
   open,
   press,
@@ -18,6 +19,7 @@ import {
   screen,
   screenSessions,
   seen,
+  sidebarRefreshedTwice,
   startTest,
   tmux,
   type,
@@ -55,6 +57,19 @@ test("a file dropped onto the lead reaches it as a copy in the lead's folder", a
   expect(line.startsWith(`${join(skelcrew(), "lead", ".skelcrew-drops")}/`)).toBe(true);
   expect(line.endsWith("/Screen\\ Shot.png")).toBe(true);
   expect(readFileSync(line.replaceAll("\\ ", " "), "utf8")).toBe("pixels");
+  expect(seen()).not.toContain(elsewhere);
+});
+
+// The start of the notice that says a dropped file is on another machine.
+const elsewhere = "That file is on";
+
+test("a file dropped from another machine's terminal reaches the agent as it came, and the screen says how to drop it", async () => {
+  open("lead");
+  await ready("lead");
+  drop("/Users/simon/Desktop/shot.png");
+  expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
+  await until(() => seen().includes(elsewhere), "the notice that the file is elsewhere");
+  expect(seen().replace(/\s+/g, " ")).toContain("To drop files, run");
 });
 
 test("a file dropped onto a builder you attached to reaches it in its clone", async () => {
@@ -232,6 +247,16 @@ test("a screen opened from a laptop with sc --remote leaves a drop to the laptop
   expect(existsSync(join(skelcrew(), "lead", ".skelcrew-drops"))).toBe(false);
 });
 
+test("a screen opened from a laptop with sc --remote says nothing of a path missing here", async () => {
+  noteRefreshes();
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
+  await ready("lead");
+  drop("/Users/simon/Desktop/shot.png");
+  expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
+  await sidebarRefreshedTwice();
+  expect(seen()).not.toContain(elsewhere);
+});
+
 test("the screen's tmux waits for the rest of a cut-off paste start as long as the layer before it", async () => {
   open("lead");
   await ready("lead");
@@ -239,9 +264,12 @@ test("the screen's tmux waits for the rest of a cut-off paste start as long as t
 });
 
 test("text pasted onto the screen reaches the agent as it was", async () => {
+  noteRefreshes();
   open("lead");
   await ready("lead");
   type("\x1b[200~/tmp and more\x1b[201~");
   press("Enter");
   expect(await got("lead")).toBe("/tmp and more");
+  await sidebarRefreshedTwice();
+  expect(seen()).not.toContain(elsewhere);
 });

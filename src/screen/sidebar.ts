@@ -59,7 +59,7 @@ import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { versionLabels } from "../version.ts";
-import { dropAnswerOption, dropAsk, escapeTime, unfinished } from "./drops.ts";
+import { dropAnswerOption, dropAsk, dropNoticeOption, escapeTime, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, grey, pad, paint, removeControlCodes } from "./look.ts";
 import { attachedMark, leadOnHost, narrowBelow, panes, sidebarFor, zoomIn } from "./screen.ts";
@@ -547,16 +547,19 @@ export async function runSidebar(
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
     // anything is drawn, as the top rows and the footer show it.
-    // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it.
-    const format = "#{pane_active} #{window_zoomed_flag} #{window_width}";
-    const [active, zoomed, across] = doing("asking tmux where your typing goes", () =>
-      screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim().split(" "),
+    // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it, and
+    // the last notice that a dropped file is on another machine.
+    const format = `#{pane_active} #{window_zoomed_flag} #{window_width} #{${dropNoticeOption}}`;
+    const [active, zoomed, across, given = "0", ...dropNotice] = doing(
+      "asking tmux where your typing goes",
+      () => screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim().split(" "),
     );
     typingRight = active === "1";
     const fullScreen = zoomed === "1";
     const windowWidth = Number(across);
     narrow = windowWidth < narrowBelow;
-    notice = noticeLines(updateNotice(db), size().width);
+    const dropNoticeShows = Date.now() - Number(given) < dropNoticeFor;
+    notice = noticeLines(dropNoticeShows ? dropNotice.join(" ") : updateNotice(db), size().width);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
       if (empty) return [];
@@ -1110,6 +1113,9 @@ function keyLines(keys: string, room: number): string[] {
   }
   return lines.map((line) => paint(grey, `${pad}${line}`));
 }
+
+// How long, in milliseconds, the notice that a dropped file is on another machine shows.
+const dropNoticeFor = 10_000;
 
 // Returns the lines that go above the rest of the sidebar for a notice, such as a release installed
 // in the background, or none without one. Cut at words to fit a sidebar `width` columns wide, and

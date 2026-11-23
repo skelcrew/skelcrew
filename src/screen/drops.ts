@@ -1,10 +1,11 @@
 // Files dropped onto the screen. A terminal types a dropped file's path as a paste, and the agent
 // can't open it: its sandbox hides your home and temporary folders, and over sc --remote the file
 // is on your laptop. So a layer between your terminal and the screen copies each dropped file into
-// the agent's own folder and passes the paste on with the copies' paths. Everything else passes
+// the agent's own folder and passes the paste on with the copies' paths. A dropped path that isn't
+// on this machine passes as it came, and the screen says how to drop it. Everything else passes
 // through untouched.
 import { constants, lstatSync, readdirSync, rmSync } from "node:fs";
-import { copyFile, mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { copyFile, lstat, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -26,6 +27,10 @@ export const dropSignal = "\x1b[<2;9999;1M\x1b[<2;9999;1m";
 export const dropSignalColumn = 9998;
 export const dropAsk = "\x1b]skel-drop\x07";
 export const dropAnswerOption = "@drop-answer";
+
+// The option on the screen's session that holds the last notice that a dropped file is on another
+// machine, after the time it was given, in milliseconds, so the sidebar shows it for a while.
+export const dropNoticeOption = "@drop-notice";
 
 // How long, in milliseconds, the screen's tmux waits for the rest of a sequence cut off after
 // its Esc before taking its bytes as keys of their own, and so how long the layer keeps the
@@ -226,11 +231,26 @@ export function copyDrops(folder: string, files: Dropped[]): Promise<(string | n
 // Where dropped files go: `where` asks the screen which agent's folder your typing goes to, and
 // gives it back, or null for none. It calls `ask` to send dropSignal on once it is ready to see
 // the sidebar's answer change. `put` puts the files, read as they were dropped, in that folder,
-// and returns each one's new path, in order, or null for one left as it was.
+// and returns each one's new path, in order, or null for one left as it was. `elsewhere`, when
+// given, is called once for a drop that names a path missing on this machine, as a file dropped
+// from another machine's terminal is.
 export type Drop = {
   where: (ask: () => void) => Promise<string | null>;
   put: (folder: string, files: Dropped[]) => Promise<(string | null)[]>;
+  elsewhere?: () => void;
 };
+
+// Says whether nothing is at `path` on this machine, so a file dropped there is on another one.
+async function missingHere(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return false;
+  } catch (error) {
+    return (
+      error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR"].includes(`${error.code}`)
+    );
+  }
+}
 
 // A whole control sequence, such as an arrow key or a mouse event: Esc, [, its parameters and
 // its final byte.
@@ -402,7 +422,11 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       ...new Set(parts.flatMap((part) => (part.path === undefined ? [] : [part.path]))),
     ];
     const reading = paths.map((path) => readEarly.get(path)?.shift() ?? readDropped(path));
-    const files = (await Promise.all(reading)).filter((file) => file !== null);
+    const read = await Promise.all(reading);
+    const files = read.filter((file) => file !== null);
+    const unread = paths.filter((_, at) => read[at] === null);
+    if (drop.elsewhere && (await Promise.all(unread.map(missingHere))).includes(true))
+      drop.elsewhere();
     if (files.length === 0) return null;
     let copies: (string | null)[] = [];
     try {

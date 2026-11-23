@@ -30,6 +30,7 @@ import {
 let home = "";
 let agent = "";
 let sent = "";
+let elsewhere = 0;
 let copying = new Set<Promise<unknown>>();
 
 beforeEach(() => {
@@ -38,6 +39,7 @@ beforeEach(() => {
   mkdirSync(agent);
   mkdirSync(join(home, "Screen Shots"));
   sent = "";
+  elsewhere = 0;
   copying = new Set();
 });
 afterEach(() => {
@@ -61,6 +63,9 @@ const filter = (where: () => string = () => agent) =>
         copying.add(copies);
         copies.finally(() => copying.delete(copies));
         return copies;
+      },
+      elsewhere: () => {
+        elsewhere++;
       },
     },
   );
@@ -132,6 +137,7 @@ test("one dropped file's path becomes its copy's, in the agent's folder", async 
   expect(out).toMatch(
     new RegExp(`^\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~$`),
   );
+  expect(elsewhere).toBe(0);
   const [copy = ""] = copies(out);
   expect(readFileSync(copy, "utf8")).toBe("the text of shot.png");
   // Git never sees the copies, so a builder doesn't commit them.
@@ -233,6 +239,7 @@ test("a text paste passes as it came, at once", () => {
   take(Buffer.from(pasted("hello /tmp and the rest")));
   expect(sent).toBe(pasted("hello /tmp and the rest"));
   expect(existsSync(join(agent, dropsFolder))).toBe(false);
+  expect(elsewhere).toBe(0);
 });
 
 test("a text paste goes on as it comes, once its start shows it isn't paths", async () => {
@@ -278,11 +285,19 @@ test("a missing path, a folder, a file you can't read and one too big keep their
   const take = filter();
   take(Buffer.from(pasted(kept)));
   expect(await afterCopies()).toBe(pasted(kept));
+  // A folder, a file you can't read and one too big are here, so none of them says a file is
+  // on another machine.
+  sent = "";
+  elsewhere = 0;
+  take(Buffer.from(pasted(`${join(home, "Screen Shots")} ${big}`)));
+  expect(await afterCopies()).toBe(pasted(`${join(home, "Screen Shots")} ${big}`));
+  expect(elsewhere).toBe(0);
   // Run as root, the file can still be read, so it is only checked where it can't be.
   if (process.getuid?.() !== 0) {
     sent = "";
     take(Buffer.from(pasted(unreadable)));
     expect(await afterCopies()).toBe(pasted(unreadable));
+    expect(elsewhere).toBe(0);
   }
   // Mixed with a file that can be copied, only that one changes.
   sent = "";
@@ -292,6 +307,19 @@ test("a missing path, a folder, a file you can't read and one too big keep their
   expect(
     readdirSync(join(agent, dropsFolder)).filter((name) => name !== ".gitignore"),
   ).toHaveLength(1);
+});
+
+test("a dropped path that isn't on this machine passes as it came, and says so once", async () => {
+  const laptop = "/Users/simon/Desktop/Screen\\ Shot.png /var/folders/x/T/shot.png";
+  const take = filter();
+  take(Buffer.from(pasted(laptop)));
+  take(Buffer.from("\r"));
+  expect(await afterCopies()).toBe(`${pasted(laptop)}\r`);
+  expect(elsewhere).toBe(1);
+  // Keys after it say nothing more.
+  take(Buffer.from("abc"));
+  await afterCopies();
+  expect(elsewhere).toBe(1);
 });
 
 test("files dropped together are each copied, however much they add up to, and their snapshots go", async () => {

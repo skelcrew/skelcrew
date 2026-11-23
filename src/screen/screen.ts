@@ -3,6 +3,7 @@
 // second tmux server, one session per open terminal, ended when you leave. A terminal too narrow
 // for both sides, such as a phone's, shows one side at a time.
 import type { Database } from "bun:sqlite";
+import { hostname, userInfo } from "node:os";
 import { applyConfig, attachCommand } from "../agents/sessions.ts";
 import { envWithoutTmux, screenSocket } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
@@ -17,6 +18,7 @@ import {
   type Drop,
   dropAnswerOption,
   dropAsk,
+  dropNoticeOption,
   dropSignalColumn,
   escapeTime,
   runWithDrops,
@@ -77,6 +79,17 @@ export const attachedMark = "skelcrew-attached";
 // The sidebar's pane and the right side's, as tmux targets in the session a command runs in.
 const toSidebar = `:.${panes.sidebar}`;
 const toRight = `:.${panes.right}`;
+
+// Returns what the screen says when a dropped file is on another machine: how to drop files onto
+// this one, by the user and hostname you would type to reach it.
+function elsewhereNotice(): string {
+  let user = "";
+  try {
+    user = userInfo().username;
+  } catch {}
+  const here = user && hostname() ? `${user}@${hostname()}` : "<user@host>";
+  return `That file is on another machine. To drop files, run sc --remote ${here} from that machine.`;
+}
 
 // Returns the name of the screen's session in one terminal. sc --remote picks the name on your
 // laptop and passes it along, so it can ask which agent shows. Otherwise it is this process's.
@@ -433,6 +446,11 @@ export async function openScreen(
       return null;
     },
     put: async (folder, files) => copyDrops(folder, files),
+    elsewhere: () => {
+      const notice = `${Date.now()} ${elsewhereNotice()}`;
+      const set = ["set", "-t", `=${name}:`, dropNoticeOption, notice];
+      Bun.spawn(["tmux", "-L", screenSocket(agents), ...set], { env, stderr: "ignore" });
+    },
   };
   // A screen opened from a laptop with sc --remote leaves drops to the laptop's sc, as a file you
   // drop is on the laptop. A path in such a paste that names a file here too must never bring
