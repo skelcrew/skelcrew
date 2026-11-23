@@ -178,13 +178,13 @@ test("tabs name each repository in order, after the header, with a badge for wha
   expect(boxRow({ tabs })).not.toContain("site");
 });
 
-test("a tab's badge counts what needs you and what is ready apart, each in its colour", () => {
+test("a tab's badge counts what needs you and what is ready apart, only what needs you coloured", () => {
   const red = headerRow({ tabs: [tab("app"), tab("site", 2, 0, "red")] });
   expect(red).toContain("  site #[fg=colour210]•2  ");
   const ready = headerRow({ tabs: [tab("app"), tab("site", 0, 1)] });
-  expect(ready).toContain("  site #[fg=colour120]•1  ");
+  expect(ready).toContain("  site #[fg=colour250]•1  ");
   const both = [tab("app"), tab("site", 2, 1)];
-  expect(headerRow({ tabs: both })).toContain("  site #[fg=colour221]•2 #[fg=colour120]•1  ");
+  expect(headerRow({ tabs: both })).toContain("  site #[fg=colour221]•2 #[fg=colour250]•1  ");
   expect(tabText(both, "simon/app", 120)).toBe("  app    site •2 •1");
 });
 
