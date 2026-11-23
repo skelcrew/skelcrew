@@ -119,7 +119,10 @@ function addApp(labeled: string[] = []): void {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
-  writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\nlimits: { threads: 1 }\n");
+  writeFileSync(
+    join(work, "skelcrew.yaml"),
+    "tracker: github\nsetup: []\ntest: []\nlimits: { threads: 1 }\n",
+  );
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
@@ -516,6 +519,31 @@ openDb().exec(${JSON.stringify(rows)});`;
   await until(() => statuses()["app-13"] === "failed");
   expect(leftQueue("app-12")).toHaveLength(1);
   expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
+}, 60_000);
+
+// A repository's skelcrew.yaml deleted on its default branch keeps every new builder from
+// starting there, from sc start, the lead or a label, and says why, while the builder already
+// at work carries on.
+test("a repository whose skelcrew.yaml was deleted starts no new builder, says why, and keeps its running one", async () => {
+  addApp(["13"]);
+  const work = join(home, "work", "app");
+  git(work, "rm", "-q", "skelcrew.yaml");
+  git(work, "commit", "-q", "-m", "Drop skelcrew.yaml");
+  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  answer(plugin, "took", { took: true });
+  await serveApp();
+  const why =
+    "simon/app has no skelcrew.yaml. Run sc init in a checkout of it to create one, then commit and push it.";
+  const started = await runSkel(["start", "APP-12"], env());
+  expect(started.code).toBe(1);
+  expect(started.err).toContain(why);
+  await until(() =>
+    leadHears().includes(
+      `couldn't start APP#13 from its label; once fixed, sc start APP#13: ${why}`,
+    ),
+  );
+  await queueLooked();
+  expect(statuses()).toEqual({ "app-11": "working" });
 }, 60_000);
 
 test("a labelled issue that can't start after its claim is told to the lead, not dropped", async () => {

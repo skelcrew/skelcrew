@@ -216,7 +216,10 @@ test("f on a queued task in the task queue asks to start it now over the limit, 
   daemon();
   // app's threads 7 and 12 work already, so its one place is taken.
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
-  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\nlimits: { threads: 1 }\n");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "tracker: github\nsetup: []\ntest: []\nlimits: { threads: 1 }\n",
+  );
   sql(threadSql({ task: "20", title: "Dark mode", status: "queued", queued_since: 1000 }));
   // APP-30 was APP-T20 until the daemon renumbered it past a clash. y starts the row's own task,
   // named by its number, never the old name APP-T20, which the daemon takes for APP-30.

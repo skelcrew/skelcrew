@@ -27,8 +27,14 @@ beforeEach(() => {
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\nmodel: opus\n");
   git("init", "-q", "-b", "main");
   writeFileSync(join(clone, "README"), "app\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 4 }\n");
   commit("start");
 });
+
+// The roles: line of a skelcrew.yaml that puts every role on Claude Code, for a test with no
+// config of yours.
+const onClaude =
+  "roles: { lead: { harness: claude }, builder: { harness: claude }, reviewer: { harness: claude } }\n";
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
@@ -117,7 +123,7 @@ test("once approved, a role file gives its instructions, harness and model, over
 test("a role file naming no harness or model leaves skelcrew.yaml's line counting", () => {
   rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/builder.md", "Build it the team's way.\n");
-  writeFileSync(join(clone, "skelcrew.yaml"), "builder: { model: sonnet }\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), "builder: { harness: claude, model: sonnet }\n");
   commit("roles");
   inHome(approveCurrent);
   expect(builderOf()).toEqual({
@@ -256,6 +262,7 @@ test("the change shown is between the versions given, whatever the default branc
 
 test("a broken role file stops only its own role: the lead still starts", () => {
   rmSync(join(home, ".config", "skelcrew", "config.yaml"));
+  writeFileSync(join(clone, "skelcrew.yaml"), onClaude);
   agentsFile("roles/reviewer.md", "---\nrounds: 5\n---\nReview it.\n");
   agentsFile("roles/lead.md", "---\nmodel: sonnet\n---\nLead it.\n");
   commit("roles");
@@ -613,6 +620,7 @@ test("a role file's harness and model are checked only where they count", () => 
 test("an empty harness or model in a role file is refused where it counts", () => {
   rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/builder.md", "---\nmodel:\n---\nBuild it.\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), onClaude);
   commit("roles");
   inHome(approveCurrent);
   expect(() => inHome('return readSettings(["builder"], app);')).toThrow(
@@ -630,6 +638,7 @@ test("an empty harness or model in a role file is refused where it counts", () =
 
 test("a reviewer file whose frontmatter never closes stops reviews only", () => {
   rmSync(join(home, ".config", "skelcrew", "config.yaml"));
+  writeFileSync(join(clone, "skelcrew.yaml"), onClaude);
   agentsFile("roles/reviewer.md", "---\nharness: codex\nReview it.\n");
   agentsFile("roles/builder.md", '---\nmodel: ""\n---\nBuild it.\n');
   agentsFile("roles/lead.md", "Lead it.\n");
@@ -655,6 +664,7 @@ test("a task whose .agents/ version the clone lost stops, rather than run on oth
   mkdirSync(clone, { recursive: true });
   git("init", "-q", "-b", "main");
   writeFileSync(join(clone, "README"), "app\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), "");
   commit("start");
   expect(() => builderOf(`{ ...app, agents: ${JSON.stringify(tree)} }`)).toThrow(
     "no longer has the .agents/ version",
@@ -685,6 +695,7 @@ catch (error) { return { first, again: String(error) }; }`);
 
 test("a role file with Windows line endings that never closes stops only its own role", () => {
   rmSync(join(home, ".config", "skelcrew", "config.yaml"));
+  writeFileSync(join(clone, "skelcrew.yaml"), onClaude);
   agentsFile("roles/reviewer.md", "---\r\nharness: codex\r\nReview it.\r\n");
   agentsFile("roles/lead.md", "---\r\nmodel: sonnet\r\n---\r\nLead it.\r\n");
   commit("roles");

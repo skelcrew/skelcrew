@@ -1,9 +1,9 @@
-// sc install installs the plugins named by a checkout and by the personal lock.
-// It never chooses harnesses, signs agents in, or sets up the daemon.
-import { mkdtempSync, rmSync } from "node:fs";
+// sc install installs the plugins named by a checkout and by the personal lock, and stops in a
+// checkout with no skelcrew.yaml. It never chooses harnesses, signs agents in, or sets up the daemon.
+import { lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkoutTop } from "../flow/repo.ts";
+import { checkoutTop, noSkelcrewYaml } from "../flow/repo.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { installYourPlugins } from "./install.ts";
 import { installRepositoryPlugins, repositoryNeeds } from "./repository.ts";
@@ -22,6 +22,8 @@ export function installFiles(from?: string): boolean {
       if (!cloned.success)
         throw new Error(`couldn't read ${from}: ${cloned.stderr.toString().trim()}`);
     }
+    if (root !== null && !lstatSync(join(root, "skelcrew.yaml"), { throwIfNoEntry: false }))
+      throw new Error(noSkelcrewYaml);
     const unreadable: string[] = [];
     const needs = repositoryNeeds(false, unreadable, root);
     const conflicts = needs.filter((need) => need.conflict !== null).map((need) => need.source);

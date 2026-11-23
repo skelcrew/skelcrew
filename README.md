@@ -31,11 +31,11 @@ sc init
 sc install
 ```
 
-`sc init` asks which installed harnesses builders and reviewers use, offering the other harness for reviews as a second opinion. Each can name an optional model. It saves these choices under `roles:` in `skelcrew.yaml` and writes only repository files: `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow.
+`sc init` asks which installed harnesses the lead, builders and reviewers use, offering the other harness for reviews as a second opinion. Each can name an optional model. It then shows the setup and test commands it read from your CI and package files, for you to keep or change, and asks how many builders may run at once. It saves all of this in `skelcrew.yaml` and writes only repository files: `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow.
 
 `sc install` then reads them. It asks before installing the GitHub plugin, `skelcrew/skelcrew-github`: say yes. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It asks no machine questions and starts no service. Plain `sc` then adds the repository and opens its lead.
 
-Skelcrew's agents read these files only from the default branch, so commit and push them, then run `sc`:
+Skelcrew's agents read these files only from the default branch, and `sc` stops until `skelcrew.yaml` is there. So commit and push them, then run `sc`:
 
 ```sh
 git add skelcrew.yaml skelcrew.lock .agents
@@ -44,13 +44,11 @@ git push
 sc
 ```
 
-A clone with `skelcrew.yaml` already needs `sc install` for its plugins, then `sc` to open it. For a repository without one, `sc repo add` adds it as it is.
+A clone with `skelcrew.yaml` already needs `sc install` for its plugins, then `sc` to open it. Every repository Skelcrew works on needs one, so run `sc init` in any other.
 
 ### 3. Meet the lead
 
 The lead opens beside a sidebar of the repository's tasks. Run `sc` in the checkout to open it again.
-
-Its first proposal is a thread that finishes the setup. It reads what your CI runs and fills in `setup:` and `test:` in `skelcrew.yaml`, the commands every builder uses. Say yes. The thread opens a PR, and once it is reviewed, merge it.
 
 ### 4. Run a first task
 

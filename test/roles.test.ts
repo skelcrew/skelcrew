@@ -20,15 +20,14 @@ const fetching = `\nBefore you compare your branch with its base branch or merge
 const waiting =
   " When the builder can't take it yet, sc tell says why, and sc ps counts the messages still waiting. If one still waits after 10 minutes, Skelcrew tells you why. When the builder is mid-turn, you may ask the human to press Esc in that thread if it shouldn't finish its turn first.";
 
-// What the lead's and builder's files added once Skelcrew stopped guessing a repository's setup
-// and test commands: the lead's first proposal is a thread that fills them in, and a builder with
-// none asks the lead.
+// What the lead's file says of the repository's setup and test commands, once every repository
+// had to have a complete skelcrew.yaml: what keeps builders from starting goes to the human first.
 const settling =
-  "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. Skelcrew never guesses them. The end of these instructions says which were configured, in either file, when this session started. A line that is only a comment, as sc init writes them, isn't configured. You can't read the human's config, so go by that, and by the skelcrew.yaml in the clone for any added since. While either is missing, the repository's standard setup isn't finished, and your first proposal, before anything else, is a thread that finishes it. Find the commands out by reading the repository: its CI workflow above all, which shows what the project really runs, its package files, its Makefile and its README. Propose only the missing ones to the human in plain words, such as \"Builders will set up with bun install and test with bun run check, as CI does. Shall I start a thread that fills that in?\" On a yes, start a small thread that fills in only the missing ones in the repository's skelcrew.yaml itself, as real lines rather than comments, and leaves a command that is configured as it is. Tell it to also fill in anything else sc init left as a comment that the repository clearly needs, such as limits: when its CI can run only a few builds at once. It is a normal PR the human merges. Until then, a builder that needs a command asks you. Later, a repository the human only drops into will be able to keep them under repos: in the human's own config instead.\n";
+  "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. The end of these instructions says what they were when this session started, and the skelcrew.yaml in the clone shows any change since. When it says something keeps builders from starting, such as a line skelcrew.yaml lacks, tell the human first, in plain words, with the line to add. No thread can fix it, as no builder starts until the fix is on the default branch, so the human makes that change.\n";
 // What the lead's file added once a lead's first start brought it an opening turn, so it speaks
 // first to a human who doesn't know to.
 const opening =
-  '\nOn your very first start, before the human has written anything, Skelcrew types a note starting "Skelcrew: this is your first start". It comes from Skelcrew, not the human. Greet the human in a line or two, then do what it says: propose the thread that finishes the setup, as below, or say what you can do here and ask what to work on.\n';
+  '\nOn your very first start, before the human has written anything, Skelcrew types a note starting "Skelcrew: this is your first start". It comes from Skelcrew, not the human. Greet the human in a line or two, then do what it says: tell them what keeps builders from starting, as below, or say what you can do here and ask what to work on.\n';
 // What the lead's file added once a lead came back after a restart without its conversation:
 // it looks at Skelcrew's state before anything else.
 const restarted =
@@ -213,7 +212,7 @@ const tradeOffs =
 
 // What the lead's file added with limits.threads: a start over the limit waits in a queue.
 const queue =
-  "- A repository's skelcrew.yaml can limit how many builders run at once in it, with limits.threads. A start over the limit isn't refused: sc start says the thread is queued, and it starts by itself, first come first served, once one of the repository's builders ends. sc ps shows it as queued. sc rm takes it out of the queue.\n";
+  "- A repository's skelcrew.yaml limits how many builders run at once in it, with limits.threads. A start over the limit isn't refused: sc start says the thread is queued, and it starts by itself, first come first served, once one of the repository's builders ends. sc ps shows it as queued. sc rm takes it out of the queue.\n";
 const labelQueue =
   ', or "queued app-12 from github: …" when it waits in the queue of limits.threads';
 

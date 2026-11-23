@@ -1,7 +1,7 @@
 // A task's decisions and what its change must keep true, recorded by the lead in a process of the
 // test's own against its own database, and shown by sc show.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowed, DaemonRequest } from "../src/flow/requests.ts";
@@ -135,6 +135,7 @@ test("a thread started with what must stay true holds it from the start, and a r
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   Bun.spawnSync(["git", "init", "-q", clone]);
+  writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
   Bun.spawnSync(["git", "init", "-q", "--bare", join(home, "app.git")]);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};

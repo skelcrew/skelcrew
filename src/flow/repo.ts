@@ -18,6 +18,7 @@ import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly } from "../agents/sessions.ts";
 import {
   agentsAnswered,
+  agentsOnDefaultBranch,
   approvedAgents,
   askAboutAgents,
   builtInAgentFiles,
@@ -48,6 +49,18 @@ import { taskName } from "./thread.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
 export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
+
+export const noSkelcrewYaml =
+  "This repository has no skelcrew.yaml. Run sc init to create one, then commit and push it.";
+
+const hasSkelcrewYaml = ({ owner, repo }: { owner: string; repo: string }) =>
+  lstatSync(join(cloneDir(owner, repo), "skelcrew.yaml"), { throwIfNoEntry: false }) !== undefined;
+
+async function requireSkelcrewYaml(db: Database, repository: Repository): Promise<void> {
+  if (hasSkelcrewYaml(repository)) return;
+  await refreshClone(db, repository).catch(() => {});
+  if (!hasSkelcrewYaml(repository)) throw new Error(noSkelcrewYaml);
+}
 
 // Returns the file of trusted repositories, kept with your settings so a clone can't bring
 // its own yes.
@@ -378,14 +391,10 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
   const fullName = `${owner}/${repo}`;
   const had = repositories(db).find((r) => r.owner === owner && r.repo === repo);
   const known = had !== undefined;
-  // Another server can hold a repository of the same owner/name. Refreshing from it would put
-  // its code in the clone of the one Skelcrew has, where leads and builders read it.
   if (had && !remoteIs(had, remote))
     throw new Error(
       `Skelcrew has ${fullName} already, from ${had.remote}. To add the one at ${remote}, remove it first with sc repo rm ${had.name}`,
     );
-  // A repository new to Skelcrew that you haven't vouched for waits for your yes, as its
-  // instructions will steer agents.
   if (!known && !mayCloneWithoutAsking(details)) {
     console.log(`Agents will run ${fullName}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
@@ -403,14 +412,14 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
     forge: claimed?.forge ?? null,
     remote,
   };
-  // Clone before saving it, so a repository Skelcrew has always has a clone. One Skelcrew had
-  // already only needed its clone back, such as after sc repo trust.
   if (!existsSync(cloneDir(owner, repo)))
     console.log(known ? `Cloning ${fullName} for Skelcrew.` : `Adding ${fullName} to Skelcrew...`);
   await refreshClone(db, repository, true);
+  if (!hasSkelcrewYaml(repository)) {
+    if (!known) rmSync(cloneDir(owner, repo), { recursive: true, force: true });
+    throw new Error(noSkelcrewYaml);
+  }
   if (known) return;
-  // A repository git can't push to isn't added, and its clone goes: every lead reads the folder
-  // of clones, which must hold only the repositories Skelcrew has.
   if (claimed === null)
     await checkPush(db, repository, cloneDir(owner, repo)).catch((error) => {
       rmSync(cloneDir(owner, repo), { recursive: true, force: true });
@@ -418,8 +427,6 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
         `${fullName} has no forge, so Skelcrew pushes threads' branches on your own git login, and git refused: ${errorText(error)}. Give the daemon a login it can use without you, such as a key with no passphrase or a credential helper, then run this again.`,
       );
     });
-  // Save it, then give every repository its short name again, since this one may now share a
-  // name with another and both gain their owner.
   db.run(
     "INSERT INTO repositories (owner, repo, name, forge, remote, author, claimed) VALUES (?, ?, ?, ?, ?, ?, 1)",
     [owner, repo, fullName, repository.forge, remote, authorOf(claimed)],
@@ -436,23 +443,19 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
 // owner/repo once Skelcrew has it, so sc opens its lead. A repository you didn't trust isn't
 // in, so nothing is returned for it. Plain sc must start fast, so a repository Skelcrew has
 // already costs no call to a forge: the daemon keeps its clone current. A folder with no
-// remote gets no complaint.
+// remote gets no complaint. Throws noSkelcrewYaml for a repository whose default branch has no
+// skelcrew.yaml, so sc stops there.
 export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
   const db = openDb();
   const named = from ?? originHere();
   let opened = named ? repositoryAt(db, named) : undefined;
-  // Bring in the repository only when Skelcrew doesn't have it, and report a failure rather
-  // than throw, so sc still attaches.
+  if (opened) await requireSkelcrewYaml(db, opened);
   try {
-    // A repository Skelcrew had before it read .agents/, or whose .agents/ you left unanswered,
-    // asks about it here, once.
     if (opened && !agentsAnswered(opened)) askAboutAgents(opened, opened.name);
     if (named && !opened) {
       const details = await identifyRepository(db, named);
       await bringIn(db, details);
       opened = repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
-      // The forge can name a repository Skelcrew has otherwise than the remote does, such as
-      // after a rename. Saved, so the next sc from this checkout asks the forge nothing.
       if (opened && oldRemoteOf(named, opened))
         db.run("UPDATE repositories SET old_remote = ? WHERE owner = ? AND repo = ?", [
           remoteKey(named),
@@ -461,11 +464,10 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
         ]);
     }
   } catch (error) {
+    if (errorText(error) === noSkelcrewYaml) throw error;
     console.error(`Skelcrew: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
-  // Said each time, not only the first: the line flashes by before the screen opens, and a
-  // remote that names another repository than the one opened should never go unnoticed.
   const update = named && opened ? oldRemoteOf(named, opened) : null;
   if (update)
     console.log(
@@ -548,7 +550,6 @@ export async function addRepo(
   given: string | undefined,
   sessions: string,
 ): Promise<Repository | undefined> {
-  // Work out the remote URL: a folder's own remote, or what you gave when it is no folder.
   const db = openDb();
   const folder = given === undefined || existsSync(given) ? resolve(given ?? ".") : null;
   const url = folder === null ? given : originHere(folder);
@@ -556,12 +557,11 @@ export async function addRepo(
     throw new Error(
       `${folder} isn't a checkout with a remote. Run sc repo add in one, or give the repository's URL.`,
     );
-  // A URL starting with a dash would reach git as an option.
   if (!url || url.startsWith("-"))
     throw new Error(`${given} is neither a folder nor a repository's URL`);
-  // One Skelcrew has already is only named, with no call to a forge.
   const had = repositoryAt(db, url);
   if (had) {
+    await requireSkelcrewYaml(db, had);
     await openAgain(db, sessions, had);
     return undefined;
   }
@@ -570,21 +570,30 @@ export async function addRepo(
   return repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
 }
 
-// The starter skelcrew.yaml: a line saying the file is shared and never holds a secret, and
-// setup and test as commented examples, as Skelcrew never guesses them: the lead proposes them. It
-// names no tracker, so a repository on GitHub keeps its issues as tasks, and shows tracker: none
-// commented out, so you can find how to turn that off. The limit on builders is commented out
-// too, as most repositories need none. sc init adds the forge's plugin below.
-const starterConfig = [
-  "# Shared with everyone who works on this repository. Never put a secret here.",
-  "# setup: [bun install]",
-  "# test: [bun test]",
-  "# Keeps this repository on git alone, with no tracker.",
-  "# tracker: none",
-  "# At most this many builders at once in this repository.",
-  "# limits: { threads: 4 }",
-  "",
-].join("\n");
+async function newSkelcrewYaml(root: string): Promise<string> {
+  const { chooseCrew } = await import("../machine/crew.ts");
+  const { confirmCommands } = await import("../machine/commands.ts");
+  const { askLine } = await import("../machine/pick.ts");
+  const roles = chooseCrew();
+  const { setup, test } = confirmCommands(root);
+  let threads = 0;
+  while (threads === 0) {
+    const answer = askLine("At most how many builders at once in this repository? Enter for 4: ");
+    threads = !answer ? 4 : /^[1-9]\d*$/.test(answer) ? Number(answer) : 0;
+  }
+  const flow = (value: unknown) =>
+    stringify(value, { collectionStyle: "flow", flowCollectionPadding: false }).trim();
+  return [
+    "# Shared with everyone who works on this repository. Never put a secret here.",
+    `setup: ${flow(setup)}`,
+    `test: ${flow(test)}`,
+    "# At most this many builders at once in this repository.",
+    `limits: ${flow({ threads })}`,
+    "# Keeps this repository on git alone, with no tracker.",
+    "# tracker: none",
+    stringify({ roles }),
+  ].join("\n");
+}
 
 function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
   if (parseRemote(remote)?.host !== "github.com") return null;
@@ -637,10 +646,7 @@ export async function initRepo(): Promise<void> {
     );
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  if (!hasConfig) {
-    const { chooseCrew } = await import("../machine/crew.ts");
-    writeFileSync(file, starterConfig + stringify({ roles: chooseCrew() }), { flag: "wx" });
-  }
+  if (!hasConfig) writeFileSync(file, await newSkelcrewYaml(root), { flag: "wx" });
   const forge = addForgePlugin(root, remote);
   const lock = join(root, "skelcrew.lock");
   const newLock = lstatSync(lock, { throwIfNoEntry: false }) === undefined;
@@ -693,6 +699,7 @@ export function approveCheckout(): void {
   }
   const current = checkoutAgents(added, root);
   if (current === null || current === approvedAgents(added)) return;
+  if (agentsAnswered(added) && current === agentsOnDefaultBranch(added)) return;
   if (agentsAnswered(added) && holdsBuiltInAgents(added, current))
     console.log(
       `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,

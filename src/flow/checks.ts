@@ -32,16 +32,10 @@ const held = new Map<Socket, Holder & { since: number }>();
 // tests runs none, so it takes no slot.
 export function holdCheckSlot(
   connection: Socket,
-  test: string[] | undefined,
+  test: string[],
   holder: Holder & { runs: () => boolean | Promise<boolean> },
 ): void {
   const send = (line: object) => connection.write(`${JSON.stringify(line)}\n`);
-  if (test === undefined) {
-    connection.end(
-      `${JSON.stringify({ error: "no test command is configured for this repository. Ask the lead which to use with sc tell lead." })}\n`,
-    );
-    return;
-  }
   if (test.length === 0) {
     connection.end(`${JSON.stringify({ test })}\n`);
     return;

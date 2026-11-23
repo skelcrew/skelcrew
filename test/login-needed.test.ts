@@ -1,6 +1,6 @@
 // Missing agent logins become an item that sends the human to sc, without a daemon prompt.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { source, threadSql } from "./harness.ts";
@@ -8,6 +8,12 @@ import { source, threadSql } from "./harness.ts";
 let home = "";
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "skelcrew-login-needed-"));
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 9 }\nroles: { builder: { harness: claude } }\n",
+  );
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });

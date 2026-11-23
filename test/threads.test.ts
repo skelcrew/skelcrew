@@ -151,8 +151,13 @@ function onGitHub(files: Record<string, string>, repo: string, owner = "simon"):
   const work = join(home, "work", owner, repo);
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
-  // The fake plugin is the tracker, whatever else skelcrew.yaml says.
-  const shared = { ...files, "skelcrew.yaml": `tracker: github\n${files["skelcrew.yaml"] ?? ""}` };
+  // The fake plugin is the tracker, whatever else skelcrew.yaml says, and each line a repository
+  // must have is there unless the test gives its own.
+  const given = files["skelcrew.yaml"] ?? "";
+  const lines = ["setup: []", "test: []", "limits: { threads: 9 }"].filter(
+    (line) => !given.includes(line.slice(0, line.indexOf(":") + 1)),
+  );
+  const shared = { ...files, "skelcrew.yaml": `tracker: github\n${lines.join("\n")}\n${given}` };
   for (const [name, text] of Object.entries(shared)) writeFileSync(join(work, name), text);
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
@@ -965,7 +970,10 @@ c.on("data", (d) => process.stdout.write(d));`;
     // The daemon saves a thread before it appends the thread to its log.
     await until(() => read(join(data(), "threads", "app-12.log")).includes("broken"));
     expect(hasSession("app-12")).toBe(false);
-    writeFileSync(join(work, "skelcrew.yaml"), "setup: [echo fixed > fixed]\n");
+    writeFileSync(
+      join(work, "skelcrew.yaml"),
+      "setup: [echo fixed > fixed]\ntest: []\nlimits: { threads: 9 }\n",
+    );
     git(work, "commit", "-q", "-am", "fix setup");
     git(work, "push", "-q", "origin", "main");
     expect((await skel("start", "APP-12")).out).toBe("Started APP-12.\n");

@@ -39,7 +39,14 @@ beforeEach(() => {
   writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
   writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
-  // Skelcrew has simon/app, with no forge.
+  // Skelcrew has simon/app, with no forge, and its clone a skelcrew.yaml, which your config's test
+  // goes over.
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: [never run]\nlimits: { threads: 9 }\n",
+  );
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', 'https://example.com/simon/app.git')");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
@@ -324,13 +331,17 @@ test("runs the test commands in one shell, so a cd or an export holds for the ne
   expect(read(join(home, "where"))).toBe("me sub\n");
 }, 60_000);
 
-test("says when no test command is configured, and runs nothing when it is configured as none", async () => {
+test("says what skelcrew.yaml lacks when no test command is set, and runs nothing when it is none", async () => {
+  writeFileSync(
+    join(home, ".local", "share", "skelcrew", "repos", "simon", "app", "skelcrew.yaml"),
+    "setup: []\n",
+  );
   config("");
   await serve();
   const folder = checkout("a");
   const missing = await check(folder).ended;
   expect(missing.code).toBe(1);
-  expect(missing.err).toContain("no test command is configured for this repository");
+  expect(missing.err).toContain("simon/app's skelcrew.yaml has no test: line.");
   config("test: []\n");
   const none = await check(folder).ended;
   expect(none.code).toBe(0);

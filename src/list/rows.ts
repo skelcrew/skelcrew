@@ -423,12 +423,12 @@ function reviewOf(thread: Thread): Row["review"] {
 const doneShown = 10;
 
 // Returns how full the repository's builders are: how many run, how many may run at once under
-// its limits.threads, or null with no limit, and how many tasks wait in its queue. A limit whose
-// file can't be read counts as none here, as the list must still draw.
+// its limits.threads, and how many tasks wait in its queue. A limit that can't be read is null
+// here, as the list must still draw.
 function buildersOf(db: Database, open: Open) {
   let limit: number | null = null;
   try {
-    limit = threadLimit(open) ?? null;
+    limit = threadLimit(open);
   } catch {}
   return { ...counted(db, open), limit };
 }

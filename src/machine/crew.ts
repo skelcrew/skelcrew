@@ -1,25 +1,11 @@
 // The crew sc init writes into a repository: the installed harnesses and optional models
-// its builders and reviewers run on.
-import { readSync, writeSync } from "node:fs";
+// its lead, builders and reviewers run on.
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import type { Role } from "../settings.ts";
-import { pick } from "./pick.ts";
+import { askLine, pick } from "./pick.ts";
 import { loginPath } from "./service.ts";
 
-function modelFor(role: string): string | undefined {
-  writeSync(1, `${role} model (Enter for the harness default): `);
-  const byte = Buffer.alloc(1);
-  let model = "";
-  while (readSync(0, byte) > 0) {
-    const key = byte.toString();
-    if (key === "\n" || key === "\r") break;
-    if (key === "\x03") process.exit(130);
-    model += key;
-  }
-  return model.trim() || undefined;
-}
-
-export function chooseCrew(): { builder: Role; reviewer: Role } {
+export function chooseCrew(): { lead: Role; builder: Role; reviewer: Role } {
   const PATH = loginPath();
   const installed = HarnessName.options
     .map(harnessNamed)
@@ -45,9 +31,10 @@ export function chooseCrew(): { builder: Role; reviewer: Role } {
           );
     const chosen = at === null ? undefined : choices[at];
     if (!chosen) throw new Error(`no harness was picked for ${role}, so none is saved`);
-    const model = modelFor(role);
+    const model = askLine(`${role} model (Enter for the harness default): `) || undefined;
     return model ? { harness: chosen.name, model } : { harness: chosen.name };
   };
+  const lead = choose("the lead");
   const builder = choose("builders");
-  return { builder, reviewer: choose("reviewers", builder.harness) };
+  return { lead, builder, reviewer: choose("reviewers", builder.harness) };
 }

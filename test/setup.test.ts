@@ -112,6 +112,13 @@ db.run("INSERT INTO plugins (name, folder) VALUES ('github', '/nowhere')");`;
     stderr: "pipe",
   });
   if (!added.success) throw new Error(added.stderr.toString());
+  // Its clone holds the skelcrew.yaml every repository Skelcrew works on has.
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 4 }\nroles: { lead: { harness: claude }, builder: { harness: claude }, reviewer: { harness: claude } }\n",
+  );
   daemon = await fakeDaemon();
 });
 afterEach(() => {
@@ -760,14 +767,18 @@ git_credentials: ["true"]
   );
 }
 
-// Returns your checkout of simon/site, which is on the fake GitHub, with no GitHub plugin
-// installed and the plugin published there.
+// Returns your checkout of simon/site, which is on the fake GitHub with a skelcrew.yaml that
+// names no plugin, with no GitHub plugin installed and the plugin published there.
 function siteOnGitHub(): string {
   noGitHubPlugin();
   fakeGitHub();
   publishGitHubPlugin();
   const site = checkoutWith("site");
   writeFileSync(join(site, "README"), "site\n");
+  writeFileSync(
+    join(site, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 4 }\nroles: { lead: { harness: claude } }\n",
+  );
   git(site, "add", ".");
   git(site, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", site, join(home, "github", "simon", "site.git"));
@@ -793,7 +804,7 @@ test("a yes installs the GitHub plugin after one question, writes nothing here, 
   expect(run.out).toContain(
     "Keeping Skelcrew running after you log out or restart.\nAdding simon/site to Skelcrew...\n",
   );
-  expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
+  expect(git(site, "status", "--porcelain")).toBe("");
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
 
@@ -805,7 +816,7 @@ test("on a run after setup, a yes installs the plugin and the lead opens, with n
   expect(run.out).toStartWith(offered("simon/site"));
   expect(run.out).toContain("Installed the GitHub plugin.");
   expect(run.out).not.toContain("sc init");
-  expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
+  expect(git(site, "status", "--porcelain")).toBe("");
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
 

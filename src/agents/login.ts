@@ -1,5 +1,4 @@
-// The saved logins agents need, and the default harness when no personal or repository role
-// names one. Login questions belong to sc in the human's terminal.
+// The saved logins agents need. Login questions belong to sc in the human's terminal.
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -12,12 +11,6 @@ export function hasAgentLogin(harness: HarnessName, home = homedir()): boolean {
   if (harness === "claude") return existsSync(claudeTokenFile(home));
   if (harness === "pi") return hasPiLogin(home);
   return hasCodexLogin(home) || existsSync(join(dataDir(home), "codex", "auth.json"));
-}
-
-export function defaultHarness(): HarnessName {
-  const harnesses: HarnessName[] = ["claude", "codex", "pi"];
-  const ready = harnesses.filter((name) => Bun.which(name) && hasAgentLogin(name));
-  return ready.length === 1 ? (ready[0] ?? "claude") : "claude";
 }
 
 export const loginInstruction = (harness: HarnessName) => `run sc: sign in to ${harness}`;

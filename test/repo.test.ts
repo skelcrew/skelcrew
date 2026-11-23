@@ -165,13 +165,22 @@ const claimsAsked = () =>
     .filter((q) => q.ask === "claims")
     .map((q) => q.remote);
 
-// Puts a repository with one file on the fake GitHub, which the fake forge claims, and returns
-// your checkout of it.
-function onGitHub(full: string, permission = "READ", fork = false): string {
+// A skelcrew.yaml with every line a repository must have. Your config names the harness.
+const complete = "setup: []\ntest: []\nlimits: { threads: 4 }\n";
+
+// Puts a repository on the fake GitHub, which the fake forge claims, and returns your checkout of
+// it. It holds a README and `files`, by default a complete skelcrew.yaml.
+function onGitHub(
+  full: string,
+  permission = "READ",
+  fork = false,
+  files: Record<string, string> = { "skelcrew.yaml": complete },
+): string {
   const bare = join(home, "github", `${full}.git`);
   const work = join(home, "code", full);
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), `${full}\n`);
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(work, name), text);
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
@@ -182,7 +191,8 @@ function onGitHub(full: string, permission = "READ", fork = false): string {
 }
 
 async function skel(args: string[], typed = "", cwd = home, more: Record<string, string> = {}) {
-  if (args[0] === "init" && typed === "") typed = "\n\n\n\n";
+  // sc init asks for each role's harness and model, then setup, test and the thread limit.
+  if (args[0] === "init" && typed === "") typed = "\n\n\n\n\n\nnone\nnone\n\n";
   const run = Bun.spawn([process.execPath, main, ...args], {
     cwd,
     env: {
@@ -241,6 +251,59 @@ test("brings in a repository you can push to from its checkout, without asking",
   expect(readFileSync(join(checkout, ".git", "config"), "utf8")).toBe(config);
   expect(git(checkout, "status", "--porcelain")).toBe("");
   expect(await listed()).toEqual([["app", "simon/app", "github"]]);
+});
+
+const noFile =
+  "Skelcrew: This repository has no skelcrew.yaml. Run sc init to create one, then commit and push it.\n";
+
+// Every repository Skelcrew works on has a skelcrew.yaml on its default branch, so sc, sc repo
+// add, sc install and sc --remote, which runs sc --from on the server, stop with the one line
+// that says what to do.
+test("sc, repo add, install and --from stop for a repository with no skelcrew.yaml, naming sc init", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  for (const args of [[], ["repo", "add"], ["install"], ["--from", "simon/app"]]) {
+    const run = await skel(args, "", checkout);
+    expect(run.err).toBe(noFile);
+    expect(run.code).toBe(1);
+  }
+  expect(calls()).not.toContain("daemon lead");
+  expect(await listed()).toEqual([]);
+  // Every lead reads the folder of clones, which holds only the repositories Skelcrew has.
+  expect(existsSync(clone("simon/app"))).toBe(false);
+  // A skelcrew.yaml only in your checkout isn't on the default branch, where agents read it.
+  writeFileSync(join(checkout, "skelcrew.yaml"), complete);
+  expect((await skel([], "", checkout)).err).toBe(noFile);
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "Add skelcrew.yaml");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
+  const run = await skel([], "", checkout);
+  expect(run.err).toBe("");
+  expect(attached()).toBe(true);
+});
+
+// The daemon keeps Skelcrew's clone current, so a skelcrew.yaml deleted on the default branch
+// stops sc there, while one you just pushed counts at once, as sc fetches before it refuses.
+test("sc stops for a repository Skelcrew has whose skelcrew.yaml was deleted, and goes once it is back", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel([], "", checkout)).err).toBe("");
+  git(checkout, "rm", "-q", "skelcrew.yaml");
+  git(checkout, "commit", "-q", "-m", "Drop skelcrew.yaml");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
+  git(clone("simon/app"), "pull", "-q", join(home, "github", "simon/app.git"), "main");
+  writeFileSync(join(home, "calls"), "");
+  const stopped = await skel([], "", checkout);
+  expect(stopped.err).toBe(noFile);
+  expect(stopped.code).toBe(1);
+  expect(calls()).not.toContain("daemon lead");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe(noFile);
+  // Skelcrew still has it, so its running threads carry on.
+  expect(await listed()).toEqual([["app", "simon/app", "github"]]);
+  writeFileSync(join(checkout, "skelcrew.yaml"), complete);
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "Bring skelcrew.yaml back");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
+  expect((await skel([], "", checkout)).err).toBe("");
+  expect(attached()).toBe(true);
 });
 
 test("brings it in from a folder inside the checkout too", async () => {
@@ -850,6 +913,7 @@ describe("a repository no forge claims", () => {
     const work = join(home, "code", "notes");
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "README"), "notes\n");
+    writeFileSync(join(work, "skelcrew.yaml"), complete);
     git(work, "init", "-q", "-b", "main");
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "start");
@@ -867,18 +931,20 @@ describe("a repository no forge claims", () => {
     expect(existsSync(join(clone("simon/notes"), "README"))).toBe(true);
   });
 
-  // A repository just created has no commit for the push check to push, nor a default branch.
-  test("an empty one is added too, once git can push to it", async () => {
+  // A repository just created has no skelcrew.yaml on its default branch yet, so it waits for
+  // one, and every lead reads the folder of clones, which keeps only the repositories Skelcrew has.
+  test("an empty one isn't added, as it has no skelcrew.yaml yet", async () => {
     const work = elsewhere();
     const bare = join(home, "elsewhere", "simon", "notes.git");
     rmSync(bare, { recursive: true, force: true });
     git(home, "init", "-q", "--bare", "-b", "main", bare);
     const run = await skel(["repo", "add"], "y\n", work);
-    expect(run.err).toBe("");
-    expect(run.out).toContain("Added simon/notes, as notes.");
-    expect(await listed()).toEqual([["notes", "simon/notes", "none"]]);
-    // The check's stand-in commit went nowhere.
-    expect(git(bare, "for-each-ref").trim()).toBe("");
+    expect(run.code).toBe(1);
+    expect(run.err).toBe(
+      "Skelcrew: This repository has no skelcrew.yaml. Run sc init to create one, then commit and push it.\n",
+    );
+    expect(await listed()).toEqual([]);
+    expect(existsSync(clone("simon/notes"))).toBe(false);
   });
 
   test("isn't added when git refuses to push, and Skelcrew says what to fix", async () => {
@@ -923,7 +989,7 @@ describe("a repository no forge claims", () => {
 });
 
 test("repo add and init refuse inside Skelcrew's sandbox, where a yes could come from an agent", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   for (const [args, what] of [
     [["repo", "add"], "adding a repository"],
     [["init"], "setting up a repository for Skelcrew"],
@@ -936,15 +1002,15 @@ test("repo add and init refuse inside Skelcrew's sandbox, where a yes could come
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-// The files sc init writes are the built-in defaults, with your harness and model in each role,
-// so the repository works the same for a teammate. Setup and test are only examples, as
-// Skelcrew never guesses them. Adding the repository is sc install's job, as with npm.
-test("init writes skelcrew.yaml, skelcrew.lock and .agents/ from the built-in defaults, and adds nothing", async () => {
+// sc init writes a complete skelcrew.yaml: the crew you chose, setup and test as you confirmed
+// them, and the thread limit. The rest is the built-in defaults, so the repository works the same
+// for a teammate. Adding the repository is sc install's job, as with npm.
+test("init writes a complete skelcrew.yaml, skelcrew.lock and .agents/ from the built-in defaults, and adds nothing", async () => {
   writeFileSync(
     join(home, ".config", "skelcrew", "config.yaml"),
     "harness: claude\nmodel: sonnet\nlead: { model: opus }\nreviewer: { harness: codex }\n",
   );
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   mkdirSync(join(checkout, "src"));
   // It names no tracker, so the repository keeps its forge as its tracker, and asks nothing.
   const commit = githubInstalledAsYours();
@@ -957,13 +1023,15 @@ test("init writes skelcrew.yaml, skelcrew.lock and .agents/ from the built-in de
   expect(run.out).not.toContain("Install it?");
   expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
     `# Shared with everyone who works on this repository. Never put a secret here.
-# setup: [bun install]
-# test: [bun test]
+setup: []
+test: []
+# At most this many builders at once in this repository.
+limits: {threads: 4}
 # Keeps this repository on git alone, with no tracker.
 # tracker: none
-# At most this many builders at once in this repository.
-# limits: { threads: 4 }
 roles:
+  lead:
+    harness: claude
   builder:
     harness: claude
   reviewer:
@@ -1020,7 +1088,7 @@ function installAtTerminal(checkout: string, typed: string) {
 // adds the repository, and approves the built-in .agents/ as sc init wrote it, so the push of
 // them asks nothing.
 test("install after init installs only the forge plugin and plain sc adds the repository", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   const commit = publishGitHubPlugin();
   expect((await skel(["init"], "", checkout)).err).toBe("");
   const run = await installAtTerminal(checkout, "y\n");
@@ -1036,6 +1104,7 @@ test("install after init installs only the forge plugin and plain sc adds the re
   });
   git(checkout, "add", "-A");
   git(checkout, "commit", "-q", "-m", "init");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
   expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
   // It starts nothing: the first sc starts the daemon and opens the lead.
   expect(calls()).not.toContain("daemon lead");
@@ -1111,7 +1180,7 @@ test("install in a checkout without skelcrew.yaml adds nothing", async () => {
 // The forge's plugin isn't on this machine yet, so sc init pins its newest version, read from
 // GitHub, and leaves installing it to sc install. Nothing of it runs, so nothing is asked.
 test("init pins the forge's plugin at its newest version, and installs nothing", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   const commit = publishGitHubPlugin();
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
@@ -1131,7 +1200,7 @@ test("init pins the forge's plugin at its newest version, and installs nothing",
 // A repository's skelcrew.lock comes with every sc init, so one whose forge has no plugin to pin
 // still gets one, pinning nothing, to commit with the rest.
 test("init writes a skelcrew.lock that pins nothing for a repository that isn't on GitHub", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   git(checkout, "remote", "set-url", "origin", "git@gitlab.com:simon/app.git");
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
@@ -1139,16 +1208,23 @@ test("init writes a skelcrew.lock that pins nothing for a repository that isn't 
   expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(
     "# Written by sc plugin add and sc plugin update. Commit it.\n",
   );
-  // The starter skelcrew.yaml is only comments, so it names no plugin.
+  // With no forge plugin to name, skelcrew.yaml holds the rest, as complete as ever.
   expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toEqual({
-    roles: { builder: { harness: "claude" }, reviewer: { harness: "codex" } },
+    setup: [],
+    test: [],
+    limits: { threads: 4 },
+    roles: {
+      lead: { harness: "claude" },
+      builder: { harness: "claude" },
+      reviewer: { harness: "codex" },
+    },
   });
 });
 
 // A teammate pushed what sc init wrote, so a clone's default branch holds only the built-in
 // files, which need no yes as the repository comes in.
 test("plain sc in a clone whose default branch has sc init's files approves them without asking", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   expect((await skel(["init"], "", checkout)).err).toBe("");
   git(checkout, "add", "-A");
@@ -1177,7 +1253,7 @@ test("plain sc asks about built-in roles once their frontmatter names a harness"
 // sc init only reads Skelcrew's state, so the plugin installed here is pinned and the database
 // stays byte for byte as it was, even one an older Skelcrew left, which preparing it would change.
 test("init on a machine with Skelcrew's state leaves that state as it was", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   const commit = githubInstalledAsYours();
   const data = join(home, ".local", "share", "skelcrew");
   const db = new Database(join(data, "skelcrew.db"));
@@ -1199,7 +1275,7 @@ test("init on a machine with Skelcrew's state leaves that state as it was", asyn
 // sc init writes into the repository alone, so on a machine where Skelcrew never ran it leaves
 // no state of Skelcrew's behind, not even the clone it reads the plugin's pin from.
 test("init on a machine where Skelcrew never ran writes nothing outside the repository", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   const commit = publishGitHubPlugin();
   const data = join(home, ".local", "share", "skelcrew");
   rmSync(data, { recursive: true });
@@ -1219,15 +1295,16 @@ test("init on a machine where Skelcrew never ran writes nothing outside the repo
 
 // A skelcrew.yaml from sc init has setup: and test: only as comments, so the lead is told
 // neither is configured, and proposes them before its first thread.
-test("the lead is told setup and test aren't configured when sc init left them as comments", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+// sc init writes the setup and test you typed as real lines, so once pushed the lead is told them.
+test("the lead is told the setup and test commands sc init wrote, once they are pushed", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
-  expect((await skel(["init"], "", checkout)).err).toBe("");
-  expect((await skel([], "", checkout)).err).toBe("");
+  const typed = "\n\n\n\n\n\nbun install\nbun test && bun run lint\n2\n";
+  expect((await skel(["init"], typed, checkout)).err).toBe("");
   git(checkout, "add", "-A");
   git(checkout, "commit", "-q", "-m", "init");
   git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
-  git(clone("simon/app"), "pull", "-q", join(home, "github", "simon/app.git"), "main");
+  expect((await skel([], "", checkout)).err).toBe("");
   expect(existsSync(join(clone("simon/app"), "skelcrew.yaml"))).toBe(true);
   const code = `import { repositoryCommands } from ${JSON.stringify(source("config.ts"))};
 import { leadInstructions } from ${JSON.stringify(source("flow/lead.ts"))};
@@ -1240,13 +1317,13 @@ console.log(leadInstructions("You lead.\\n", "simon/app", "/c", commands, false)
   });
   expect(told.stderr.toString()).toBe("");
   expect(told.stdout.toString()).toContain(
-    "When this session started, no setup command was configured, and no test command was configured.",
+    "When this session started, the setup command was `bun install`, and the test command was `bun test && bun run lint`.",
   );
 });
 
 // Every repository gets its forge's plugin, so one whose skelcrew.yaml names no plugin gains it.
 test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   const file = join(checkout, "skelcrew.yaml");
   writeFileSync(file, "# How to build it.\nsetup: [make]\n");
@@ -1266,7 +1343,7 @@ test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin",
 // sc plugin add would move a pin to the version installed here, so a pin the repository has already
 // stays as it is, and only skelcrew.yaml gains the plugin's name.
 test("init keeps the pin a skelcrew.lock that is there has for the forge's plugin", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   writeFileSync(join(checkout, "skelcrew.yaml"), "setup: [make]\n");
   const lock = `# Ours.\nskelcrew/skelcrew-github: { name: github, version: 0.0.9, commit: ${"a".repeat(40)} }\n`;
@@ -1283,7 +1360,7 @@ test("init keeps the pin a skelcrew.lock that is there has for the forge's plugi
 
 // A skelcrew.lock that pins other plugins keeps them, and gains the forge's pin beside them.
 test("init adds the forge's pin to a skelcrew.lock that is there, keeping its other pins", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   const commit = githubInstalledAsYours();
   // Written as people write it, with spaces, which a rewrite of the whole file would drop.
   const other = `simon/skelcrew-other: { name: other, version: 1.0.0, commit: ${"b".repeat(40)} }\n`;
@@ -1300,7 +1377,7 @@ test("init adds the forge's pin to a skelcrew.lock that is there, keeping its ot
 
 // The human commits the file, so a line init didn't need to change stays byte for byte.
 test("init adds the forge's plugin to a skelcrew.yaml without changing its other lines", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   const file = join(checkout, "skelcrew.yaml");
   writeFileSync(file, "setup:   [ make, test ]  # ours\ntest: [make]");
@@ -1334,7 +1411,7 @@ test("init adds the forge's plugin to a skelcrew.yaml without changing its other
 // Written again, a file written as one map would change on every line, so init leaves it as it
 // is and says which line to add by hand. A lock written so is left the same way.
 test("init leaves a skelcrew.yaml or skelcrew.lock written as one map as it is", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   const commit = githubInstalledAsYours();
   const yaml = join(checkout, "skelcrew.yaml");
   const lock = join(checkout, "skelcrew.lock");
@@ -1362,7 +1439,7 @@ test("init leaves a skelcrew.yaml or skelcrew.lock written as one map as it is",
 
 // A repository that names its plugins chose them, so init leaves its files as they are.
 test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   const file = join(checkout, "skelcrew.yaml");
   const text = "setup: [make]\ntest: [make test]\nplugins: [simon/skelcrew-other]\n";
@@ -1395,7 +1472,7 @@ test("init leaves an .agents/ that is there as it is, and install asks before ap
   expect(run.out).toContain("Ship it fast.");
   expect(run.out).toContain("Approve simon/app's .agents/?");
   expect(run.out).toContain("Tasks in simon/app run on the built-in roles.");
-  expect(git(checkout, "status", "--porcelain")).toBe("?? skelcrew.lock\n?? skelcrew.yaml\n");
+  expect(git(checkout, "status", "--porcelain")).toBe("?? skelcrew.lock\n");
   expect(readFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), "utf8")).toBe(
     "simon/app: none\n",
   );
@@ -1571,7 +1648,7 @@ test("init stops outside a git repository, and in one with no remote", async () 
   expect(outside.err).toBe(
     "Skelcrew: sc init runs in a checkout of a git repository, and this folder isn't in one.\n",
   );
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   git(checkout, "remote", "remove", "origin");
   const none = await skel(["init"], "", checkout);
   expect(none.code).toBe(1);
@@ -1952,17 +2029,73 @@ test("sc says once that rounds: replaces max_rounds: in your config.yaml, here a
   expect(readFileSync(file, "utf8")).toBe(yours);
 });
 
+// Skelcrew never writes a guess silently: sc init shows the setup and test it read from the
+// repository's CI, then its package files, and writes what you keep or type instead.
+test("init shows the setup and test it read from CI and package files, and writes what you keep", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  mkdirSync(join(checkout, ".github", "workflows"), { recursive: true });
+  writeFileSync(
+    join(checkout, ".github", "workflows", "ci.yml"),
+    "jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v4\n      - run: bun install --frozen-lockfile\n      - run: |\n          bun run lint\n          bun test\n      - run: echo done\n",
+  );
+  writeFileSync(join(checkout, "package.json"), JSON.stringify({ scripts: { check: "x" } }));
+  writeFileSync(join(checkout, "bun.lock"), "");
+  // Enter keeps the setup it read, and the test is typed over.
+  const run = await skel(["init"], "\n\n\n\n\n\n\nmake check\n\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain(
+    "Setup runs once in each builder's fresh clone. The repository's CI and package files run: bun install --frozen-lockfile\n",
+  );
+  expect(run.out).toContain(
+    "Test runs the whole test suite. The repository's CI and package files run: bun run lint && bun test\n",
+  );
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toMatchObject({
+    setup: ["bun install --frozen-lockfile"],
+    test: ["make check"],
+    limits: { threads: 4 },
+  });
+  // Without CI, package.json and its lock file say them.
+  rmSync(join(checkout, ".github"), { recursive: true });
+  rmSync(join(checkout, "skelcrew.yaml"));
+  rmSync(join(checkout, ".agents"), { recursive: true });
+  expect((await skel(["init"], "\n".repeat(9), checkout)).err).toBe("");
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toMatchObject({
+    setup: ["bun install"],
+    test: ["bun run check"],
+  });
+});
+
+// With nothing found, Enter alone isn't an answer, and input that ends before one writes no
+// skelcrew.yaml, so none holds a line you didn't give.
+test("init with no setup found asks until you answer, and writes nothing when the input ends", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  const run = await skel(["init"], "\n\n\n\n\n\n\n", checkout);
+  expect(run.out).toContain(
+    "Setup runs once in each builder's fresh clone. Skelcrew found none in the repository's CI or package files.\n",
+  );
+  expect(run.err).toBe(
+    "Skelcrew: sc init stopped before you gave the setup commands, so it wrote nothing\n",
+  );
+  expect(run.code).toBe(1);
+  expect(existsSync(join(checkout, "skelcrew.yaml"))).toBe(false);
+});
+
 test("init writes the chosen crew without changing personal settings or logins", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   fake("codex", "exit 0");
   const config = join(home, ".config", "skelcrew", "config.yaml");
   const before = readFileSync(config, "utf8");
-  const run = await skel(["init"], "j\nmy-builder\n\nmy-reviewer\n", checkout);
+  const typed = "\nmy-lead\nj\nmy-builder\n\nmy-reviewer\nnone\nnone\n3\n";
+  const run = await skel(["init"], typed, checkout);
   expect(run.code).toBe(0);
-  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).roles).toEqual({
-    builder: { harness: "codex", model: "my-builder" },
-    reviewer: { harness: "claude", model: "my-reviewer" },
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toMatchObject({
+    limits: { threads: 3 },
+    roles: {
+      lead: { harness: "claude", model: "my-lead" },
+      builder: { harness: "codex", model: "my-builder" },
+      reviewer: { harness: "claude", model: "my-reviewer" },
+    },
   });
   expect(readFileSync(config, "utf8")).toBe(before);
   expect(run.out).not.toContain("Sign in");

@@ -72,16 +72,42 @@ test("your general settings override the repository", () => {
   });
 });
 
-test("without a skelcrew.yaml, your config decides", () => {
-  settings("harness: claude\nmodel: sonnet\nmax_rounds: 5\nreviewer: { harness: codex }\n", null);
-  expect(forApp()).toEqual({
-    lead: { harness: "claude", model: "sonnet" },
-    builder: { harness: "claude", model: "sonnet" },
-    reviewer: { harness: "codex" },
-    maxRounds: 5,
-    fallback: null,
-    reviewMinutes: 30,
-  });
+// Every repository Skelcrew works on has a skelcrew.yaml, so neither your config nor an override
+// for the repository under repos: stands in for one.
+test("without a skelcrew.yaml, no role, command or limit of the repository is read", () => {
+  const missing =
+    "simon/app has no skelcrew.yaml. Run sc init in a checkout of it to create one, then commit and push it.";
+  settings(
+    "harness: claude\nsetup: [make]\ntest: [make test]\nrepos:\n  simon/app: { limits: { threads: 2 } }\n",
+    null,
+  );
+  for (const read of [
+    'agentRole("builder", app)',
+    'agentRole("lead", app)',
+    "reviewConfig(app)",
+    "repositoryCommands(app)",
+    "threadLimit(app)",
+  ])
+    expect(run(`${read};`).err).toContain(missing);
+  settings("harness: claude\nsetup: [make]\ntest: [make test]\n", "limits: { threads: 2 }\n");
+  expect(run("console.log(threadLimit(app));").out).toBe("2\n");
+});
+
+// No role has a built-in harness: one no file names is an error naming the line to add.
+test("a role no file gives a harness is an error naming the line to add", () => {
+  settings("", "roles: { builder: { model: opus }, reviewer: { harness: codex } }\n");
+  expect(run('agentRole("builder", app);').err).toContain(
+    "simon/app's skelcrew.yaml names no harness for the builder. Add one under roles:, such as roles: { builder: { harness: claude } }, naming claude, codex or pi, then commit and push it.",
+  );
+  expect(run('agentRole("lead", app);').err).toContain("names no harness for the lead");
+  expect(run('console.log(JSON.stringify(agentRole("reviewer", app)));').out).toBe(
+    '{"harness":"codex"}\n',
+  );
+  // Your harness for every role still goes over the repository's.
+  settings("harness: pi\n", "roles: { builder: { model: opus } }\n");
+  expect(run('console.log(JSON.stringify(agentRole("builder", app)));').out).toBe(
+    '{"harness":"pi","model":"opus"}\n',
+  );
 });
 
 // A usage limit and a review's time are yours, so only your config sets them.
@@ -92,7 +118,7 @@ test("the reviewer's fallback and a review's time limit come from your config al
   );
   expect(forApp()).toMatchObject({ fallback: "claude", reviewMinutes: 10 });
   // A fallback that is the reviewer's own harness is none.
-  settings("harness: claude\nreviewer: { fallback: claude }\n", null);
+  settings("harness: claude\nreviewer: { fallback: claude }\n", "");
   expect(forApp()).toMatchObject({ fallback: null, reviewMinutes: 30 });
 });
 
@@ -167,22 +193,27 @@ test("setup and test come from the skelcrew.yaml in Skelcrew's clone", () => {
 });
 
 // Skelcrew never guesses them from the repository's files: a guess is often wrong, and builders
-// and reviewers would use it without anyone seeing it was a guess.
-test("with no skelcrew.yaml naming them, there are no setup or test commands", () => {
-  settings("harness: claude\n", null);
+// and reviewers would use it without anyone seeing it was a guess. A missing line is an error
+// that says how to add it.
+test("a skelcrew.yaml missing setup or test is an error naming the line to add", () => {
+  settings("harness: claude\n", "test: [make check]\n");
   writeFileSync(join(clone(), "go.mod"), "");
   writeFileSync(join(clone(), "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
-  // JSON drops a setting no file names, so it reads as missing here.
-  expect(commands()).toEqual({});
-  settings("harness: claude\n", "test: [make check]\n");
-  expect(commands()).toEqual({ test: ["make check"] });
+  expect(run("repositoryCommands(app);").err).toContain(
+    "simon/app's skelcrew.yaml has no setup: line. Add the commands that set up a fresh clone, such as setup: [bun install], or setup: [] when it needs none, then commit and push it.",
+  );
+  settings("harness: claude\n", "setup: []\n");
+  expect(run("repositoryCommands(app);").err).toContain(
+    "simon/app's skelcrew.yaml has no test: line.",
+  );
+  settings("harness: claude\n", "setup: []\ntest: []\n");
+  expect(commands()).toEqual({ setup: [], test: [] });
 });
 
-// Your config stands in for a repository you don't want to commit a skelcrew.yaml to. Each of
-// setup and test comes from the repository's skelcrew.yaml, else your config, and an empty list
-// in skelcrew.yaml counts as named.
+// Your config goes over the repository's skelcrew.yaml. Each of setup and test comes from your
+// config, else the repository's skelcrew.yaml, and an empty list there counts as named.
 test("setup and test come from your config, then the repository", () => {
-  settings("harness: claude\nsetup: [make deps]\ntest: [make test]\n", null);
+  settings("harness: claude\nsetup: [make deps]\ntest: [make test]\n", "");
   expect(commands()).toEqual({ setup: ["make deps"], test: ["make test"] });
   settings(
     "harness: claude\nsetup: [make deps]\ntest: [make test]\n",
@@ -240,15 +271,17 @@ test("how many checks run at once comes from your config only, else half the cor
   expect(run("checkLimit();").err).toContain("isn't valid");
 });
 
-test("how many builders run at once comes from the repository or your override for it, else no limit", () => {
-  const limit = () => run("console.log(threadLimit(app) ?? 'none');").out.trim();
-  settings("harness: claude\n", null);
-  expect(limit()).toBe("none");
+test("how many builders run at once comes from the repository or your override for it, and must be set", () => {
+  const limit = () => run("console.log(threadLimit(app));").out.trim();
+  settings("harness: claude\n", "");
+  expect(run("threadLimit(app);").err).toContain(
+    "simon/app's skelcrew.yaml has no limits: { threads: … } line. Add the most builders to run at once in it, such as limits: { threads: 4 }, then commit and push it.",
+  );
   settings("harness: claude\n", "limits: { threads: 2 }\n");
   expect(limit()).toBe("2");
   // Your general limits are about your machine, so they don't limit a repository's builders.
-  settings("harness: claude\nlimits: { threads: 5 }\n", null);
-  expect(limit()).toBe("none");
+  settings("harness: claude\nlimits: { threads: 5 }\n", "");
+  expect(run("threadLimit(app);").err).toContain("has no limits: { threads: … } line");
   // An override for the repository wins, and one for another repository changes nothing.
   const overrides =
     "repos:\n  simon/app: { limits: { threads: 3 } }\n  simon/other: { limits: { threads: 7 } }\n";

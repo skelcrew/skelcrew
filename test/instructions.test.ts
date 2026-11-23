@@ -105,14 +105,13 @@ for (const name of HarnessName.options)
 // builder's own origin/ refs. A builder that compares with them unfetched would say it
 // already has main when it doesn't.
 test("a builder fetches before it compares with or merges the base branch", () => {
-  const told = builderInstructions(instructions, { setup: undefined, test: undefined });
+  const told = builderInstructions(instructions, { setup: [], test: [] });
   expect(told).toContain(
     "Before you compare your branch with its base branch or merge it, such as main, run git fetch origin first.",
   );
 });
 
-// The lead settles the setup and test commands with the human once, so every builder uses the
-// same ones, and a builder with none asks rather than guess.
+// Every builder of a repository uses the same setup and test commands, from its skelcrew.yaml.
 test("a builder is told the repository's setup and test commands", () => {
   const told = builderInstructions(instructions, {
     setup: ["go mod download"],
@@ -123,22 +122,20 @@ test("a builder is told the repository's setup and test commands", () => {
   expect(told).toEndWith(
     "Skelcrew set up your clone with `go mod download`. The repository's whole test suite runs with `make check`. That is for CI and the reviewer, so don't run it yourself. If you ever must, run `sc check`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
   );
-  expect(
-    builderInstructions(instructions, { setup: undefined, test: ["go test ./..."] }),
-  ).toEndWith(
-    "\n\nNo setup command is configured. The repository's whole test suite runs with `go test ./...`. That is for CI and the reviewer, so don't run it yourself. If you ever must, run `sc check`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
+  expect(builderInstructions(instructions, { setup: [], test: ["go test ./..."] })).toEndWith(
+    "\n\nSetup is configured as none, so Skelcrew ran no setup command. The repository's whole test suite runs with `go test ./...`. That is for CI and the reviewer, so don't run it yourself. If you ever must, run `sc check`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
   );
 });
 
-// Each command is told on its own, so a configured setup is never hidden by a missing test.
-test("a builder is told each command that isn't configured, and asks the lead rather than make one up", () => {
-  expect(builderInstructions(instructions, { setup: undefined, test: undefined })).toEndWith(
-    "\n\nNo setup command is configured. No test command is configured.\n",
+// Each command is told on its own, so a configured setup is never hidden by a test set to none.
+test("a builder is told each command configured as none, and asks the lead rather than make one up", () => {
+  expect(builderInstructions(instructions, { setup: [], test: [] })).toEndWith(
+    "\n\nSetup is configured as none, so Skelcrew ran no setup command. Test is configured as none, so the repository has no test suite to run.\n",
   );
-  expect(builderInstructions(instructions, { setup: ["bun install"], test: undefined })).toEndWith(
-    "\n\nSkelcrew set up your clone with `bun install`. No test command is configured.\n",
+  expect(builderInstructions(instructions, { setup: ["bun install"], test: [] })).toEndWith(
+    "\n\nSkelcrew set up your clone with `bun install`. Test is configured as none, so the repository has no test suite to run.\n",
   );
-  expect(builderInstructions(instructions, { setup: undefined, test: undefined })).toContain(
+  expect(builderInstructions(instructions, { setup: [], test: [] })).toContain(
     "If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.",
   );
 });
@@ -147,7 +144,7 @@ test("a builder is told each command that isn't configured, and asks the lead ra
 // hasn't read the code. A question asked in the builder's own session would make the human
 // open it to answer.
 test("a builder asks the lead, not the human in its session, with background, options and a recommendation", () => {
-  const told = builderInstructions(instructions, { setup: undefined, test: undefined });
+  const told = builderInstructions(instructions, { setup: [], test: [] });
   expect(told).toContain("ask the lead, never the human in this session: run sc tell lead");
   expect(told).toContain(
     "Never use your harness's tool for asking questions, such as AskUserQuestion",
@@ -181,7 +178,7 @@ test("a lead decides most things and tells the human, and waits for them only on
     "You are our lead. Answer the builders yourself.\n",
     "simon/app",
     "/c",
-    { setup: undefined, test: undefined },
+    { setup: [], test: [] },
     false,
   );
   for (const told of [lead, custom])
@@ -196,9 +193,9 @@ test("a lead decides most things and tells the human, and waits for them only on
       expect(told).toContain(rule);
 });
 
-// The lead can't read the human's config from its sandbox, so it is told which commands are
-// configured, each on its own, and proposes only the ones that are missing.
-test("a lead is told its repository and each setup and test command, or that none is configured", () => {
+// The lead can't read the human's config from its sandbox, so it is told the commands, each on
+// its own, or what keeps builders from starting, so it tells the human first.
+test("a lead is told its repository and each setup and test command, or what keeps builders from starting", () => {
   const told = leadInstructions(
     builtInRole("lead").instructions,
     "simon/app",
@@ -209,17 +206,11 @@ test("a lead is told its repository and each setup and test command, or that non
     },
     false,
   );
-  // A repository whose setup and test are missing gets them first, as real lines in its
-  // skelcrew.yaml, from a thread the lead proposes before anything else.
+  // No thread can fix a missing line, as no builder starts without it, so the human does.
   expect(told).toContain(
-    "your first proposal, before anything else, is a thread that finishes it.",
+    "When it says something keeps builders from starting, such as a line skelcrew.yaml lacks, tell the human first, in plain words, with the line to add.",
   );
-  expect(told).toContain(
-    "A line that is only a comment, as sc init writes them, isn't configured.",
-  );
-  expect(told).toContain(
-    "fills in only the missing ones in the repository's skelcrew.yaml itself, as real lines rather than comments, and leaves a command that is configured as it is.",
-  );
+  expect(told).not.toContain("finishes the setup");
   expect(told).toContain(
     "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\n",
   );
@@ -231,29 +222,29 @@ test("a lead is told its repository and each setup and test command, or that non
       builtInRole("lead").instructions,
       "simon/app",
       "/c",
-      { setup: undefined, test: ["go test ./..."] },
+      { setup: [], test: ["go test ./..."] },
       false,
     ),
   ).toContain(
-    "\nWhen this session started, no setup command was configured, and the test command was `go test ./...`.\n",
+    "\nWhen this session started, setup was configured as none, and the test command was `go test ./...`.\n",
   );
   expect(
     leadInstructions(
       builtInRole("lead").instructions,
       "simon/app",
       "/c",
-      { setup: undefined, test: undefined },
+      { problem: "simon/app's skelcrew.yaml has no test: line. Add it." },
       false,
     ),
   ).toContain(
-    "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
+    "\nWhen this session started, no builder can start in simon/app until this is fixed on its default branch: simon/app's skelcrew.yaml has no test: line. Add it. Before anything else, tell the human so in plain words, with the line to add.\n",
   );
 });
 
 // The human wants each lead to understand the other repositories and review their leads' work,
 // so it is told where their clones are and that it can only read them.
 test("a lead is told where every other repository's clone is, read-only", () => {
-  const commands = { setup: undefined, test: undefined };
+  const commands = { setup: [], test: [] };
   const told = leadInstructions("You lead.\n", "simon/app", "/c", commands, false);
   const repos = join(homedir(), ".local", "share", "skelcrew", "repos");
   expect(told).toContain(
@@ -271,9 +262,9 @@ test("a lead triages a thread's flow, from the flows the human approved", () => 
   expect(role).toContain("Whenever you pick a flow other than default, tell the human");
   expect(role).toContain("A thread keeps its flow to the end");
   expect(role).toContain("not .agents/flows/ in the clone");
-  const commands = { setup: undefined, test: undefined };
+  const commands = { setup: [], test: [] };
   expect(leadInstructions(role, "simon/app", "/c", commands, false)).toEndWith(
-    "and no test command was configured.\nThe .agents/ the human approved is at refs/skelcrew/agents/approved in the clone. List its flows with git -C /c ls-tree --name-only refs/skelcrew/agents/approved flows/, and read one with git -C /c show refs/skelcrew/agents/approved:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.\n",
+    "and test was configured as none.\nThe .agents/ the human approved is at refs/skelcrew/agents/approved in the clone. List its flows with git -C /c ls-tree --name-only refs/skelcrew/agents/approved flows/, and read one with git -C /c show refs/skelcrew/agents/approved:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.\n",
   );
 });
 
@@ -289,7 +280,7 @@ test("a lead's commands for the approved flows work from a clone whose path the 
   git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "flows");
   const tree = git("rev-parse", "HEAD:.agents").stdout.toString().trim();
   git("update-ref", "refs/skelcrew/agents/approved", tree);
-  const commands = { setup: undefined, test: undefined };
+  const commands = { setup: [], test: [] };
   const told = leadInstructions("You lead.\n", "simon/app", clone, commands, false);
   const [, list = "", show = ""] =
     /List its flows with (git .*? flows\/), and read one with (git .*?\.yaml)\./.exec(told) ?? [];
@@ -325,7 +316,7 @@ test("a lead tells the human to arm a merge when ready in their own terminal", (
     builtInRole("lead").instructions,
     "simon/app",
     "/c",
-    { setup: undefined, test: undefined },
+    { setup: [], test: [] },
     false,
   );
   expect(told).toContain("You can't merge. Arming a merge when ready is the human's too");
@@ -349,7 +340,7 @@ test("a lead let arm merges arms one only when the human asks in the conversatio
     builtInRole("lead").instructions,
     "simon/app",
     "/c",
-    { setup: undefined, test: undefined },
+    { setup: [], test: [] },
     true,
   );
   expect(told).toContain("The human has let you arm a merge when ready.");
@@ -380,7 +371,7 @@ test("a lead gives the human's words in a file it writes with its file tool, nev
     builtInRole("lead").instructions,
     "simon/app",
     "/c",
-    { setup: undefined, test: undefined },
+    { setup: [], test: [] },
     true,
   );
   expect(told).toContain(
@@ -458,13 +449,7 @@ test("sc merge --asked-file sends the file's words exactly, and refuses an empty
 // the lead: asking before work starts or a public issue is filed, and what the lead can't do.
 test("a custom lead role that drops the safety rules still gets them after its own words", () => {
   const custom = "You are our lead. Start threads as soon as you see work, without asking.\n";
-  const told = leadInstructions(
-    custom,
-    "simon/app",
-    "/c",
-    { setup: undefined, test: undefined },
-    false,
-  );
+  const told = leadInstructions(custom, "simon/app", "/c", { setup: [], test: [] }, false);
   expect(told).toStartWith(custom);
   for (const rule of [
     "Run sc start or sc add --start only once the human says yes. To park work for later, file it in Skelcrew's backlog with sc add. Create an issue in the tracker only when the human explicitly asks for one",
@@ -486,7 +471,7 @@ test("a custom lead role that drops the safety rules still gets them after its o
   // And where to read the flows it picks from.
   expect(told).toContain("The .agents/ the human approved is at refs/skelcrew/agents/approved");
   expect(told).toContain(
-    "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
+    "\nWhen this session started, setup was configured as none, and test was configured as none.\n",
   );
 });
 
@@ -497,7 +482,7 @@ test("a custom lead role is told how to brief another lead, with the human's wor
     "You are our lead.\n",
     "simon/app",
     "/c",
-    { setup: undefined, test: undefined },
+    { setup: [], test: [] },
     false,
   );
   expect(told).toContain(
@@ -520,7 +505,7 @@ test("the built-in lead already holds every core rule word for word, so it is to
     builtInRole("lead").instructions,
     "simon/app",
     "/c",
-    { setup: undefined, test: undefined },
+    { setup: [], test: [] },
     false,
   );
   expect(told).not.toContain(leadRules);

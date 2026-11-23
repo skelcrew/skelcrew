@@ -1,7 +1,7 @@
 // Skelcrew's copy of a repository's issues and PRs, as polls bring it up to date, and as the
 // sidebar's readers, sc issue and a builder read it.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { source, threadSql } from "./harness.ts";
@@ -103,8 +103,10 @@ test("a task with no issue saves an empty closing line", () => {
   const work = join(home, "work");
   Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
   Bun.spawnSync(["git", "init", "-q", "-b", "main", work]);
+  writeFileSync(join(work, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
+  Bun.spawnSync(["git", "-C", work, "add", "."]);
   const identity = ["-c", "user.name=t", "-c", "user.email=t@t"];
-  Bun.spawnSync(["git", "-C", work, ...identity, "commit", "-q", "--allow-empty", "-m", "a"]);
+  Bun.spawnSync(["git", "-C", work, ...identity, "commit", "-q", "-m", "a"]);
   Bun.spawnSync(["git", "-C", work, "push", "-q", remote, "main"]);
   const code = `db.run("UPDATE repositories SET opened = 1, remote = ?, claimed = 1", [${JSON.stringify(remote)}]);
 const { startThread } = await import(${JSON.stringify(source("flow/builder.ts"))});

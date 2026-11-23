@@ -446,6 +446,7 @@ db.run("INSERT INTO repositories (name, owner, repo, remote, opened) VALUES ('ap
 db.run("DELETE FROM threads");
 fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
 Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+fs.writeFileSync(cloneDir("simon", "app") + "/skelcrew.yaml", "setup: []\\ntest: []\\nlimits: { threads: 9 }\\n");
 const host = pluginHost(db, "fake");
 // The host takes two seconds to start the lead, and the removal looks for it meanwhile.
 fs.writeFileSync(${JSON.stringify(join(fake, "slow-start"))}, "");
@@ -1864,6 +1865,7 @@ db.run("INSERT INTO repositories (name, owner, repo, remote, opened${row ? ", le
 db.run("DELETE FROM threads");
 fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
 Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+fs.writeFileSync(cloneDir("simon", "app") + "/skelcrew.yaml", "limits: { threads: 9 }\\n");
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
 if (${failFirst}) await startLead(db, "unused", repository).catch(() => {});
 token();
@@ -1887,11 +1889,12 @@ process.exit(0);`,
   return readFileSync(typed, "utf8");
 }
 
-// A new human sees only the harness's banner until they speak, and shouldn't have to know to.
-test("a lead's first start brings it Skelcrew's opening turn, proposing to finish the setup", () => {
+// A new human sees only the harness's banner until they speak, and shouldn't have to know to. A
+// skelcrew.yaml with no setup or test keeps every builder from starting, so the lead says so first.
+test("a lead's first start brings it Skelcrew's opening turn, telling what keeps builders from starting", () => {
   const typed = typedAfterStart("");
   expect(typed).toContain("Skelcrew: this is your first start");
-  expect(typed).toContain("finishes the setup");
+  expect(typed).toContain("tell them what keeps builders from starting");
   expect(typed).toContain("last note");
 }, 30_000);
 
@@ -1899,7 +1902,7 @@ test("a configured repository's first start has the lead ask what to work on", (
   const typed = typedAfterStart("setup: [bun install]\ntest: [bun test]\n");
   expect(typed).toContain("Skelcrew: this is your first start");
   expect(typed).toContain("what to work on");
-  expect(typed).not.toContain("finishes the setup");
+  expect(typed).not.toContain("keeps builders from starting");
 }, 30_000);
 
 // The failed start saved the lead's session first, which the next start must not take for an
@@ -1958,6 +1961,7 @@ db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_sessio
 db.run("DELETE FROM threads");
 fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
 Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+fs.writeFileSync(cloneDir("simon", "app") + "/skelcrew.yaml", "setup: []\\ntest: []\\nlimits: { threads: 9 }\\n");
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
 await startLead(db, "unused", repository);
 // The host holds the next question whether the lead runs, while the opening waits to be typed.
@@ -2012,6 +2016,7 @@ db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_sessio
 db.run("DELETE FROM threads");
 fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
 Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+fs.writeFileSync(cloneDir("simon", "app") + "/skelcrew.yaml", "setup: []\\ntest: []\\nlimits: { threads: 9 }\\n");
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
 await startLead(db, "unused", repository);
 // The lead answers the human, and a note comes meanwhile, which the host holds.

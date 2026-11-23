@@ -84,14 +84,16 @@ export function reviewConfig(repository: Repository): {
   };
 }
 
-// Returns the repository's setup and test commands: each from your override for it under
-// repos:, else its skelcrew.yaml, else your config, or missing when none names it. An empty list
-// named on purpose stays empty. Skelcrew never guesses them: the lead settles them with you
-// once, and every builder and reviewer then uses the same ones.
+// Returns the repository's setup and test commands, from its skelcrew.yaml or your config over
+// it, an empty list when it needs none. Throws, naming the line to add, when none sets one, so
+// every builder and reviewer uses the same ones and none guesses.
 export function repositoryCommands(repository: Repository): Pick<Settings, "setup" | "test"> {
   const { setup, test } = readSettings(["setup", "test"], repository);
   return { setup, test };
 }
+
+export const builderSettings = (repository: Repository) =>
+  readSettings(["setup", "test", "threads"], repository);
 
 // Returns the plugin your override for the repository under repos: names as its tracker, else
 // its skelcrew.yaml, or nothing when neither names one.
@@ -101,9 +103,9 @@ export const repositoryTracker = (repository: Repository): string | undefined =>
 // Returns how many reviews may run at once on this machine. Throws when your config isn't valid.
 export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 // Returns how many builders may run at once in the repository, from your override for it under
-// repos: or its skelcrew.yaml, or nothing when neither sets limits.threads. Throws when the file
-// that decides it isn't valid.
-export const threadLimit = (repository: Repository): number | undefined =>
+// repos: or its skelcrew.yaml. Throws when the repository has no skelcrew.yaml, when neither
+// sets limits.threads, or when the file that decides it isn't valid.
+export const threadLimit = (repository: Repository): number =>
   readSettings(["threads"], repository).threads;
 // Returns how many test suites may run at once through sc check on this machine. Throws when
 // your config isn't valid.

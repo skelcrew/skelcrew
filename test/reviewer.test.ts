@@ -964,25 +964,6 @@ describe("what the reviewer is told about the tests", () => {
     expect(prompt).not.toContain("ci.md");
   });
 
-  // Skelcrew never guesses a test command, so with none configured the reviewer runs nothing.
-  test("with no test command configured, the reviewer reviews without running tests and says so", () => {
-    const none =
-      "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
-    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true)).toContain(
-      `No CI runs on this commit, so ${none}`,
-    );
-    expect(
-      reviewerPrompt(
-        reviewerRole,
-        issue,
-        "origin/main",
-        { ci: "/tmp/review/ci.md" },
-        undefined,
-        true,
-      ),
-    ).toContain(`such as only a deploy preview or a CLA check, ${none}`);
-  });
-
   // An empty list says on purpose that the repository has no tests to run.
   test("with test configured as none, the reviewer runs no tests and says the repository has none", () => {
     expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", [], true)).toContain(
@@ -1145,7 +1126,7 @@ describe("what the reviewer is told of the task's decisions and what must stay t
 describe("what the reviewer is told of which findings block", () => {
   // A fresh reviewer always finds something small, so only a P1 holds the PR back.
   test("only a P1 blocks, and P1 is defined plainly", () => {
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", [], true);
     expect(prompt).toContain(
       "P1 is a bug a user or the system will hit, a security or data-loss problem, or the task not done.",
     );
@@ -1160,7 +1141,7 @@ describe("what the reviewer is told of which findings block", () => {
 
   // Past the flow's strict rounds, what the base branch already has no longer holds the PR back.
   test("past the strict rounds, only a P1 the change brings blocks", () => {
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, false);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", [], false);
     expect(prompt).toContain(
       "This round is past the flow's strict rounds, so a P1 blocks only when this change brings it. Mark a P1 the base branch already has as not blocking.",
     );
@@ -1182,7 +1163,7 @@ describe("what the reviewer is told of the last round", () => {
   const shown = (text: string | null) => ({ decisions: [], stayTrue: [], description: text });
 
   test("the first round is told of none", () => {
-    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined, true);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", [], true);
     expect(prompt).not.toContain("Since the last round");
   });
 
@@ -1192,7 +1173,7 @@ describe("what the reviewer is told of the last round", () => {
       issue,
       "origin/main",
       "run",
-      undefined,
+      [],
       true,
       { round: last, file },
       shown(description),
@@ -1219,7 +1200,7 @@ describe("what the reviewer is told of the last round", () => {
       issue,
       "origin/main",
       "run",
-      undefined,
+      [],
       true,
       { round, file },
       shown("Says {{title}} and $&"),
@@ -1235,7 +1216,7 @@ describe("what the reviewer is told of the last round", () => {
       issue,
       "origin/main",
       "run",
-      undefined,
+      [],
       true,
       { round: last, file },
       shown(null),
@@ -1255,7 +1236,7 @@ describe("what the reviewer is told of the last round", () => {
       issue,
       "origin/main",
       "run",
-      undefined,
+      [],
       true,
       { round, file },
       shown(description),
@@ -1272,7 +1253,7 @@ describe("what the reviewer is told of the last round", () => {
       issue,
       "origin/main",
       "run",
-      undefined,
+      [],
       true,
       { round, file },
       shown(description),
@@ -1290,7 +1271,7 @@ describe("what the reviewer is told of the last round", () => {
       issue,
       "origin/main",
       "run",
-      undefined,
+      [],
       true,
       { round, file },
       shown(description),
@@ -1313,7 +1294,7 @@ describe("what the reviewer is told of the last round", () => {
       issue,
       "origin/main",
       "run",
-      undefined,
+      [],
       true,
       { round: last, file },
       { decisions: [], stayTrue: ["Each agent's login stays separate."], description: edited },

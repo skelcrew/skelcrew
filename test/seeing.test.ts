@@ -54,6 +54,11 @@ beforeEach(() => {
   writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
   writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
+  for (const repo of ["app", "site"]) {
+    const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", repo);
+    mkdirSync(clone, { recursive: true });
+    writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
+  }
 });
 afterEach(async () => {
   for (const serve of running.splice(0)) {

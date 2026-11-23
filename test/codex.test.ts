@@ -226,7 +226,10 @@ function addApp(): void {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
-  writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\n");
+  writeFileSync(
+    join(work, "skelcrew.yaml"),
+    "tracker: github\nsetup: []\ntest: []\nlimits: { threads: 9 }\n",
+  );
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
