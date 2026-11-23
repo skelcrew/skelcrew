@@ -21,6 +21,7 @@ const base: Top = {
   typingRight: true,
   fullScreen: false,
   side: "",
+  notice: "",
 };
 // Returns the header and the boxes' row as tmux formats, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
@@ -279,4 +280,20 @@ test("on a phone-wide screen with many tabs, the way back to the sidebar still s
   expect(seen(line)).toContain("‹ sidebar");
   expect(line).toContain("#[range=user|sidebar]");
   expect(seen(line)).toHaveLength(terminal(given));
+});
+
+test("a notice takes the tabs' place after Skelcrew, cut to fit, and the row stays as wide", () => {
+  const notice = "That file is on another machine.";
+  expect(seen(headerRow({ notice }))).toStartWith(`    Skelcrew ${notice}`);
+  expect(headerRow({ notice })).not.toContain("app");
+  for (const sidebar of [0, 5, 20]) {
+    const given = { sidebar, right: 10 };
+    const line = seen(headerRow({ notice }, given));
+    expect(Bun.stringWidth(line)).toBe(terminal(given));
+  }
+  expect(seen(headerRow({ notice }, { sidebar: 20, right: 10 }))).toContain("…");
+});
+
+test("a notice is shown, never read as a format", () => {
+  expect(seen(headerRow({ notice: "#(touch x) 100%" }))).toContain("#(touch x) 100%%");
 });

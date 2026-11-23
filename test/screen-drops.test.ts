@@ -21,6 +21,7 @@ import {
   seen,
   sidebarRefreshedTwice,
   startTest,
+  tabRow,
   tmux,
   type,
   until,
@@ -68,8 +69,23 @@ test("a file dropped from another machine's terminal reaches the agent as it cam
   await ready("lead");
   drop("/Users/simon/Desktop/shot.png");
   expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
-  await until(() => seen().includes(elsewhere), "the notice that the file is elsewhere");
-  expect(seen().replace(/\s+/g, " ")).toContain("To drop files, run");
+  await until(() => tabRow().includes(elsewhere), "the notice that the file is elsewhere");
+  expect(tabRow()).toContain("To drop files, run sc --remote");
+});
+
+test("the notice that a dropped file is elsewhere shows while the agent fills the terminal", async () => {
+  daemon();
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onDetails, "APP-12's details");
+  type("a");
+  const zoomed = () =>
+    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
+  await until(() => zoomed().trim() === "1", "app-12 full screen");
+  drop("/Users/simon/Desktop/shot.png");
+  expect(await got("app-12")).toBe("/Users/simon/Desktop/shot.png");
+  await until(() => tabRow().includes(elsewhere), "the notice over the full-screen agent");
 });
 
 test("a file dropped onto a builder you attached to reaches it in its clone", async () => {

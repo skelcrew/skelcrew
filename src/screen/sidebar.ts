@@ -558,8 +558,7 @@ export async function runSidebar(
     const fullScreen = zoomed === "1";
     const windowWidth = Number(across);
     narrow = windowWidth < narrowBelow;
-    const dropNoticeShows = Date.now() - Number(given) < dropNoticeFor;
-    notice = noticeLines(dropNoticeShows ? dropNotice.join(" ") : updateNotice(db), size().width);
+    notice = noticeLines(updateNotice(db), size().width);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
       if (empty) return [];
@@ -622,6 +621,7 @@ export async function runSidebar(
       typingRight,
       fullScreen,
       side: narrow ? (typingRight ? name : "sidebar") : "",
+      notice: Date.now() - Number(given) < dropNoticeFor ? dropNotice.join(" ") : "",
     };
     const top = drawTop(look, { sidebar, right });
     if (`${top.header}\n${top.boxes}` !== lastTop) {
