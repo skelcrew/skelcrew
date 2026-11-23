@@ -2036,3 +2036,28 @@ process.exit(0);`,
   expect(seen.during).not.toContain("held note");
   expect(seen.after).toContain("held note");
 }, 30_000);
+
+test("a Codex folder trust screen needs the human instead of becoming silently idle", () => {
+  const prompt = join(home, "prompt.sh");
+  writeFileSync(
+    prompt,
+    '#!/bin/sh\nprintf "Folder access\\n/tmp/clone\\nTrust this folder?\\n› 1. Trust and continue\\n  2. Quit\\n"\ncat > received.txt\n',
+    { mode: 0o755 },
+  );
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
+const deadline = Date.now() + 5000;
+while (readThread(db, "app-12").state === "working" && Date.now() < deadline) {
+  noticeIdleScreens(db, "unused");
+  await Bun.sleep(100);
+}
+const thread = readThread(db, "app-12");
+const { ownItem } = await import(${JSON.stringify(source("flow/own-items.ts"))});
+console.log(thread.state, thread.asking, ownItem(thread, false)?.text);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", state: "working", harness: "codex" },
+  );
+  expect(said).toBe("asking true Codex is asking to trust its folder\n");
+});

@@ -1,12 +1,10 @@
-// The status module: knows whether each agent works, idles, asks you or hit an error, and
-// whether each thread needs you or is ready. It learns this from the hooks the agent's harness
-// runs, and from the agent's screen where no hook fires, and gives the word the sidebar and sc ps
-// show for a thread. A lead's hooks only keep its state: nothing a lead does flags needs you.
+// Keeps agent state from hooks and screens, and says why a thread needs you or is ready.
+// Startup questions found on a builder's screen become an item in Needs you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
-import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
+import { forQuestion, type Marks, quietSince, startupQuestion } from "../agents/transport.ts";
 import { errorText } from "../format.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
 import { waitsOnFirstCheck } from "./decide.ts";
@@ -204,8 +202,6 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
 // runs it every two seconds. Each agent is looked at on its own, without waiting: a slow or hung
 // host holds up only its own agents' looks, and one that fails leaves the others' to go on.
 export function noticeIdleScreens(db: Database, sessions: string): void {
-  // The working agents: each builder still at work on its thread, on whichever host it runs, and
-  // each lead, on whichever host it runs. An agent whose host plugin is gone can't be looked at.
   const working: { key: Agent; host: Host; name: string; marks: Marks }[] = [];
   const threads = db
     .query(
@@ -234,15 +230,13 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
         marks: harnessNamed(harness ?? "claude").marks,
       });
   }
-  // An agent no longer working is forgotten. Each other one gets a look, unless the last is
-  // still under way.
   const keys = new Set(working.map((agent) => agentKey(agent.key)));
   for (const key of lastLook.keys()) if (!keys.has(key)) lastLook.delete(key);
   for (const agent of working) {
     const key = agentKey(agent.key);
     if (looking.has(key)) continue;
     looking.add(key);
-    lookAt(db, agent, key)
+    lookAt(db, sessions, agent, key)
       .catch((error) => console.log(`couldn't look at ${agent.name}'s screen: ${errorText(error)}`))
       .finally(() => looking.delete(key));
   }
@@ -257,6 +251,7 @@ const looking = new Set<string>();
 // with no earlier look to compare. An agent that isn't running has nothing to remember.
 async function lookAt(
   db: Database,
+  sessions: string,
   agent: { key: Agent; host: Host; name: string; marks: Marks },
   key: string,
 ): Promise<void> {
@@ -266,6 +261,12 @@ async function lookAt(
   const screen = runs ? await readSession(agent.host, agent.name) : "";
   if (stateChanges.get(key) !== changes || lastLook.get(key) !== before) return;
   if (!runs) return void lastLook.delete(key);
+  const question = startupQuestion(screen, agent.marks);
+  if (question !== null) {
+    keepState(db, agent.key, "asking");
+    if ("folder" in agent.key) questionAsked(db, sessions, agent.key.folder, question);
+    return;
+  }
   const quiet = quietSince(before?.screen, screen, agent.marks);
   if (quiet && before?.quiet) keepState(db, agent.key, "idle");
   else lastLook.set(key, { screen, quiet });

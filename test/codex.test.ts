@@ -84,10 +84,8 @@ function fakeCodex(): void {
   echo '{"models":[{"slug":"gpt-6.1-sol"},{"slug":"gpt-6-luna"}]}'; exit 0
 fi
 cd "$CODEX_HOME"
-# Its arguments last, as tests wait for them before reading the others. The profile -p names,
-# which holds its developer instructions, goes in told, moved into place like its arguments.
 : > told.part
-for a; do [ "$prev" = -p ] && cat "$a.config.toml" > told.part; prev=$a; done
+for a; do case "$a" in developer_instructions*) printf '%s\\n' "$a" > told.part;; esac; done
 mv told.part told
 env > env; echo "$OLDPWD" > pwd; printf '%s\\n' "$@" > args.part; mv args.part args
 if [ "$1" != resume ]; then
@@ -355,11 +353,8 @@ function setThread(sql: string): void {
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there agents can't start.
 describe.skipIf(insideSandbox)("codex", () => {
-  // tmux refuses a start command past about 16 KB, so instructions that long once stopped
-  // agents from starting.
-  // Linux refuses a single argument past 128 KB, so these are longer than that.
-  test("a lead and a builder on Codex start with 200 KB of instructions, and each reads them to their end", async () => {
-    const long = `${"x".repeat(200 * 1024)} the end of the instructions`;
+  test("a lead and builder read role instructions passed after the session starts", async () => {
+    const long = `${"x".repeat(20 * 1024)} the end of the instructions`;
     config(
       `lead: { harness: codex }\nbuilder: { harness: codex, model: gpt-6.1-sol }\ntest: [${JSON.stringify(long)}]\n`,
     );
@@ -374,12 +369,14 @@ describe.skipIf(insideSandbox)("codex", () => {
     const given = args();
     const clone = join(data(), "threads", "app-12");
     expect(read(join(builder(), "pwd")).trim()).toBe(clone);
+    expect(Bun.TOML.parse(read(join(builder(), "config.toml")))).toEqual({
+      projects: { [clone]: { trust_level: "trusted" } },
+    });
     expect(read(join(builder(), "env"))).toContain(`CODEX_HOME=${builder()}\n`);
     expect(given.slice(0, 1)).toEqual(["--no-daemon"]);
     for (const flag of [
       "--dangerously-bypass-approvals-and-sandbox",
       "--dangerously-bypass-hook-trust",
-      `projects.${JSON.stringify(clone)}.trust_level="trusted"`,
       "features.hooks=true",
     ])
       expect(given).toContain(flag);

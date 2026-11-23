@@ -747,7 +747,9 @@ The state comes from the harness's hooks wherever a hook fires. The lead gets th
 
 The `Stop` hook also tells Skelcrew the commit the builder's clone has checked out, and its last message when nothing in the clone is uncommitted.
 
-Two gaps have no hook: Esc on Claude Code, and an error on Codex, which prints it and sits at its prompt. For these, every two seconds Skelcrew reads the screen of each agent that is `working`, with the sessions' `read`, so this works on every host. One whose busy mark, "esc to interrupt", is gone at two looks in a row, or sits still at a bare prompt, becomes `idle`. Neither gap flags needs you.
+Two gaps have no hook: Esc on Claude Code, and an error on Codex, which prints it and sits at its prompt. For these, every two seconds Skelcrew reads the screen of each agent that is `working`, with the sessions' `read`, so this works on every host. One whose busy mark, "esc to interrupt", is gone at two looks in a row, or sits still at a bare prompt, becomes `idle`. Neither gap flags needs you. Codex startup questions, such as asking to trust its folder,
+are also recognised by this screen check. They set the agent to `asking`; a builder needs
+you with an item naming the question. Messages wait until the startup question is over.
 
 Skelcrew reports the status to the host when the host can show it. A plugin that provides status implements one function:
 

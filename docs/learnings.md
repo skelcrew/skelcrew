@@ -54,13 +54,13 @@ that covers the code you are about to write.
   Code creates and deletes, so a throwaway layer over `~/.claude` can't share it either.
   Give each session its own config folder and a token from `claude setup-token`, which
   never renews.
-- **Pass instructions in a file, not on the command line.** tmux refuses a start command
-  past about 16 KB with "command too long", and a lead's instructions grew close to that.
-  Claude Code reads them with `--append-system-prompt-file`. Codex takes developer
-  instructions from a profile, `$CODEX_HOME/<name>.config.toml` chosen with `-p <name>`. An
-  argument won't do either: Linux refuses one past 128 KB. An `AGENTS.md` won't do: Codex
-  gives it less weight than developer instructions. A repository's `.codex/config.toml` beats
-  the profile, but Codex loads it only for a folder trusted in a config file, not with `-c`.
+- **Keep instructions out of tmux's start command.** tmux refuses one past about 16 KB
+  with "command too long". Claude Code reads `--append-system-prompt-file`. Codex starts
+  through a shell that reads its own instruction file and passes it as `-c developer_instructions`.
+  That override wins over repository config, unlike a profile. Linux limits each argument
+  to 128 KB, so Codex instructions over 100 KiB after TOML escaping are refused with the
+  instruction file and limit named. Nothing is truncated. An `AGENTS.md` cannot replace this:
+  Codex gives it less weight than developer instructions.
 - **Check a login with `claude auth status --json`.** `.claude.json` exists after any
   launch, logged in or not, so finding it proves nothing.
 - **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it
@@ -150,8 +150,30 @@ that covers the code you are about to write.
   login is worse: any agent can sign every other into another account. Each agent gets its own
   copy without the refresh token, and Skelcrew renews its login outside the sandbox, well before
   Codex would, then writes the renewal into each copy.
-- **Mark the folder trusted, or the session waits.** Without `trust_level = "trusted"` for
-  the folder under `projects`, Codex asks first. `"untrusted"` asks too.
+- **Write folder trust into the agent's `CODEX_HOME/config.toml`.** On workbox with
+  `codex-cli 0.163.0` (2026-11-23), `-c projects."<cwd>".trust_level="trusted"` still shows
+  "Folder access / Trust this folder?". An isolated launch with a dummy login reproduced it:
+  the printed folder matched the override exactly, with no symlink or trailing slash.
+  Writing the same entry into `config.toml` skipped the screen. Startup trust uses the file
+  setting rather than the command-line override; the key itself has not changed.
+  Write the folder's real path before every new launch and resume. File trust uses the same
+  `projects` entry older versions support. Reviews use noninteractive `codex exec`, which has
+  no folder-trust menu.
+- **File trust also enables repository config.** An offline `codex debug prompt-input`
+  probe on 0.163.0 confirmed that a repository's `.codex/config.toml` replaces a profile's
+  `developer_instructions`. A command-line `developer_instructions` wins over both. Read the
+  session's instruction file in the launch shell and pass its setting with `-c`, below the
+  100 KiB limit described above. This works without hiding repository files on Linux or macOS.
+  `developer_instructions_file` and `experimental_instructions_file` did not supply developer
+  instructions in that probe. `model_instructions_file` changes the base instructions and
+  leaves repository developer instructions in place. Hooks and the other settings Skelcrew
+  requires stay on the command line too. Repository settings can load, but cannot replace
+  those overrides.
+- **Startup menus have no hook.** The two-second screen check recognises Codex's folder
+  trust, hook review, sign-in and update menus. A builder shows the question in Needs you;
+  a lead's state becomes asking. Match a heading and a selected numbered option, and reject
+  old menu text followed by the normal input prompt. Message delivery waits too, so its
+  Enter cannot answer a startup question.
 - **Hooks wait for a person to trust them.** Codex shows "Hooks need review" at start for
   any hook not trusted yet, even one Skelcrew wrote. `--dangerously-bypass-hook-trust` skips the
   question. A `trusted_hash` per hook does too, but then a repository's own
