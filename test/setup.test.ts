@@ -174,6 +174,23 @@ async function skel(
   return { out, err, code };
 }
 
+// The service is set up the first time sc runs where there is a repository, not before.
+test("outside a repository, with none yet, sets up nothing and says where to run sc", async () => {
+  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+openDb().run("DELETE FROM repositories");`;
+  expect(Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } }).success).toBe(true);
+  const run = await skel("sk-ant-oat01-good\n");
+  expect(run).toEqual({
+    out: "Skelcrew has no repositories yet. Run sc inside a git repository.\n",
+    err: "",
+    code: 0,
+  });
+  expect(calls()).not.toContain("systemctl");
+  expect(calls()).not.toContain("daemon");
+  expect(existsSync(unit())).toBe(false);
+  expect(existsSync(token())).toBe(false);
+});
+
 test("takes every step on the first run, and none on the second", async () => {
   const first = await skel("sk-ant-oat01-good\n");
   expect(first.err).toBe("");
@@ -742,10 +759,10 @@ test("on a fresh machine, a GitHub checkout with no skelcrew.yaml gets only the 
   git(site, "commit", "-q", "-m", "No Skelcrew");
   git(site, "push", "-q", join(home, "github", "simon", "site.git"), "HEAD:main");
   const run = await atTerminal("y\nsk-ant-oat01-good\n", site);
-  expect(run.out).toBe("");
-  expect(run.err).toBe(
-    "Skelcrew: This repository has no skelcrew.yaml. Run sc init to create one, then commit and push it.\n",
+  expect(run.out).toBe(
+    "This repository has no skelcrew.yaml. Create one with:\n\n  sc init\n\nThen commit and push it.\n",
   );
+  expect(run.err).toBe("");
   expect(run.code).toBe(1);
   expect(pluginRows()).toEqual([]);
   expect(existsSync(token())).toBe(false);
@@ -785,10 +802,10 @@ test("a skelcrew.yaml naming a plugin this machine lacks gets the sc install lin
   git(site, "commit", "-q", "-m", "Name GitHub");
   git(site, "push", "-q", join(home, "github", "simon", "site.git"), "HEAD:main");
   const stopped = await atTerminal("y\nsk-ant-oat01-good\n", site);
-  expect(stopped.out).toBe("");
-  expect(stopped.err).toBe(
-    "Skelcrew: This repository's skelcrew.yaml names plugins this machine doesn't have: github. Run sc install, then sc again.\n",
+  expect(stopped.out).toBe(
+    "This repository's skelcrew.yaml names plugins this machine doesn't have: github. Install them with:\n\n  sc install\n\nThen run sc again.\n",
   );
+  expect(stopped.err).toBe("");
   expect(stopped.code).toBe(1);
   expect(pluginRows()).toEqual([]);
   expect(recorded("simon", "site")).toBeNull();
@@ -796,7 +813,7 @@ test("a skelcrew.yaml naming a plugin this machine lacks gets the sc install lin
   const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
 openDb().run("INSERT INTO removed_plugins (source) VALUES ('skelcrew/skelcrew-github')");`;
   expect(Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } }).success).toBe(true);
-  expect((await atTerminal("y\n", site)).err).toBe(stopped.err);
+  expect((await atTerminal("y\n", site)).out).toBe(stopped.out);
   expect(recorded("simon", "site")).toBeNull();
   const installed = await atTerminal("y\n", site, ["install"]);
   expect(installed.out).toContain("Installed github 0.1.0.");

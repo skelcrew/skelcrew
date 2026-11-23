@@ -28,7 +28,7 @@ let daemon: Server | undefined;
 // The fake forge's settings folder, where it keeps what it is asked and its answers.
 let forge = "";
 
-const hint = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
+const hint = "Skelcrew has no repositories yet. Run sc inside a git repository.";
 // What Skelcrew says once you leave the screen.
 const left = "Your agents keep running. Run sc to come back.\n";
 const clone = (full: string) => join(home, ".local", "share", "skelcrew", "repos", full);
@@ -255,16 +255,18 @@ test("brings in a repository you can push to from its checkout, without asking",
 });
 
 const noFile =
-  "Skelcrew: This repository has no skelcrew.yaml. Run sc init to create one, then commit and push it.\n";
+  "This repository has no skelcrew.yaml. Create one with:\n\n  sc init\n\nThen commit and push it.\n";
 
 // Every repository Skelcrew works on has a skelcrew.yaml on its default branch, so sc, sc repo
-// add, sc install and sc --remote, which runs sc --from on the server, stop with the one line
-// that says what to do.
+// add, sc install and sc --remote, which runs sc --from on the server, stop and say what to do.
+// Plain sc and --from show it as steps to take, the others as an error.
 test("sc, repo add, install and --from stop for a repository with no skelcrew.yaml, naming sc init", async () => {
   const checkout = onGitHub("simon/app", "WRITE", false, {});
-  for (const args of [[], ["repo", "add"], ["install"], ["--from", "simon/app"]]) {
+  for (const args of [[], ["--from", "simon/app"]])
+    expect(await skel(args, "", checkout)).toEqual({ out: noFile, err: "", code: 1 });
+  for (const args of [["repo", "add"], ["install"]]) {
     const run = await skel(args, "", checkout);
-    expect(run.err).toBe(noFile);
+    expect(run.err).toBe(`Skelcrew: ${noFile}`);
     expect(run.code).toBe(1);
   }
   expect(calls()).not.toContain("daemon lead");
@@ -273,8 +275,8 @@ test("sc, repo add, install and --from stop for a repository with no skelcrew.ya
   expect(existsSync(clone("simon/app"))).toBe(false);
   // A skelcrew.yaml only in your checkout isn't on the default branch, where agents read it.
   writeFileSync(join(checkout, "skelcrew.yaml"), complete);
-  expect((await skel([], "", checkout)).err).toBe(noFile);
-  expect((await skel(["install"], "", checkout)).err).toBe(noFile);
+  expect((await skel([], "", checkout)).out).toBe(noFile);
+  expect((await skel(["install"], "", checkout)).err).toBe(`Skelcrew: ${noFile}`);
   git(checkout, "add", "-A");
   git(checkout, "commit", "-q", "-m", "Add skelcrew.yaml");
   git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
@@ -325,10 +327,9 @@ test("sc stops for a repository Skelcrew has whose skelcrew.yaml was deleted, an
   expect(existsSync(join(clone("simon/app"), "skelcrew.yaml"))).toBe(true);
   writeFileSync(join(home, "calls"), "");
   const stopped = await skel([], "", checkout);
-  expect(stopped.err).toBe(noFile);
-  expect(stopped.code).toBe(1);
+  expect(stopped).toEqual({ out: noFile, err: "", code: 1 });
   expect(calls()).not.toContain("daemon lead");
-  expect((await skel(["repo", "add"], "", checkout)).err).toBe(noFile);
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe(`Skelcrew: ${noFile}`);
   // Skelcrew still has it, so its running threads carry on.
   expect(await listed()).toEqual([["app", "simon/app", "github"]]);
   writeFileSync(join(checkout, "skelcrew.yaml"), complete);
@@ -983,9 +984,7 @@ describe("a repository no forge claims", () => {
     git(home, "init", "-q", "--bare", "-b", "main", bare);
     const run = await skel(["repo", "add"], "y\n", work);
     expect(run.code).toBe(1);
-    expect(run.err).toBe(
-      "Skelcrew: This repository has no skelcrew.yaml. Run sc init to create one, then commit and push it.\n",
-    );
+    expect(run.err).toBe(`Skelcrew: ${noFile}`);
     expect(await listed()).toEqual([]);
     expect(existsSync(clone("simon/notes"))).toBe(false);
   });
@@ -2193,7 +2192,8 @@ test("sc says once which old role keys your config.yaml uses, what replaces them
     // The lead's line holds a setting of its own, which no role replaces.
     "lead: { may_arm_merges: true }\n";
   writeFileSync(file, yours);
-  const first = await skel([]);
+  const checkout = onGitHub("simon/app", "WRITE");
+  const first = await skel([], "", checkout);
   expect(first.out).toContain(
     "Your config.yaml's builder: is read as roles: { builder: … }, which replaces it.",
   );
@@ -2201,7 +2201,7 @@ test("sc says once which old role keys your config.yaml uses, what replaces them
     "Your config.yaml's reviewer: is read as roles: { reviewer: … }, which replaces it.",
   );
   expect(first.out).not.toContain("lead:");
-  expect((await skel([])).out).not.toContain("replaces it");
+  expect((await skel([], "", checkout)).out).not.toContain("replaces it");
   expect(readFileSync(file, "utf8")).toBe(yours);
 });
 
@@ -2264,14 +2264,15 @@ test("sc says once that rounds: replaces max_rounds: in your config.yaml, here a
   const file = join(home, ".config", "skelcrew", "config.yaml");
   const yours = "harness: claude\nmax_rounds: 5\nrepos:\n  simon/app: { max_rounds: 2 }\n";
   writeFileSync(file, yours);
-  const first = await skel([]);
+  const checkout = onGitHub("simon/app", "WRITE");
+  const first = await skel([], "", checkout);
   expect(first.out).toContain(
     "Your config.yaml's max_rounds: is read as rounds:, which replaces it.",
   );
   expect(first.out).toContain(
     "Your config.yaml's max_rounds: under repos: simon/app is read as rounds:, which replaces it.",
   );
-  expect((await skel([])).out).not.toContain("replaces it");
+  expect((await skel([], "", checkout)).out).not.toContain("replaces it");
   expect(readFileSync(file, "utf8")).toBe(yours);
 });
 

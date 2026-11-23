@@ -858,7 +858,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     serve();
     await untilAnswers();
     expect(await ask({ command: "lead" })).toEqual({
-      error: "Skelcrew has no repositories yet. Run sc in a checkout of one.",
+      error: "Skelcrew has no repositories yet. Run sc inside a git repository.",
     });
   });
 
