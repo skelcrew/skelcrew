@@ -47,8 +47,8 @@ const File = z.looseObject({
   // The most builders at once in a repository, written as limits: { threads: 4 } and picked out
   // of the limits on reading, as a repository may set it but not the rest of its limits.
   threads: z.number().int().positive().optional(),
-  setup: z.array(z.string()).optional(),
-  test: z.array(z.string()).optional(),
+  setup: z.array(z.string()).nullish(),
+  test: z.array(z.string()).nullish(),
   tracker: z.string().nullish(),
   review: z.looseObject({ timeout_minutes: z.number().positive().optional() }).optional(),
   // Written as reviewer: { fallback: codex }, and picked out of the reviewer's lines on reading,
@@ -93,9 +93,10 @@ export type Role = { harness: HarnessName; model?: string };
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
 // machine, `checks` how many test suites run at once through sc check, `threads` how many
 // builders run at once in the repository, and `setup` and `test` the commands that set up a
-// thread's clone and run its whole test suite, an empty list when the repository needs none.
-// The roles, `threads`, `setup` and `test` have no default: a repository's must be set, in its
-// skelcrew.yaml or over it. `fallback` is the harness reviews run on
+// thread's clone and run its whole test suite, an empty list when the repository needs none, and
+// null while they aren't decided yet, as a bare `setup:` or no line says.
+// The roles and `threads` have no default: a repository's must be set, in its skelcrew.yaml or
+// over it. `fallback` is the harness reviews run on
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
 // run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
@@ -112,8 +113,8 @@ export type Settings = {
   reviews: number;
   checks: number;
   threads: number;
-  setup: string[];
-  test: string[];
+  setup: string[] | null;
+  test: string[] | null;
   tracker: string | undefined;
   fallback: HarnessName | undefined;
   reviewMinutes: number;
@@ -196,7 +197,7 @@ const overrideKeys: Key[] = [
 ];
 
 // Returns the built-in defaults: the built-in flow's rounds and 30 minutes for a review. The
-// roles, the thread limit, setup, test and the tracker have none. Reviews default to a quarter of this machine's
+// roles, the thread limit and the tracker have none, and setup and test are unset. Reviews default to a quarter of this machine's
 // cores, at least one, as a review of a commit CI doesn't run on runs the repository's whole test
 // suite, and many at once fight over the CPU. Checks default to half the cores divided by four,
 // at least one: a test suite usually runs about four processes of its own, so half the cores
@@ -281,10 +282,7 @@ const missingFile = ({ owner, repo }: { owner: string; repo: string }) =>
 
 const missingLine: Partial<Record<Group, string>> = {
   threads:
-    "has no limits: { threads: … } line. Add the most builders to run at once in it, such as limits: { threads: 4 }, then commit and push it.",
-  setup:
-    "has no setup: line. Add the commands that set up a fresh clone, such as setup: [bun install], or setup: [] when it needs none, then commit and push it.",
-  test: "has no test: line. Add the commands that run its whole test suite, such as test: [bun run check], or test: [] when it has none, then commit and push it.",
+    "has no limits: { threads: … } line. Add the most builders to run at once in it, such as limits: { threads: 3 }, then commit and push it.",
 };
 
 // One harness or model a file names for a role: its value, or nothing when the file names none,
@@ -636,8 +634,8 @@ function mergeSettings(
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     checks: first((l) => l.limits?.checks) ?? defaults.checks,
     threads: first((l) => l.threads) ?? needed("threads", 0),
-    setup: first((l) => l.setup) ?? needed("setup", []),
-    test: first((l) => l.test) ?? needed("test", []),
+    setup: first((l) => l.setup) ?? null,
+    test: first((l) => l.test) ?? null,
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,

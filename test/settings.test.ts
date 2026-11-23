@@ -193,18 +193,19 @@ test("setup and test come from the skelcrew.yaml in Skelcrew's clone", () => {
 });
 
 // Skelcrew never guesses them from the repository's files: a guess is often wrong, and builders
-// and reviewers would use it without anyone seeing it was a guess. A missing line is an error
-// that says how to add it.
-test("a skelcrew.yaml missing setup or test is an error naming the line to add", () => {
+// and reviewers would use it without anyone seeing it was a guess. While one isn't set yet, no
+// builder or reviewer gets commands, and the error sends whoever asked to the lead, who proposes
+// them. An empty list is none, which is decided.
+test("setup or test not set yet is an error naming the lead, and an empty list is none", () => {
   settings("harness: claude\n", "test: [make check]\n");
   writeFileSync(join(clone(), "go.mod"), "");
   writeFileSync(join(clone(), "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
   expect(run("repositoryCommands(app);").err).toContain(
-    "simon/app's skelcrew.yaml has no setup: line. Add the commands that set up a fresh clone, such as setup: [bun install], or setup: [] when it needs none, then commit and push it.",
+    "simon/app's setup isn't set yet. Ask the lead to set it up.",
   );
-  settings("harness: claude\n", "setup: []\n");
+  settings("harness: claude\n", "setup: []\ntest:\n");
   expect(run("repositoryCommands(app);").err).toContain(
-    "simon/app's skelcrew.yaml has no test: line.",
+    "simon/app's test isn't set yet. Ask the lead to set it up.",
   );
   settings("harness: claude\n", "setup: []\ntest: []\n");
   expect(commands()).toEqual({ setup: [], test: [] });
@@ -275,7 +276,7 @@ test("how many builders run at once comes from the repository or your override f
   const limit = () => run("console.log(threadLimit(app));").out.trim();
   settings("harness: claude\n", "");
   expect(run("threadLimit(app);").err).toContain(
-    "simon/app's skelcrew.yaml has no limits: { threads: … } line. Add the most builders to run at once in it, such as limits: { threads: 4 }, then commit and push it.",
+    "simon/app's skelcrew.yaml has no limits: { threads: … } line. Add the most builders to run at once in it, such as limits: { threads: 3 }, then commit and push it.",
   );
   settings("harness: claude\n", "limits: { threads: 2 }\n");
   expect(limit()).toBe("2");

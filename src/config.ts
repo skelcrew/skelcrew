@@ -7,7 +7,7 @@ import type { HarnessName } from "./agents/harness.ts";
 import { flowRoles, hasFlowFile, repositoryFlows } from "./flows.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import type { RoleName } from "./roles.ts";
-import { type Repository, type Role, readSettings, type Settings } from "./settings.ts";
+import { type Repository, type Role, readSettings } from "./settings.ts";
 
 // Returns the path of your settings file.
 export const configFile = () => join(configDir(), "config.yaml");
@@ -85,11 +85,23 @@ export function reviewConfig(repository: Repository): {
 }
 
 // Returns the repository's setup and test commands, from its skelcrew.yaml or your config over
-// it, an empty list when it needs none. Throws, naming the line to add, when none sets one, so
-// every builder and reviewer uses the same ones and none guesses.
-export function repositoryCommands(repository: Repository): Pick<Settings, "setup" | "test"> {
+// it, an empty list when it needs none. Throws while either isn't decided yet, naming the
+// repository as `name` and the lead who sets them up, so every builder and reviewer uses the
+// same ones and none guesses.
+export function repositoryCommands(
+  repository: Repository,
+  name = `${repository.owner}/${repository.repo}`,
+): { setup: string[]; test: string[] } {
   const { setup, test } = readSettings(["setup", "test"], repository);
-  return { setup, test };
+  if (setup !== null && test !== null) return { setup, test };
+  const unset =
+    setup === null && test === null
+      ? "setup and test aren't"
+      : setup === null
+        ? "setup isn't"
+        : "test isn't";
+  const them = setup === null && test === null ? "them" : "it";
+  throw new Error(`${name}'s ${unset} set yet. Ask the lead to set ${them} up.`);
 }
 
 export const builderSettings = (repository: Repository) =>

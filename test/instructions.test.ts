@@ -241,6 +241,25 @@ test("a lead is told its repository and each setup and test command, or what kee
   );
 });
 
+// Setup and test not decided yet aren't a line for the human to add: the lead finds them in the
+// repository and proposes them, telling unset apart from none.
+test("a lead whose setup or test isn't set yet is told to find and propose them", () => {
+  const told = (commands: { setup: string[] | null; test: string[] | null }) =>
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", commands, false);
+  const unset = told({ setup: null, test: null });
+  expect(unset).toContain(
+    "\nWhen this session started, setup wasn't set yet, and test wasn't set yet, so no builder can start in simon/app yet. Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README.",
+  );
+  expect(told({ setup: [], test: null })).toContain(
+    "\nWhen this session started, setup was configured as none, and test wasn't set yet, so no builder can start in simon/app yet.",
+  );
+  const set = told({ setup: [], test: ["make test"] });
+  expect(set).toContain(
+    "\nWhen this session started, setup was configured as none, and the test command was `make test`.\n",
+  );
+  expect(set).not.toContain("read the repository to find them");
+});
+
 // The human wants each lead to understand the other repositories and review their leads' work,
 // so it is told where their clones are and that it can only read them.
 test("a lead is told where every other repository's clone is, read-only", () => {

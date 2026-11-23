@@ -33,7 +33,6 @@ import { needsInstall } from "../plugins/repository.ts";
 import { filesFor, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
 import { capture } from "../run.ts";
-import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { openTasks, threadTask } from "./copy.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
@@ -129,6 +128,7 @@ async function recordThread(
   const flow = given.flow ?? "default";
   checkFlow({ owner, repo, agents }, name, flow);
   builderSettings({ owner, repo, agents, flow });
+  repositoryCommands({ owner, repo }, name);
   const refuseMissingPlugins = () => {
     if (needsInstall(cloneDir(owner, repo)))
       throw new Error(
@@ -488,7 +488,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 // builder can't read your config from its sandbox, so it is told.
 export function builderInstructions(
   role: string,
-  commands: Pick<Settings, "setup" | "test">,
+  commands: { setup: string[]; test: string[] },
 ): string {
   const instructions = role.replace(/\n$/, "");
   const { setup, test } = commands;

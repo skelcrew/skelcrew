@@ -85,16 +85,29 @@ test("with an empty skelcrew.yaml, every setting that has a default is the built
   });
 });
 
-// No role has a built-in harness, and the repository's setup and test have no default, so each
-// is an error naming the line to add.
-test("with an empty skelcrew.yaml, the roles, setup and test are errors", () => {
+// No role has a built-in harness, so each is an error naming the line to add.
+test("with an empty skelcrew.yaml, the roles are errors", () => {
   files(null, "");
   for (const name of roleGroups)
     expect(read([name]).err).toContain(
       `simon/app's skelcrew.yaml names no harness for the ${name}. Add one under roles:`,
     );
-  expect(read(["setup"]).err).toContain("simon/app's skelcrew.yaml has no setup: line");
-  expect(read(["test"]).err).toContain("simon/app's skelcrew.yaml has no test: line");
+});
+
+// Setup and test not decided yet are no error: the repository and its lead open, and the lead
+// proposes them. A bare line and no line both read as not decided yet, distinct from none.
+test("setup and test with no value are unset, and an empty list is none", () => {
+  for (const shared of ["", "setup:\ntest:\n", "setup: ~\ntest: null\n"]) {
+    files(null, shared);
+    expect(read(["setup", "test"]).settings).toEqual({ setup: null, test: null });
+  }
+  files(null, "setup: []\ntest: [make test]\n");
+  expect(read(["setup", "test"]).settings).toEqual({ setup: [], test: ["make test"] });
+});
+
+test("your config's setup goes over a repository's unset one", () => {
+  files("setup: [make]\n", "setup:\ntest:\n");
+  expect(read(["setup", "test"]).settings).toEqual({ setup: ["make"], test: null });
 });
 
 test("your config goes over the built-in defaults", () => {

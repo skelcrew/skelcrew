@@ -679,6 +679,51 @@ await startThread(db, { repo: "app", title: "One", body: "b" });`,
   expect(refs.stdout.toString()).not.toContain("refs/skelcrew/names");
 }, 60_000);
 
+// Setup and test not decided yet keep every builder from starting, with a line that sends whoever
+// asked to the lead, who proposes them. Nothing is claimed.
+test.each([
+  ["setup:\ntest: []", "app's setup isn't set yet. Ask the lead to set it up."],
+  ["setup: []", "app's test isn't set yet. Ask the lead to set it up."],
+  ["setup:\ntest:", "app's setup and test aren't set yet. Ask the lead to set them up."],
+])(
+  "a thread on a repository with %j is refused before it claims a name",
+  async (lines, said) => {
+    const { homes } = twoMachines();
+    const [laptop = ""] = homes;
+    const remote = join(home, "unset.git");
+    const work = join(home, "unset");
+    const git = (cwd: string, ...args: string[]) =>
+      Bun.spawnSync(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+    Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
+    Bun.spawnSync(["git", "init", "-q", "-b", "main", work]);
+    writeFileSync(
+      join(work, "skelcrew.yaml"),
+      `${lines}\nlimits: { threads: 9 }\nroles: { builder: { harness: claude }, reviewer: { harness: claude } }\n`,
+    );
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "a");
+    git(work, "push", "-q", remote, "main");
+    const run = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+await startThread(db, { repo: "app", title: "One", body: "b" });`,
+      ],
+      { env: { ...process.env, HOME: laptop }, stdout: "pipe", stderr: "pipe" },
+    );
+    const err = await new Response(run.stderr).text();
+    expect(await run.exited).toBe(1);
+    expect(err).toContain(said);
+    const refs = Bun.spawnSync(["git", "-C", remote, "for-each-ref"], { stdout: "pipe" });
+    expect(refs.stdout.toString()).not.toContain("refs/skelcrew/names");
+  },
+  60_000,
+);
+
 // A repository with no commits yet, such as one just created, has no skelcrew.yaml, so a thread
 // there is refused before it claims a name, and the remote stays empty.
 test("a thread on an empty repository is refused, as it has no skelcrew.yaml, and claims no name", async () => {

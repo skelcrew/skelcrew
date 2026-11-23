@@ -1890,12 +1890,21 @@ process.exit(0);`,
 }
 
 // A new human sees only the harness's banner until they speak, and shouldn't have to know to. A
-// skelcrew.yaml with no setup or test keeps every builder from starting, so the lead says so first.
-test("a lead's first start brings it Skelcrew's opening turn, telling what keeps builders from starting", () => {
+// skelcrew.yaml whose setup and test aren't decided yet keeps every builder from starting, so the
+// lead proposes them first.
+test("a lead's first start brings it Skelcrew's opening turn, proposing setup and test while they are unset", () => {
   const typed = typedAfterStart("");
   expect(typed).toContain("Skelcrew: this is your first start");
-  expect(typed).toContain("tell them what keeps builders from starting");
+  expect(typed).toContain("propose the repository's setup and test commands");
   expect(typed).toContain("last note");
+}, 30_000);
+
+// A line no thread can add, such as a builder's harness, is for the human to fix first.
+test("a lead's first start with a line its skelcrew.yaml lacks tells what keeps builders from starting", () => {
+  const typed = typedAfterStart(
+    "setup: []\ntest: []\nrepos: { simon/app: { roles: { builder: { harness: nope } } } }\n",
+  );
+  expect(typed).toContain("tell them what keeps builders from starting");
 }, 30_000);
 
 test("a configured repository's first start has the lead ask what to work on", () => {
@@ -1903,6 +1912,7 @@ test("a configured repository's first start has the lead ask what to work on", (
   expect(typed).toContain("Skelcrew: this is your first start");
   expect(typed).toContain("what to work on");
   expect(typed).not.toContain("keeps builders from starting");
+  expect(typed).not.toContain("propose the repository's setup");
 }, 30_000);
 
 // The failed start saved the lead's session first, which the next start must not take for an

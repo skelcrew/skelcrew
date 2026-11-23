@@ -131,6 +131,14 @@ function commandsOf(repository: Repository): Commands {
   }
 }
 
+// Returns whether the repository's setup or test isn't decided yet, which keeps builders from
+// starting until the lead has proposed them and the human said yes.
+const unsetCommands = (commands: Commands) =>
+  !("problem" in commands) && (commands.setup === null || commands.test === null);
+
+const proposeCommands =
+  'Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README. Propose them to the human in plain words, such as "Setup installs the dependencies with bun install, and the tests run with bun run check", or none where it needs none. On a yes, start a small thread that writes them into skelcrew.yaml as setup: and test:, each a list of commands, [] for none, and opens a PR';
+
 // Returns the lead's instructions: its role's, from `role`, then Skelcrew's rules for every lead
 // when the role is a repository's own, whether you let it arm a merge when ready and how, the
 // repository it leads and where its clone is, and where it reads every other repository. Then
@@ -146,10 +154,16 @@ export function leadInstructions(
   canMerge: boolean,
 ): string {
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
+  const said = (name: "setup" | "test", list: string[] | null) =>
+    list === null
+      ? `${name} wasn't set yet`
+      : list.length === 0
+        ? `${name} was configured as none`
+        : `the ${name} command was ${shown(list)}`;
   const told =
     "problem" in commands
       ? `no builder can start in ${repository} until this is fixed on its default branch: ${commands.problem} Before anything else, tell the human so in plain words, with the line to add`
-      : `${commands.setup.length === 0 ? "setup was configured as none" : `the setup command was ${shown(commands.setup)}`}, and ${commands.test.length === 0 ? "test was configured as none" : `the test command was ${shown(commands.test)}`}`;
+      : `${said("setup", commands.setup)}, and ${said("test", commands.test)}${unsetCommands(commands) ? `, so no builder can start in ${repository} yet. ${proposeCommands}` : ""}`;
   const ruled =
     role === builtInRole("lead").instructions
       ? role
@@ -308,7 +322,9 @@ function openingNote(commands: Commands): string {
   const then =
     "problem" in commands
       ? "Then, as your instructions say, tell them what keeps builders from starting."
-      : "Then say in a line what you can do here, and ask what to work on.";
+      : unsetCommands(commands)
+        ? "Then, as your instructions say, propose the repository's setup and test commands."
+        : "Then say in a line what you can do here, and ask what to work on.";
   return `${opening}, and the human hasn't written anything yet. Greet them in a line or two. ${then}`;
 }
 
