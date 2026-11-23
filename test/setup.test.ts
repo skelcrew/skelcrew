@@ -83,6 +83,7 @@ beforeEach(async () => {
   bin = join(home, "bin");
   mkdirSync(bin);
   mkdirSync(join(home, "run"), { mode: 0o700 });
+  mkdirSync(join(home, "tmp"));
   // PATH holds only this folder, so a test can take a tool away.
   symlinkSync(Bun.which("git") ?? "git", join(bin, "git"));
   fake("tmux", "exit 0");
@@ -101,8 +102,7 @@ esac`,
   );
   fake("loginctl", "exit 0");
   // Skelcrew has a repository, so plain Skelcrew has a lead to open once set up, and sc install in a
-  // checkout of it adds nothing. The GitHub plugin
-  // is installed, so the first run doesn't offer it, unless a test removes it.
+  // checkout of it adds nothing. The GitHub plugin is installed, unless a test removes it.
   const db = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', 'git@example.com:simon/app.git')");
@@ -643,17 +643,6 @@ function onExample(remote: string): void {
   );
 }
 
-// What d shows at the offer: what the plugin is and runs.
-const offer =
-  "github 0.1.0 from skelcrew/skelcrew-github is an I/O plugin that provides tracker, forge.";
-// The offer for a repository, given as owner/name: why Skelcrew needs the plugin, then the
-// plugin's version and source, and one question.
-const offered = (repository: string) =>
-  `This is a GitHub repository (${repository}). Skelcrew needs its GitHub plugin to read issues, open pull requests and merge them.
-
-GitHub plugin 0.1.0, from skelcrew/skelcrew-github. Runs on this machine as you, outside the agents' sandbox. Type d for details.
-Install the GitHub plugin? [Y/n]`;
-
 // Runs plain sc, or the command in `args`, in `cwd` with a terminal as its input, typing `typed`
 // into it. Skelcrew offers and installs a plugin only to an answer at a terminal. The token's
 // question reads keys one by one there, through stty.
@@ -667,82 +656,6 @@ function atTerminal(typed: string, cwd = home, args: string[] = []) {
   };
   return inTerminal([process.execPath, main(), ...args], { typed, env, cwd });
 }
-
-// The GitHub plugin is offered where you work on a GitHub repository, and only there, on any run
-// until it is installed or you say no.
-test("offers the GitHub plugin only in a checkout on github.com, on any run", async () => {
-  noGitHubPlugin();
-  fakeGitHub();
-  publishGitHubPlugin();
-  const outside = await skel("sk-ant-oat01-good\n");
-  expect(outside.code).toBe(0);
-  expect(outside.out).not.toContain("GitHub");
-  const folder = checkoutWith("app");
-  expect((await atTerminal("", folder)).out).not.toContain("GitHub");
-  git(folder, "remote", "add", "origin", "git@gitlab.com:simon/app.git");
-  expect((await atTerminal("", folder)).out).not.toContain("GitHub");
-  git(folder, "remote", "set-url", "origin", "git@github.com:simon/app.git");
-  const later = await atTerminal("n\n", folder);
-  expect(later.out).toStartWith(offered("simon/app"));
-  // What it runs shows only on d.
-  expect(later.out).not.toContain(offer);
-});
-
-test("a no holds for the repository, in every checkout of it, and another repository asks once", async () => {
-  noGitHubPlugin();
-  fakeGitHub();
-  publishGitHubPlugin();
-  const app = checkoutWith("app", "git@github.com:simon/app.git");
-  const first = await atTerminal("n\nsk-ant-oat01-good\n", app);
-  expect(first.code).toBe(0);
-  expect(first.out).toContain(offered("simon/app"));
-  expect(first.out).toContain(
-    "Skelcrew won't ask again for simon/app. To install it:\n\n  sc plugin add -g skelcrew/skelcrew-github\n",
-  );
-  // The offer comes before the first step.
-  expect(first.out.indexOf(offered("simon/app"))).toBeLessThan(
-    first.out.indexOf("Sign in to Claude"),
-  );
-  expect(parse(configText())).toMatchObject({
-    github_declined: ["simon/app"],
-  });
-  const again = checkoutWith("app-again", "https://github.com/Simon/app.git");
-  expect((await atTerminal("", again)).out).not.toContain("GitHub");
-  expect((await atTerminal("", app)).out).not.toContain("GitHub");
-  const site = checkoutWith("site", "git@github.com:simon/site.git");
-  const other = await atTerminal("n\n", site);
-  expect(other.out).toContain(offered("simon/site"));
-  expect(parse(configText()).github_declined).toEqual(["simon/app", "simon/site"]);
-  // Nothing is written into the repository.
-  expect(git(app, "status", "--porcelain")).toBe("");
-});
-
-// The question names the plugin's version, so it is asked once the plugin is fetched. With GitHub
-// out of reach there is nothing to answer, so nothing is decided, and the next run offers again.
-test("with GitHub out of reach, the offer asks nothing and decides nothing", async () => {
-  noGitHubPlugin();
-  // github.com leads to a folder that isn't there, and nothing is published.
-  writeFileSync(
-    join(home, ".gitconfig"),
-    `[url "file://${home}/nowhere/"]\n\tinsteadOf = https://github.com/\n\tinsteadOf = git@github.com:\n`,
-  );
-  await skel("sk-ant-oat01-good\n");
-  const app = checkoutWith("app", "git@github.com:simon/app.git");
-  const run = await atTerminal("n\n", app);
-  expect(run.out).toContain("Couldn't install the GitHub plugin:");
-  expect(run.out).not.toContain("[Y/n]");
-  expect(parse(configText() || "{}")?.github_declined).toBeUndefined();
-});
-
-test("over --remote, the offer reads the remote sc brought from your laptop", async () => {
-  noGitHubPlugin();
-  fakeGitHub();
-  publishGitHubPlugin();
-  await skel("sk-ant-oat01-good\n");
-  const run = await atTerminal("n\n", home, ["--from", "git@github.com:simon/app.git"]);
-  expect(run.out).toContain(offered("simon/app"));
-  expect(parse(configText()).github_declined).toEqual(["simon/app"]);
-});
 
 // Puts a GitHub plugin on the fake GitHub as skelcrew/skelcrew-github, a tracker and forge whose
 // setup keeps the remote it was handed, and whose calls the fake plugin answers. It claims
@@ -805,37 +718,71 @@ function siteOnGitHub(): string {
   return site;
 }
 
-// d shows what the plugin runs and asks again, and Enter takes the offer. GitHub is then the
-// repository's tracker, so nothing is written into the checkout, and the line saying Skelcrew is
-// set up goes straight on to bringing the repository in.
-test("a yes installs the GitHub plugin after one question, writes nothing here, and the lead opens", async () => {
-  const site = siteOnGitHub();
-  const run = await atTerminal("d\n\nsk-ant-oat01-good\n", site);
-  expect(run.err).toBe("");
-  expect(run.code).toBe(0);
-  expect(run.out).toStartWith(offered("simon/site"));
-  expect(run.out).toContain(offer);
-  expect(run.out).toContain("Install the GitHub plugin? [Y/n] Installed the GitHub plugin.\n");
-  expect(run.out.match(/\[Y\/n\]/g)).toHaveLength(2);
-  expect(run.out).not.toContain("[y/N]");
-  expect(readFileSync(join(home, "handed"), "utf8")).toBe("https://github.com/simon/site\n");
-  expect(run.out).not.toContain("sc init");
-  expect(run.out).toContain(
-    "Keeping Skelcrew running after you log out or restart.\nAdding simon/site to Skelcrew...\n",
+// Returns whether Skelcrew has recorded a repository by this owner/name, and with which forge.
+function recorded(owner: string, repo: string): { forge: string | null } | null {
+  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+console.log(JSON.stringify(openDb().query("SELECT forge FROM repositories WHERE owner = ? AND repo = ?").get(${JSON.stringify(owner)}, ${JSON.stringify(repo)})));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } });
+  return JSON.parse(run.stdout.toString());
+}
+
+const pluginRows = () => {
+  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+console.log(JSON.stringify(openDb().query("SELECT name FROM plugins").all()));`;
+  return JSON.parse(
+    Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } }).stdout.toString(),
   );
-  expect(git(site, "status", "--porcelain")).toBe("");
-  expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
+};
+
+// Plain sc checks the repository before anything else, so on a fresh machine a GitHub checkout
+// with no skelcrew.yaml gets only the line naming sc init: nothing is asked, set up or installed.
+test("on a fresh machine, a GitHub checkout with no skelcrew.yaml gets only the sc init line", async () => {
+  const site = siteOnGitHub();
+  git(site, "rm", "-q", "skelcrew.yaml");
+  git(site, "commit", "-q", "-m", "No Skelcrew");
+  git(site, "push", "-q", join(home, "github", "simon", "site.git"), "HEAD:main");
+  const run = await atTerminal("y\nsk-ant-oat01-good\n", site);
+  expect(run.out).toBe("");
+  expect(run.err).toBe(
+    "Skelcrew: This repository has no skelcrew.yaml. Run sc init to create one, then commit and push it.\n",
+  );
+  expect(run.code).toBe(1);
+  expect(pluginRows()).toEqual([]);
+  expect(existsSync(token())).toBe(false);
+  expect(existsSync(unit())).toBe(false);
+  expect(recorded("simon", "site")).toBeNull();
 });
 
-test("on a run after setup, a yes installs the plugin and the lead opens, with nothing written here", async () => {
+// Plain sc never installs a plugin: a repository whose files name one this machine lacks gets the
+// line naming sc install, and isn't brought in without its forge. Once sc install has put the
+// plugin in, sc brings the repository in with GitHub as its forge.
+test("a skelcrew.yaml naming a plugin this machine lacks gets the sc install line, then sc opens it with its forge", async () => {
   const site = siteOnGitHub();
-  await skel("sk-ant-oat01-good\n");
-  const run = await atTerminal("\n", site);
-  expect(run.err).toBe("");
-  expect(run.out).toStartWith(offered("simon/site"));
-  expect(run.out).toContain("Installed the GitHub plugin.");
-  expect(run.out).not.toContain("sc init");
-  expect(git(site, "status", "--porcelain")).toBe("");
+  const plugin = join(home, "github", "skelcrew", "skelcrew-github");
+  const commit = git(plugin, "rev-parse", "HEAD").trim();
+  appendFileSync(join(site, "skelcrew.yaml"), "plugins: [skelcrew/skelcrew-github]\n");
+  writeFileSync(
+    join(site, "skelcrew.lock"),
+    `skelcrew/skelcrew-github: { name: github, version: 0.1.0, commit: ${commit} }\n`,
+  );
+  git(site, "add", ".");
+  git(site, "commit", "-q", "-m", "Name GitHub");
+  git(site, "push", "-q", join(home, "github", "simon", "site.git"), "HEAD:main");
+  const stopped = await atTerminal("y\nsk-ant-oat01-good\n", site);
+  expect(stopped.out).toBe("");
+  expect(stopped.err).toBe(
+    "Skelcrew: This repository's skelcrew.yaml names plugins this machine doesn't have: github. Run sc install, then sc again.\n",
+  );
+  expect(stopped.code).toBe(1);
+  expect(pluginRows()).toEqual([]);
+  expect(recorded("simon", "site")).toBeNull();
+  const installed = await atTerminal("y\n", site, ["install"]);
+  expect(installed.out).toContain("Installed github 0.1.0.");
+  const opened = await atTerminal("sk-ant-oat01-good\n", site);
+  expect(opened.err).toBe("");
+  expect(opened.code).toBe(0);
+  expect(opened.out).not.toContain("Do you trust");
+  expect(recorded("simon", "site")).toEqual({ forge: "github" });
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
 
@@ -1665,9 +1612,8 @@ test("plain sc ignores an unpinned plugin in your config", async () => {
 
 // A failed sc install takes the mark away too, so plain sc tries again.
 
-// On a new machine your files decide which GitHub plugin it gets, so the offer, which would
-// install its newest version, isn't made.
-test("in a GitHub checkout, files that name the GitHub plugin skip the offer, and sc install gets the locked commit", async () => {
+// On a new machine your files decide which GitHub plugin it gets, at the commit they lock.
+test("in a GitHub checkout, sc install gets the locked commit of the GitHub plugin your files name", async () => {
   const site = siteOnGitHub();
   await skel("sk-ant-oat01-good\n");
   const plugin = join(home, "github", "skelcrew", "skelcrew-github");
@@ -1682,7 +1628,6 @@ test("in a GitHub checkout, files that name the GitHub plugin skip the offer, an
   );
   const run = await atTerminal("y\n", site, ["install"]);
   expect(run.err).toBe("");
-  expect(run.out).not.toContain("This is a GitHub repository");
   expect(run.out).toContain("Installed github 0.1.0.");
   const folder = join(home, ".local", "share", "skelcrew", "plugins", "github", "0.1.0");
   expect(git(folder, "rev-parse", "HEAD")).toBe(locked);
@@ -1914,15 +1859,6 @@ test("sc install without a terminal installs none of a repository's plugins", as
   expect(run.code).toBe(1);
   expect(run.err).toContain("Skelcrew left out simon/skelcrew-fake, as each runs its commands");
   expect(existsSync(fakeFolder())).toBe(false);
-});
-
-// The repository's files decide which GitHub plugin it gets, at the version its lock pins.
-test("in a GitHub checkout whose skelcrew.yaml names the GitHub plugin, sc skips the offer", async () => {
-  const site = siteOnGitHub();
-  await skel("sk-ant-oat01-good\n");
-  writeFileSync(join(site, "skelcrew.yaml"), "plugins: [skelcrew/skelcrew-github]\n");
-  const run = await atTerminal("", site);
-  expect(run.out).not.toContain("This is a GitHub repository");
 });
 
 // A machine holds one version of a plugin, so pins that disagree are said, never settled by

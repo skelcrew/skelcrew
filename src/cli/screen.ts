@@ -5,13 +5,14 @@ import { usage } from "./input.ts";
 export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { attachToLead } = await import("../attach.ts");
   const { openDb } = await import("../db.ts");
-  const { bringInFrom, approveCheckout, checkoutTop, repositories } = await import(
+  const { bringInFrom, approveCheckout, checkRepository, checkoutTop, repositories } = await import(
     "../flow/repo.ts"
   );
   const { originHere } = await import("../machine/origin.ts");
   const { ensureDaemon } = await import("../machine/service.ts");
   const { prepareMachine, signInForAgents } = await import("../machine/setup.ts");
-  prepareMachine(from);
+  prepareMachine();
+  await checkRepository(from);
   await ensureDaemon();
   const origin = originHere();
   if (from === undefined && origin === null && checkoutTop() !== null) {

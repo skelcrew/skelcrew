@@ -6,11 +6,13 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
@@ -39,6 +41,7 @@ import {
   lockStart,
   namePlugin,
   pinRepositoryPlugin,
+  pluginsToInstall,
   repositoryPlugins,
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
@@ -76,6 +79,47 @@ async function requireSkelcrewYaml(db: Database, repository: Repository): Promis
   );
   if (!onDefaultBranch) throw new Error(noSkelcrewYaml);
   if (!hasSkelcrewYaml(repository)) await refreshClone(db, repository);
+}
+
+// Throws, naming them and sc install, when the repository's files in `folder` name plugins this
+// machine lacks, so a repository never comes in without its forge.
+function requirePlugins(folder: string): void {
+  let lacked: string[];
+  try {
+    lacked = pluginsToInstall(folder);
+  } catch {
+    throw new Error(
+      "This repository's skelcrew.yaml or skelcrew.lock can't be read. Run sc install to see why, then sc again.",
+    );
+  }
+  if (lacked.length > 0)
+    throw new Error(
+      `This repository's skelcrew.yaml names plugins this machine doesn't have: ${lacked.join(", ")}. Run sc install, then sc again.`,
+    );
+}
+
+// Checks the repository plain sc runs for before anything else, so sc says what to run before it
+// sets anything up. One Skelcrew has needs a skelcrew.yaml on its default branch. A new one, read
+// from a shallow clone of its remote, also needs the plugins its files name. A remote that can't
+// be read, or a bare owner/name, is left to bringing it in, which says why.
+export async function checkRepository(from: string | undefined): Promise<void> {
+  const named = from ?? originHere();
+  if (!named) return;
+  const db = openDb();
+  const known = repositoryAt(db, named);
+  if (known) return requireSkelcrewYaml(db, known);
+  if (!named.includes(":") || !parseRemote(named)) return;
+  const temporary = mkdtempSync(join(tmpdir(), "skelcrew-check-"));
+  try {
+    const folder = join(temporary, "repository");
+    const clone = ["git", "clone", "--quiet", "--depth=1", "--", named, folder];
+    if (!Bun.spawnSync(clone, { stdout: "pipe", stderr: "pipe" }).success) return;
+    if (!lstatSync(join(folder, "skelcrew.yaml"), { throwIfNoEntry: false }))
+      throw new Error(noSkelcrewYaml);
+    requirePlugins(folder);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 }
 
 // Returns the file of trusted repositories, kept with your settings so a clone can't bring
@@ -436,6 +480,12 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
     throw new Error(noSkelcrewYaml);
   }
   if (known) return;
+  try {
+    requirePlugins(cloneDir(owner, repo));
+  } catch (error) {
+    rmSync(cloneDir(owner, repo), { recursive: true, force: true });
+    throw error;
+  }
   if (claimed === null)
     await checkPush(db, repository, cloneDir(owner, repo)).catch((error) => {
       rmSync(cloneDir(owner, repo), { recursive: true, force: true });
@@ -458,14 +508,14 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
 // used. A failure is printed rather than thrown, so sc still attaches. Returns the repository's
 // owner/repo once Skelcrew has it, so sc opens its lead. A repository you didn't trust isn't
 // in, so nothing is returned for it. A repository Skelcrew has already costs no call to a
-// forge, only a fetch of its default branch's tip, so a skelcrew.yaml deleted there since the
-// daemon's last look still stops sc. A folder with no remote gets no complaint. Throws
-// noSkelcrewYaml for a repository whose default branch has no skelcrew.yaml.
+// forge. A folder with no remote gets no complaint. Throws the lines that stop sc, which start
+// with "This repository": one with no skelcrew.yaml on its default branch, or whose files name
+// plugins this machine lacks. checkRepository runs first, so these come here only for a
+// repository it couldn't read.
 export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
   const db = openDb();
   const named = from ?? originHere();
   let opened = named ? repositoryAt(db, named) : undefined;
-  if (opened) await requireSkelcrewYaml(db, opened);
   try {
     if (opened && !agentsAnswered(opened)) askAboutAgents(opened, opened.name);
     if (named && !opened) {
@@ -480,7 +530,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
         ]);
     }
   } catch (error) {
-    if (errorText(error) === noSkelcrewYaml) throw error;
+    if (errorText(error).startsWith("This repository")) throw error;
     console.error(`Skelcrew: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);

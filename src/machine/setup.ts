@@ -7,16 +7,10 @@ import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { hasAgentLogin, loginInstruction } from "../agents/login.ts";
 import { piHome } from "../agents/pi-login.ts";
 import { approvedAgents } from "../approved-agents.ts";
-import { agentRole, configFile, yourConfigDocument } from "../config.ts";
+import { agentRole } from "../config.ts";
 import { openDb } from "../db.ts";
-import { errorText, toRun } from "../format.ts";
+import { toRun } from "../format.ts";
 import { claudeTokenFile, configDir, dataDir, setUpFile } from "../paths.ts";
-import { addPlugin } from "../plugins/install.ts";
-import { yourPlugins } from "../plugins/lock.ts";
-import { installedPlugins } from "../plugins/plugin.ts";
-import { checkoutNames, gitHubShown, githubPlugin } from "../plugins/repository.ts";
-import { readSettings } from "../settings.ts";
-import { originHere, parseRemote } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
 import { loginPath, serviceFile } from "./service.ts";
 
@@ -167,38 +161,7 @@ function logInPi(env: Env, line: string): void {
   console.log("Signed in to Pi.");
 }
 
-const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
-
-function gitHubToOffer(remote: string | null): string | null {
-  const found = remote === null ? null : parseRemote(remote);
-  if (found?.host !== "github.com" || hasGitHubPlugin()) return null;
-  if (yourPlugins().includes(githubPlugin) || checkoutNames(githubPlugin)) return null;
-  const repository = `${found.owner}/${found.repo}`;
-  const declined = readSettings(["declined"]).declined.map((name) => name.toLowerCase());
-  return declined.includes(repository.toLowerCase()) ? null : repository;
-}
-
-function offerGitHub(repository: string, remote: string): void {
-  const shown = gitHubShown(repository);
-  let answer: boolean | null = null;
-  try {
-    answer = addPlugin(githubPlugin, remote, shown);
-  } catch (error) {
-    console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
-    return;
-  }
-  if (answer) return;
-  const { declined } = readSettings(["declined"]);
-  const config = yourConfigDocument();
-  config.set("github_declined", [...declined, repository]);
-  mkdirSync(configDir(), { recursive: true });
-  writeFileSync(configFile(), config.toString());
-  console.log(
-    `Skelcrew won't ask again for ${repository}. To install it:\n${toRun([`sc plugin add -g ${githubPlugin}`])}`,
-  );
-}
-
-export function prepareMachine(from?: string): void {
+export function prepareMachine(): void {
   const env = { ...process.env, PATH: loginPath() };
   process.env.PATH = env.PATH;
   if (!existsSync(setUpFile()) && !existsSync(serviceFile())) {
@@ -207,9 +170,6 @@ export function prepareMachine(from?: string): void {
     mkdirSync(dataDir(), { recursive: true });
     writeFileSync(setUpFile(), "");
   }
-  const remote = from ?? originHere();
-  const github = process.stdin.isTTY ? gitHubToOffer(remote) : null;
-  if (github && remote) offerGitHub(github, remote);
 }
 
 function signIn(harness: HarnessName): void {
