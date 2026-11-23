@@ -103,7 +103,10 @@ test("a task with no issue saves an empty closing line", () => {
   const work = join(home, "work");
   Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
   Bun.spawnSync(["git", "init", "-q", "-b", "main", work]);
-  writeFileSync(join(work, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
+  writeFileSync(
+    join(work, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 9 }\nroles: { builder: { harness: claude }, reviewer: { harness: claude } }\n",
+  );
   Bun.spawnSync(["git", "-C", work, "add", "."]);
   const identity = ["-c", "user.name=t", "-c", "user.email=t@t"];
   Bun.spawnSync(["git", "-C", work, ...identity, "commit", "-q", "-m", "a"]);

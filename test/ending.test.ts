@@ -15,7 +15,10 @@ beforeEach(() => {
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   Bun.spawnSync(["git", "init", "-q", clone]);
-  writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 9 }\nroles: { builder: { harness: claude }, reviewer: { harness: claude } }\n",
+  );
   // The repository's remote, where a thread with no issue claims its name, with the skelcrew.yaml
   // a clone made again reads.
   Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", join(home, "app.git")]);

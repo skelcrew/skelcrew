@@ -124,11 +124,11 @@ async function recordThread(
   const repository = findRepository(db, given.repo);
   const { owner, repo, name } = repository;
   if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
-  builderSettings(repository);
   const tracked = trackerOf(db, repository) !== null;
   const agents = approvedAgents({ owner, repo });
   const flow = given.flow ?? "default";
   checkFlow({ owner, repo, agents }, name, flow);
+  builderSettings({ owner, repo, agents, flow });
   const refuseMissingPlugins = () => {
     if (needsInstall(cloneDir(owner, repo)))
       throw new Error(

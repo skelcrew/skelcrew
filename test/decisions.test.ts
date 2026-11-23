@@ -135,7 +135,10 @@ test("a thread started with what must stay true holds it from the start, and a r
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   Bun.spawnSync(["git", "init", "-q", clone]);
-  writeFileSync(join(clone, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 9 }\n");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 9 }\nroles: { builder: { harness: claude }, reviewer: { harness: claude } }\n",
+  );
   Bun.spawnSync(["git", "init", "-q", "--bare", join(home, "app.git")]);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};

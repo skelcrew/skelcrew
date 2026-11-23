@@ -98,11 +98,11 @@ export function confirmCommands(root: string): Commands {
           ? `${name}: Enter keeps it, or type other commands joined with &&, or none: `
           : `${name}: type the commands joined with &&, or none: `,
       );
-      if (answer === null && !shown)
+      if (answer === null)
         throw new Error(
           `sc init stopped before you gave the ${name} commands, so it wrote nothing`,
         );
-      if (answer === null || answer === "") {
+      if (answer === "") {
         if (shown) return found[name] ?? [];
         continue;
       }

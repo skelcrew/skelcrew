@@ -93,7 +93,7 @@ export function repositoryCommands(repository: Repository): Pick<Settings, "setu
 }
 
 export const builderSettings = (repository: Repository) =>
-  readSettings(["setup", "test", "threads"], repository);
+  readSettings(["setup", "test", "threads", "builder", "reviewer"], repository);
 
 // Returns the plugin your override for the repository under repos: names as its tracker, else
 // its skelcrew.yaml, or nothing when neither names one.

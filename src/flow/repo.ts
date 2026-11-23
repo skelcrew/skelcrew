@@ -43,7 +43,15 @@ import {
 import { hostNamed } from "../plugins/runtime.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
-import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
+import {
+  checkPush,
+  cloneRepository,
+  fetchBranch,
+  headCommit,
+  noCommits,
+  remoteEmpty,
+  updateClone,
+} from "./git.ts";
 import { closeTabAndEndLead, leadOf } from "./lead.ts";
 import { taskName } from "./thread.ts";
 
@@ -57,9 +65,13 @@ const hasSkelcrewYaml = ({ owner, repo }: { owner: string; repo: string }) =>
   lstatSync(join(cloneDir(owner, repo), "skelcrew.yaml"), { throwIfNoEntry: false }) !== undefined;
 
 async function requireSkelcrewYaml(db: Database, repository: Repository): Promise<void> {
-  if (hasSkelcrewYaml(repository)) return;
-  await refreshClone(db, repository).catch(() => {});
-  if (!hasSkelcrewYaml(repository)) throw new Error(noSkelcrewYaml);
+  const clone = cloneDir(repository.owner, repository.repo);
+  if (!existsSync(clone)) await refreshClone(db, repository).catch(() => {});
+  const onDefaultBranch = await fetchBranch(db, repository, clone, null).then(
+    () => Bun.spawnSync(["git", "-C", clone, "cat-file", "-e", "FETCH_HEAD:skelcrew.yaml"]).success,
+    (error) => errorText(error) !== noCommits(repository) && hasSkelcrewYaml(repository),
+  );
+  if (!onDefaultBranch) throw new Error(noSkelcrewYaml);
 }
 
 // Returns the file of trusted repositories, kept with your settings so a clone can't bring
@@ -441,10 +453,10 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
 // remote URL or a repository's owner/name on its forge. Without it, the checkout you are in is
 // used. A failure is printed rather than thrown, so sc still attaches. Returns the repository's
 // owner/repo once Skelcrew has it, so sc opens its lead. A repository you didn't trust isn't
-// in, so nothing is returned for it. Plain sc must start fast, so a repository Skelcrew has
-// already costs no call to a forge: the daemon keeps its clone current. A folder with no
-// remote gets no complaint. Throws noSkelcrewYaml for a repository whose default branch has no
-// skelcrew.yaml, so sc stops there.
+// in, so nothing is returned for it. A repository Skelcrew has already costs no call to a
+// forge, only a fetch of its default branch's tip, so a skelcrew.yaml deleted there since the
+// daemon's last look still stops sc. A folder with no remote gets no complaint. Throws
+// noSkelcrewYaml for a repository whose default branch has no skelcrew.yaml.
 export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
   const db = openDb();
   const named = from ?? originHere();
@@ -579,7 +591,9 @@ async function newSkelcrewYaml(root: string): Promise<string> {
   let threads = 0;
   while (threads === 0) {
     const answer = askLine("At most how many builders at once in this repository? Enter for 4: ");
-    threads = !answer ? 4 : /^[1-9]\d*$/.test(answer) ? Number(answer) : 0;
+    if (answer === null)
+      throw new Error("sc init stopped before you gave the thread limit, so it wrote nothing");
+    threads = answer === "" ? 4 : /^[1-9]\d*$/.test(answer) ? Number(answer) : 0;
   }
   const flow = (value: unknown) =>
     stringify(value, { collectionStyle: "flow", flowCollectionPadding: false }).trim();

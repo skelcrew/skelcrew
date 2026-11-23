@@ -273,6 +273,7 @@ test("sc, repo add, install and --from stop for a repository with no skelcrew.ya
   // A skelcrew.yaml only in your checkout isn't on the default branch, where agents read it.
   writeFileSync(join(checkout, "skelcrew.yaml"), complete);
   expect((await skel([], "", checkout)).err).toBe(noFile);
+  expect((await skel(["install"], "", checkout)).err).toBe(noFile);
   git(checkout, "add", "-A");
   git(checkout, "commit", "-q", "-m", "Add skelcrew.yaml");
   git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
@@ -289,7 +290,8 @@ test("sc stops for a repository Skelcrew has whose skelcrew.yaml was deleted, an
   git(checkout, "rm", "-q", "skelcrew.yaml");
   git(checkout, "commit", "-q", "-m", "Drop skelcrew.yaml");
   git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
-  git(clone("simon/app"), "pull", "-q", join(home, "github", "simon/app.git"), "main");
+  // Skelcrew's clone still has the file, as the daemon hasn't looked since.
+  expect(existsSync(join(clone("simon/app"), "skelcrew.yaml"))).toBe(true);
   writeFileSync(join(home, "calls"), "");
   const stopped = await skel([], "", checkout);
   expect(stopped.err).toBe(noFile);
@@ -347,8 +349,10 @@ for (const [what, typed] of [
   });
 }
 
-// Plain Skelcrew must stay fast: keeping the clone current is the daemon's work.
-test("asks its forge nothing and fetches nothing for a repository Skelcrew has", async () => {
+// Plain Skelcrew must stay fast, so it asks no forge for a repository it has. It fetches only the
+// tip of its default branch, to see skelcrew.yaml there, and leaves keeping the clone current to
+// the daemon.
+test("asks its forge nothing for a repository Skelcrew has, and leaves its clone as it is", async () => {
   const checkout = onGitHub("simon/app");
   await skel([], "y\n", checkout);
   writeFileSync(join(checkout, "NEWS"), "more\n");
@@ -1192,10 +1196,15 @@ function installAtTerminal(checkout: string, typed: string) {
 // sc install reads what sc init wrote: it installs the plugin skelcrew.lock pins, after asking,
 // adds the repository, and approves the built-in .agents/ as sc init wrote it, so the push of
 // them asks nothing.
-test("install after init installs only the forge plugin and plain sc adds the repository", async () => {
+test("install after init and its push installs only the forge plugin and plain sc adds the repository", async () => {
   const checkout = onGitHub("simon/app", "WRITE", false, {});
   const commit = publishGitHubPlugin();
   expect((await skel(["init"], "", checkout)).err).toBe("");
+  // sc install reads the default branch, so the files are committed and pushed first, as sc init
+  // offers to.
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "init");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
   const run = await installAtTerminal(checkout, "y\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
@@ -1207,9 +1216,6 @@ test("install after init installs only the forge plugin and plain sc adds the re
   expect(parse(readFileSync(join(checkout, "skelcrew.lock"), "utf8"))).toEqual({
     "skelcrew/skelcrew-github": { name: "github", version: "0.1.0", commit },
   });
-  git(checkout, "add", "-A");
-  git(checkout, "commit", "-q", "-m", "init");
-  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
   expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
   // It starts nothing: the first sc starts the daemon and opens the lead.
   expect(calls()).not.toContain("daemon lead");
@@ -2168,6 +2174,18 @@ test("init shows the setup and test it read from CI and package files, and write
     setup: ["bun install"],
     test: ["bun run check"],
   });
+});
+
+// Input that ends before a command it found is kept writes nothing, so no guess goes unseen.
+test("init writes nothing when the input ends before you keep the commands it found", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  writeFileSync(join(checkout, "package.json"), JSON.stringify({ scripts: { test: "x" } }));
+  const run = await skel(["init"], "\n\n\n\n\n\n", checkout);
+  expect(run.out).toContain("The repository's CI and package files run: npm install");
+  expect(run.err).toBe(
+    "Skelcrew: sc init stopped before you gave the setup commands, so it wrote nothing\n",
+  );
+  expect(existsSync(join(checkout, "skelcrew.yaml"))).toBe(false);
 });
 
 // With nothing found, Enter alone isn't an answer, and input that ends before one writes no

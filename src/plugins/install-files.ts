@@ -1,5 +1,6 @@
 // sc install installs the plugins named by a checkout and by the personal lock, and stops in a
-// checkout with no skelcrew.yaml. It never chooses harnesses, signs agents in, or sets up the daemon.
+// checkout whose repository has no skelcrew.yaml on its default branch. It never chooses
+// harnesses, signs agents in, or sets up the daemon.
 import { lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,17 @@ export function installFiles(from?: string): boolean {
     }
     if (root !== null && !lstatSync(join(root, "skelcrew.yaml"), { throwIfNoEntry: false }))
       throw new Error(noSkelcrewYaml);
+    if (root !== null && !from && originHere(root)) {
+      const git = (args: string[]) =>
+        Bun.spawnSync(["git", "-C", root, ...args], { stdout: "pipe", stderr: "pipe" });
+      const fetched = git(["fetch", "--quiet", "origin", "HEAD"]);
+      if (!fetched.success)
+        throw new Error(
+          `Skelcrew couldn't read the repository's default branch: ${fetched.stderr.toString().trim()}`,
+        );
+      if (!git(["cat-file", "-e", "FETCH_HEAD:skelcrew.yaml"]).success)
+        throw new Error(noSkelcrewYaml);
+    }
     const unreadable: string[] = [];
     const needs = repositoryNeeds(false, unreadable, root);
     const conflicts = needs.filter((need) => need.conflict !== null).map((need) => need.source);
