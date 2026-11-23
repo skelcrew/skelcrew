@@ -474,14 +474,18 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     verdict(1, "changes", "The export has no test.");
     verdict(2, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => read(join(lead(), "typed")).includes("Round 2"), longWait);
+    const told = () => read(join(builder(), "typed")).includes("Someone edited PR #7's");
+    await until(
+      () => told() && read(join(lead(), "typed")).includes("PR #7's description"),
+      longWait,
+    );
     expect(asked(plugin).filter((q) => q.ask === "edit pr")).toEqual([]);
     expect(read(join(builder(), "typed"))).toContain(
       "Someone edited PR #7's description on the forge, so Skelcrew kept it and left your new summary out.",
     );
     const note = read(join(lead(), "typed"));
     expect(note).toContain("app-12: someone edited PR #7's description on the forge");
-    expect(note).toContain("Round 2");
+    expect(note).toMatch(/That summary:\n\nRound \d/);
     expect(read(join(data(), "threads", "app-12.log"))).toContain(
       "kept PR #7's description, which someone edited on the forge",
     );
@@ -497,8 +501,9 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     writeFileSync(join(plugin, "fail-changed"), "the forge is down");
     await until(() => read(join(builder(), "typed")).includes("couldn't read"), longWait);
     expect(read(join(builder(), "typed"))).toContain(
-      "Skelcrew couldn't read PR #7's description, so it kept it and left your new summary out: the forge is down",
+      "Skelcrew couldn't read PR #7's description, so it kept it and left your new summary out:",
     );
+    expect(read(join(builder(), "typed"))).toContain("the forge is down");
     expect(asked(plugin).filter((q) => q.ask === "edit pr")).toEqual([]);
   }, 90_000);
 

@@ -173,8 +173,8 @@ const prBody = (summary: string, closes: string | null) =>
 
 // Replaces the PR's description with the round's summary and the line that closes its task, so
 // the reviewer, who reads it as the review starts, and sc show see this round's. Only a
-// description that still holds a summary Skelcrew wrote is replaced, read from the forge, or
-// from Skelcrew's copy when the forge doesn't show the PR. One a person edited is kept, and the
+// description that is empty or still holds a summary Skelcrew wrote is replaced, read from the
+// forge, or from Skelcrew's copy when the forge doesn't show the PR. One a person edited is kept, and the
 // builder and lead hear so, the lead with the new summary. One Skelcrew can't read is kept too.
 // A forge that can't edit keeps the one before, and the builder hears so, as its round goes on.
 async function describePr(
@@ -204,7 +204,8 @@ async function describePr(
     );
   const plain = (text: string) => text.replaceAll("\r\n", "\n").trim();
   const written = summariesSubmitted(thread).map((said) => plain(prBody(said, closes)));
-  if (shown && !written.includes(plain(shown.body))) {
+  const kept = shown === null ? "" : plain(shown.body);
+  if (kept !== "" && !written.includes(kept)) {
     record(db, folder, {}, `kept PR #${pr}'s description, which someone edited on the forge`);
     queueMessage(db, sessions, folder, {
       sender: "skelcrew",
