@@ -2037,27 +2037,68 @@ process.exit(0);`,
   expect(seen.after).toContain("held note");
 }, 30_000);
 
-test("a Codex folder trust screen needs the human instead of becoming silently idle", () => {
-  const prompt = join(home, "prompt.sh");
-  writeFileSync(
-    prompt,
-    '#!/bin/sh\nprintf "Folder access\\n/tmp/clone\\nTrust this folder?\\n› 1. Trust and continue\\n  2. Quit\\n"\ncat > received.txt\n',
-    { mode: 0o755 },
-  );
-  const said = runWithFakeHost(
-    "sessions",
-    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+for (const state of [null, "working"]) {
+  test(`a Codex trust screen needs the human from state ${state}`, () => {
+    const prompt = join(home, "prompt.sh");
+    writeFileSync(
+      prompt,
+      '#!/bin/sh\nprintf "Folder access\\n/tmp/clone\\nTrust this folder?\\n› 1. Trust and continue\\n  2. Quit\\n"\ncat > received.txt\n',
+      { mode: 0o755 },
+    );
+    const said = runWithFakeHost(
+      "sessions",
+      `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
 const deadline = Date.now() + 5000;
-while (readThread(db, "app-12").state === "working" && Date.now() < deadline) {
+while (!readThread(db, "app-12").asking && Date.now() < deadline) {
   noticeIdleScreens(db, "unused");
   await Bun.sleep(100);
 }
 const thread = readThread(db, "app-12");
 const { ownItem } = await import(${JSON.stringify(source("flow/own-items.ts"))});
-console.log(thread.state, thread.asking, ownItem(thread, false)?.text);
+for (let look = 0; look < 3; look++) {
+  noticeIdleScreens(db, "unused");
+  await Bun.sleep(100);
+}
+const after = readThread(db, "app-12");
+console.log(thread.state, thread.asking, ownItem(thread, false)?.text, after.noting, after.changed === thread.changed);
 process.exit(0);`,
-    { host: "fake", host_id: "fake-app-12", state: "working", harness: "codex" },
+      { host: "fake", host_id: "fake-app-12", state, harness: "codex" },
+    );
+    expect(said).toBe("asking true Codex is asking to trust its folder null true\n");
+  });
+}
+
+test("a new Codex lead's trust screen is noticed before its first hook", () => {
+  const prompt = join(home, "prompt.sh");
+  const release = join(home, "show-trust");
+  writeFileSync(
+    prompt,
+    '#!/bin/sh\necho loading\nwhile [ ! -e "$1" ]; do sleep 0.05; done\nprintf "Folder access\\n/tmp/clone\\nTrust this folder?\\n› 1. Trust and continue\\n  2. Quit\\n"\ncat > received.txt\n',
+    { mode: 0o755 },
   );
-  expect(said).toBe("asking true Codex is asking to trust its folder\n");
+  const said = runWithFakeHost(
+    "sessions",
+    `
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "lead", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}, ${JSON.stringify(release)}], env: { PATH: process.env.PATH }, labels: { repository: "simon/app", role: "lead" } });
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', '')");
+db.run("UPDATE repositories SET lead_session = 's', lead_harness = 'codex', lead_host = 'fake', lead_host_id = 'fake-lead', lead_state = NULL");
+const state = () => db.query("SELECT lead_state FROM repositories").get().lead_state;
+for (let look = 0; look < 3; look++) {
+  noticeIdleScreens(db, "unused");
+  await Bun.sleep(200);
+}
+const before = state();
+require("node:fs").writeFileSync(${JSON.stringify(release)}, "");
+const deadline = Date.now() + 5000;
+while (state() === null && Date.now() < deadline) {
+  noticeIdleScreens(db, "unused");
+  await Bun.sleep(100);
+}
+console.log(before, state());
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", state: "idle", harness: "codex" },
+  );
+  expect(said).toBe("null asking\n");
 });

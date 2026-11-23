@@ -192,20 +192,11 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
   }
 }
 
-// Looks at the screen of each running agent whose state is working, and makes it idle once two
-// looks in a row find it out of a turn: its harness's busy mark gone, or sitting still at a bare
-// prompt, as the agent's own text, such as a reply quoting it. Only a live status line counts,
-// as when typing, so such a reply can't keep it working forever. Two gaps have no hook: Esc on
-// Claude Code, and an error on Codex, such as an unknown model, which prints it and sits at its
-// prompt. One look isn't enough: right after a message goes in, the mark can take a moment to
-// show. Neither gap flags needs you: after Esc you are looking at the agent anyway. The daemon
-// runs it every two seconds. Each agent is looked at on its own, without waiting: a slow or hung
-// host holds up only its own agents' looks, and one that fails leaves the others' to go on.
 export function noticeIdleScreens(db: Database, sessions: string): void {
-  const working: { key: Agent; host: Host; name: string; marks: Marks }[] = [];
+  const working: { key: Agent; host: Host; name: string; marks: Marks; starting: boolean }[] = [];
   const threads = db
     .query(
-      "SELECT * FROM task_threads WHERE state = 'working' AND status IN ('working', 'waiting')",
+      "SELECT * FROM task_threads WHERE (state = 'working' OR state IS NULL) AND status IN ('working', 'waiting')",
     )
     .all()
     .map((row) => Thread.parse(row));
@@ -213,12 +204,20 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
     const host = hostNamed(db, sessions, thread.host ?? "tmux");
     const name = thread.host_id ?? thread.folder;
     if (host !== null)
-      working.push({ key: thread, host, name, marks: builderHarness(thread).marks });
+      working.push({
+        key: thread,
+        host,
+        name,
+        marks: builderHarness(thread).marks,
+        starting: thread.state === null,
+      });
   }
   const leads = db
-    .query("SELECT owner, repo FROM repositories WHERE lead_state = 'working'")
+    .query(
+      "SELECT owner, repo, lead_state FROM repositories WHERE lead_state = 'working' OR lead_state IS NULL",
+    )
     .all()
-    .map((row) => LeadKey.parse(row));
+    .map((row) => LeadKey.extend({ lead_state: AgentState.nullable() }).parse(row));
   for (const lead of leads) {
     const { name, harness, host, hostId } = leadOf(db, lead.owner, lead.repo);
     const on = hostNamed(db, sessions, host);
@@ -228,6 +227,7 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
         host: on,
         name: hostId ?? name,
         marks: harnessNamed(harness ?? "claude").marks,
+        starting: lead.lead_state === null,
       });
   }
   const keys = new Set(working.map((agent) => agentKey(agent.key)));
@@ -236,7 +236,7 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
     const key = agentKey(agent.key);
     if (looking.has(key)) continue;
     looking.add(key);
-    lookAt(db, sessions, agent, key)
+    lookAt(db, agent, key)
       .catch((error) => console.log(`couldn't look at ${agent.name}'s screen: ${errorText(error)}`))
       .finally(() => looking.delete(key));
   }
@@ -245,14 +245,9 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
 // The agents being looked at now, by the key agentKey gives them.
 const looking = new Set<string>();
 
-// Takes one look at a working agent's screen for noticeIdleScreens. It goes idle when the last
-// look found it out of a turn too. Otherwise this look is remembered for the next. A new state
-// kept while it looked makes this one count for nothing, as it may show the turn before, even
-// with no earlier look to compare. An agent that isn't running has nothing to remember.
 async function lookAt(
   db: Database,
-  sessions: string,
-  agent: { key: Agent; host: Host; name: string; marks: Marks },
+  agent: { key: Agent; host: Host; name: string; marks: Marks; starting: boolean },
   key: string,
 ): Promise<void> {
   const before = lastLook.get(key);
@@ -264,9 +259,18 @@ async function lookAt(
   const question = startupQuestion(screen, agent.marks);
   if (question !== null) {
     keepState(db, agent.key, "asking");
-    if ("folder" in agent.key) questionAsked(db, sessions, agent.key.folder, question);
+    if ("folder" in agent.key) {
+      record(
+        db,
+        agent.key.folder,
+        { asking: true, said: question, handed: null, noting: null },
+        "its harness asked a startup question",
+      );
+      stopDelivering(db, agent.key.folder, false, forQuestion);
+    }
     return;
   }
+  if (agent.starting) return;
   const quiet = quietSince(before?.screen, screen, agent.marks);
   if (quiet && before?.quiet) keepState(db, agent.key, "idle");
   else lastLook.set(key, { screen, quiet });

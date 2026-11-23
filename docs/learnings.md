@@ -170,7 +170,9 @@ that covers the code you are about to write.
   requires stay on the command line too. Repository settings can load, but cannot replace
   those overrides.
 - **Startup menus have no hook.** The two-second screen check recognises Codex's folder
-  trust, hook review, sign-in and update menus. A builder shows the question in Needs you;
+  trust, hook review, sign-in and update menus, including before the first hook. Keep checking
+  agents with no state while they load; only a hook starts their ordinary idle checks. A
+  builder shows the question in Needs you without automatically asking the lead to answer;
   a lead's state becomes asking. Match a heading and a selected numbered option, and reject
   old menu text followed by the normal input prompt. Message delivery waits too, so its
   Enter cannot answer a startup question.
