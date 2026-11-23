@@ -514,7 +514,8 @@ console.log(JSON.stringify({ before, during, refused, failed, box, again, cleare
 
 // A merge without approval arms a plan, which the forge can still refuse on its first try. The
 // pick then fails: the plan stops, and the round limit needs you again, so the item comes back with
-// the forge's reason, to pick again. One still waiting on its checks stays armed.
+// the forge's reason, to pick again. So does a poll that failed before it could try. One still
+// waiting on its checks stays armed.
 test("a merge without approval the forge refuses at once brings its item back, unarmed", () => {
   const seen = inProcess(`
 const { armMerge, takeBackFailedMerge } = await import(${JSON.stringify(source("flow/merging.ts"))});
@@ -524,14 +525,19 @@ record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", held: "
 const tryMerge = (waits) => async () => {
   armMerge(db, "none", thread(), { seen: { pr: 7, started: thread().started, head: "b".repeat(40) } }, true);
   record(db, "app-12", { merge_waits: waits });
-  const failed = takeBackFailedMerge(db, thread());
+  const failed = takeBackFailedMerge(db, thread(), pollFailed);
   if (failed !== null) throw new Error(failed);
   return "armed";
 };
+let pollFailed = null;
 const refused = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", tryMerge("the forge, which refused: Pull Request is not mergeable")).catch((error) => error.message);
 const back = row("APP-12");
-const waiting = await pickOwnItem(db, "none", "app", "t12", back.ask, "b", tryMerge("its checks"));
-console.log(JSON.stringify({ refused, section: back.section, ask: back.ask, plan: thread().merge_plan, waiting }));`);
+pollFailed = "github failed: GitHub is down";
+const down = await pickOwnItem(db, "none", "app", "t12", back.ask, "b", tryMerge(null)).catch((error) => error.message);
+const downBack = { section: row("APP-12").section, plan: thread().merge_plan, failed: row("APP-12").ask?.failed };
+pollFailed = null;
+const waiting = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", tryMerge("its checks"));
+console.log(JSON.stringify({ refused, section: back.section, ask: back.ask, down, downBack, plan: thread().merge_plan, waiting }));`);
   const why = "#7 didn't merge: the forge refused: Pull Request is not mergeable";
   expect(seen.refused).toBe(why);
   expect(seen.section).toBe("needs you");
@@ -540,6 +546,10 @@ console.log(JSON.stringify({ refused, section: back.section, ask: back.ask, plan
     options: ["Go on: fix the findings", "Merge without approval", "Stop the builder"],
     failed: why,
   });
+  // A poll that failed before the forge was asked to merge takes the plan back too.
+  const down = "#7 didn't merge: github failed: GitHub is down";
+  expect(seen.down).toBe(down);
+  expect(seen.downBack).toEqual({ section: "needs you", plan: null, failed: down });
   expect(seen.waiting).toBe("armed");
   expect(seen.plan).toBe("armed");
 });

@@ -506,16 +506,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Polls the thread's repository twice at once, once a merge is armed, so a PR that is ready
   // already merges now rather than at the polls to come: the first posts the record of who
-  // asked, and the second merges. sc merge doesn't wait for it, and a pick does, so it can say
-  // when the forge refused.
+  // asked, and the second merges. sc merge doesn't wait for it. A pick takes it, by the thread's
+  // folder, to wait for that one try and say when it failed.
+  const mergesSoon = new Map<string, Promise<void>>();
   const mergeSoon = (thread: Thread) => {
     const fullName = `${thread.owner}/${thread.repo}`;
-    return polling.promise
-      .then(async (poll) => {
-        await poll(fullName);
-        await poll(fullName);
-      })
-      .catch((error) => console.log(errorText(error)));
+    const soon = polling.promise.then(async (poll) => {
+      await poll(fullName);
+      await poll(fullName);
+    });
+    soon.catch((error) => console.log(errorText(error)));
+    mergesSoon.set(thread.folder, soon);
   };
   // Restarts a running builder, keeping its conversation, and returns what to say.
   const restartThread = async (thread: Thread): Promise<string> => {
@@ -530,7 +531,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       return `${name} was stopped or removed meanwhile, so its builder stays ended.`;
     if ("failed" in restarted) {
       failThread(db, sessions, thread, restarted.failed);
-      return `${name}'s builder couldn't start again: ${errorText(restarted.failed)}`;
+      throw new Error(`${name}'s builder couldn't start again: ${errorText(restarted.failed)}`);
     }
     return restarted.gone === null
       ? `Restarted ${name}'s builder.`
@@ -556,8 +557,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         : (Object.values(reply).find((value) => typeof value === "string") ?? said);
     }
     if (act === "skip review") {
-      await mergeSoon(thread);
-      const failed = takeBackFailedMerge(db, thread);
+      const soon = mergesSoon.get(thread.folder) ?? Promise.resolve();
+      mergesSoon.delete(thread.folder);
+      const failed = await soon.then(
+        () => takeBackFailedMerge(db, thread, null),
+        (error) => takeBackFailedMerge(db, thread, errorText(error)),
+      );
       if (failed !== null) throw new Error(failed);
     }
     return said;
@@ -1052,7 +1057,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           if (request.asked !== undefined)
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
           const said = armMerge(db, sessions, thread, { seen: request.seen }, skip);
-          void mergeSoon(thread);
+          mergeSoon(thread);
           return { said };
         }
         if (!leadCanMerge())
@@ -1066,7 +1071,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             "give what the human asked with --asked-file, a file holding their exact words",
           );
         const said = armMerge(db, sessions, thread, { asked: request.asked }, skip);
-        void mergeSoon(thread);
+        mergeSoon(thread);
         return { said };
       }
       case "merge cancel":

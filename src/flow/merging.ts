@@ -253,16 +253,27 @@ export function cancelMerge(db: Database, thread: Thread): string {
   return `${name} won't merge by itself. It waits for you to merge it.`;
 }
 
-// Takes back a merge without approval you picked on an item, once its first try failed on the
-// forge, and returns why, or null when it merged or still waits on its checks. The plan is
-// cancelled, so it tries no more, and the round limit needs you again, so the item comes back
-// for you to pick again.
-export function takeBackFailedMerge(db: Database, thread: Thread): string | null {
+// Takes back a merge without approval you picked on an item, once its first try failed: the forge
+// refused or failed as it merged, or the poll itself failed, as `pollFailed` says. Returns why, or
+// null when it merged, is merging, or still waits on its checks. The plan is cancelled, so it
+// tries no more, and the round limit needs you again, so the item comes back for you to pick
+// again.
+export function takeBackFailedMerge(
+  db: Database,
+  thread: Thread,
+  pollFailed: string | null,
+): string | null {
   const now = readThread(db, thread.folder);
   const waits = now.merge_waits;
-  if (now.merge_plan !== "armed" || !waits?.startsWith("the forge, which ")) return null;
-  cancelMerge(db, now);
-  const why = `#${now.pr} didn't merge: the forge ${waits.slice("the forge, which ".length)}`;
+  const forge = waits?.startsWith("the forge, which ") ? waits : null;
+  const failed = pollFailed ?? (forge && `the forge ${forge.slice("the forge, which ".length)}`);
+  if (now.merge_plan !== "armed" || now.status === "done" || failed === null) return null;
+  try {
+    cancelMerge(db, now);
+  } catch {
+    return null;
+  }
+  const why = `#${now.pr} didn't merge: ${failed}`;
   record(db, now.folder, limitUndecided(readThread(db, now.folder)), why);
   return why;
 }
