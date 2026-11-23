@@ -1,12 +1,10 @@
 // The list as lines for your terminal: the top line with Skelcrew and every repository's tab, the
-// lead's block that heads the repository, each section's heading in its colour with the rows of
-// those that are open, and the bottom line with the keys and the machine's load. It reads
+// lead's block that heads the repository, each section's heading with the rows of those that are
+// open, and the bottom line with the keys and the machine's load. It reads
 // nothing, so what you see can be tested without a terminal.
 import { yesNo } from "../flow/inbox.ts";
 import { letters } from "../flow/requests.ts";
 import {
-  amber,
-  blue,
   bright,
   filled,
   fitted,
@@ -15,7 +13,6 @@ import {
   lightGrey,
   markColours,
   paint,
-  purple,
   red,
   shade,
   shaded,
@@ -135,18 +132,6 @@ export function enterAttaches(row: Row): boolean {
   return (atWork || row.needsYou) && row.session !== null;
 }
 
-// The colour of each section that has one, which its heading and its tasks' marks share, so the
-// stages sort at a glance. Needs you is the yellow of its marks. The task queue and Backlog only
-// wait, so they keep the theme's own text. Every heading and mark reads without colour too.
-const sectionColours: Partial<Record<Section, string>> = {
-  "needs you": yellow,
-  building: blue,
-  reviewing: purple,
-  checks: amber,
-  ready: green,
-  done: grey,
-};
-
 // The spinner on the mark of an agent at work, one frame after another. The list draws its first
 // frame, and the screen's sidebar turns it.
 export const spinner = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -161,24 +146,26 @@ const keyOf = (section: Section) =>
   section === "needs you" ? " " : String(numbered.indexOf(section));
 
 // Returns a section's heading as a line: the number key that opens and closes it, dim, then its
-// name in its section's colour, bold while open, or bright while open and dim while closed for a
-// section without a colour, then how many tasks it
-// has, lined up under the other headings' counts, such as `2 Building  4`. Needs you's count is yellow, as it shows only
-// while a task waits on you. Task queue then says dim how full the builders are, such as `Building
-// 4/4 · 3 queued`, which goes first on a narrow terminal. Cut to fit, without its colours, on a
-// terminal narrower still.
+// name, bold while open, then how many tasks it has, lined up under the other headings' counts,
+// such as `2 Building  4`. A stage has no colour of its own: an empty one is dim, and Needs you
+// is yellow, as it shows only while a task waits on you. Task queue then says dim how full the
+// builders are, such as `Building 4/4 · 3 queued`, which goes first on a narrow terminal. Cut to
+// fit on a terminal narrower still, all in the heading's colour.
 function headingLine(heading: Heading, countWidth: number, width: number): string {
   const key = keyOf(heading.section);
   const name = sectionNames[heading.section].padEnd(sectionNameWidth);
   const count = String(heading.count).padStart(countWidth);
   const plain = ` ${key} ${name} ${count}`;
-  if (Bun.stringWidth(plain) > width) return fitted(plain, width);
-  const colour = sectionColours[heading.section];
-  const shown = paint(heading.open ? (colour ? `1;${colour}` : bright) : (colour ?? grey), name);
-  const waits = heading.section === "needs you";
+  const colour = heading.section === "needs you" ? yellow : heading.count === 0 ? grey : "";
+  if (Bun.stringWidth(plain) > width) {
+    const cut = fitted(plain, width);
+    return colour ? paint(colour, cut) : cut;
+  }
+  const style = [heading.open ? "1" : "", colour].filter(Boolean).join(";");
+  const shown = style ? paint(style, name) : name;
   const fits = heading.note && Bun.stringWidth(`${plain}  ${heading.note}`) <= width;
   const note = fits ? `  ${paint(grey, heading.note)}` : "";
-  return ` ${paint(grey, key)} ${shown} ${waits ? paint(yellow, count) : count}${note}`;
+  return ` ${paint(grey, key)} ${shown} ${colour ? paint(colour, count) : count}${note}`;
 }
 
 // A repository's tab on the top line, the columns it takes, counted from 1 as your terminal
@@ -192,8 +179,8 @@ const otherTab = "48;5;236";
 // Returns the top line and where each repository's tab is on it. Skelcrew in bold and the longest
 // name of its version that fits and where it runs, dim, then every repository's tab, in order, left
 // to right. The open one is white on a lighter grey. Each other one has a yellow dot and how many
-// of its threads need you, or red when one went wrong, then a green dot and how many wait for you
-// to merge. They are counted apart, so a finished task is never told twice. Another repository's
+// of its threads need you, or red when one went wrong, then a dot in the tab's light grey and how
+// many wait for you to merge. They are counted apart, so a finished task is never told twice. Another repository's
 // tab that doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
   // Each tab's text, with a space either side inside its background.
@@ -201,7 +188,7 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
     const open = tab.name === frame.name;
     const colour = tab.colour === "red" ? markColours.red : yellow;
     const needing = !open && tab.needYou ? [{ code: colour, badge: `•${tab.needYou}` }] : [];
-    const ready = tab.ready && !open ? [{ code: markColours.green, badge: `•${tab.ready}` }] : [];
+    const ready = tab.ready && !open ? [{ code: lightGrey, badge: `•${tab.ready}` }] : [];
     const badges = [...needing, ...ready];
     const text = ` ${[tab.name, ...badges.map(({ badge }) => badge)].join(" ")} `;
     return { tab, open, badges, size: Bun.stringWidth(text) };
@@ -364,20 +351,9 @@ const marked = (lines: string[], here: boolean, width: number) =>
 // What starts the first line of a row: ▸ on the row you are on, and blank on the others.
 const pointer = (here: boolean) => (here ? " ▸ " : "   ");
 
-// Returns the colour of a task's mark: yellow, red or green as its state says, or else the
-// colour of the stage it shows under.
-function markColour(row: Row): string {
-  const { colour } = row.mark;
-  const stage = row.section === row.part && row.section !== "lead" ? row.section : null;
-  const own = stage === null ? undefined : sectionColours[stage];
-  return colour === "bright" || colour === "dim"
-    ? (own ?? markColours[colour])
-    : markColours[colour];
-}
-
-// Returns the start of a row's first line: its pointer, then its mark.
+// Returns the start of a row's first line: its pointer, then its mark in its state's colour.
 const markStart = (row: Row, here: boolean) =>
-  `${pointer(here)}${tinted(here, markColour(row), row.mark.sign)}`;
+  `${pointer(here)}${tinted(here, markColours[row.mark.colour], row.mark.sign)}`;
 
 // Returns a row in Backlog or Done as one line, in columns from the left: its mark, its name,
 // its title, cut with … when it doesn't fit, then when it changed, dim. The title's column is as
@@ -583,10 +559,12 @@ export type Spin = { line: number; column: number; cell: string };
 
 // Returns the lead's block, which heads the list as the repository's header. Its first line is
 // `◆ Lead · Claude Code`, its harness, with its mark and state on the right, such as `○ idle`.
-// Its title is cut first to fit. The second says what the lead is doing while it works. Then a
-// line across, a line of how many tasks are where, such as `9 running · 2 ready · 1 needs you`,
-// with only those that have any. Running are those whose builder is at work this moment, and a
-// task waiting only for you to merge it counts as ready, though it shows under Needs you. Then a
+// Its title is cut first to fit. The second says what the lead is doing while it works, and is
+// blank while it doesn't, outside the shade of the row you are on, so the shade fits the row. Then a
+// line across, a line of how many tasks are running or ready, such as `9 running · 2 ready`, with
+// only those that have any. What needs you is left out, as the Needs you heading counts it. Running
+// are those whose builder is at work this moment, and a task waiting only for you to merge it
+// counts as ready, though it shows under Needs you. Then a
 // blank line. Gives the lines, and where its mark is. On a place too short for all of them, its
 // last lines give way, so the row you are on still shows.
 function leadBlock(
@@ -617,20 +595,23 @@ function leadBlock(
   const merges = headings.find((heading) => heading.section === "needs you")?.merges ?? 0;
   const running = headings.reduce((sum, heading) => sum + heading.working, 0);
   const parts = [
-    { count: running, word: "running", code: "" },
-    { count: count("ready") + merges, word: "ready", code: green },
-    { count: count("needs you") - merges, word: "needs you", code: yellow },
+    { count: running, word: "running" },
+    { count: count("ready") + merges, word: "ready" },
   ].filter((part) => part.count > 0);
   const said = parts.map((part) => `${part.count} ${part.word}`);
   const plain = `   ${said.join(" · ") || "nothing under way"}`;
   const summary =
     Bun.stringWidth(plain) > width || parts.length === 0
       ? paint(grey, fitted(plain, width))
-      : `   ${parts
-          .map(({ code }, at) => (code ? paint(code, said[at] ?? "") : (said[at] ?? "")))
-          .join(paint(grey, " · "))}`;
+      : `   ${said.join(paint(grey, " · "))}`;
   return {
-    lines: [...marked([first, second], here, width), paint(grey, "─".repeat(width)), summary, ""],
+    lines: [
+      ...marked(second ? [first, second] : [first], here, width),
+      ...(second ? [] : [""]),
+      paint(grey, "─".repeat(width)),
+      summary,
+      "",
+    ],
     mark: row.working ? mark : null,
   };
 }
@@ -755,7 +736,7 @@ export function drawRows(
   const spins = shown.flatMap((line, at): Spin[] => {
     const row = line.row === null ? undefined : rows[line.row];
     if (!spin || !row?.working || [...Bun.stripANSI(line.text)][3] !== still) return [];
-    const sign = tinted(line.row === here, markColour(row), still);
+    const sign = tinted(line.row === here, markColours[row.mark.colour], still);
     const cell = line.row === here ? `\x1b[${shade}m${sign}\x1b[49m` : sign;
     return [{ line: lead.length + at, column: 3, cell }];
   });

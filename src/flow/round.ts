@@ -52,6 +52,7 @@ import {
   roundOf,
   submitted,
   submittedBefore,
+  summariesSubmitted,
   verdictPosted,
   verdictReached,
 } from "./ledger.ts";
@@ -158,7 +159,7 @@ async function push(
   // The forge answers with the PR already open from the branch, such as one opened before the
   // daemon stopped and could save it. After an earlier submit, it may hold that one's summary.
   const { title, closes } = threadTask(db, thread);
-  const body = closes ? `${summary}\n\n${closes}` : summary;
+  const body = prBody(summary, closes);
   const known = thread.pr;
   const pr =
     known ??
@@ -166,24 +167,64 @@ async function push(
   if (forgeOf(db, repository) === null) return sha;
   record(db, folder, { pr }, `pushed ${sha} to ${thread.branch}, for #${pr}`);
   if (known !== null || submittedBefore(thread))
-    await describePr(db, sessions, folder, pr, body, signal);
+    await describePr(db, sessions, folder, pr, { summary, closes }, signal);
   return sha;
 }
 
+const prBody = (summary: string, closes: string | null) =>
+  closes ? `${summary}\n\n${closes}` : summary;
+
 // Replaces the PR's description with the round's summary and the line that closes its task, so
-// the reviewer, who reads it as the review starts, and sc show see this round's. A forge that
-// can't keeps the one before, and the builder hears so, as its round goes on.
+// the reviewer, who reads it as the review starts, and sc show see this round's. Only a
+// description that is empty or still holds a summary Skelcrew wrote is replaced, read from the
+// forge, or from Skelcrew's copy when the forge doesn't show the PR. One a person edited is kept, and the
+// builder and lead hear so, the lead with the new summary. One Skelcrew can't read is kept too.
+// A forge that can't edit keeps the one before, and the builder hears so, as its round goes on.
 async function describePr(
   db: Database,
   sessions: string,
   folder: string,
   pr: number,
-  body: string,
+  { summary, closes }: { summary: string; closes: string | null },
   signal: AbortSignal,
 ): Promise<void> {
   if (signal.aborted) return;
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
+  const tell = (text: string, said: string) => {
+    record(db, folder, {}, text);
+    queueMessage(db, sessions, folder, { sender: "skelcrew", text, said, typed_in: [] });
+  };
+  const shown = await refreshPr(db, repository, pr).then(
+    (found) => found ?? prOf(db, thread.owner, thread.repo, pr),
+    errorText,
+  );
+  if (signal.aborted) return;
+  if (typeof shown === "string")
+    return tell(
+      `Skelcrew couldn't read PR #${pr}'s description, so it kept it and left your new summary out: ${shown}`,
+      `it couldn't read PR #${pr}'s description`,
+    );
+  const plain = (text: string) => text.replaceAll("\r\n", "\n").trim();
+  const written = summariesSubmitted(thread).map((said) => plain(prBody(said, closes)));
+  const kept = shown === null ? "" : plain(shown.body);
+  if (kept !== "" && !written.includes(kept)) {
+    record(db, folder, {}, `kept PR #${pr}'s description, which someone edited on the forge`);
+    queueMessage(db, sessions, folder, {
+      sender: "skelcrew",
+      text: `Someone edited PR #${pr}'s description on the forge, so Skelcrew kept it and left your new summary out. The lead has your summary. The reviewer reads trade-offs only from the description, so ask the lead about any your summary states.`,
+      said: `someone edited PR #${pr}'s description`,
+      typed_in: [],
+    });
+    noteForLead(
+      db,
+      sessions,
+      repository,
+      `${threadName(db, thread)}: someone edited PR #${pr}'s description on the forge, so Skelcrew kept it instead of the builder's new summary. That summary:\n\n${summary}`,
+    );
+    return;
+  }
+  const body = prBody(summary, closes);
   const edited = await editPr(db, repository, { pr, body }).catch(errorText);
   // A newer submit's push waits for this one, so its own edit comes next and says what holds.
   if (signal.aborted) return;
@@ -194,14 +235,10 @@ async function describePr(
     return;
   }
   const why = edited === false ? "the forge can't edit it" : edited;
-  const text = `Skelcrew couldn't replace PR #${pr}'s description with your new summary, so it still shows the one before: ${why}`;
-  record(db, folder, {}, text);
-  queueMessage(db, sessions, folder, {
-    sender: "skelcrew",
-    text,
-    said: `it couldn't replace PR #${pr}'s description`,
-    typed_in: [],
-  });
+  tell(
+    `Skelcrew couldn't replace PR #${pr}'s description with your new summary, so it still shows the one before: ${why}`,
+    `it couldn't replace PR #${pr}'s description`,
+  );
 }
 
 // How long a review waits for a first check when nothing says CI runs: no workflows and no CI

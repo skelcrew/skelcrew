@@ -2,6 +2,7 @@
 // which its sandbox lets it read, through the screen's real tmux servers.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname, userInfo } from "node:os";
 import { join } from "node:path";
 import { escapeTime } from "../src/screen/drops.ts";
 import { panes } from "../src/screen/screen.ts";
@@ -10,6 +11,7 @@ import {
   daemon,
   endTest,
   home,
+  noteRefreshes,
   onDetails,
   open,
   press,
@@ -18,7 +20,9 @@ import {
   screen,
   screenSessions,
   seen,
+  sidebarRefreshedTwice,
   startTest,
+  terminal,
   tmux,
   type,
   until,
@@ -55,6 +59,50 @@ test("a file dropped onto the lead reaches it as a copy in the lead's folder", a
   expect(line.startsWith(`${join(skelcrew(), "lead", ".skelcrew-drops")}/`)).toBe(true);
   expect(line.endsWith("/Screen\\ Shot.png")).toBe(true);
   expect(readFileSync(line.replaceAll("\\ ", " "), "utf8")).toBe("pixels");
+  expect(seen()).not.toContain(elsewhere);
+});
+
+// The row under the header, where the notice shows.
+const boxesRow = () => seen().split("\n")[1] ?? "";
+
+// What every wording of the notice that a dropped file is on another machine says.
+const elsewhere = "sc --remote ";
+
+test("a file dropped from another machine's terminal reaches the agent as it came, and the screen says how to drop it", async () => {
+  open("lead");
+  await ready("lead");
+  drop("/Users/simon/Desktop/shot.png");
+  expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
+  await until(() => boxesRow().includes(elsewhere), "the notice that the file is elsewhere");
+});
+
+test("on a phone-wide screen the notice wraps under the top rows, with the command whole", async () => {
+  open("lead");
+  await ready("lead");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "20", "-y", "30");
+  const zoomed = () =>
+    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
+  await until(() => zoomed().trim() === "1", "the lead alone on the phone-wide screen");
+  drop("/Users/simon/Desktop/shot.png");
+  expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
+  const command = `sc --remote ${userInfo().username}@${hostname()}`.replace(/ /g, "");
+  const told = () => seen().split("\n").slice(2, 5).join("").replace(/ /g, "");
+  await until(() => told().includes(command), "the command whole under the top rows");
+});
+
+test("the notice that a dropped file is elsewhere shows while the agent fills the terminal", async () => {
+  daemon();
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onDetails, "APP-12's details");
+  type("a");
+  const zoomed = () =>
+    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
+  await until(() => zoomed().trim() === "1", "app-12 full screen");
+  drop("/Users/simon/Desktop/shot.png");
+  expect(await got("app-12")).toBe("/Users/simon/Desktop/shot.png");
+  await until(() => boxesRow().includes(elsewhere), "the notice over the full-screen agent");
 });
 
 test("a file dropped onto a builder you attached to reaches it in its clone", async () => {
@@ -232,6 +280,16 @@ test("a screen opened from a laptop with sc --remote leaves a drop to the laptop
   expect(existsSync(join(skelcrew(), "lead", ".skelcrew-drops"))).toBe(false);
 });
 
+test("a screen opened from a laptop with sc --remote says nothing of a path missing here", async () => {
+  noteRefreshes();
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
+  await ready("lead");
+  drop("/Users/simon/Desktop/shot.png");
+  expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
+  await sidebarRefreshedTwice();
+  expect(seen()).not.toContain(elsewhere);
+});
+
 test("the screen's tmux waits for the rest of a cut-off paste start as long as the layer before it", async () => {
   open("lead");
   await ready("lead");
@@ -239,9 +297,12 @@ test("the screen's tmux waits for the rest of a cut-off paste start as long as t
 });
 
 test("text pasted onto the screen reaches the agent as it was", async () => {
+  noteRefreshes();
   open("lead");
   await ready("lead");
   type("\x1b[200~/tmp and more\x1b[201~");
   press("Enter");
   expect(await got("lead")).toBe("/tmp and more");
+  await sidebarRefreshedTwice();
+  expect(seen()).not.toContain(elsewhere);
 });

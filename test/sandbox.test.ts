@@ -860,3 +860,78 @@ test("a Claude Code session gets Claude Code's key and not Codex's", () => {
   expect(env.ANTHROPIC_API_KEY).toBe("sk-ant");
   expect(env.OPENAI_API_KEY).toBeUndefined();
 });
+
+test("Codex saves folder trust before launch, including resumes, and refuses a linked config", async () => {
+  const given = { ...lead(), name: "lead", socket: socketPath, env: outside() };
+  const started = await codex.start(given);
+  const config = join(started.env.CODEX_HOME ?? "", "config.toml");
+  expect(Bun.TOML.parse(readFileSync(config, "utf8"))).toEqual({
+    projects: { [realpathSync(given.folder)]: { trust_level: "trusted" } },
+  });
+  writeFileSync(config, "old = true\n");
+  await codex.start({ ...given, resume: "saved-conversation" });
+  expect(readFileSync(config, "utf8")).not.toContain("old");
+  rmSync(config);
+  const other = join(home, "untouched");
+  writeFileSync(other, "keep");
+  symlinkSync(other, config);
+  await expect(codex.start(given)).rejects.toThrow("is a link");
+  expect(readFileSync(other, "utf8")).toBe("keep");
+});
+
+test("Codex saves trust for the real folder when its path is linked or ends with a slash", async () => {
+  const real = join(home, 'work "quoted"');
+  const linked = join(home, "linked");
+  mkdirSync(real);
+  symlinkSync(real, linked);
+  for (const folder of [linked, `${real}/`]) {
+    const started = await codex.start({ name: "lead", folder, socket: socketPath, env: outside() });
+    const config = join(started.env.CODEX_HOME ?? "", "config.toml");
+    expect(Bun.TOML.parse(readFileSync(config, "utf8"))).toEqual({
+      projects: { [realpathSync(real)]: { trust_level: "trusted" } },
+    });
+  }
+});
+
+test("Codex refuses oversized role instructions without truncating them", async () => {
+  const given = { ...lead(), name: "lead", socket: socketPath, env: outside() };
+  await expect(codex.start({ ...given, system: "x".repeat(200 * 1024) })).rejects.toThrow(
+    "exceed 100 KiB",
+  );
+  await expect(codex.start({ ...given, system: "\n".repeat(60 * 1024) })).rejects.toThrow(
+    "skelcrew.config.toml",
+  );
+});
+
+test("Codex reads its role file after the host starts and passes it as a command-line override", async () => {
+  const system = `${"x".repeat(20 * 1024)} literal $(touch should-not-exist) \`unchanged\``;
+  const folder = join(home, "work");
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "codex"), '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CODEX_HOME/received"\n', {
+    mode: 0o755,
+  });
+  for (const resume of [undefined, "saved-conversation"]) {
+    const started = await codex.start({
+      name: "lead",
+      folder,
+      socket: socketPath,
+      system,
+      ...(resume ? { resume } : {}),
+      env: outside(),
+    });
+    const at = started.argv.indexOf("--chdir");
+    expect(at).toBeGreaterThan(0);
+    const run = Bun.spawnSync(started.argv.slice(at + 3), {
+      cwd: folder,
+      env: { ...outside(), ...started.env, PATH: `${bin}:/usr/bin:/bin` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode).toBe(0);
+    const args = readFileSync(join(started.env.CODEX_HOME ?? "", "received"), "utf8").split("\n");
+    expect(args).toContain(`developer_instructions = ${JSON.stringify(system)}`);
+    expect(existsSync(join(folder, "should-not-exist"))).toBe(false);
+    expect(started.argv.join(" ")).not.toContain(system);
+  }
+});

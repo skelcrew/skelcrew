@@ -23,6 +23,7 @@ import {
   roundOf,
   submitted,
   submittedBefore,
+  summariesSubmitted,
   verdictPosted,
   verdictReached,
 } from "../src/flow/ledger.ts";
@@ -411,6 +412,18 @@ test("a thread submitted before once its record holds two submits", () => {
   // A row from before the record that had submitted, such as one whose PR number was never saved.
   const migrated = thread({ round_log: null, rounds: 1, reviewed_commit: sha });
   expect(submittedBefore({ ...migrated, ...submitted(migrated, "Fix", 2000, false) })).toBe(true);
+});
+
+// A PR's description that holds any of them is Skelcrew's own, such as an older one kept after
+// the forge couldn't edit it. A row from before the record has none, so its PR's is kept.
+test("a thread's record keeps each summary the builder submitted, oldest first", () => {
+  const fresh = thread({ round_log: [] });
+  const first = { ...fresh, ...submitted(fresh, "Add export", 1000, false) };
+  const second = { ...first, ...submitted(first, "Fix", 2000, false) };
+  expect(summariesSubmitted(second)).toEqual(["Add export", "Fix"]);
+  expect(summariesSubmitted(thread({ round_log: null, rounds: 1, reviewed_commit: sha }))).toEqual(
+    [],
+  );
 });
 
 // What the forge said while a round moved on is about the older round. Posting a verdict or

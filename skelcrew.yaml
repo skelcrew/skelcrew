@@ -2,3 +2,4 @@
 setup: [bun install]
 test: [bun run check]
 limits: { threads: 5 }
+plugins: [skelcrew/skelcrew-github]

@@ -21,6 +21,7 @@ const base: Top = {
   typingRight: true,
   fullScreen: false,
   side: "",
+  elsewhere: null,
 };
 // Returns the header and the boxes' row as tmux formats, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
@@ -177,13 +178,13 @@ test("tabs name each repository in order, after the header, with a badge for wha
   expect(boxRow({ tabs })).not.toContain("site");
 });
 
-test("a tab's badge counts what needs you and what is ready apart, each in its colour", () => {
+test("a tab's badge counts what needs you and what is ready apart, only what needs you coloured", () => {
   const red = headerRow({ tabs: [tab("app"), tab("site", 2, 0, "red")] });
   expect(red).toContain("  site #[fg=colour210]•2  ");
   const ready = headerRow({ tabs: [tab("app"), tab("site", 0, 1)] });
-  expect(ready).toContain("  site #[fg=colour120]•1  ");
+  expect(ready).toContain("  site #[fg=colour250]•1  ");
   const both = [tab("app"), tab("site", 2, 1)];
-  expect(headerRow({ tabs: both })).toContain("  site #[fg=colour221]•2 #[fg=colour120]•1  ");
+  expect(headerRow({ tabs: both })).toContain("  site #[fg=colour221]•2 #[fg=colour250]•1  ");
   expect(tabText(both, "simon/app", 120)).toBe("  app    site •2 •1");
 });
 
@@ -279,4 +280,88 @@ test("on a phone-wide screen with many tabs, the way back to the sidebar still s
   expect(seen(line)).toContain("‹ sidebar");
   expect(line).toContain("#[range=user|sidebar]");
   expect(seen(line)).toHaveLength(terminal(given));
+});
+
+test("after a drop from another machine, the right box's edge says how to drop it, and the rest stays", () => {
+  const drawn = top({ elsewhere: "simon@workbox" });
+  expect(seen(drawn.boxes)).toMatch(
+    new RegExp(
+      `^─┬─{${size.sidebar}}┬── That file is on another machine\\. To drop files, run sc --remote simon@workbox there\\. ─*┬─$`,
+    ),
+  );
+  expect(Bun.stringWidth(seen(drawn.boxes))).toBe(terminal(size));
+  expect(drawn.header).toBe(headerRow());
+});
+
+test("the notice keeps the box your typing goes to lit, and the other dim", () => {
+  const [lit, dim] = ["#[fg=colour33]", "#[fg=brightblack]"];
+  const toRight = boxRow({ elsewhere: "simon@workbox" });
+  expect(toRight).toStartWith(`${dim}─#[default]${dim}┬─`);
+  expect(toRight).toContain(`${lit}┬#[default]${lit}──#[default] #[fg=colour231]`);
+  const toSidebar = boxRow({ elsewhere: "simon@workbox", typingRight: false });
+  expect(toSidebar).toStartWith(`${dim}─#[default]${lit}┬─`);
+  expect(toSidebar).toContain(`${lit}┬#[default]${dim}──#[default] #[fg=colour231]`);
+});
+
+test("on a narrow screen the notice says it shorter along the whole row, and keeps the way back", () => {
+  for (const width of [79, 60, 45, 30]) {
+    const given = { sidebar: 0, right: width - 5 };
+    const drawn = top({ elsewhere: "simon@workbox", side: "lead", fullScreen: true }, given);
+    expect(seen(drawn.boxes)).toContain("sc --remote simon@workbox");
+    expect(Bun.stringWidth(seen(drawn.boxes))).toBe(width);
+    expect(drawn.boxes).not.toContain("brightblack");
+    expect(seen(drawn.header)).toContain("‹ sidebar");
+  }
+  const split = seen(top({ elsewhere: "simon@workbox" }, { sidebar: 27, right: 48 }).boxes);
+  expect(split).toContain("sc --remote simon@workbox");
+});
+
+test("a command too long for the boxes' row wraps whole over rows below it, and the boxes stay", () => {
+  const machine = "simon@a-very-long-hostname.example.internal";
+  const cases: [Partial<Top>, { sidebar: number; right: number }][] = [
+    [
+      { fullScreen: true, side: "lead" },
+      { sidebar: 0, right: 15 },
+    ],
+    [
+      { fullScreen: true, side: "lead" },
+      { sidebar: 0, right: 40 },
+    ],
+    [{}, { sidebar: 27, right: 48 }],
+  ];
+  for (const [more, given] of cases) {
+    const drawn = top({ ...more, elsewhere: machine }, given);
+    expect(drawn.boxes).toBe(boxRow(more, given));
+    expect(drawn.below.length).toBeGreaterThan(0);
+    expect(drawn.below.length).toBeLessThanOrEqual(3);
+    for (const row of drawn.below) expect(Bun.stringWidth(seen(row))).toBe(terminal(given));
+    const told = drawn.below.map((row) => seen(row).trim()).join(" ");
+    expect(told.replace(/ /g, "")).toContain(`sc--remote${machine}`);
+  }
+  const long = top(
+    { elsewhere: "simon@build-box-02.lan", fullScreen: true },
+    { sidebar: 0, right: 15 },
+  );
+  expect(long.below.map((row) => seen(row).trim()).join("")).toBe(
+    "sc --remote simon@build-box-02.lan",
+  );
+  const phone = top({ elsewhere: "simon@workbox", fullScreen: true }, { sidebar: 0, right: 15 });
+  expect(phone.below.map((row) => seen(row).trim())).toEqual([
+    "To drop files, run",
+    "sc --remote",
+    "simon@workbox",
+  ]);
+});
+
+test("a command that fits the boxes' row adds no rows", () => {
+  expect(top({ elsewhere: "simon@workbox" }).below).toEqual([]);
+  expect(top().below).toEqual([]);
+});
+
+test("without this machine's name, the notice says where to fill it in", () => {
+  expect(seen(boxRow({ elsewhere: "" }))).toContain("sc --remote <user@host>");
+});
+
+test("the machine's name in the notice is shown, never read as a format", () => {
+  expect(seen(boxRow({ elsewhere: "#(touch x)%" }))).toContain("sc --remote #(touch x)%%");
 });

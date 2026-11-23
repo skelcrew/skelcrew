@@ -1,6 +1,5 @@
-// How Codex runs inside the sandbox: as the lead or a builder, in a tmux session with a
-// CODEX_HOME of its own, and as the reviewer, once per review. Each gets its own copy of
-// Skelcrew's login.
+// How Codex starts leads, builders and reviews in the sandbox, with their own login copies.
+// Session folder trust is saved before launch; startup questions are recognised on screen.
 import {
   closeSync,
   constants,
@@ -10,6 +9,7 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -238,7 +238,9 @@ const tomlString = (text: string) => JSON.stringify(text);
 // a loop, which Codex can't load either. Only options every find has are used, -L and -name, as
 // an option a Mac's find lacked would fail quietly and turn nothing off, and a missing find or
 // realpath stops Codex for the same reason. The array may end with a comma, as TOML allows.
-const skillsOffStep = String.raw`k=$1; shift
+const skillsOffStep = String.raw`k=$1; instructions=$2; shift 2
+setting=
+if [ -n "$instructions" ]; then setting=$(cat "$instructions") || exit 1; fi
 command -v find > /dev/null && command -v realpath > /dev/null || { echo "Skelcrew needs find and realpath to keep unapproved skills from Codex" >&2; exit 1; }
 count=$(find -L .agents/skills -name SKILL.md -exec printf x \; 2>/dev/null; true)
 list=$(find -L .agents/skills -name SKILL.md 2>/dev/null; true)
@@ -254,7 +256,10 @@ done)
 i=0
 for a do
   shift
-  [ "$i" -eq "$k" ] && set -- "$@" -c "skills.config=[$off]"
+  if [ "$i" -eq "$k" ]; then
+    set -- "$@" -c "skills.config=[$off]"
+    [ -z "$setting" ] || set -- "$@" -c "$setting"
+  fi
   set -- "$@" "$a"
   i=$((i + 1))
 done
@@ -262,12 +267,13 @@ exec codex "$@"`;
 
 // Returns the command that runs codex with `args` through skillsOffStep, its setting put in after
 // the first `after` of them.
-const withSkillsOff = (after: number, args: string[]): string[] => [
+const withSkillsOff = (after: number, args: string[], instructions = ""): string[] => [
   "sh",
   "-c",
   skillsOffStep,
   "sh",
   String(after),
+  instructions,
   ...args,
 ];
 
@@ -327,11 +333,6 @@ async function checkModel(home: string, model: string, env: Record<string, strin
 // `repositories`, the folder of every repository's clone, read-only. `files` is the placeholder of
 // its dropped files, on a host that hands it some.
 //
-// Settings go on the command line rather than in the session's config.toml: a repository's
-// own .codex/config.toml wins over that file, and could turn the hooks off. Codex's own
-// sandbox and approvals are off, since Skelcrew's sandbox draws the boundary. Codex picks its own
-// session ID, so `sessionId` is not passed on. The repository's skills, from the .agents/
-// `skills` names, go into the CODEX_HOME's skills/, where Codex finds them.
 async function startCommand(given: {
   name: string;
   socket: string;
@@ -352,88 +353,64 @@ async function startCommand(given: {
     given;
   const { skills, files } = given;
   const env = given.env ?? process.env;
-  // Refuse what would start the wrong agent or write outside Skelcrew's folders, and a model
-  // Codex doesn't offer.
   const home = env.HOME;
   if (!home) throw new Error("HOME isn't set, so Skelcrew can't find its own folders");
-  // The name becomes a folder, so it must not climb out of Skelcrew's.
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(name)) throw new Error(`"${name}" can't name a session`);
-  // A login due for renewal is renewed before Codex runs on it here, so Codex never renews it.
   ownLogin(home, codexHome(home));
   await renewLogin(home);
   if (model) await checkModel(home, model, env);
 
-  // A folder of its own per session, never your ~/.codex: an agent could write instructions
-  // that another session loads. It stays, so codex resume finds the conversation.
   const sessions = join(dataDir(home), "codex-sessions");
   const sessionHome = join(sessions, name);
   const instructions = join(sessionHome, "skelcrew.config.toml");
-  // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
-  // link it left would send that write to any file of yours.
-  for (const p of [sessions, sessionHome, instructions])
+  const config = join(sessionHome, "config.toml");
+  for (const p of [sessions, sessionHome, instructions, config])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   mkdirSync(sessionHome, { recursive: true, mode: 0o700 });
-  // The instructions go in a profile of the session's own, as developer instructions, which
-  // weigh more than an AGENTS.md. On the command line they would stop the session: tmux refuses
-  // a start command past about 16 KB, and Linux an argument past 128 KB.
-  if (system) writeFileSync(instructions, `developer_instructions = ${tomlString(system)}\n`);
+  if (system) {
+    const setting = `developer_instructions = ${tomlString(system)}\n`;
+    if (Buffer.byteLength(setting) > 100 * 1024)
+      throw new Error(
+        `Codex role instructions for ${name} in ${instructions} exceed 100 KiB after TOML escaping; shorten the role file or repository commands`,
+      );
+    writeFileSync(instructions, setting);
+  }
   if (skills) copySkills(skills, join(sessionHome, "skills"), home);
-  // The agent sees its own folder, its CODEX_HOME and its copy of the login, all writable, and
-  // nothing else of yours.
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
+  writeFileSync(config, `[projects.${tomlString(realpathSync(cwd))}]\ntrust_level = "trusted"\n`);
   const mounts = [...rw(cwd), ...rw(sessionHome)];
-  // Read-only at the same path, as for Claude Code.
   if (origin) {
     refuseCredentials(origin);
     mounts.push(...ro(origin));
   }
-  // Every repository's clone, read-only, for a lead, as for Claude Code.
   if (repositories) mounts.push(...everyRepository(repositories));
 
-  // --no-daemon belongs to codex itself: without it Codex may start a background server that
-  // outlives the session.
   const command = ["codex", ...(resume ? ["resume"] : []), "--no-daemon"];
   command.push("--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust");
-  // The folder trusted, or Codex asks first. No update check, which only fails in the
-  // sandbox, and no paste burst, which could take a message typed in for keys.
-  command.push("-c", `projects.${tomlString(cwd)}.trust_level="trusted"`);
   command.push("-c", "check_for_update_on_startup=false", "-c", "tui.disable_paste_burst=true");
   command.push("-c", "features.hooks=true", ...agentHooks);
-  // Codex layers $CODEX_HOME/skelcrew.config.toml over its config when asked for that profile.
-  // A repository's own .codex/config.toml could win over it, but Codex loads that only for a
-  // folder trusted in a config file, not by the -c above.
-  if (system) command.push("-p", "skelcrew");
   if (model) command.push("-m", model);
   if (resume) command.push(resume);
-  // After --, so a message that starts with - is never taken for an option.
   else if (prompt) command.push("--", prompt);
 
-  // Only the environment the agent needs, plus its own CODEX_HOME.
   const kept = filterEnv(env, codex.keys);
   kept.CODEX_HOME = sessionHome;
   const path = env.PATH ?? "";
-  // A login left from before, its own or a link to one shared, never stays. Codex renews by
-  // renaming a new file beside the one a link leads to, so the copy has a folder of its own.
-  // It is written by launch, as the session starts, and removed if anything there fails. The
-  // session removes it as it ends.
   for (const file of ["auth.json", "auth.lock"])
     rmSync(join(sessionHome, file), { recursive: true, force: true });
   const login = sessionLogin(home, name);
   const loggedIn = hasLogin(home);
   if (loggedIn) mounts.push(...rw(login));
-  // Codex starts through the step that turns off the skills in its folder's .agents/skills/,
-  // put in after resume and --no-daemon. Only a builder has a thread. The lead is what you type
-  // into, so it keeps its priority.
   const argv = sandboxArgs({
     home,
     path,
     mounts,
     socket,
     cwd,
-    command: withSkillsOff(resume ? 2 : 1, command.slice(1)),
+    command: withSkillsOff(resume ? 2 : 1, command.slice(1), system ? instructions : ""),
     programs: ["codex"],
     normalPriority: !thread,
     files,
@@ -626,7 +603,16 @@ export const codex = {
   title: "Codex",
   program: "codex",
   install: "npm install -g @openai/codex",
-  marks: { busy: "esc to interrupt", prompt: "› Ask Codex to do anything" },
+  marks: {
+    busy: "esc to interrupt",
+    prompt: "› Ask Codex to do anything",
+    startupQuestions: [
+      { heading: "Folder access", reason: "Codex is asking to trust its folder" },
+      { heading: "Hooks need review", reason: "Codex is asking to review its hooks" },
+      { heading: "Welcome to Codex,", reason: "Codex is asking to sign in" },
+      { heading: "Update available!", reason: "Codex is asking to update" },
+    ],
+  },
   keys: ["OPENAI_API_KEY", "CODEX_API_KEY"],
   start: startCommand,
   saved: savedConversation,
