@@ -666,11 +666,8 @@ export async function initRepo(): Promise<void> {
     hasAgents ? null : ".agents/",
   ].filter((name) => name !== null);
   if (wrote.length > 0) {
-    const many = wrote.length > 1;
-    console.log(`Wrote ${wrote.slice(0, -1).join(", ")}${many ? " and " : ""}${wrote.at(-1)}.`);
-    console.log(
-      "Commit and push them once sc install is done, as Skelcrew's agents read them from your default branch.",
-    );
+    const { offerCommit } = await import("../machine/init-commit.ts");
+    await offerCommit(root, remote, wrote);
   }
   console.log("Next: sc install");
 }

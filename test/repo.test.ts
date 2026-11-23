@@ -1061,14 +1061,119 @@ plugins:
   expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
   expect(await listed()).toEqual([]);
   expect(calls()).not.toContain("daemon");
+  // With no terminal to answer, it commits nothing and says how to.
+  const paths = "skelcrew.yaml skelcrew.lock .agents/";
   expect(run.out).toEndWith(
     [
       "Wrote skelcrew.yaml, skelcrew.lock and .agents/.",
-      "Commit and push them once sc install is done, as Skelcrew's agents read them from your default branch.",
+      "To commit and push them yourself, run:",
+      "",
+      `  git add -- ${paths}`,
+      "",
+      `  git commit -m "Set up Skelcrew" -- ${paths}`,
+      "",
+      "  git push origin HEAD:main",
+      "",
       "Next: sc install",
       "",
     ].join("\n"),
   );
+});
+
+// Runs sc init in the checkout with a terminal as its input, typing `typed`. The checkout has
+// skelcrew.yaml already, so the only question is the commit's.
+function initAtTerminal(checkout: string, typed: string) {
+  return inTerminal([process.execPath, main, "init"], {
+    typed,
+    env: {
+      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+      HOME: home,
+      XDG_RUNTIME_DIR: join(home, "run"),
+    },
+    cwd: checkout,
+  });
+}
+
+// Your checkout of simon/app on main, up to date with origin, with a file you changed and one you
+// staged that aren't sc init's.
+function checkoutWithOwnChanges(): string {
+  const checkout = onGitHub("simon/app", "WRITE");
+  git(
+    checkout,
+    "fetch",
+    "-q",
+    join(home, "github", "simon/app.git"),
+    "main:refs/remotes/origin/main",
+  );
+  git(checkout, "config", "user.name", "Simon");
+  git(checkout, "config", "user.email", "simon@example.com");
+  githubInstalledAsYours();
+  writeFileSync(join(checkout, "README"), "changed\n");
+  writeFileSync(join(checkout, "notes"), "staged\n");
+  git(checkout, "add", "notes");
+  return checkout;
+}
+
+const bare = () => join(home, "github", "simon/app.git");
+
+// A yes commits only what sc init wrote, with your own git, and pushes it to the default branch,
+// so the next sc finds skelcrew.yaml there. What else you changed or staged stays as it was.
+test("init at a terminal commits only its own files and pushes them to the default branch on a yes", async () => {
+  const checkout = checkoutWithOwnChanges();
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Wrote skelcrew.yaml, skelcrew.lock and .agents/. Commit and push them to main? [Y/n]",
+  );
+  expect(run.out).toContain("Committed them and pushed them to main.");
+  expect(git(bare(), "log", "-1", "--format=%s", "main").trim()).toBe("Set up Skelcrew");
+  const files = git(bare(), "show", "--name-only", "--format=", "main").trim().split("\n");
+  expect(files.filter((file) => !file.startsWith(".agents/"))).toEqual([
+    "skelcrew.lock",
+    "skelcrew.yaml",
+  ]);
+  expect(files).toContain(".agents/roles/lead.md");
+  expect(git(checkout, "status", "--porcelain")).toBe(" M README\nA  notes\n");
+  // skelcrew.yaml is on the default branch now, so the next sc opens the repository.
+  expect((await skel([], "", checkout)).err).toBe("");
+  expect(await listed()).toEqual([["app", "simon/app", "github"]]);
+});
+
+// A default branch that refuses the push, such as a protected one, gets the commit as a branch
+// and a pull request through the forge plugin instead.
+test("init whose push is refused offers a branch and a pull request through the forge", async () => {
+  const checkout = checkoutWithOwnChanges();
+  writeFileSync(
+    join(bare(), "hooks", "pre-receive"),
+    '#!/bin/sh\nwhile read -r old new ref; do [ "$ref" = refs/heads/main ] && { echo "main is protected" >&2; exit 1; }; done\nexit 0\n',
+    { mode: 0o755 },
+  );
+  const run = await initAtTerminal(checkout, "y\ny\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Committed them, but main refused the push:");
+  expect(run.out).toContain("main is protected");
+  expect(run.out).toContain(
+    "Push them to a branch, skelcrew/setup, and open a pull request instead? [Y/n]",
+  );
+  expect(run.out).toContain("Pushed them to skelcrew/setup. Opened pull request #7.");
+  expect(git(bare(), "log", "-1", "--format=%s", "skelcrew/setup").trim()).toBe("Set up Skelcrew");
+  expect(git(bare(), "log", "-1", "--format=%s", "main").trim()).toBe("start");
+  expect(asked(forge)).toContainEqual(
+    expect.objectContaining({ ask: "open pr", branch: "skelcrew/setup", base: "main" }),
+  );
+});
+
+// A no commits nothing, and says how to do it by hand.
+test("init at a terminal prints the git commands on a no, and commits nothing", async () => {
+  const checkout = checkoutWithOwnChanges();
+  const before = git(checkout, "rev-parse", "HEAD");
+  const run = await initAtTerminal(checkout, "n\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("To commit and push them yourself, run:");
+  expect(run.out).toContain("git push origin HEAD:main");
+  expect(git(checkout, "rev-parse", "HEAD")).toBe(before);
+  expect(git(bare(), "log", "-1", "--format=%s", "main").trim()).toBe("start");
 });
 
 // Runs sc install in the checkout with a terminal as its input, typing `typed`.
