@@ -11,11 +11,12 @@ import { panes } from "./screen.ts";
 const always = "⌥↑↓ move  ⌥W close  ⌥Q quit";
 
 // Returns the footer's text while your typing goes to an agent on the right side, named by
-// `name`, such as lead or APP-12: which one it is and the key back to the list, then the keys you
-// need most and what Esc stops there, with its harness's name, so you never have to guess that
-// Esc is the agent's. An agent whose harness isn't known yet, given as empty, gets no Esc.
+// `name`, such as lead or APP-12: which one it is and the key that switches to the sidebar, then
+// the keys you need most and what Esc stops there, with its harness's name, so you never have to
+// guess that Esc is the agent's. An agent whose harness isn't known yet, given as empty, gets no
+// Esc.
 export function agentFooter(name: string, harness: string): string {
-  const keys = `typing to ${name} · ⌃\\ to list  ${always}`;
+  const keys = `typing to ${name} · ⌥Tab switch  ${always}`;
   return harness ? `${keys}  Esc stops ${harness}` : keys;
 }
 

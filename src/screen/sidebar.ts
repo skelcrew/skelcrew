@@ -87,12 +87,12 @@ const altPattern = new RegExp(`^${esc}(\\[1;3[AB]|\\[1;4[A-D]|[0-6w]|\\[<|\\])`)
 const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // The keys the sidebar acts on, by what they do. The Alt ones come from the screen's tmux, from
 // anywhere. The plain ones come only while your typing goes to the sidebar. Alt with a digit and
-// the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte
-// from anywhere, to bring your typing here, and Shift-Enter as CSI-u, only while your typing is
-// here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
+// the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte from anywhere,
+// for Alt-Tab, Ctrl-\ or Ctrl-4, to switch your typing, and Shift-Enter as CSI-u, only while
+// your typing is here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
 // Enter, except on an item you opened, where it picks option a. Alt-W and plain w ask whether to close or remove the open repository.
 const keyNames: Record<string, string> = {
-  "\x1c": "to sidebar",
+  "\x1c": "switch",
   "\x1bw": "close",
   w: "close",
   "\x1b": "esc",
@@ -281,13 +281,14 @@ export async function runSidebar(
   let running: string[] = [];
   // What is on the right: an agent's session, or a task's details, by detailsOf.
   let shown: string | null = null;
-  // Whether you keep your typing in the sidebar yourself, by Ctrl-\ or by any plain key there.
+  // Whether you keep your typing in the sidebar yourself, by a switch or by any plain key there.
   // Moving then leaves it there, even onto the lead's row, so a digit or an arrow never lands in
   // an agent. Enter on the lead's row or a click on the lead gives it back. With Alt keys alone,
   // typing follows the row: the lead's row types to the lead.
   let held = false;
   // Where your typing went at the last look, which the top of the boxes shows and the footer says.
   let typingRight = true;
+  let switchedFrom: { name: string; zoomed: boolean } | null = null;
   let narrow = false;
   // What the footer says in place of its keys until the next key, the question it asks, and
   // whether the daemon is at work on an answer.
@@ -369,6 +370,25 @@ export async function runSidebar(
   const toSidebar = () => {
     held = true;
     screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
+  };
+  const switchTyping = () => {
+    const asked = (format: string) =>
+      screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim();
+    const row = rows[here];
+    if (asked("#{pane_active}") === "1") {
+      switchedFrom = row
+        ? { name: row.name, zoomed: asked("#{window_zoomed_flag}") === "1" }
+        : null;
+      toSidebar();
+      if (asked("#{pane_start_command}").includes(attachedMark))
+        screenTmux(agents, ["run-shell", "-t", rightPane, "pkill -P #{pane_pid}"]);
+      return;
+    }
+    if (closing) return working ? undefined : goBack();
+    if (!held || !row) return toSidebar();
+    const zoom = switchedFrom?.name === row.name && switchedFrom.zoomed;
+    if (row.part === "lead" || row.part === "ask") return toRight(zoom);
+    if (switchedFrom?.name === row.name && row.session) attachBuilder(row, zoom);
   };
   const endAttachment = () => {
     const command = screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_start_command}"]);
@@ -728,8 +748,8 @@ export async function runSidebar(
     working = false;
     refresh();
   };
-  // Acts on a key while the close key's question is open, and takes every key but Ctrl-\, so none
-  // moves or opens anything under it. c or r choose, y says yes to the choice, and n or Esc go
+  // Acts on a key while the close key's question is open, and takes every key but a switch, so
+  // none moves or opens anything under it. c or r choose, y says yes to the choice, and n or Esc go
   // back. Any key goes back from a refusal.
   const answerClosing = (question: Closing, name: string) => {
     if (question.step === "refused") return goBack();
@@ -839,7 +859,7 @@ export async function runSidebar(
     else if (row.merge) asking = { question: row.merge, row: row.name, offer: "merge" };
     else said = openPr(db, open, row, canOpen, (text) => process.stdout.write(text));
   };
-  // Acts on a key while you type a reply, which takes every key but Ctrl-\.
+  // Acts on a key while you type a reply, which takes every key but a switch.
   const typeInReply = (reply: Reply, key: string) => {
     const typed = typeReply(reply, key);
     replying = typeof typed === "string" ? null : typed;
@@ -958,7 +978,7 @@ export async function runSidebar(
   const press = (key: string) => {
     if (key === dropAsk) return answerDrop();
     const name = keyNames[key] ?? key;
-    if (name === "to sidebar") return toSidebar();
+    if (name === "switch") return switchTyping();
     if (working) return;
     if (closing) return answerClosing(closing, name);
     if (replying) return typeInReply(replying, name === "enter" || name === "esc" ? name : key);

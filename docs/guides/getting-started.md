@@ -104,7 +104,7 @@ sc merge --when-ready APP-12
 
 ## Leaving
 
-Press Alt+Q to leave the screen. You see:
+Press Alt+Q to leave the screen. On a Mac, Alt keys need your terminal to send ⌥ as Alt: [the screen](the-screen.md#alt-keys-on-a-mac) says how. You see:
 
 ```
 Your agents keep running. Run sc to come back.

@@ -199,9 +199,9 @@ test("moving to another row while attached comes back from the builder, and show
   expect(tmux(agents, "list-clients").out).not.toContain("app-7");
 });
 
-// Ctrl-\\ moves your typing to the sidebar, and on a task's details it is there already, so the
-// details stay.
-test("Ctrl-\\ on the lead moves your typing to the sidebar, and on a task's details keeps it there", async () => {
+// Ctrl-\\ moves your typing to the sidebar, and back to the lead. A task's details are only to
+// look at, so there it stays in the sidebar, however often you press it.
+test("Ctrl-\\ switches between the lead and the sidebar, and on a task's details keeps your typing in the sidebar", async () => {
   open("lead");
   await ready("lead");
   expect(typingTo()).toBe("right");
@@ -210,12 +210,16 @@ test("Ctrl-\\ on the lead moves your typing to the sidebar, and on a task's deta
   type("x");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
-  onRow("show", "APP-7");
-  await until(onDetails, "app-7's details");
   press("C-\\");
-  await Bun.sleep(500);
-  expect(onDetails()).toBe(true);
-  expect(typingTo()).toBe("sidebar");
+  await until(() => typingTo() === "right", "your typing to go back to the lead");
+  press("M-S-Down");
+  await until(onDetails, "app-12's details");
+  for (const _ of [1, 2]) {
+    press("C-\\");
+    await Bun.sleep(500);
+    expect(onDetails()).toBe(true);
+    expect(typingTo()).toBe("sidebar");
+  }
 });
 
 test("Enter on a task whose builder isn't running, or that went, says so, and attaches to nothing", async () => {

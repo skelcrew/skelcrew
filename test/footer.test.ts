@@ -4,12 +4,12 @@ import { agentFooter, drawFooter } from "../src/screen/footer.ts";
 
 test("under an agent the footer says which one you type to and the key back to the list, then move, quit and what Esc stops", () => {
   expect(agentFooter("lead", "claude")).toBe(
-    "typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
+    "typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
   );
   expect(agentFooter("APP-12", "codex")).toBe(
-    "typing to APP-12 · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops codex",
+    "typing to APP-12 · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops codex",
   );
-  expect(agentFooter("lead", "")).toBe("typing to lead · ⌃\\ to list  ⌥↑↓ move  ⌥W close  ⌥Q quit");
+  expect(agentFooter("lead", "")).toBe("typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit");
 });
 
 test("the footer is a dim row two columns in", () => {
