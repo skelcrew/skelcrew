@@ -582,7 +582,7 @@ function leadBlock(row: Row, here: boolean, width: number): { lines: string[]; m
     lines: [
       ...marked(second ? [first, second] : [first], here, width),
       ...(second ? [] : [""]),
-      paint(grey, "─".repeat(width)),
+      ` ${paint(grey, "─".repeat(Math.max(width - 1, 0)))}`,
     ],
     mark: row.working ? mark : null,
   };

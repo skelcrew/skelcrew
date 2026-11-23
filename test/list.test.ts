@@ -1050,7 +1050,7 @@ test("every section has its heading with its count, only open ones show rows, an
   expect(lines.slice(2, 24).map((line) => line.trimEnd())).toEqual([
     "   ◆ Lead · Claude Code                                              ○ starting",
     "",
-    "─".repeat(79),
+    ` ${"─".repeat(78)}`,
     "   Needs you  2",
     " ▸ ● 12  Rate limit the API",
     "     Its builder asked a question · 2 options",
@@ -1387,11 +1387,11 @@ test("the lead heads the list with its state and step, then a divider directly b
   expect(lines.slice(0, 4).map((line) => Bun.stripANSI(line).trimEnd())).toEqual([
     `${"   ◆ Lead · Claude Code".padEnd(41)}○ working`,
     "     Reading rows.ts",
-    "─".repeat(50),
+    ` ${"─".repeat(49)}`,
     "   Needs you  2",
   ]);
   expect(targets.slice(0, 4)).toEqual([{ row: 0 }, { row: 0 }, null, { section: "needs you" }]);
-  expect(lines[2]).toStartWith("\x1b[90m─");
+  expect(lines[2]).toStartWith(" \x1b[90m─");
   const narrow = drawRows(shown, sectionHeadings(all, opened), 0, 0, 30, 30).lines;
   expect(narrow[0]).toContain("\x1b[48;5;238m");
   expect(narrow[1]).toContain("\x1b[48;5;238m");
@@ -1687,7 +1687,7 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
   expect(lines.slice(2, 16).map((line) => line.trimEnd())).toEqual([
     "   ◆ Lead · Claude Code                                              ○ starting",
     "",
-    "─".repeat(79),
+    ` ${"─".repeat(78)}`,
     " ↑ 10 more   Needs you 2   Backlog 1   Task queue 1   Building 11",
     "   ○ 56  Task 56",
     "     16m",
@@ -1799,7 +1799,7 @@ test("an empty repository shows stages directly after the lead divider", () => {
   );
   expect(lines.slice(1, 4).map((line) => Bun.stripANSI(line).trimEnd())).toEqual([
     "",
-    "─".repeat(50),
+    ` ${"─".repeat(49)}`,
     " 0 Backlog    0",
   ]);
   expect(targets[3]).toEqual({ section: "backlog" });

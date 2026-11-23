@@ -168,9 +168,10 @@ export type Top = {
 // start where the right side does, so they sit above it. When one of the two doesn't fit its
 // part, it takes what the other leaves, so nothing is left out while the row has room for it.
 // Under it, the boxes' row draws the top of the box round each side, which tmux's lines between
-// the panes can't: ┬ above each of those lines, and a stub of dim line above each pad at the
-// outer edges, as tmux's line under the panes has. The box your typing goes to is lit, the line
-// the sides share always, and the rest is dim, as tmux draws the lines below. While the right
+// the panes can't: a corner above each of those lines, and a stub of dim line above each pad at
+// the outer edges, as tmux's line under the panes has. The box your typing goes to is lit, with
+// ┌ and ┐ for its corners, so the dim lines stop at it, and the rest is dim, with ┬ over the dim
+// box's outer line, as tmux draws the lines below. While the right
 // side fills the terminal, tmux hides the panes that draw the boxes' lines, so the whole boxes'
 // row is lit, as the one mark left that your typing goes to the agent, with no corner over lines
 // that aren't there. For a while after a file dropped was on another machine, the boxes' row also
@@ -199,7 +200,12 @@ export function drawTop(top: Top, size: Size): { header: string; boxes: string; 
   const tabs = drawTabs(top.tabs, top.open, Math.max(width - split, 0));
   const after = " ".repeat(Math.max(width - split - tabs.width, 0));
   const [left, right] = top.fullScreen ? [lit, lit] : top.typingRight ? [dim, lit] : [lit, dim];
-  const [outer, corner] = top.fullScreen ? [lit, "─"] : [dim, "┬"];
+  const outer = top.fullScreen ? lit : dim;
+  const [first, middle, last] = top.fullScreen
+    ? ["─", "─", "─"]
+    : top.typingRight
+      ? ["┬", "┌", "┐"]
+      : ["┌", "┐", "┬"];
   const command =
     top.elsewhere === null
       ? ""
@@ -208,12 +214,12 @@ export function drawTop(top: Top, size: Size): { header: string; boxes: string; 
     command !== "" && Bun.stringWidth(command) <= (top.fullScreen ? width : size.right) - 4;
   const rightEdge =
     inLine && !top.fullScreen
-      ? `${elsewhereLine(command, size.right, right)}${inColour(right, corner)}`
-      : inColour(right, `${"─".repeat(Math.max(size.right, 0))}${corner}`);
+      ? `${elsewhereLine(command, size.right, right)}${inColour(right, last)}`
+      : inColour(right, `${"─".repeat(Math.max(size.right, 0))}${last}`);
   const boxes = [
     inColour(outer, "─"),
-    inColour(left, `${corner}${"─".repeat(Math.max(size.sidebar, 0))}`),
-    inColour(lit, corner),
+    inColour(left, `${first}${"─".repeat(Math.max(size.sidebar, 0))}`),
+    inColour(lit, middle),
     rightEdge,
     inColour(outer, "─"),
   ].join("");

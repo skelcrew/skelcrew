@@ -61,7 +61,7 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   expect(lines[2]).toContain("I am lead");
   expect(left(3)).toMatch(/^ ▸ ◆ Lead\b/);
   expect(left(4)).toBe("");
-  expect(left(5)).toMatch(/^─+$/);
+  expect(left(5)).toMatch(/^ ─+$/);
   expect(left(6)).toBe(" 0 Backlog    0");
   expect(left(7)).toBe(" 1 Task queue 0");
   expect(left(8)).toBe(" 2 Building   2");

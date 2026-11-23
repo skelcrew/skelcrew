@@ -86,10 +86,10 @@ export function selected(window = "one"): string {
     .trim();
 }
 // Returns whose box is lit, which is where your typing goes: the sidebar's, the right side's, both
-// or none, from the colour of the outer line of each side, on the row under the top rows. The
-// line between the two sides is in both boxes, so it says nothing.
-export function litBox(window = "one"): string {
-  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out.split("\n")[2];
+// or none, from the colour of the outer line of each side, on the row under the top rows or the
+// row given. The line between the two sides is in both boxes, so it says nothing.
+export function litBox(window = "one", at = 2): string {
+  const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out.split("\n")[at];
   const parts = (row ?? "").split("│");
   // The colours that were set last before a line, as the text before it ends.
   const lit = (before: string) => before.lastIndexOf("38;5;136") > before.lastIndexOf("\x1b[9");
