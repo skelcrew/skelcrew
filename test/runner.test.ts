@@ -7,6 +7,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { timesOfFiles } from "../scripts/shards.ts";
+import { overdue } from "../scripts/stuck.ts";
 
 const runner = join(import.meta.dir, "..", "scripts", "test.ts");
 let folder = "";
@@ -135,6 +136,61 @@ test("in CI a run stopped at its limit still prints the times it has, and names 
   expect(code).toBe(1);
   expect(timeOf(out, "quick.test.ts  quick").seconds).toBeGreaterThanOrEqual(0.1);
   expect(out).toMatch(/\n +cut off {2}hangs\.test\.ts\n/);
+});
+
+// A run that hangs says where, before it is stopped: the file and the test each worker is on,
+// and every process, which shows what the test waits on. A test made with test.skipIf or
+// test.each is named too, test.each's as Bun fills it in from its row.
+test("in CI a run stopped at its limit first says which file and test ran, and what processes ran", async () => {
+  const hangs = "() => new Promise(() => {}), 600_000";
+  const files = {
+    "plain.test.ts": `test("waits for ever", ${hangs});`,
+    "skipped.test.ts": `test.skipIf(false)("waits unless skipped", ${hangs});`,
+    "each.test.ts": `test.each([["one", 1]])("waits for row %s, %d", (_name, _n) => new Promise(() => {}), 600_000);`,
+  };
+  for (const [file, body] of Object.entries(files))
+    writeFileSync(join(folder, file), `import { test } from "bun:test";\n${body}\n`);
+  const run = Bun.spawn([process.execPath, runner, ...Object.keys(files).map((f) => `./${f}`)], {
+    cwd: folder,
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: folder,
+      GITHUB_ACTIONS: "true",
+      SKELCREW_TESTS_LIMIT: "4000",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
+  expect(code).toBe(1);
+  const said = err.slice(err.indexOf("so they were stopped"));
+  const running = said.slice(
+    said.indexOf("It had running:"),
+    said.indexOf("The processes running:"),
+  );
+  expect(running).toMatch(/\n {2}plain\.test\.ts for \d+ s, in "waits for ever" for \d+ s\n/);
+  expect(running).toMatch(
+    /\n {2}skipped\.test\.ts for \d+ s, in "waits unless skipped" for \d+ s\n/,
+  );
+  expect(running).toMatch(/\n {2}each\.test\.ts for \d+ s, in "waits for row one, 1" for \d+ s\n/);
+  expect(said).toContain("The processes running:");
+  expect(said).toMatch(/UID +PID +PPID/);
+});
+
+// A file is named as running far past its time at twice its recorded time, and two minutes
+// more at least, as a busy machine makes any file slower.
+test("a file runs far past its time at twice its recorded time, and two minutes more at least", () => {
+  const since = (seconds: number) => ({
+    file: "test/a.test.ts",
+    fileSince: 1_000_000 - seconds * 1000,
+    test: null,
+    testSince: 0,
+  });
+  expect(overdue(since(119), 0, 1_000_000)).toBe(false);
+  expect(overdue(since(121), undefined, 1_000_000)).toBe(true);
+  expect(overdue(since(121), 0, 1_000_000)).toBe(true);
+  expect(overdue(since(399), 200, 1_000_000)).toBe(false);
+  expect(overdue(since(401), 200, 1_000_000)).toBe(true);
 });
 
 // A test that hangs and ignores being asked to stop, so only a kill ends its worker.

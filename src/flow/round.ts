@@ -1208,8 +1208,8 @@ function pushAndReview(
 // about an older commit, and so are Skelcrew's waiting messages of the PR's events. A moved branch
 // commit whose notice is dropped is no longer told, so the builder hears of it again if its new
 // round doesn't merge it. One whose notice the builder got stays told. Throws when your config or the repository's skelcrew.yaml isn't valid,
-// so the builder hears why, and for a thread sc stop is ending, whose builder may submit while
-// it exits.
+// so the builder hears why, for a thread sc stop is ending, whose builder may submit while
+// it exits, and for one no longer at work, such as done, whose builder's submit came in late.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
   const { reviewer } = reviewConfig(thread);
@@ -1218,6 +1218,8 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
   const unreviewed = flowRoles(thread).review === null;
   if (thread.status === "stopped" || supervisor(folder).state().stopping)
     throw new Error("this thread was stopped, so Skelcrew won't push it");
+  if (thread.status !== "working" && thread.status !== "waiting")
+    throw new Error(`this thread is ${thread.status}, so Skelcrew won't push it`);
   record(
     db,
     folder,
