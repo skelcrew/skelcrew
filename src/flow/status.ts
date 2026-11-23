@@ -1,12 +1,10 @@
-// The status module: knows whether each agent works, idles, asks you or hit an error, and
-// whether each thread needs you or is ready. It learns this from the hooks the agent's harness
-// runs, and from the agent's screen where no hook fires, and gives the word the sidebar and sc ps
-// show for a thread. A lead's hooks only keep its state: nothing a lead does flags needs you.
+// Keeps agent state from hooks and screens, and says why a thread needs you or is ready.
+// Startup questions found on a builder's screen become an item in Needs you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
-import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
+import { forQuestion, type Marks, quietSince, startupQuestion } from "../agents/transport.ts";
 import { errorText } from "../format.ts";
 import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
 import { waitsOnFirstCheck } from "./decide.ts";
@@ -194,22 +192,11 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
   }
 }
 
-// Looks at the screen of each running agent whose state is working, and makes it idle once two
-// looks in a row find it out of a turn: its harness's busy mark gone, or sitting still at a bare
-// prompt, as the agent's own text, such as a reply quoting it. Only a live status line counts,
-// as when typing, so such a reply can't keep it working forever. Two gaps have no hook: Esc on
-// Claude Code, and an error on Codex, such as an unknown model, which prints it and sits at its
-// prompt. One look isn't enough: right after a message goes in, the mark can take a moment to
-// show. Neither gap flags needs you: after Esc you are looking at the agent anyway. The daemon
-// runs it every two seconds. Each agent is looked at on its own, without waiting: a slow or hung
-// host holds up only its own agents' looks, and one that fails leaves the others' to go on.
 export function noticeIdleScreens(db: Database, sessions: string): void {
-  // The working agents: each builder still at work on its thread, on whichever host it runs, and
-  // each lead, on whichever host it runs. An agent whose host plugin is gone can't be looked at.
-  const working: { key: Agent; host: Host; name: string; marks: Marks }[] = [];
+  const working: { key: Agent; host: Host; name: string; marks: Marks; starting: boolean }[] = [];
   const threads = db
     .query(
-      "SELECT * FROM task_threads WHERE state = 'working' AND status IN ('working', 'waiting')",
+      "SELECT * FROM task_threads WHERE (state = 'working' OR state IS NULL) AND status IN ('working', 'waiting')",
     )
     .all()
     .map((row) => Thread.parse(row));
@@ -217,12 +204,20 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
     const host = hostNamed(db, sessions, thread.host ?? "tmux");
     const name = thread.host_id ?? thread.folder;
     if (host !== null)
-      working.push({ key: thread, host, name, marks: builderHarness(thread).marks });
+      working.push({
+        key: thread,
+        host,
+        name,
+        marks: builderHarness(thread).marks,
+        starting: thread.state === null,
+      });
   }
   const leads = db
-    .query("SELECT owner, repo FROM repositories WHERE lead_state = 'working'")
+    .query(
+      "SELECT owner, repo, lead_state FROM repositories WHERE lead_state = 'working' OR lead_state IS NULL",
+    )
     .all()
-    .map((row) => LeadKey.parse(row));
+    .map((row) => LeadKey.extend({ lead_state: AgentState.nullable() }).parse(row));
   for (const lead of leads) {
     const { name, harness, host, hostId } = leadOf(db, lead.owner, lead.repo);
     const on = hostNamed(db, sessions, host);
@@ -232,10 +227,9 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
         host: on,
         name: hostId ?? name,
         marks: harnessNamed(harness ?? "claude").marks,
+        starting: lead.lead_state === null,
       });
   }
-  // An agent no longer working is forgotten. Each other one gets a look, unless the last is
-  // still under way.
   const keys = new Set(working.map((agent) => agentKey(agent.key)));
   for (const key of lastLook.keys()) if (!keys.has(key)) lastLook.delete(key);
   for (const agent of working) {
@@ -251,13 +245,9 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
 // The agents being looked at now, by the key agentKey gives them.
 const looking = new Set<string>();
 
-// Takes one look at a working agent's screen for noticeIdleScreens. It goes idle when the last
-// look found it out of a turn too. Otherwise this look is remembered for the next. A new state
-// kept while it looked makes this one count for nothing, as it may show the turn before, even
-// with no earlier look to compare. An agent that isn't running has nothing to remember.
 async function lookAt(
   db: Database,
-  agent: { key: Agent; host: Host; name: string; marks: Marks },
+  agent: { key: Agent; host: Host; name: string; marks: Marks; starting: boolean },
   key: string,
 ): Promise<void> {
   const before = lastLook.get(key);
@@ -266,6 +256,21 @@ async function lookAt(
   const screen = runs ? await readSession(agent.host, agent.name) : "";
   if (stateChanges.get(key) !== changes || lastLook.get(key) !== before) return;
   if (!runs) return void lastLook.delete(key);
+  const question = startupQuestion(screen, agent.marks);
+  if (question !== null) {
+    keepState(db, agent.key, "asking");
+    if ("folder" in agent.key) {
+      record(
+        db,
+        agent.key.folder,
+        { asking: true, said: question, handed: null, noting: null },
+        "its harness asked a startup question",
+      );
+      stopDelivering(db, agent.key.folder, false, forQuestion);
+    }
+    return;
+  }
+  if (agent.starting) return;
   const quiet = quietSince(before?.screen, screen, agent.marks);
   if (quiet && before?.quiet) keepState(db, agent.key, "idle");
   else lastLook.set(key, { screen, quiet });

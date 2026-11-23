@@ -473,6 +473,11 @@ export const submittedBefore = (thread: Recorded) => {
   return submits > 1 || before;
 };
 
+// Returns each summary the builder submitted, oldest first, so a PR's description that still
+// holds one is known to be Skelcrew's own. A row from before the record has none.
+export const summariesSubmitted = (thread: Recorded) =>
+  recordOf(thread).flatMap((event) => (event.kind === "submitted" ? [event.summary] : []));
+
 // The builder submitted, which drops what the older review asked for. A flow with no review stage
 // saves its verdict as the submit starts, so the thread waits on checks from then on. A submit is
 // in flight until its review answers, and waiting on a review never needs you.
