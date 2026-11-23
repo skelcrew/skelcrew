@@ -90,6 +90,7 @@ Description=Skelcrew daemon
 ExecStart="${unitValue(skel)}" serve
 Environment="PATH=${path}"
 Restart=on-failure
+RestartPreventExitStatus=78
 KillMode=process
 
 [Install]

@@ -309,26 +309,22 @@ async function ended(run: Subprocess<"ignore", "pipe", "pipe">) {
   return { err, code };
 }
 
-test("refuses to start before the first run, and says to run sc", async () => {
-  const run = await ended(serve());
-  expect(run.code).not.toBe(0);
-  expect(run.err).toContain("run sc");
-  expect(hasLead()).toBe(false);
+test("the daemon starts with a Claude login and no config", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
+  const run = serve();
+  await until(() => run.exitCode !== null || existsSync(join(home, "run", "skelcrew.sock")));
+  if (run.exitCode !== null) throw new Error(await new Response(run.stderr).text());
+  expect(run.exitCode).toBeNull();
+  expect(existsSync(join(home, ".config", "skelcrew", "config.yaml"))).toBe(false);
 });
 
-// Before the first run sc serve stops at once, so these reach the daemon without starting one on
-// Skelcrew's own tmux server.
-test("sc serve runs the daemon, and sc up is no command", () => {
+test("sc up is no command", () => {
   const env = {
     HOME: home,
     XDG_RUNTIME_DIR: join(home, "run"),
     PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
   };
-  const serve = Bun.spawnSync([process.execPath, main, "serve"], { env, stderr: "pipe" });
-  expect(serve.exitCode).toBe(1);
-  expect(serve.stderr.toString()).toBe(
-    "Skelcrew: the first run isn't done on this machine: run sc first\n",
-  );
   const up = Bun.spawnSync([process.execPath, main, "up"], { env, stderr: "pipe" });
   expect(up.exitCode).toBe(1);
   expect(up.stderr.toString()).toBe(
@@ -1672,4 +1668,21 @@ describe.skipIf(insideSandbox)("the lead from before", () => {
     });
     await until(() => read(join(keptLead(), "typed")).includes("you are the lead of app"));
   }, 60_000);
+});
+
+test("a daemon setup failure names its fix and exits without a restart code", async () => {
+  const runtime = join(home, "not-a-folder");
+  writeFileSync(runtime, "occupied");
+  const run = Bun.spawnSync([process.execPath, main, "serve"], {
+    env: {
+      HOME: home,
+      XDG_RUNTIME_DIR: runtime,
+      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.exitCode, run.stderr.toString()).toBe(78);
+  expect(run.stderr.toString()).toContain("socket folder");
+  expect(run.stderr.toString()).toContain("writable directory");
 });

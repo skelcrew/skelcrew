@@ -1,12 +1,12 @@
-// Reads every setting, from your overrides for the repository under repos: in your config.yaml,
-// the repository's files in Skelcrew's clone, the rest of your config.yaml and the built-in
-// defaults. Roles use your general config before the repository's files.
+// Reads settings from your repository overrides, your general overrides, repository files,
+// and built-in defaults. Your config.yaml is optional.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
+import { defaultHarness } from "./agents/login.ts";
 import {
   builtInRounds,
   flowRoles,
@@ -209,7 +209,7 @@ function builtInDefaults(): {
   reviewMinutes: number;
 } {
   return {
-    harness: "claude",
+    harness: defaultHarness(),
     max_rounds: builtInRounds(),
     reviews: Math.max(1, Math.floor(availableParallelism() / 4)),
     checks: Math.max(1, Math.floor(availableParallelism() / 2 / 4)),
@@ -234,16 +234,22 @@ export function readSettings<G extends Group>(
   const decidedBy = (layers: File[]) => (k: Key) =>
     layers.some((l) => sameSetting(k).some((key) => l[key] !== undefined && l[key] !== null));
   const overrides = repository ? readOverrides(wanted, repository) : {};
+  const general = readYourFile(
+    wanted.filter((k) => yourKeys.includes(k) && !decidedBy([overrides])(k)),
+  );
   // The rounds of the task's flow, `default` unless it named another, go over max_rounds in
   // skelcrew.yaml, which they replace. The flow file is checked even when your override decides
   // the round limit, as its stages still say which roles run.
   const agentsFiles: File = {};
   if (repository && groups.some((group) => group === "rounds"))
-    agentsFiles.max_rounds = repositoryRounds(repository, decidedBy([overrides])("max_rounds"));
+    agentsFiles.max_rounds = repositoryRounds(
+      repository,
+      decidedBy([overrides, general])("max_rounds"),
+    );
   // The old max_rounds in skelcrew.yaml is the default flow's rounds only until the repository has a
   // flow file, of any flow. From then on no flow takes it, though its file names no rounds: it
   // gets yours or the built-in round limit, and a bad max_rounds, left unread, doesn't stop it.
-  const aboveShared = decidedBy([overrides, agentsFiles]);
+  const aboveShared = decidedBy([overrides, general, agentsFiles]);
   const flowFiles = (place: Repository) =>
     repositoryFlows(place).length > 1 || hasFlowFile({ ...place, flow: "default" });
   const shared = repository
@@ -257,8 +263,6 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  const decided = decidedBy([overrides, agentsFiles, shared]);
-  const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
   // Only the roles asked for are read, so a mistake in one role's settings stops only its own
   // agents. `builder` and `reviewer` are the roles the task's flow runs in the build and review
   // stages, which are those two unless the flow names one of the repository's own, such as
@@ -273,7 +277,7 @@ export function readSettings<G extends Group>(
   const roles: Partial<Record<RoleName, Role>> = {};
   for (const name of ["lead", "builder", "reviewer"] as const)
     if (groups.some((group) => group === name)) roles[name] = roleOf(name, runs[name], repository);
-  return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)], roles);
+  return mergeSettings([overrides, general, agentsFiles, shared], roles);
 }
 
 // One harness or model a file names for a role: its value, or nothing when the file names none,
@@ -616,7 +620,7 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,
-    yourHarness: layers.at(-1)?.harness,
+    yourHarness: first((l) => l.harness),
     yourReviewer: first((l) => l.your_reviewer),
     declined: first((l) => l.github_declined) ?? [],
     plugins: first((l) => l.plugins) ?? [],

@@ -8,7 +8,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { dropReviewLogins } from "../agents/harness.ts";
+import { dropReviewLogins, HarnessName } from "../agents/harness.ts";
+import { hasAgentLogin } from "../agents/login.ts";
 import {
   agentRuns,
   endExitedSession,
@@ -31,7 +32,6 @@ import {
 } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { errorText } from "../format.ts";
-import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
 import { closeTask, createTask, mergePr, trackerOf } from "../plugins/ask.ts";
@@ -131,6 +131,7 @@ import {
   turnEnded,
   turnFailed,
 } from "./status.ts";
+import { supervisor } from "./supervisor.ts";
 import {
   backToQueue,
   claimOwed,
@@ -304,6 +305,8 @@ function endWhatItStarted(sockets: string[]): void {
   process.exit(0);
 }
 
+export class DaemonSetupError extends Error {}
+
 // Opens the daemon's sockets, brings back the lead of each repository you have opened and
 // the builders of threads that were running, so commands and agents can reach it. Leaves the
 // sockets listening after returning, and removes them when stopped, leaving every agent's
@@ -311,17 +314,36 @@ function endWhatItStarted(sockets: string[]): void {
 // systemd has nobody to answer. Polls each repository's tracker and forge every `every`
 // milliseconds while a thread is active.
 export async function serve(sessions: string, every = 30_000): Promise<void> {
-  if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
   // The lock decides which of two daemons started together runs. The socket can't: both
   // could find one left by a daemon that was killed, and each remove the other's new one. It
   // comes before the database, whose threads move onto tasks, and their turns that ended onto
   // turn_ended, only while no other daemon, such as one of an earlier release, can still write
   // to them.
   const path = daemonSocket();
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  if (!lock(`${path}.lock`))
-    throw new Error("the daemon is already running. Run sc to attach to a lead.");
-  const db = openDb();
+  try {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  } catch (error) {
+    throw new DaemonSetupError(
+      `The daemon cannot use its socket folder ${dirname(path)}. Make it a writable directory, then run sc: ${errorText(error)}`,
+    );
+  }
+  try {
+    if (!lock(`${path}.lock`))
+      throw new DaemonSetupError("the daemon is already running. Run sc to attach to a lead.");
+  } catch (error) {
+    if (error instanceof DaemonSetupError) throw error;
+    throw new DaemonSetupError(
+      `The daemon cannot lock its socket folder ${dirname(path)}. Make it writable, then run sc: ${errorText(error)}`,
+    );
+  }
+  let db: Database;
+  try {
+    db = openDb();
+  } catch (error) {
+    throw new DaemonSetupError(
+      `The daemon cannot open its database. Make ~/.local/share/skelcrew writable and restore a valid database if it is damaged, then run sc: ${errorText(error)}`,
+    );
+  }
   moveToTasks(db);
   moveTurnEnded(db);
   marksToItems(db);
@@ -1309,7 +1331,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // A host's own apps show each builder by its title as it is now, such as after an upgrade.
   renameBuilders(db);
   // Open your socket.
-  await open(path, "you");
+  try {
+    await open(path, "you");
+  } catch (error) {
+    throw new DaemonSetupError(
+      `The daemon cannot open its socket ${path}. Make its folder writable and remove a stale socket, then run sc: ${errorText(error)}`,
+    );
+  }
   console.log(`Listening on ${path}.`);
   // Bring back the lead of each repository you have opened, side by side, so a host that hangs
   // holds up no other lead. One that fails is logged, and the rest still start. One that fails
@@ -1355,6 +1383,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // which is asked for again each time.
   const startFromQueue = () => {
     try {
+      for (const thread of liveThreads(db)) {
+        if (!thread.needs_you_for?.startsWith("run sc: sign in to ")) continue;
+        if (roundOf(thread).reviewing !== null || supervisor(thread.folder).state().busy) continue;
+        const login = HarnessName.safeParse(
+          thread.needs_you_for.slice("run sc: sign in to ".length),
+        );
+        if (login.success && hasAgentLogin(login.data)) void comeBack(thread);
+      }
       claimOwed(db, sessions);
       for (const thread of leaveQueue(db, beingRemoved))
         if (thread.session === null) setUpAndStart(thread);

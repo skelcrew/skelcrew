@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
+import { hasAgentLogin, loginInstruction, MissingLogin } from "../agents/login.ts";
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
   agentRuns,
@@ -534,6 +535,9 @@ async function startOnConfiguredHost(
   const role = agentRole("builder", thread);
   roundLimit(thread);
   const harness = stored === null ? harnessNamed(role.harness) : builderHarness(thread);
+  if (!hasAgentLogin(harness.name)) throw new MissingLogin(harness.name);
+  if (thread.needs_you_for === loginInstruction(harness.name))
+    record(db, thread.folder, { needs_you_for: null }, "its agent login is saved");
   const resume = stored === null ? null : harness.saved(thread.folder, clone, stored);
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
@@ -708,7 +712,7 @@ export async function bringBack(
   sessions: string,
   thread: Thread,
 ): Promise<BroughtBack> {
-  if (thread.session === null)
+  if (thread.session === null && !thread.needs_you_for?.startsWith("run sc: sign in to "))
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
   return supervisor(thread.folder).bringBack(
     builderHost(db, sessions, thread, false),
@@ -777,6 +781,16 @@ export function failThread(db: Database, sessions: string, thread: Thread, error
   const { status } = readThread(db, thread.folder);
   if (status === "stopped" || status === "done") {
     console.log(`${threadName(db, thread)} stays ${status}: ${why}`);
+    return;
+  }
+  if (error instanceof MissingLogin) {
+    record(
+      db,
+      thread.folder,
+      { status: "working", needs_you_for: loginInstruction(error.harness) },
+      why,
+    );
+    console.log(`${threadName(db, thread)} needs you: ${why}`);
     return;
   }
   record(db, thread.folder, { status: "failed" }, why);

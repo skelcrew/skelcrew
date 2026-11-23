@@ -83,6 +83,12 @@ function itemFor(thread: Thread): OwnItem {
   const said = thread.said?.split("\n").map(removeControlCodes).join("\n").trim() || null;
   const round = roundOf(thread);
   const pr = thread.pr === null ? "Its branch" : `#${thread.pr}`;
+  if (thread.needs_you_for?.startsWith("run sc: sign in to "))
+    return {
+      title: "An agent needs a login",
+      text: `An agent cannot start without its login. In your terminal, ${thread.needs_you_for}. Skelcrew will try again after you sign in.`,
+      options: [{ label: "Let the lead handle it", act: "lead" }],
+    };
   if (thread.needs_you_for !== null && word === thread.needs_you_for)
     return {
       title: "Its session host is missing",

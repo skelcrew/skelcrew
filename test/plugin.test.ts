@@ -520,26 +520,28 @@ test("rm removes a plugin's folders and settings, and refuses for a repository's
   expect(existsSync(settings("fake"))).toBe(false);
 });
 
-test("rm keeps a plugin used by a builder or lead", async () => {
-  publish("skelcrew/skelcrew-fake", "0.1.0");
-  await skel(["plugin", "add", "-g", "skelcrew/skelcrew-fake"], "y\n");
-  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  db.run(
-    "INSERT INTO repositories (owner, repo, name, lead_session, lead_host) VALUES ('simon', 'app', 'app', 'lead', 'fake')",
-  );
-  db.run(
-    "INSERT INTO threads (owner, repo, task, folder, branch, status, host) VALUES ('simon', 'app', 12, 'app-12', 'branch', 'working', 'fake')",
-  );
-  const refused = await skel(["plugin", "rm", "-g", "fake"]);
-  expect(refused.code).toBe(1);
-  expect(refused.err).toContain("APP-12");
-  expect(refused.err).toContain("lead of app");
-  expect(existsSync(join(settings("fake"), "token"))).toBe(true);
-  db.run("UPDATE threads SET host = NULL");
-  db.run("UPDATE repositories SET tab_closed = 1");
-  db.close();
-  expect((await skel(["plugin", "rm", "-g", "fake"])).code).toBe(0);
-});
+for (const status of ["stopped", "done"]) {
+  test(`rm keeps live builder and lead hosts, but allows ${status} threads`, async () => {
+    publish("skelcrew/skelcrew-fake", "0.1.0");
+    await skel(["plugin", "add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+    const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+    db.run(
+      "INSERT INTO repositories (owner, repo, name, lead_session, lead_host) VALUES ('simon', 'app', 'app', 'lead', 'fake')",
+    );
+    db.run(
+      "INSERT INTO threads (owner, repo, task, folder, branch, status, host) VALUES ('simon', 'app', 't12', 'app-12', 'branch', 'working', 'fake')",
+    );
+    const refused = await skel(["plugin", "rm", "-g", "fake"]);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("APP-12");
+    expect(refused.err).toContain("lead of app");
+    expect(existsSync(join(settings("fake"), "token"))).toBe(true);
+    db.run("UPDATE threads SET status = ?", [status]);
+    db.run("UPDATE repositories SET tab_closed = 1");
+    db.close();
+    expect((await skel(["plugin", "rm", "-g", "fake"])).code).toBe(0);
+  });
+}
 
 test("setup runs an installed plugin's setup again in your terminal, and nothing else", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");
@@ -772,7 +774,11 @@ test("sc plugin ls says what sc install would change", async () => {
   );
   writeFileSync(yourConfig(), "plugins: [skelcrew/skelcrew-fake, skelcrew/skelcrew-new]\n");
   expect((await skel(["plugin", "ls"])).out).toBe(
-    ["fake 0.2.0 io: tracker, forge. sc install moves it to 0.1.0.", ""].join("\n"),
+    [
+      "fake 0.2.0 io: tracker, forge. sc install moves it to 0.1.0.",
+      "skelcrew/skelcrew-new from skelcrew/skelcrew-new isn't installed. named in config.yaml but not installed; run sc plugin add -g skelcrew/skelcrew-new.",
+      "",
+    ].join("\n"),
   );
 });
 
@@ -1310,4 +1316,14 @@ test("sc plugin rm removes an installed plugin no longer in the personal lock", 
   expect(removed.code).toBe(0);
   expect(existsSync(join(plugins(), "fake"))).toBe(false);
   expect(readFileSync(yourConfig(), "utf8")).toBe("plugins: [skelcrew/skelcrew-fake]\n");
+});
+
+test("plugin ls shows config-only plugins without offering to install them", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(yourConfig(), "plugins: [simon/skelcrew-legacy]\n");
+  const run = await skel(["plugin", "ls"]);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("named in config.yaml but not installed");
+  expect(run.out).toContain("sc plugin add -g simon/skelcrew-legacy");
+  expect(existsSync(yourLockFile())).toBe(false);
 });

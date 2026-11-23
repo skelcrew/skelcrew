@@ -317,8 +317,18 @@ export function everyNamed(unreadable: string[]): string[] {
 // settled by whichever is read last. A repository whose files can't be read throws, unless
 // `unreadable` is given: then what is wrong goes there, and the other repositories still count,
 // so one broken file can't hide another repository's pins.
-export function repositoryNeeds(everywhere = false, unreadable?: string[]): Need[] {
-  const needs = places(everywhere).flatMap(({ folder, where, remote }) => {
+export function repositoryNeeds(
+  everywhere = false,
+  unreadable?: string[],
+  root?: string | null,
+): Need[] {
+  const selected =
+    root === undefined
+      ? places(everywhere)
+      : root === null
+        ? []
+        : [{ folder: root, where: "This checkout", remote: originHere(root) }];
+  const needs = selected.flatMap(({ folder, where, remote }) => {
     try {
       const { plugins, lock } = repositoryPlugins(folder);
       return plugins.map((source) => ({ source, where, locked: lock[source], remote }));

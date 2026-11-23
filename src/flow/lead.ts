@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { hasAgentLogin, MissingLogin } from "../agents/login.ts";
 import {
   agentRuns,
   checkAgentStarted,
@@ -243,6 +244,7 @@ export async function startLead(
   // both before starting.
   const role = agentRole("lead", repository);
   const harness = harnessNamed(lead.harness ?? role.harness);
+  if (!hasAgentLogin(harness.name)) throw new MissingLogin(harness.name);
   const stored = lead.session;
   const resume = stored === null ? null : harness.saved(lead.name, lead.folder, stored);
   const session = resume ?? crypto.randomUUID();

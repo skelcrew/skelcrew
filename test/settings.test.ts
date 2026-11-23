@@ -57,7 +57,7 @@ const forApp = () =>
     ).out,
   );
 
-test("your role settings override the repository while its round limit still applies", () => {
+test("your general settings override the repository", () => {
   settings(
     "harness: claude\nmodel: sonnet\nmax_rounds: 5\n",
     "lead: { model: opus }\nreviewer: { harness: codex }\nmax_rounds: 2\n",
@@ -66,7 +66,7 @@ test("your role settings override the repository while its round limit still app
     lead: { harness: "claude", model: "sonnet" },
     builder: { harness: "claude", model: "sonnet" },
     reviewer: { harness: "claude", model: "sonnet" },
-    maxRounds: 2,
+    maxRounds: 5,
     fallback: null,
     reviewMinutes: 30,
   });
@@ -181,14 +181,14 @@ test("with no skelcrew.yaml naming them, there are no setup or test commands", (
 // Your config stands in for a repository you don't want to commit a skelcrew.yaml to. Each of
 // setup and test comes from the repository's skelcrew.yaml, else your config, and an empty list
 // in skelcrew.yaml counts as named.
-test("setup and test come from the repository, then your config", () => {
+test("setup and test come from your config, then the repository", () => {
   settings("harness: claude\nsetup: [make deps]\ntest: [make test]\n", null);
   expect(commands()).toEqual({ setup: ["make deps"], test: ["make test"] });
   settings(
     "harness: claude\nsetup: [make deps]\ntest: [make test]\n",
     "setup: []\ntest: [bun run check]\n",
   );
-  expect(commands()).toEqual({ setup: [], test: ["bun run check"] });
+  expect(commands()).toEqual({ setup: ["make deps"], test: ["make test"] });
   settings("harness: claude\ntest: [make test]\n", "setup: [bun install]\n");
   expect(commands()).toEqual({ setup: ["bun install"], test: ["make test"] });
 });

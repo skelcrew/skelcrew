@@ -27,23 +27,10 @@ let home = "";
 const realSsh = Bun.which("ssh") ?? "ssh";
 let laptop = { folder: "", main: "", commit: "" };
 
-// The Skelcrew the fake bun builds: it says what reached it, one argument per line, so a test
-// can see that each one arrived exactly as typed. Built with a commit, it stops as a copied
-// Skelcrew does when the laptop's build differs. Without one, it is a Skelcrew from before builds
-// carried their commit. On a server that sc install hasn't set up, it runs nothing but sc
-// install, which sets it up, and says so before checking its build, as a copied Skelcrew does.
-// Its sc install puts the files sent with --files in place, as Skelcrew's does.
+// The fake server reports the arguments it receives and checks the laptop build.
 const serverSkel = (built?: string) => `#!/bin/sh
-test "$1" != install && test -f not-set-up && exit 97
 ${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = install && {
-  f=; prev=; for w; do test "$prev" = --files && f=$w; prev=$w; done
-  if test -n "$f"; then
-    for n in config.yaml skelcrew.lock claude-token; do
-      if test -f ".config/skelcrew/$f/$n"; then mv ".config/skelcrew/$f/$n" ".config/skelcrew/$n"; else rm -f ".config/skelcrew/$n"; fi
-    done
-    rmdir ".config/skelcrew/$f"
-  fi
-  echo "sc install on the server"; cp .config/skelcrew/config.yaml installed-from 2>/dev/null; rm -f not-set-up; test ! -f install-fails; exit
+  echo "sc install on the server"; test ! -f install-fails; exit
 }
 echo "Skelcrew on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
@@ -290,15 +277,13 @@ test("without a terminal, --remote on a server without Skelcrew only says how to
   expect(calls()).toBe(`${onServer(" ps")}\n`);
 });
 
-test("without a terminal, --remote on a server that isn't set up only says how to set it up", async () => {
+test("--remote runs an installed server without personal config", async () => {
   installed(laptop.commit);
-  writeFileSync(join(home, "server", "not-set-up"), "");
   const run = await skel(["--remote", "simon@workbox", "ps"]);
-  expect(run.err).toBe(
-    "Skelcrew: simon@workbox isn't set up. Run this on your laptop:\n  sc --remote simon@workbox install\n",
-  );
-  expect(run.code).toBe(1);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(3);
   expect(calls()).toBe(`${onServer(" ps")}\n`);
+  expect(existsSync(join(home, "server", ".config", "skelcrew", "config.yaml"))).toBe(false);
 });
 
 test("in a terminal, --remote offers to set up a server without Skelcrew, then runs the command", async () => {
@@ -318,53 +303,12 @@ test("in a terminal, --remote offers to set up a server without Skelcrew, then r
   expect(lines.at(-1)).toBe(onServer(" ps"));
 });
 
-test("in a terminal, --remote sets up a server that isn't, then runs the command", async () => {
-  installed(laptop.commit);
-  writeFileSync(join(home, "server", "not-set-up"), "");
-  const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
-  expect(wrote).toContain("simon@workbox isn't set up. Set it up now? [Y/n]");
-  expect(code).toBe(3);
-  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" install")}\n${onServer(" ps")}\n`);
-});
-
-// sc install there fails while a plugin you said no to is missing, and then the command you
-// asked for doesn't run on a server that isn't set up.
-test("in a terminal, --remote runs nothing more when setting up the server fails", async () => {
-  installed(laptop.commit);
-  writeFileSync(join(home, "server", "not-set-up"), "");
+test("a failed install on a server without Skelcrew does not retry the command", async () => {
   writeFileSync(join(home, "server", "install-fails"), "");
   const { code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
   expect(code).toBe(1);
-  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" install")}\n`);
-});
-
-test("in a terminal, --remote asks before installing on an unprepared server", async () => {
-  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
-  installed(laptop.commit);
-  writeFileSync(join(home, "server", "not-set-up"), "");
-  const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
-  expect(code).toBe(3);
-  const asked = wrote.indexOf("simon@workbox isn't set up. Set it up now? [Y/n]");
-  expect(asked).toBeGreaterThan(-1);
-  expect(wrote).not.toContain("Sending your");
-  expect(wrote.indexOf("sc install on the server")).toBeGreaterThan(asked);
-  expect(existsSync(join(home, "server", ".config", "skelcrew", "config.yaml"))).toBe(false);
-});
-
-test("in a terminal, a no to setting up a server that isn't set up sends none of your files", async () => {
-  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
-  installed(laptop.commit);
-  writeFileSync(join(home, "server", "not-set-up"), "");
-  const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["n"]);
-  expect(wrote).toContain("sc --remote simon@workbox install");
-  expect(code).toBe(1);
-  // Only the command you asked for reached the server.
-  const lines = calls().trim().split("\n");
-  expect(lines).toHaveLength(1);
-  expect(lines[0]).toMatch(/^ssh .* simon@workbox .* sh ps$/);
-  expect(existsSync(join(home, "server", ".config", "skelcrew"))).toBe(false);
+  expect(calls().match(/sh ps$/gm)).toHaveLength(1);
+  expect(calls()).toContain(onServer(" install"));
 });
 
 test("in a terminal, a no to setting up sets up nothing and says what to run later", async () => {
@@ -757,23 +701,7 @@ test("the update keeps the old Skelcrew when the copy fails", async () => {
   expect(calls()).not.toMatch(/^systemctl --user restart/m);
 });
 
-// Gives the test's home a finished first run, as setupDone reads it: a harness chosen, its login
-// and the daemon's service.
-function firstRunDone(): void {
-  const config = join(home, ".config", "skelcrew");
-  const codex = join(home, ".local", "share", "skelcrew", "codex");
-  const units = join(home, ".config", "systemd", "user");
-  for (const folder of [config, codex, units]) mkdirSync(folder, { recursive: true });
-  writeFileSync(join(config, "config.yaml"), "harness: codex\n");
-  writeFileSync(join(codex, "auth.json"), "login\n");
-  writeFileSync(join(units, "skelcrew.service"), "");
-}
-
-// Runs main.ts as the Skelcrew on a server would run it, built from the given commit
-// or from a checkout, asked for its help by a laptop with the given build. The server's first
-// run is done, so the build is what decides.
 function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) {
-  firstRunDone();
   const define = built === null ? [] : ["--define", `SKELCREW_BUILD="${built}"`];
   const env: Record<string, string> = { PATH: "/usr/bin:/bin", HOME: home };
   if (laptopBuild)
@@ -810,9 +738,7 @@ test("a sidebar runs whichever laptop's build its tmux server remembers", () => 
   expect(run.out).toBe("");
 });
 
-// Out of date, Skelcrew there would have the laptop copy things, so a machine that isn't set up
-// says so first, and the laptop asks.
-test("a copied Skelcrew that isn't set up says so before its build is checked", () => {
+test("a copied Skelcrew checks its build without personal config", () => {
   const run = Bun.spawnSync(
     [process.execPath, "--define", 'SKELCREW_BUILD="abc1234"', laptop.main, "ps"],
     {
@@ -821,12 +747,11 @@ test("a copied Skelcrew that isn't set up says so before its build is checked", 
         HOME: home,
         SKELCREW_REMOTE_NAME: "x",
         SKELCREW_LAPTOP_BUILD: "def5678",
-        SKELCREW_LAPTOP_LOCK: "another",
       },
     },
   );
-  expect(run.exitCode).toBe(97);
-  expect(run.stdout.toString()).toBe("");
+  expect(run.exitCode).toBe(98);
+  expect(run.stdout.toString()).toContain("Skelcrew on x");
 });
 
 test("a copied Skelcrew built with uncommitted changes is never up to date", () => {
@@ -1270,17 +1195,6 @@ test("install leaves laptop-only plugins off the server", async () => {
   const db = new Database(join(home, "server", ".local", "share", "skelcrew", "skelcrew.db"));
   expect(db.query("SELECT name FROM plugins").all()).toEqual([{ name: "fake" }]);
   db.close();
-});
-
-// --files names a folder the laptop made, so a path that leads elsewhere moves nothing.
-test("sc install refuses --files that isn't a folder of sent files", () => {
-  for (const folder of ["../../elsewhere", "/tmp/x", "sending-a/../.."]) {
-    const run = Bun.spawnSync([process.execPath, laptop.main, "install", "--files", folder], {
-      env: { PATH: "/usr/bin:/bin", HOME: home },
-    });
-    expect(run.exitCode).toBe(1);
-    expect(run.stderr.toString()).toBe(`Skelcrew: ${folder} isn't a folder of sent files\n`);
-  }
 });
 
 test("--remote does not compare personal locks", async () => {

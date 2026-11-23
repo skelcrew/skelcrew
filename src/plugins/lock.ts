@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { isMap, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
-import { configFile } from "../config.ts";
 import { configDir } from "../paths.ts";
 import { Version } from "./plugin.ts";
 
@@ -81,10 +80,9 @@ export function setLocked(source: string, locked: Locked | null): void {
   writeFileSync(file, document.toString({ lineWidth: 0 }));
 }
 
-// Runs `write`, which changes `files`: by default your config.yaml and your lock, or a
-// repository's skelcrew.yaml and skelcrew.lock. When it fails, each file is put back as it was,
+// Runs `write`, which changes your lock or the repository files explicitly passed in. When it fails, each file is put back as it was,
 // so a plugin is never left named in one and missing from the other.
-export function writeBoth(write: () => void, files = [configFile(), lockFile()]): void {
+export function writeBoth(write: () => void, files = [lockFile()]): void {
   const before = files.map((file) => (existsSync(file) ? readFileSync(file, "utf8") : null));
   try {
     write();

@@ -39,7 +39,7 @@ const sections: [string, [string, string][]][] = [
   [
     "PLUGINS",
     [
-      ["install", "Set up this machine, the plugins your files name, and this repository"],
+      ["install", "Install the plugins in this checkout and your personal lock"],
       ["plugin add <owner/repo>", "Add a plugin to this repository, after asking"],
       ["plugin add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
       ["plugin update -g [<name>]", "Move one, or all, to its newest version, after asking"],
@@ -51,7 +51,7 @@ const sections: [string, [string, string][]][] = [
   [
     "ELSEWHERE",
     [
-      ["--remote <host> install", "Send your personal files to a server, and set it up"],
+      ["--remote <host> install", "Install this repository's plugins on a server"],
       ["--remote <host> serve --bg", "Run the daemon on a server, in the background"],
       ["--remote <host> [command]", "Run sc on a server, over ssh"],
     ],

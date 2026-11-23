@@ -263,7 +263,6 @@ test("submits", async () => {
         XDG_RUNTIME_DIR: folder,
         SKELCREW_SOCKET: join(folder, "skelcrew.sock"),
         SKELCREW_SANDBOX: "1",
-        SKELCREW_LAPTOP_LOCK: "laptop",
         SKELCREW_LAPTOP_BUILD: "laptop",
         SKELCREW_REMOTE_NAME: "laptop",
       },

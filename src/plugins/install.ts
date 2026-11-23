@@ -21,6 +21,7 @@ import { taskName } from "../flow/thread.ts";
 import { originHere } from "../machine/origin.ts";
 import { configDir, dataDir } from "../paths.ts";
 import { removeControlCodes } from "../screen/look.ts";
+import { readSettings } from "../settings.ts";
 import { release } from "../version.ts";
 import { trackerOf } from "./ask.ts";
 import { type Locked, setLocked, writeBoth, yourLock, yourPlugins } from "./lock.ts";
@@ -349,8 +350,6 @@ type Options = {
   pin?: boolean;
   io?: boolean;
   called?: string;
-  // Refuses a plugin that only reaches machines, with OnlyReachesMachines, before asking.
-  skipMachines?: boolean;
 };
 
 // Throws when the plugin's manifest names it otherwise than the lock that pins it, `called`, before
@@ -372,10 +371,6 @@ export function refusePersonal(manifest: Manifest, io: boolean | undefined): voi
       `${manifest.name} is a notifier, which reaches you, so it is always yours and never a repository's. sc plugin add -g adds it as yours`,
     );
 }
-
-// The error for a plugin that only reaches machines, refused on a machine you reach with
-// --remote, as such a plugin is used where you run --remote.
-class OnlyReachesMachines extends Error {}
 
 // Installs a plugin and returns whether it did. `given` is either owner/repo, installed from that
 // GitHub repository's newest version tag or the one `tag` names, or a path to a folder of yours,
@@ -417,8 +412,6 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   const cloned = cloneTag(given, tag ?? newestTag(given), commit);
   const { staged, manifest } = cloned;
   try {
-    if (options.skipMachines && reachesOnlyMachines(manifest))
-      throw new OnlyReachesMachines(manifest.name);
     refuseInstalled(db, manifest.name, io);
     checkSkelcrewVersion(manifest);
     refusePersonal(manifest, io);
@@ -599,11 +592,11 @@ function jobOf(db: Database, name: string): string | null {
     ["forge", repositories(db).filter((r) => r.forge === name)],
   ] as const)
     if (usingIt.length > 0) return `the ${job} of ${usingIt.map((r) => r.name).join(", ")}`;
-  const builders = z.array(z.object({ name: z.string(), task: z.number() })).parse(
+  const builders = z.array(z.object({ name: z.string(), task: z.coerce.string() })).parse(
     db
       .query(`SELECT repositories.name, threads.task FROM threads
       JOIN repositories ON repositories.owner = threads.owner AND repositories.repo = threads.repo
-      WHERE threads.host = ? ORDER BY repositories.name, threads.task`)
+      WHERE threads.host = ? AND threads.status IN ('working', 'waiting') ORDER BY repositories.name, threads.task`)
       .all(name),
   );
   const leads = z
@@ -735,54 +728,31 @@ function unnamed(db: Database, needed: string[]): Plugin[] {
 export function installYourPlugins(
   remote: string | null,
   conflicting: string[] = [],
-  _needed: string[] | string = [],
 ): { changed: boolean; left: string[] } {
   const db = openDb();
   const lock = yourLock();
   let changed = false;
-  // On a machine you reach with --remote, a plugin that only reaches machines isn't installed,
-  // as it is used where you run --remote. The laptop leaves those it has out of the files it
-  // sends, but one your files name that the laptop doesn't have yet can only be told apart here,
-  // by its manifest.
-  const skipMachines = process.env.SKELCREW_REMOTE_NAME !== undefined;
-  const skipped: string[] = [];
-  const mine = yourPlugins().filter((source) => !conflicting.includes(source));
+  const mine = Object.keys(lock).filter((source) => !conflicting.includes(source));
   eachAsked(
     mine,
     (source) => source,
     (source) => {
       const locked = lock[source];
+      if (!locked) return;
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
-      if (here && locked && matchesLock(here, locked)) return;
+      if (here && matchesLock(here, locked)) return;
       changed = true;
-      // Installing with no pin adds one. One with a pin leaves the lock as it is.
-      try {
-        if (!locked) installPlugin(source, { remote, skipMachines });
-        else {
-          const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
-          if (here) updatePlugin(db, here, pinned);
-          else installPlugin(source, { ...pinned, skipMachines });
-        }
-      } catch (error) {
-        if (!(error instanceof OnlyReachesMachines)) throw error;
-        console.log(
-          `Skelcrew skipped ${error.message}, which only reaches machines, so it belongs where you run sc --remote, not here.`,
-        );
-        skipped.push(source);
-      }
+      const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
+      if (here) updatePlugin(db, here, pinned);
+      else installPlugin(source, pinned);
     },
   );
-  // Read again, as an install added its pin.
-  const now = yourLock();
-  // One left as it is for a repository's pin always counts, even at your pin, so the machine
-  // isn't set up until the pins agree, and plain sc says why each time.
-  const left = yourPlugins().filter((source) => {
-    if (skipped.includes(source)) return false;
-    const here = installedPlugins(db).find((plugin) => plugin.source === source);
-    const locked = now[source];
-    if (conflicting.includes(source)) return true;
-    return !here || (locked !== undefined && !matchesLock(here, locked));
-  });
+  const left = Object.entries(lock)
+    .filter(([source, locked]) => {
+      const here = installedPlugins(db).find((plugin) => plugin.source === source);
+      return conflicting.includes(source) || !here || !matchesLock(here, locked);
+    })
+    .map(([source]) => source);
   return { changed, left };
 }
 
@@ -803,12 +773,12 @@ type Row = {
 // plugins: each one's name, version, kind and what it provides, such as "github 0.1.0 io:
 // tracker, forge", and what sc install would change. `needs` are the plugins repositories need,
 // as repositoryNeeds gives them, and `needed` the plugins any repository Skelcrew has names, or
-// why that can't be told, as installYourPlugins takes them. --json gives the same rows for
+// why that can't be told. --json gives the same rows for
 // tools, and keeps jobs, so a tool written before kinds still reads it.
 export function listPlugins(json: boolean, needs: Need[], needed: string[] | string): void {
   const db = openDb();
   const lock = yourLock();
-  const wanted = yourPlugins();
+  const wanted = [...new Set([...yourPlugins(), ...readSettings(["plugins"]).plugins])];
   const installed = installedPlugins(db);
   // What sc install would do for a repository's plugin, or null for nothing. The first need
   // that changes something is said, as sc install acts on it first.
@@ -827,7 +797,7 @@ export function listPlugins(json: boolean, needs: Need[], needed: string[] | str
     const conflict = needs.find((need) => need.source === source)?.conflict;
     return conflict ? `sc install leaves it, as it is pinned at ${conflict}` : null;
   };
-  const removed = unnamed(db, typeof needed === "string" ? [] : needed).map((p) => p.name);
+  const unused = unnamed(db, typeof needed === "string" ? [] : needed).map((p) => p.name);
   const rows: Row[] = installed.map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
     if (!manifest) throw new Error(`${plugin.name}'s folder ${plugin.folder} is gone`);
@@ -851,7 +821,7 @@ export function listPlugins(json: boolean, needs: Need[], needed: string[] | str
       jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
       // A disagreement goes first, as sc install then leaves the plugin as it is.
-      change: removed.includes(plugin.name)
+      change: unused.includes(plugin.name)
         ? jobOf(db, plugin.name)
           ? `sc install keeps it, as it is ${jobOf(db, plugin.name)}`
           : "unused"
@@ -874,7 +844,9 @@ export function listPlugins(json: boolean, needs: Need[], needed: string[] | str
       from: source,
       change:
         disagreement(source) ??
-        (locked ? "sc install installs it" : "sc install installs its newest version"),
+        (locked
+          ? "sc install installs it"
+          : `named in config.yaml but not installed; run sc plugin add -g ${source}`),
     });
   }
   // Then those only repositories name that aren't installed here, once each.

@@ -9,7 +9,7 @@ export async function repoCommand(args: string[], json: boolean): Promise<void> 
   const { listRepositories, printRepositories } = await import("../flow/list.ts");
   const { addRepo, initRepo, removeRepo, trustRepo } = await import("../flow/repo.ts");
   if (command === "init" && args.length === 1) {
-    initRepo();
+    await initRepo();
     return;
   }
   if (sub === "add" && rest.length <= 1) {

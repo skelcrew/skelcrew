@@ -113,7 +113,7 @@ test("your config overrides repository role settings", () => {
     lead: { harness: "claude", model: "opus" },
     builder: { harness: "claude", model: "sonnet" },
     reviewer: { harness: "claude", model: "opus" },
-    rounds: 2,
+    rounds: 5,
     reviews: quarter,
     checks: eighth,
     setup: ["make"],
@@ -171,9 +171,9 @@ test("only the settings asked for are checked, and a bad one names its file", ()
   expect(read(["setup"]).err).toContain("the repository's skelcrew.yaml isn't valid");
 });
 
-test("a setting skelcrew.yaml sets isn't read from your config, so a bad one there stops nothing", () => {
+test("a personal setting that overrides the repository must be valid", () => {
   files("harness: claude\nmax_rounds: 0\nsetup: 5\n", "max_rounds: 2\n");
-  expect(read(["rounds"]).settings?.rounds).toBe(2);
+  expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
   // A role is merged with yours, so yours is still read and checked where it can count: a
   // model of yours goes along if your line puts the role on the repository's harness.
   files(
@@ -652,4 +652,36 @@ test("your general and repository overrides replace repository roles", () => {
     "roles: { builder: { harness: codex, model: gpt } }\n",
   );
   expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude" });
+});
+
+test("with no personal override the only installed logged-in harness is the default", () => {
+  files(null, null);
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const folder = join(home, ".local", "share", "skelcrew", "codex");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "auth.json"), "{}\n");
+  const done = Bun.spawnSync(
+    [
+      process.execPath,
+      "-e",
+      `import { readSettings } from ${JSON.stringify(source("settings.ts"))}; console.log(JSON.stringify(readSettings(["builder"]).builder));`,
+    ],
+    { env: { HOME: home, PATH: bin }, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(done.success).toBe(true);
+  expect(JSON.parse(done.stdout.toString())).toEqual({ harness: "codex" });
+});
+
+test("personal general settings override repository defaults and repos overrides win first", () => {
+  files(
+    "rounds: 7\nsetup: [mine]\nrepos: { simon/app: { test: [special] } }\n",
+    "max_rounds: 2\nsetup: [team]\ntest: [team-test]\n",
+  );
+  expect(read(["rounds", "setup", "test"]).settings).toMatchObject({
+    rounds: 7,
+    setup: ["mine"],
+    test: ["special"],
+  });
 });

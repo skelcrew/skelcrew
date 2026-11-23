@@ -20,7 +20,7 @@ import { addCommand, lsCommand, psCommand, showCommand } from "./cli/tasks.ts";
 import { checkCommand, mergeCommand, startCommand, threadCommand } from "./cli/threads.ts";
 import { errorText } from "./format.ts";
 import { help } from "./help.ts";
-import { outdated, outOfDate, remote, serverName, unfinished } from "./machine/remote.ts";
+import { outdated, outOfDate, remote } from "./machine/remote.ts";
 import { versionLine } from "./version.ts";
 
 const agentRefusals: Record<string, string> = {
@@ -35,7 +35,7 @@ const agentRefusals: Record<string, string> = {
   attach: "attaching to a thread",
   sidebar: "showing the sidebar",
   list: "showing a list",
-  install: "setting up this machine",
+  install: "installing plugins",
   "plugin add": "adding a plugin",
   "plugin update": "updating a plugin",
   "plugin setup": "setting up a plugin",
@@ -52,11 +52,6 @@ async function runCommand(args: string[]): Promise<void> {
   }
 
   const onScreen = ["sidebar", "footer", "details"].includes(command ?? "");
-
-  if (serverName() && command !== "install" && !onScreen && !runByAgent()) {
-    const { setupDone } = await import("./machine/setup.ts");
-    if (!setupDone()) process.exit(unfinished);
-  }
 
   if (!onScreen && outOfDate()) process.exit(outdated);
 
@@ -149,5 +144,5 @@ try {
   await runCommand(process.argv.slice(2));
 } catch (error) {
   console.error(`Skelcrew: ${errorText(error)}`);
-  process.exit(1);
+  process.exit(typeof process.exitCode === "number" ? process.exitCode : 1);
 }

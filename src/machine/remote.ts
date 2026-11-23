@@ -86,10 +86,6 @@ export const checkThenSc = [
 // What a copied Skelcrew exits with when the laptop's build differs. Skelcrew otherwise exits 0 or
 // 1, and the server's shell 127 when it finds no Skelcrew.
 export const outdated = 98;
-// What Skelcrew exits with when --remote reaches it before sc install has set the machine up,
-// so the laptop can offer to set it up.
-export const unfinished = 97;
-
 export function serverName(): string | undefined {
   return process.env.SKELCREW_REMOTE_NAME;
 }
@@ -240,10 +236,6 @@ export const notSetUp = (where: string) =>
 const saysYes = (question: string) =>
   ["", "y", "yes"].includes(prompt(`${question} [Y/n]`)?.trim().toLowerCase() ?? "");
 
-// Offers to set up a machine that --remote found not set up, and returns the exit code. A yes
-// runs sc --remote <host> install, then `connect`, the command you asked for. Setting up means
-// logins, so it never happens without your yes. Without a terminal nobody can answer, so it only
-// says what to run.
 async function setUpFirst(where: string, connect: () => Promise<number>): Promise<number> {
   if (!process.stdin.isTTY) throw new Error(notSetUp(where));
   if (!saysYes(`${where} isn't set up. Set it up now?`)) {
@@ -291,7 +283,7 @@ export async function remote(host: string, args: string[]): Promise<number> {
   const code = await connect();
   // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
-  if (code !== 127 && code !== unfinished) return code;
+  if (code !== 127) return code;
   return setUpFirst(host, connect);
 }
 
