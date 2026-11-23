@@ -196,32 +196,22 @@ function approvalOf(manifest: Manifest): string {
 const shellWord = (word: string) =>
   /^[\w./:=@%+,-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 
-// How a question about a plugin names it, such as GitHub, and the line it starts with in place of
-// the plugin's own description, such as an offer saying why Skelcrew needs it.
-export type Shown = { title?: string; intro?: string };
-
 // Shows what the plugin is and asks whether to `verb` it, such as Install. First comes what it is
-// for, in plain words: the plugin's own one-line description, or `intro`. Then its name, version
+// for, in plain words: the plugin's own one-line description. Then its name, version
 // and source, and that it runs as you, outside the sandbox. d shows the rest, its kind, what it
 // provides and every command its manifest runs, and asks again. An answer is a line, as for every
 // question here, so the Enter after a key never answers the next question. Returns true for yes,
 // false for any other answer, and null with no terminal to answer in. Nothing of the plugin runs
 // before this.
-function confirmPlugin(
-  manifest: Manifest,
-  from: string,
-  verb: string,
-  shown: Shown = {},
-): boolean | null {
+function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean | null {
   const { name, version, kind, provides, about } = manifest;
-  const title = shown.title ?? name;
   const source = removeControlCodes(from);
-  console.log(shown.intro ?? removeControlCodes(about));
+  console.log(removeControlCodes(about));
   console.log(
-    `\n${title} plugin ${version}, from ${source}. Runs on this machine as you, outside the agents' sandbox. Type d for details.`,
+    `\n${name} plugin ${version}, from ${source}. Runs on this machine as you, outside the agents' sandbox. Type d for details.`,
   );
   while (true) {
-    const answer = askLine(`${verb} the ${title} plugin? [Y/n]`);
+    const answer = askLine(`${verb} the ${name} plugin? [Y/n]`);
     if (answer === null) return null;
     if (answer.trim().toLowerCase() !== "d") return isYes(answer);
     const kindName = kind === "io" ? "an I/O" : "a runtime";
@@ -336,7 +326,6 @@ function refuseInstalled(db: Database, name: string, io: boolean | undefined): v
 
 type Options = {
   source?: string;
-  shown?: Shown;
   remote?: string | null;
   ask?: boolean;
   tag?: string;
@@ -372,7 +361,7 @@ export function refusePersonal(manifest: Manifest, io: boolean | undefined): voi
 // and setup, and writes your lock when `pin` says to, before the plugin counts as
 // installed. A write that fails leaves the files as they were and the plugin not installed.
 export function installPlugin(given: string, options: Options = {}): boolean {
-  const { ask = true, tag, commit, pin = true, io, called, shown } = options;
+  const { ask = true, tag, commit, pin = true, io, called } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
@@ -381,7 +370,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     const manifest = readManifest(folder);
     refuseInstalled(db, manifest.name, io);
     checkSkelcrewVersion(manifest);
-    const answer = confirmPlugin(manifest, folder, "Install", shown);
+    const answer = confirmPlugin(manifest, folder, "Install");
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
     if (!answer) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
@@ -427,7 +416,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     checkSkelcrewVersion(manifest);
     refusePersonal(manifest, io);
     refuseOtherName(manifest, called);
-    const answer = ask ? confirmPlugin(manifest, given, "Install", shown) : true;
+    const answer = ask ? confirmPlugin(manifest, given, "Install") : true;
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
     if (!answer) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
@@ -454,10 +443,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     ]);
     db.run("DELETE FROM removed_plugins WHERE source = ?", [given]);
     markUnclaimed(db, manifest);
-    const title = shown?.title;
-    console.log(
-      title ? `Installed the ${title} plugin.` : `Installed ${manifest.name} ${manifest.version}.`,
-    );
+    console.log(`Installed ${manifest.name} ${manifest.version}.`);
     return true;
   } finally {
     rmSync(staged, { recursive: true, force: true });
@@ -685,9 +671,8 @@ function removePlugin(name: string): void {
 // installed on this machine only: its path means nothing on another machine, and it has no version
 // to pin, so it stays out of your files and says so. A plugin a repository had installed here
 // becomes yours at the version installed, asking nothing, as you approved that exact version
-// before. Returns whether it was installed. `shown` is how its question names the plugin and
-// starts.
-export function addPlugin(given: string, remote = originHere(), shown: Shown = {}): boolean {
+// before. Returns whether it was installed.
+export function addPlugin(given: string, remote = originHere()): boolean {
   const db = openDb();
   const here = installedPlugins(db).find((plugin) => plugin.source === given);
   if (here && !yourPlugins().includes(given)) {
@@ -700,7 +685,7 @@ export function addPlugin(given: string, remote = originHere(), shown: Shown = {
     );
     return true;
   }
-  if (!installPlugin(given, { remote, shown })) return false;
+  if (!installPlugin(given, { remote })) return false;
   if (given.startsWith(".") || given.startsWith("/"))
     console.log("A plugin from a folder is on this machine only, so your lock leaves it out.");
   return true;

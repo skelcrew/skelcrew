@@ -62,9 +62,6 @@ const File = z.looseObject({
   // its old name, still read so no config breaks, and can_merge wins where a file has both.
   can_merge: z.boolean().optional(),
   may_arm_merges: z.boolean().optional(),
-  // The repositories, by full name, never offered the GitHub plugin again because you said no
-  // in one of their checkouts.
-  github_declined: z.array(z.string()).optional(),
   // Your personal plugins, by the GitHub repository each comes from, such as
   // skelcrew/skelcrew-github. Your own skelcrew.lock pins each one's version.
   plugins: z.array(z.string()).optional(),
@@ -98,9 +95,8 @@ export type Role = { harness: HarnessName; model?: string };
 // skelcrew.yaml or over it. `fallback` is the harness reviews run on
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
 // run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
-// your config saved, with no default, so the first run can tell what you haven't picked yet, and
-// `declined` the repositories never offered the GitHub plugin again. `plugins` are your personal
-// plugins. `host` is where new sessions start: tmux, or the name of a runtime plugin that provides
+// your config saved, with no default, so the first run can tell what you haven't picked yet.
+// `plugins` are your personal plugins. `host` is where new sessions start: tmux, or the name of a runtime plugin that provides
 // sessions. `leadCanMerge` is whether the lead may arm a merge when you ask it to, on unless
 // you turn it off. `notify` is the plugin each type of message to you goes through, none for a
 // type that isn't sent, and `digestAt` when the daily digest goes, 08:00 unless you say.
@@ -119,7 +115,6 @@ export type Settings = {
   reviewMinutes: number;
   yourHarness: HarnessName | undefined;
   yourReviewer: HarnessName | undefined;
-  declined: string[];
   plugins: string[];
   host: string;
   leadCanMerge: boolean;
@@ -145,7 +140,6 @@ const keysOf: Record<Group, Key[]> = {
   reviewMinutes: ["review"],
   yourHarness: ["harness"],
   yourReviewer: ["your_reviewer"],
-  declined: ["github_declined"],
   plugins: ["plugins"],
   host: ["session"],
   leadCanMerge: ["can_merge", "may_arm_merges"],
@@ -154,8 +148,7 @@ const keysOf: Record<Group, Key[]> = {
 };
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time,
-// the repositories you declined the GitHub plugin for, your personal plugins and the session host
-// fit you, your account and your machine, so a repository can't set them. So do where messages
+// your personal plugins and the session host fit you, your account and your machine, so a repository can't set them. So do where messages
 // to you go, as their recipient is yours alone. Letting the lead merge grants an agent
 // what is yours, so only you can say whether it may, never a repository. The tracker belongs to
 // the repository, so your config doesn't. Setup and test can come from either: yours go over
@@ -171,7 +164,6 @@ const yourKeys: Key[] = [
   "review",
   "fallback",
   "your_reviewer",
-  "github_declined",
   "plugins",
   "session",
   "can_merge",
@@ -643,7 +635,6 @@ function mergeSettings(
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,
     yourHarness: first((l) => l.harness),
     yourReviewer: first((l) => l.your_reviewer),
-    declined: first((l) => l.github_declined) ?? [],
     plugins: first((l) => l.plugins) ?? [],
     host: first((l) => l.session) ?? "tmux",
     leadCanMerge: first((l) => l.can_merge ?? l.may_arm_merges) ?? true,
