@@ -81,6 +81,24 @@ console.log(JSON.stringify({ held, notes }));`);
   expect(seen).toEqual({ held: [`APP-1 failed: its setup command failed`], notes: [] });
 });
 
+// A builder brought back as the daemon starts can run sc submit just as a poll ends its thread
+// for a merge. The submit comes in once the thread is done, and must leave it done.
+test("a submit that comes in after the thread ended leaves it done", () => {
+  const seen = withThread(`import { submitRound } from ${JSON.stringify(source("flow/round.ts"))};
+await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
+let refused = "";
+try {
+  submitRound(db, socket, thread.folder, "Round 1");
+} catch (error) {
+  refused = String(error);
+}
+console.log(JSON.stringify({ refused, status: readThread(db, thread.folder).status }));`);
+  expect(seen).toEqual({
+    refused: "Error: this thread is done, so Skelcrew won't push it",
+    status: "done",
+  });
+});
+
 // Runs a script against the test's own home, with a thread app-1 started on a repository with
 // no tracker or forge, and returns what it printed as JSON. The script has db, thread, the
 // imports below, and socket, the test's tmux socket, where no lead runs unless the script starts one.

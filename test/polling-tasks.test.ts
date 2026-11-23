@@ -195,6 +195,8 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
     serve();
     await until(() => thread().status === "done");
     // Watching a builder start takes a second, and only then could it call the thread failed.
+    // The builder brought back also runs sc submit as it starts, which can come in after the
+    // merge ended the thread, and is refused then.
     await Bun.sleep(1500);
     expect(thread().status).toBe("done");
     expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
