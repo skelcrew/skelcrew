@@ -1,31 +1,12 @@
 // The commands for plugins: sc plugin adds, removes, updates and lists them and runs their setup,
-// and sc install sets up this machine and the plugins your files name, and adds the repository
-// you run it in.
+// and sc install installs only the plugins named by the checkout and personal lock.
 import { usage } from "./input.ts";
 
 export async function installCommand(args: string[]): Promise<void> {
-  const options = new Map<string, string>();
-  for (let at = 0; at < args.length; at += 2) {
-    const [flag = "", value] = args.slice(at, at + 2);
-    if (!["--from", "--files"].includes(flag) || !value || options.has(flag)) usage("install");
-    else options.set(flag, value);
-  }
-  const files = options.get("--files");
-  if (files) {
-    const { putSentFiles } = await import("../machine/your-files.ts");
-    putSentFiles(files);
-  }
-  const { install } = await import("../machine/setup.ts");
-  if (!install(options.get("--from"))) {
-    process.exitCode = 1;
-    return;
-  }
-  // On a server, the checkout is on your laptop, so only a run here adds a repository.
-  if (options.has("--from")) return;
-  const { installRepo } = await import("../flow/repo.ts");
-  await installRepo("skelcrew");
-  const { setUpPiForRoles } = await import("../machine/setup.ts");
-  setUpPiForRoles();
+  if (args.length !== 0 && !(args.length === 2 && args[0] === "--from" && args[1]))
+    usage("install");
+  const { installFiles } = await import("../plugins/install-files.ts");
+  if (!installFiles(args[1])) process.exitCode = 1;
 }
 
 export async function pluginCommand(args: string[], json: boolean): Promise<void> {
@@ -41,10 +22,9 @@ export async function pluginCommand(args: string[], json: boolean): Promise<void
     if (added) console.log(added);
     return;
   }
-  if ((command === "rm" || command === "update") && !yours) {
-    const verb = command === "rm" ? "remove" : "update";
+  if (command === "update" && !yours) {
     throw new Error(
-      `sc plugin ${command} without -g is for a repository's plugins, which Skelcrew can't ${verb} yet. sc plugin ${command} -g is for your own`,
+      `sc plugin ${command} without -g is for a repository's plugins, which Skelcrew can't update yet. sc plugin ${command} -g is for your own`,
     );
   }
   if (command === "add" && name && more.length === 0) {
@@ -52,8 +32,7 @@ export async function pluginCommand(args: string[], json: boolean): Promise<void
     return;
   }
   if (command === "rm" && name && more.length === 0) {
-    const { repositoryNeeds } = await import("../plugins/repository.ts");
-    return removeYourPlugin(name, repositoryNeeds(true));
+    return removeYourPlugin(name);
   }
   if (command === "update" && more.length === 0) return updatePlugins(name);
   if (command === "setup" && rest[0] && rest.length === 1) {

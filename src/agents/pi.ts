@@ -35,7 +35,7 @@ const answerWith =
   "Give your answer with the skelcrew_answer tool, once, as your last step. Skelcrew reads only that.";
 
 // Why a Pi agent can't start: no provider's key reaches it, so it runs only on Skelcrew's login.
-const noLogin = "Skelcrew has no Pi login for agents yet: run sc install to sign in to Pi";
+const noLogin = "Skelcrew has no Pi login for agents yet: run sc to sign in to Pi";
 
 // The folder of each session's own: Pi's agent folder, with its conversations in sessions/.
 const sessionHome = (name: string, home = homedir()) => join(dataDir(home), "pi-sessions", name);

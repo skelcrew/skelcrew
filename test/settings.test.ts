@@ -57,16 +57,16 @@ const forApp = () =>
     ).out,
   );
 
-test("the repository's skelcrew.yaml sets each role and the round limit, over your config", () => {
+test("your general settings override the repository", () => {
   settings(
     "harness: claude\nmodel: sonnet\nmax_rounds: 5\n",
     "lead: { model: opus }\nreviewer: { harness: codex }\nmax_rounds: 2\n",
   );
   expect(forApp()).toEqual({
-    lead: { harness: "claude", model: "opus" },
+    lead: { harness: "claude", model: "sonnet" },
     builder: { harness: "claude", model: "sonnet" },
-    reviewer: { harness: "codex" },
-    maxRounds: 2,
+    reviewer: { harness: "claude", model: "sonnet" },
+    maxRounds: 5,
     fallback: null,
     reviewMinutes: 30,
   });
@@ -113,13 +113,13 @@ test("only your config lets the lead merge, and it is on by default", () => {
   expect(leadMerges()).toBe("true");
   settings("harness: claude\nlead: { may_arm_merges: true, can_merge: false }\n", null);
   expect(leadMerges()).toBe("false");
-  // A repository's skelcrew.yaml can't turn it on, and the lead's harness still comes from it.
+  // A repository cannot turn it on or replace your harness.
   settings(
     "harness: claude\nlead: { can_merge: false }\n",
     "lead: { harness: codex, can_merge: true, may_arm_merges: true }\n",
   );
   expect(leadMerges()).toBe("false");
-  expect(forApp().lead).toEqual({ harness: "codex" });
+  expect(forApp().lead).toEqual({ harness: "claude" });
   // Nor can it turn yours off.
   settings("harness: claude\n", "lead: { can_merge: false }\n");
   expect(leadMerges()).toBe("true");
@@ -144,9 +144,9 @@ test("only your config lets the lead merge, and it is on by default", () => {
 });
 
 // A model name belongs to its harness.
-test("your model for a role doesn't follow it onto the harness skelcrew.yaml picks", () => {
+test("your harness and role model override the repository harness", () => {
   settings("harness: claude\nreviewer: { model: sonnet }\n", "reviewer: { harness: codex }\n");
-  expect(forApp().reviewer).toEqual({ harness: "codex" });
+  expect(forApp().reviewer).toEqual({ harness: "claude", model: "sonnet" });
   settings("harness: claude\nreviewer: { model: sonnet }\n", "reviewer: { harness: claude }\n");
   expect(forApp().reviewer).toEqual({ harness: "claude", model: "sonnet" });
 });
@@ -181,14 +181,14 @@ test("with no skelcrew.yaml naming them, there are no setup or test commands", (
 // Your config stands in for a repository you don't want to commit a skelcrew.yaml to. Each of
 // setup and test comes from the repository's skelcrew.yaml, else your config, and an empty list
 // in skelcrew.yaml counts as named.
-test("setup and test come from the repository, then your config", () => {
+test("setup and test come from your config, then the repository", () => {
   settings("harness: claude\nsetup: [make deps]\ntest: [make test]\n", null);
   expect(commands()).toEqual({ setup: ["make deps"], test: ["make test"] });
   settings(
     "harness: claude\nsetup: [make deps]\ntest: [make test]\n",
     "setup: []\ntest: [bun run check]\n",
   );
-  expect(commands()).toEqual({ setup: [], test: ["bun run check"] });
+  expect(commands()).toEqual({ setup: ["make deps"], test: ["make test"] });
   settings("harness: claude\ntest: [make test]\n", "setup: [bun install]\n");
   expect(commands()).toEqual({ setup: ["bun install"], test: ["make test"] });
 });

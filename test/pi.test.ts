@@ -99,7 +99,7 @@ test("a lead or builder starts with Skelcrew's extension, its own folder and no 
     env: { HOME: home, PATH: path, ANTHROPIC_API_KEY: "sk-ant-1" },
   };
   // With no login of Skelcrew's, Pi would have nothing to run on, as no key reaches it.
-  expect(() => pi.start(without)).toThrow("run sc install to sign in to Pi");
+  expect(() => pi.start(without)).toThrow("run sc to sign in to Pi");
   saveLogin(3_600_000);
   const started = pi.start({
     name: "app-12",

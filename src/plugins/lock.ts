@@ -1,13 +1,9 @@
-// Your own lock: the exact version and commit of each of your personal plugins, in
-// ~/.config/skelcrew/skelcrew.lock, beside the list of them under plugins: in your config.yaml.
-// sc install makes the machine match both.
+// Your own lock: the exact version and commit of each personal plugin.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isMap, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
-import { configFile, yourConfigDocument } from "../config.ts";
 import { configDir } from "../paths.ts";
-import { readSettings } from "../settings.ts";
 import { Version } from "./plugin.ts";
 
 // Returns the path of your own lock file.
@@ -84,10 +80,9 @@ export function setLocked(source: string, locked: Locked | null): void {
   writeFileSync(file, document.toString({ lineWidth: 0 }));
 }
 
-// Runs `write`, which changes `files`: by default your config.yaml and your lock, or a
-// repository's skelcrew.yaml and skelcrew.lock. When it fails, each file is put back as it was,
+// Runs `write`, which changes your lock or the repository files explicitly passed in. When it fails, each file is put back as it was,
 // so a plugin is never left named in one and missing from the other.
-export function writeBoth(write: () => void, files = [configFile(), lockFile()]): void {
+export function writeBoth(write: () => void, files = [lockFile()]): void {
   const before = files.map((file) => (existsSync(file) ? readFileSync(file, "utf8") : null));
   try {
     write();
@@ -105,14 +100,5 @@ export function writeBoth(write: () => void, files = [configFile(), lockFile()])
   }
 }
 
-// Returns your personal plugins, as plugins: in your config.yaml lists them.
-export const yourPlugins = (): string[] => readSettings(["plugins"]).plugins;
-
-// Writes your personal plugins into plugins: in your config.yaml, keeping the rest of it as it
-// is.
-export function setYourPlugins(sources: string[]): void {
-  const config = yourConfigDocument();
-  config.set("plugins", sources);
-  mkdirSync(configDir(), { recursive: true });
-  writeFileSync(configFile(), config.toString());
-}
+// Returns the personal plugins pinned in your lock.
+export const yourPlugins = (): string[] => Object.keys(yourLock());

@@ -44,6 +44,7 @@ import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { roundMoved, roundOf } from "./ledger.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
+import { markMissingPlugin } from "./missing-plugins.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
 import { ciShowedIn, ciWaitEnded, lastPushed, retryPost } from "./round.ts";
 import { needsYou } from "./status.ts";
@@ -554,6 +555,7 @@ async function pollRepository(
   passed: Set<string>,
 ): Promise<void> {
   const { owner, repo } = repository;
+  for (const thread of threads) markMissingPlugin(db, thread);
   // Whether Skelcrew's clone's default branch is up to date with the remote as of this poll.
   let refreshed = false;
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this
@@ -568,6 +570,7 @@ async function pollRepository(
         ? threads.flatMap((t) => (t.pr === null ? [] : [t.pr]))
         : [];
       const answer = await askWhatChanged(db, plugin, repository, jobs, next, watched);
+      if (!repositoryPlugins(db, repository).some((using) => using.plugin === plugin)) continue;
       const kinds: Item["kind"][] = [
         ...(jobs.includes("tracker") ? ["task" as const] : []),
         ...(jobs.includes("forge") ? ["pr" as const] : []),
@@ -742,6 +745,7 @@ export function pollRepositories(
     // not known yet, never hides one. One whose stop fails, such as on a host that can't end
     // what an ended builder left, is logged, and tried again on the next tick.
     for (const thread of live) {
+      if (markMissingPlugin(db, thread) !== null) continue;
       if (looking.has(thread.folder)) continue;
       looking.add(thread.folder);
       noticeEndedBuilder(db, sessions, thread)

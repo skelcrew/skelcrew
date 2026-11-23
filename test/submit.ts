@@ -164,6 +164,8 @@ export function setUp(): void {
   mkdirSync(join(home, "run"), { mode: 0o700 });
   fakeClaude();
   fakeCodex();
+  mkdirSync(join(home, ".local", "share", "skelcrew", "codex"), { recursive: true });
+  writeFileSync(join(home, ".local", "share", "skelcrew", "codex", "auth.json"), "{}");
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   config("");

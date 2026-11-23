@@ -12,12 +12,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly } from "../agents/sessions.ts";
 import {
   agentsAnswered,
-  agentsOnDefaultBranch,
   approvedAgents,
   askAboutAgents,
   builtInAgentFiles,
@@ -624,12 +624,7 @@ export function checkoutTop(): string | null {
   return top.success ? top.stdout.toString().trim() : null;
 }
 
-// Writes the standard setup every repository shares into the checkout you are in, for sc init:
-// the starter skelcrew.yaml and the built-in .agents/ at its top, leaving either as it is when
-// there, and names the forge's plugin, pinned in skelcrew.lock. It adds nothing to Skelcrew,
-// installs nothing and sets up nothing: that is sc install's job. Stops outside a git repository,
-// and in one with no remote, as the remote says which forge's plugin to name.
-export function initRepo(): void {
+export async function initRepo(): Promise<void> {
   const root = checkoutTop();
   if (root === null)
     throw new Error(
@@ -640,12 +635,13 @@ export function initRepo(): void {
     throw new Error(
       "sc init needs the repository's remote, and this checkout has none. Push it somewhere first, such as to GitHub.",
     );
-  // A new file is made only where none is, so the write never follows a link.
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
+  if (!hasConfig) {
+    const { chooseCrew } = await import("../machine/crew.ts");
+    writeFileSync(file, starterConfig + stringify({ roles: chooseCrew() }), { flag: "wx" });
+  }
   const forge = addForgePlugin(root, remote);
-  // Every repository gets a skelcrew.lock, so one that pins nothing yet has one to commit too.
   const lock = join(root, "skelcrew.lock");
   const newLock = lstatSync(lock, { throwIfNoEntry: false }) === undefined;
   if (newLock) writeFileSync(lock, lockStart, { flag: "wx" });
@@ -673,13 +669,7 @@ export function initRepo(): void {
   console.log("Next: sc install");
 }
 
-// Adds the checkout you are in to Skelcrew, for sc install, when its skelcrew.yaml says it is a
-// repository for Skelcrew and Skelcrew doesn't have it yet, as sc repo add does. Then it approves
-// the checkout's .agents/ when it holds only the built-in files sc init writes, and shows and asks
-// about any other, as it may be on no default branch yet. An answer you gave already stands, so sc
-// install on an old branch never swaps the roles new tasks start on. `sessions` names where the
-// repository's lead runs.
-export async function installRepo(sessions: string): Promise<void> {
+export function approveCheckout(): void {
   const root = checkoutTop();
   if (
     root === null ||
@@ -689,21 +679,15 @@ export async function installRepo(sessions: string): Promise<void> {
   const remote = originHere(root);
   if (!remote) {
     console.log(
-      "This checkout has no remote, so Skelcrew didn't add it. Push it somewhere, such as to GitHub, then run sc install again.",
+      "This checkout has no remote, so Skelcrew didn't add it. Push it somewhere, such as to GitHub, then run sc again.",
     );
     return;
   }
-  const isNew = repositoryAt(openDb(), remote) === undefined;
-  if (isNew) await addRepo(root, sessions);
-  // A repository you didn't trust isn't in, and gets no approval.
   const added = repositoryAt(openDb(), remote);
-  // Skelcrew reads only a folder of .agents/ with files in it.
   if (!added || !lstatSync(join(root, ".agents"), { throwIfNoEntry: false })?.isDirectory()) return;
-  // A tracked file whose edits aren't staged has two versions, and git commit takes one while
-  // git commit -a takes the other, so Skelcrew can't tell which to show you.
   if (!Bun.spawnSync(["git", "-C", root, "diff", "--quiet", "--", ".agents"]).success) {
     console.log(
-      ".agents/ has changes you haven't staged, so Skelcrew can't tell which version you'll commit. Stage or drop them, then run sc install again.",
+      ".agents/ has changes you haven't staged, so Skelcrew can't tell which version you'll commit. Stage or drop them, then run sc again.",
     );
     return;
   }
@@ -713,10 +697,7 @@ export async function installRepo(sessions: string): Promise<void> {
     console.log(
       `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,
     );
-  // A repository new to Skelcrew was asked about its default branch's .agents/ as it came in,
-  // so the checkout's is asked about only when it differs.
-  else if (!isNew || current !== agentsOnDefaultBranch(added))
-    askAboutAgents(added, added.name, current);
+  else askAboutAgents(added, added.name, current);
 }
 
 // Records your trust from outside the sandbox and brings in the repository: one Skelcrew has,

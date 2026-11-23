@@ -104,6 +104,7 @@ export function setUp(): void {
   mkdirSync(join(home, "bin"));
   mkdirSync(join(home, "run"), { mode: 0o700 });
   mkdirSync(codexHome(), { recursive: true });
+  writeFileSync(join(codexHome(), "auth.json"), "{}");
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');

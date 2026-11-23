@@ -77,6 +77,20 @@ console.log(JSON.stringify({ mark: thread().needs_you_for, notes: notes() }));`)
   expect(seen).toEqual({ mark, notes: [`APP-12 needs you: ${mark}`] });
 });
 
+test("polling keeps a missing-host item when the installed plugin's folder is gone", () => {
+  const seen = inProcess(`
+import { markMissingPlugin } from ${JSON.stringify(source("flow/missing-plugins.ts"))};
+db.run("INSERT INTO plugins (name, folder) VALUES ('broken', ?)", [cloneDir("simon", "gone-host")]);
+record(db, "app-12", { session: "s", host: "broken", host_id: "broken-app-12" });
+await bringBack(db, "none", thread());
+const before = thread().needs_you_for;
+markMissingPlugin(db, thread());
+markMissingPlugin(db, thread());
+console.log(JSON.stringify({ before, after: thread().needs_you_for }));`);
+  const mark = "run sc install: its session host broken is missing";
+  expect(seen).toEqual({ before: mark, after: mark });
+});
+
 // A release before this one had a failed review need you. The lead can run it again, so once
 // upgraded it shows as failed without needing you. One past the round limit still needs you.
 test("an upgrade moves a failed review off needing you, but not one past the round limit", () => {

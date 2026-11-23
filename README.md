@@ -12,22 +12,13 @@ Five steps take you from nothing to a first merged task.
 
 ### 1. Install
 
-The script runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bin`. If that folder isn't on your PATH, the script says so and gives the line to add to your shell's startup file. Add it and open a new terminal, or `sc` won't be found. Then `sc install` sets up the machine.
+The script runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bin`. If that folder isn't on your PATH, the script says so and gives the line to add to your shell's startup file. Add it and open a new terminal, or `sc` won't be found. Then plain `sc` starts Skelcrew when you are ready to open a repository.
 
 ```sh
 curl -fsSL https://skelcrew.dev/install.sh | sh
-sc install
 ```
 
-`sc install` checks for `tmux`, `git`, a sandbox (`bwrap` 0.11 or newer on Linux, `sandbox-exec` on a Mac) and a harness, Claude Code or Codex. If one is missing, it says what to install and stops. If `bwrap` is there but can't start a sandbox, as AppArmor can cause on Ubuntu 24.04 and later, it says what may block it, with the lines that allow it when AppArmor is the likely cause.
-
-Then it asks:
-
-- **The coding agent**, the harness agents run on.
-- **The coding agent for reviews**, only when both are installed. It offers the other one first, as a second model sees what the first one misses. With one installed, reviews run on it.
-- **A sign-in for Skelcrew's agents.** For Claude Code, you run `claude setup-token` in another terminal and paste the token. Codex gets a login of Skelcrew's own, apart from yours.
-
-It ends with `Skelcrew is set up.` Running it again changes nothing that is done.
+Plain `sc` checks for `tmux`, `git` and a sandbox (`bwrap` 0.11 or newer on Linux, `sandbox-exec` on a Mac). It names the command that fixes a missing tool or a sandbox that cannot start. It installs the background service and asks for a harness login when an agent needs one. No personal `config.yaml` is required.
 
 ### 2. Set up a repository
 
@@ -40,9 +31,9 @@ sc init
 sc install
 ```
 
-`sc init` only writes files: `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow.
+`sc init` asks which installed harnesses builders and reviewers use, offering the other harness for reviews as a second opinion. Each can name an optional model. It saves these choices under `roles:` in `skelcrew.yaml` and writes only repository files: `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow.
 
-`sc install` then reads them. It asks before installing the GitHub plugin, `skelcrew/skelcrew-github`: say yes. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. Then it adds the repository to Skelcrew.
+`sc install` then reads them. It asks before installing the GitHub plugin, `skelcrew/skelcrew-github`: say yes. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It asks no machine questions and starts no service. Plain `sc` then adds the repository and opens its lead.
 
 Skelcrew's agents read these files only from the default branch, so commit and push them, then run `sc`:
 
@@ -53,7 +44,7 @@ git push
 sc
 ```
 
-A clone of a repository that has a `skelcrew.yaml` already, such as a teammate's, needs only `sc install`. For a repository without one, `sc repo add` adds it as it is.
+A clone with `skelcrew.yaml` already needs `sc install` for its plugins, then `sc` to open it. For a repository without one, `sc repo add` adds it as it is.
 
 ### 3. Meet the lead
 
@@ -94,7 +85,7 @@ sc --remote <host> install   # such as simon@workbox
 sc --remote <host>
 ```
 
-The install sends your settings, plugins and the agents' token there. It puts Skelcrew there if it is missing, after asking, and runs `sc install` there. Then `sc --remote <host>`, run in your checkout, opens that repository's lead on the server over ssh. It also starts Skelcrew there as a background service, so it survives logging out and reboots. Run the install again whenever you change your settings or plugins.
+The install runs plugin-only `sc install` on the server for your checkout's remote. It leaves personal settings, locks and tokens on their own machines. It puts Skelcrew there first if missing, after asking. Then `sc --remote <host>` starts the service and opens that repository's lead, asking for an agent login when needed. Each machine keeps its own personal plugin lock.
 
 ## How it works
 

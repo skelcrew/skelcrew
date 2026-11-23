@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { hasAgentLogin } from "../src/agents/login.ts";
 import { answer, asked, git, insideSandbox, prItem, source, taskItem } from "./harness.ts";
 import {
   addApp,
@@ -37,6 +38,11 @@ import {
 
 beforeEach(setUp);
 afterEach(tearDown);
+
+test("polling agents have their logins before the daemon starts", () => {
+  expect(hasAgentLogin("claude", home)).toBe(true);
+  expect(hasAgentLogin("codex", home)).toBe(true);
+});
 
 test("the first poll brings everything open into Skelcrew's copy, and later ones what changed", async () => {
   addApp();

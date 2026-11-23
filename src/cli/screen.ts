@@ -5,14 +5,13 @@ import { usage } from "./input.ts";
 export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { attachToLead } = await import("../attach.ts");
   const { openDb } = await import("../db.ts");
-  const { bringInFrom, checkoutTop, repositories } = await import("../flow/repo.ts");
+  const { bringInFrom, approveCheckout, checkoutTop, repositories } = await import(
+    "../flow/repo.ts"
+  );
   const { originHere } = await import("../machine/origin.ts");
   const { ensureDaemon } = await import("../machine/service.ts");
-  const { firstRun, install, installFinished, setUpPiForRoles } = await import(
-    "../machine/setup.ts"
-  );
-  if (installFinished()) firstRun(from);
-  else install(from, true);
+  const { prepareMachine, signInForAgents } = await import("../machine/setup.ts");
+  prepareMachine(from);
   await ensureDaemon();
   const origin = originHere();
   if (from === undefined && origin === null && checkoutTop() !== null) {
@@ -23,7 +22,8 @@ export async function leadCommand(list: boolean, from?: string): Promise<void> {
     process.exit(1);
   }
   const found = await bringInFrom(from);
-  setUpPiForRoles();
+  if (from === undefined) approveCheckout();
+  signInForAgents(found);
   const { tellOldKeys } = await import("../config.ts");
   tellOldKeys(undefined);
   if (repositories(openDb()).length === 0) return;

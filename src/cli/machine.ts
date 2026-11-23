@@ -8,15 +8,18 @@ export async function machineCommand(args: string[]): Promise<void> {
     await restartDaemon();
     return;
   }
-  const { serve } = await import("../flow/daemon.ts");
+  const { serve, DaemonSetupError } = await import("../flow/daemon.ts");
   const daemon = command === "serve";
   if (daemon && args.length === 1) {
-    await serve("skelcrew");
+    try {
+      await serve("skelcrew");
+    } catch (error) {
+      if (error instanceof DaemonSetupError) process.exitCode = 78;
+      throw error;
+    }
     return;
   }
   if (daemon && args.length === 2 && args[1] === "--bg") {
-    const { setupDone } = await import("../machine/setup.ts");
-    if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
     const { ensureDaemon } = await import("../machine/service.ts");
     const outside = await ensureDaemon();
     console.log(

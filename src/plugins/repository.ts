@@ -20,7 +20,6 @@ import {
   newestLocked,
   refuseOtherName,
   refusePersonal,
-  removePlugin,
   type Shown,
   updatePlugin,
 } from "./install.ts";
@@ -226,7 +225,6 @@ export function addRepositoryPlugin(given: string, shown: Shown = {}): string | 
   repositoryPlugins(top);
   const db = openDb();
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
-  const before = installedPlugins(db);
   const fresh = !installed();
   if (fresh && !installPlugin(given, { remote: originHere(top), pin: false, io: true, shown }))
     return null;
@@ -234,18 +232,10 @@ export function addRepositoryPlugin(given: string, shown: Shown = {}): string | 
   if (!plugin) throw new Error(`${given} isn't installed after all`);
   const manifest = readManifest(plugin.folder);
   refusePersonal(manifest, true);
-  try {
-    writeBoth(
-      () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
-      [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],
-    );
-  } catch (error) {
-    if (!before.some((one) => one.name === plugin.name))
-      try {
-        removePlugin(manifest.name);
-      } catch {}
-    throw error;
-  }
+  writeBoth(
+    () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
+    [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],
+  );
   const pinned = fresh ? "" : ", at the version installed here";
   return `Added ${manifest.name} ${manifest.version} to skelcrew.yaml and skelcrew.lock${pinned}. They count once you commit and push them.`;
 }
@@ -318,8 +308,18 @@ export function everyNamed(unreadable: string[]): string[] {
 // settled by whichever is read last. A repository whose files can't be read throws, unless
 // `unreadable` is given: then what is wrong goes there, and the other repositories still count,
 // so one broken file can't hide another repository's pins.
-export function repositoryNeeds(everywhere = false, unreadable?: string[]): Need[] {
-  const needs = places(everywhere).flatMap(({ folder, where, remote }) => {
+export function repositoryNeeds(
+  everywhere = false,
+  unreadable?: string[],
+  root?: string | null,
+): Need[] {
+  const selected =
+    root === undefined
+      ? places(everywhere)
+      : root === null
+        ? []
+        : [{ folder: root, where: "This checkout", remote: originHere(root) }];
+  const needs = selected.flatMap(({ folder, where, remote }) => {
     try {
       const { plugins, lock } = repositoryPlugins(folder);
       return plugins.map((source) => ({ source, where, locked: lock[source], remote }));
@@ -427,6 +427,7 @@ export function needsInstall(folder: string): boolean {
     const db = openDb();
     const { plugins, lock } = repositoryPlugins(folder);
     return plugins.some((source) => {
+      if (db.query("SELECT 1 FROM removed_plugins WHERE source = ?").get(source)) return false;
       const locked = lock[source];
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
       if (!locked || !here || !matchesLock(here, locked)) return true;

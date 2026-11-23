@@ -95,6 +95,7 @@ test("an .agents/ you never approved steers nothing: every role stays built in",
 });
 
 test("once approved, a role file gives its instructions, harness and model, over skelcrew.yaml's line", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile(
     "roles/builder.md",
     "---\nharness: codex\nmodel: gpt-6\n---\nBuild it the team's way.\n",
@@ -114,6 +115,7 @@ test("once approved, a role file gives its instructions, harness and model, over
 });
 
 test("a role file naming no harness or model leaves skelcrew.yaml's line counting", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/builder.md", "Build it the team's way.\n");
   writeFileSync(join(clone, "skelcrew.yaml"), "builder: { model: sonnet }\n");
   commit("roles");
@@ -226,6 +228,7 @@ test("what you are shown to approve hides nothing: binary files, control codes a
 });
 
 test("a role file goes over skelcrew.yaml's line key by key, and a new harness drops its model", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/builder.md", "---\nmodel: gpt-6-mini\n---\nBuild it.\n");
   agentsFile("roles/reviewer.md", "---\nharness: claude\n---\nReview it.\n");
   writeFileSync(
@@ -236,7 +239,7 @@ test("a role file goes over skelcrew.yaml's line key by key, and a new harness d
   inHome(approveCurrent);
   expect(inHome('return readSettings(["builder", "reviewer"], app);')).toMatchObject({
     builder: { harness: "codex", model: "gpt-6-mini" },
-    reviewer: { harness: "claude", model: "opus" },
+    reviewer: { harness: "claude" },
   });
 });
 
@@ -252,6 +255,7 @@ test("the change shown is between the versions given, whatever the default branc
 });
 
 test("a broken role file stops only its own role: the lead still starts", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/reviewer.md", "---\nrounds: 5\n---\nReview it.\n");
   agentsFile("roles/lead.md", "---\nmodel: sonnet\n---\nLead it.\n");
   commit("roles");
@@ -267,6 +271,7 @@ test("a broken role file stops only its own role: the lead still starts", () => 
 });
 
 test("a role file naming the harness the role is on already keeps the model skelcrew.yaml gives", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/builder.md", "---\nharness: claude\n---\nBuild it.\n");
   writeFileSync(join(clone, "skelcrew.yaml"), "builder: { model: sonnet }\n");
   commit("roles");
@@ -306,6 +311,8 @@ test("a default flow file replaces max_rounds though it names no rounds, and you
   writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 0\n");
   expect(roundsOf()).toBe(2);
   // A task on the built-in files has no flow file, so max_rounds counts and is checked.
+  expect(roundsOf("{ ...app, agents: null }")).toBe(2);
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   expect(() => roundsOf("{ ...app, agents: null }")).toThrow("skelcrew.yaml isn't valid");
   agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
   commit("flow");
@@ -317,13 +324,13 @@ test("a default flow file replaces max_rounds though it names no rounds, and you
   expect(roundsOf()).toBe(7);
 });
 
-test("the flow file goes over your config's max_rounds, which goes over the built-in flow", () => {
+test("your config's max_rounds overrides an approved flow file", () => {
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "max_rounds: 6\n");
   expect(roundsOf()).toBe(6);
   agentsFile("flows/default.yaml", "review:\n  rounds: 4\n");
   commit("flow");
   inHome(approveCurrent);
-  expect(roundsOf()).toBe(4);
+  expect(roundsOf()).toBe(6);
 });
 
 test("a flow file that isn't valid stops only what reads the flow, naming the file", () => {
@@ -450,7 +457,10 @@ test("a flow's stage runs a role of the repository's own, with its file's instru
     "Test first.\n",
   );
   // A role with no harness or model of its own gets the stage's, from your config.
-  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({ harness: "codex" });
+  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({
+    harness: "claude",
+    model: "opus",
+  });
   expect(inHome('return readSettings(["reviewer"], app).reviewer;')).toEqual({
     harness: "claude",
     model: "opus",
@@ -547,12 +557,12 @@ test("a role of the repository's own takes its own roles: lines, never the stage
     "harness: claude\nmodel: opus\nroles: { tester: { model: sonnet } }\nrepos: { simon/app: { roles: { tester: { harness: codex, model: gpt-6 } } } }\n",
   );
   expect(builder()).toEqual({ harness: "codex", model: "gpt-6" });
-  // The role file's harness goes over your general settings, and your override over the file.
+  // Personal settings override the role file.
   agentsFile("roles/tester.md", "---\nharness: codex\n---\nTest first.\n");
   commit("tester");
   inHome(approveCurrent);
   writeFileSync(config, "harness: claude\nmodel: opus\nroles: { tester: { model: sonnet } }\n");
-  expect(builder()).toEqual({ harness: "codex" });
+  expect(builder()).toEqual({ harness: "claude", model: "sonnet" });
   writeFileSync(
     config,
     "harness: claude\nmodel: opus\nrepos: { simon/app: { roles: { tester: { harness: claude } } } }\n",
@@ -576,6 +586,7 @@ test("skelcrew.yaml's max_rounds counts until the repository has any flow file, 
 });
 
 test("a role file's harness and model are checked only where they count", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/builder.md", "---\nharness: codex\nmodel: [bad]\n---\nBuild it.\n");
   agentsFile("roles/reviewer.md", "---\nharness: emacs\n---\nReview it.\n");
   commit("roles");
@@ -594,12 +605,13 @@ test("a role file's harness and model are checked only where they count", () => 
     "harness: claude\nmodel: opus\nrepos: { simon/app: { roles: { builder: { model: gpt-6 } } } }\n",
   );
   expect(builderOf()).toEqual({
-    role: { harness: "codex", model: "gpt-6" },
+    role: { harness: "claude", model: "gpt-6" },
     told: "Build it.\n",
   });
 });
 
 test("an empty harness or model in a role file is refused where it counts", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/builder.md", "---\nmodel:\n---\nBuild it.\n");
   commit("roles");
   inHome(approveCurrent);
@@ -617,6 +629,7 @@ test("an empty harness or model in a role file is refused where it counts", () =
 });
 
 test("a reviewer file whose frontmatter never closes stops reviews only", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/reviewer.md", "---\nharness: codex\nReview it.\n");
   agentsFile("roles/builder.md", '---\nmodel: ""\n---\nBuild it.\n');
   agentsFile("roles/lead.md", "Lead it.\n");
@@ -625,7 +638,6 @@ test("a reviewer file whose frontmatter never closes stops reviews only", () => 
   expect(inHome('return repositoryRole("lead", app).instructions;')).toBe("Lead it.\n");
   expect(inHome('return readSettings(["lead"], app).lead;')).toEqual({
     harness: "claude",
-    model: "opus",
   });
   expect(() => inHome('return readSettings(["reviewer"], app);')).toThrow("never closes");
   expect(() => inHome('return readSettings(["builder"], app);')).toThrow(
@@ -672,6 +684,7 @@ catch (error) { return { first, again: String(error) }; }`);
 });
 
 test("a role file with Windows line endings that never closes stops only its own role", () => {
+  rmSync(join(home, ".config", "skelcrew", "config.yaml"));
   agentsFile("roles/reviewer.md", "---\r\nharness: codex\r\nReview it.\r\n");
   agentsFile("roles/lead.md", "---\r\nmodel: sonnet\r\n---\r\nLead it.\r\n");
   commit("roles");
@@ -683,12 +696,12 @@ test("a role file with Windows line endings that never closes stops only its own
   expect(() => inHome('return readSettings(["reviewer"], app);')).toThrow("never closes");
 });
 
-test("rounds: in your config goes under the flow file, and rounds: in your override over it", () => {
+test("personal rounds override the flow, with repos taking precedence", () => {
   agentsFile("flows/default.yaml", "review:\n  rounds: 4\n");
   commit("flow");
   inHome(approveCurrent);
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "rounds: 6\nmax_rounds: 9\n");
-  expect(roundsOf()).toBe(4);
+  expect(roundsOf()).toBe(6);
   writeFileSync(
     join(home, ".config", "skelcrew", "config.yaml"),
     "repos: { simon/app: { rounds: 7, max_rounds: 8 } }\n",
