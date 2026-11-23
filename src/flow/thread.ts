@@ -287,7 +287,7 @@ export const Thread = z.object({
   // The issue as its tracker wrote it as the task started, such as #12, or null.
   issue_ref: z.string().nullable(),
   // Whether the task is the lead's setup thread, started with --setup while the repository's
-  // setup or test wasn't set yet, so it runs with neither.
+  // setup or test wasn't set yet, so it runs only the ones its own branch sets.
   setup_thread: z.coerce.boolean().optional(),
 });
 export type Thread = z.infer<typeof Thread>;

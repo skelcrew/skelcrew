@@ -6,7 +6,13 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { hasAgentLogin, loginInstruction } from "../agents/login.ts";
-import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
+import {
+  commitSkelcrewYaml,
+  reviewConfig,
+  reviewLimit,
+  roundLimit,
+  threadTest,
+} from "../config.ts";
 import type { Repository } from "../db.ts";
 import { flowRoles, strictRounds } from "../flows.ts";
 import { errorText } from "../format.ts";
@@ -588,7 +594,7 @@ async function reviewRound(
               return { decisions: fresh.decisions, stayTrue: fresh.stay_true, description: shown };
             },
             base: from,
-            test: repositoryCommands(thread).test,
+            test: threadTest(thread, () => commitSkelcrewYaml(skelcrewClone, sha)),
             socket: reviewSocket(thread.folder),
           });
           const { harness } = given;

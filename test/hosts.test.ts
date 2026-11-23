@@ -1830,10 +1830,11 @@ process.exit(0);`,
 // follows once it is there. With `spokeFirst`, the human has a draft at the lead's prompt as it
 // starts, which holds Skelcrew's typing, and sends it, as the lead's hook reports. With
 // `transport`, the host carries the text itself, and holds the opening handed to it while the
-// lead looks busy, as the human is busy there.
+// lead looks busy, as the human is busy there. `files` are more files the clone's commit holds,
+// by path, such as a package file that makes it a repository with code.
 function typedAfterStart(
   config: string,
-  { row = "", failFirst = false, spokeFirst = false, transport = false } = {},
+  { row = "", failFirst = false, spokeFirst = false, transport = false, files = {} } = {},
 ): string {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const typed = join(home, "typed.txt");
@@ -1866,6 +1867,11 @@ db.run("DELETE FROM threads");
 fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
 Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
 fs.writeFileSync(cloneDir("simon", "app") + "/skelcrew.yaml", "limits: { threads: 9 }\\n");
+for (const [path, text] of Object.entries(${JSON.stringify(files)})) {
+  fs.mkdirSync(require("node:path").dirname(cloneDir("simon", "app") + "/" + path), { recursive: true });
+  fs.writeFileSync(cloneDir("simon", "app") + "/" + path, text);
+}
+Bun.spawnSync(["git", "-C", cloneDir("simon", "app"), "add", "-A"]);
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
 if (${failFirst}) await startLead(db, "unused", repository).catch(() => {});
 token();
@@ -1891,12 +1897,29 @@ process.exit(0);`,
 
 // A new human sees only the harness's banner until they speak, and shouldn't have to know to. A
 // skelcrew.yaml whose setup and test aren't decided yet keeps every builder from starting, so the
-// lead proposes them first.
+// lead proposes them first. A package under docs/, such as a docs site's, is code to set up too.
 test("a lead's first start brings it Skelcrew's opening turn, proposing setup and test while they are unset", () => {
-  const typed = typedAfterStart("");
+  const typed = typedAfterStart("", { files: { "docs/package.json": "{}\n" } });
   expect(typed).toContain("Skelcrew: this is your first start");
   expect(typed).toContain("propose the repository's setup and test commands");
   expect(typed).toContain("last note");
+}, 30_000);
+
+// A repository with nothing to set up or test yet, only a README, docs and Skelcrew's files, has
+// no commands to propose. A setup thread that only wrote setup: [] and test: [] would need a
+// review of its own, so the first thread that adds code sets them instead.
+test("a lead's first start in a repository with no code yet asks what to build, proposing no setup thread", () => {
+  const typed = typedAfterStart("", {
+    files: {
+      "README.md": "# app\n",
+      "spec.md": "",
+      "skelcrew.lock": "",
+      ".agents/roles/builder.md": "Build.\n",
+    },
+  });
+  expect(typed).toContain("Skelcrew: this is your first start");
+  expect(typed).toContain("setup and test can wait until there's code, and ask what to build");
+  expect(typed).not.toContain("propose the repository's setup");
 }, 30_000);
 
 // A line no thread can add, such as a builder's harness, is for the human to fix first.
