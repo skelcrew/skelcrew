@@ -1,5 +1,6 @@
-// The screen's sidebar as the list: its stages opening and closing by key and by click, moving
-// between sections, and the list's keys on a task's row, which never reach an agent.
+// The screen's sidebar as the list: its stages opening and closing by key and by click, a click
+// bringing your typing there, moving between sections, and the list's keys on a task's row, which
+// never reach an agent.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -144,6 +145,35 @@ test("a click on a stage's heading opens or closes it, and on Needs you does not
   await until(() => !isOpen("2 Building"), "Building to close");
   click(5, at("2 Building"));
   await until(() => isOpen("2 Building"), "Building to open");
+});
+
+test("a left click anywhere in the sidebar moves your typing there, and the wheel never does", async () => {
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 't12'");
+  open("lead");
+  await ready("lead");
+  await until(() => isOpen("Needs you  1"), "app-12 under Needs you");
+  const at = (text: string) => left().findIndex((line) => line.includes(text)) + 1;
+  const toLead = async () => {
+    click(5, at("◆ Lead"));
+    await until(() => !typingToSidebar() && onLead(), "your typing back on the lead");
+  };
+  const clicked = async (line: number, what: string) => {
+    click(5, line);
+    await until(typingToSidebar, `a click on ${what} to move your typing`);
+    await until(() => !footer().startsWith("  typing to"), `the footer after ${what}`);
+    await toLead();
+  };
+  type("\x1b[<65;5;10M");
+  await until(() => !selected().includes("Lead"), "the wheel to move down a row");
+  type("\x1b[<64;5;10M");
+  await until(() => selected().includes("Lead") && onLead(), "the wheel to move back up");
+  await Bun.sleep(300);
+  expect(typingToSidebar()).toBe(false);
+  const task = left().findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(line)) + 1;
+  await clicked(task, "a task's row");
+  await clicked(at("Needs you  1"), "Needs you");
+  await clicked(at("2 Building"), "a stage's heading");
+  await clicked(25, "empty space");
 });
 
 test("Alt-Shift-Down and Alt-Shift-Up move between the lead, Needs you and the open stages", async () => {

@@ -919,7 +919,8 @@ export async function runSidebar(
     });
   };
 
-  // Acts on a press of the mouse at a column and line, counted from 1. A click on a task's row
+  // Acts on a press of the mouse at a column and line, counted from 1. A left click anywhere
+  // brings your typing to the sidebar, as Ctrl-\ does. A click on a task's row
   // moves to it, which shows its details, and a click on the row you are on opens it as Enter does.
   // A click on the lead's row opens the lead at once. A click on a stage's heading, or its name
   // pinned at an edge, opens or closes it. The wheel moves one row up or down. On an item open
@@ -936,6 +937,7 @@ export async function runSidebar(
     if (button === "64") return moveTo(here - 1);
     if (button === "65") return moveTo(here + 1);
     if (button !== "0") return;
+    toSidebar();
     const target = targets[line - 1] ?? null;
     if (target === null) return;
     if ("section" in target) return toggle(target.section);
