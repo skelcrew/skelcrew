@@ -316,6 +316,48 @@ test("on a narrow screen the notice says it shorter along the whole row, and kee
   expect(split).toContain("sc --remote simon@workbox");
 });
 
+test("a command too long for the boxes' row wraps whole over rows below it, and the boxes stay", () => {
+  const machine = "simon@a-very-long-hostname.example.internal";
+  const cases: [Partial<Top>, { sidebar: number; right: number }][] = [
+    [
+      { fullScreen: true, side: "lead" },
+      { sidebar: 0, right: 15 },
+    ],
+    [
+      { fullScreen: true, side: "lead" },
+      { sidebar: 0, right: 40 },
+    ],
+    [{}, { sidebar: 27, right: 48 }],
+  ];
+  for (const [more, given] of cases) {
+    const drawn = top({ ...more, elsewhere: machine }, given);
+    expect(drawn.boxes).toBe(boxRow(more, given));
+    expect(drawn.below.length).toBeGreaterThan(0);
+    expect(drawn.below.length).toBeLessThanOrEqual(3);
+    for (const row of drawn.below) expect(Bun.stringWidth(seen(row))).toBe(terminal(given));
+    const told = drawn.below.map((row) => seen(row).trim()).join(" ");
+    expect(told.replace(/ /g, "")).toContain(`sc--remote${machine}`);
+  }
+  const long = top(
+    { elsewhere: "simon@build-box-02.lan", fullScreen: true },
+    { sidebar: 0, right: 15 },
+  );
+  expect(long.below.map((row) => seen(row).trim()).join("")).toBe(
+    "sc --remote simon@build-box-02.lan",
+  );
+  const phone = top({ elsewhere: "simon@workbox", fullScreen: true }, { sidebar: 0, right: 15 });
+  expect(phone.below.map((row) => seen(row).trim())).toEqual([
+    "To drop files, run",
+    "sc --remote",
+    "simon@workbox",
+  ]);
+});
+
+test("a command that fits the boxes' row adds no rows", () => {
+  expect(top({ elsewhere: "simon@workbox" }).below).toEqual([]);
+  expect(top().below).toEqual([]);
+});
+
 test("without this machine's name, the notice says where to fill it in", () => {
   expect(seen(boxRow({ elsewhere: "" }))).toContain("sc --remote <user@host>");
 });

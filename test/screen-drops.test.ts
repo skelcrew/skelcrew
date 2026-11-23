@@ -2,6 +2,7 @@
 // which its sandbox lets it read, through the screen's real tmux servers.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname, userInfo } from "node:os";
 import { join } from "node:path";
 import { escapeTime } from "../src/screen/drops.ts";
 import { panes } from "../src/screen/screen.ts";
@@ -21,6 +22,7 @@ import {
   seen,
   sidebarRefreshedTwice,
   startTest,
+  terminal,
   tmux,
   type,
   until,
@@ -72,6 +74,20 @@ test("a file dropped from another machine's terminal reaches the agent as it cam
   drop("/Users/simon/Desktop/shot.png");
   expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
   await until(() => boxesRow().includes(elsewhere), "the notice that the file is elsewhere");
+});
+
+test("on a phone-wide screen the notice wraps under the top rows, with the command whole", async () => {
+  open("lead");
+  await ready("lead");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "20", "-y", "30");
+  const zoomed = () =>
+    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
+  await until(() => zoomed().trim() === "1", "the lead alone on the phone-wide screen");
+  drop("/Users/simon/Desktop/shot.png");
+  expect(await got("lead")).toBe("/Users/simon/Desktop/shot.png");
+  const command = `sc --remote ${userInfo().username}@${hostname()}`.replace(/ /g, "");
+  const told = () => seen().split("\n").slice(2, 5).join("").replace(/ /g, "");
+  await until(() => told().includes(command), "the command whole under the top rows");
 });
 
 test("the notice that a dropped file is elsewhere shows while the agent fills the terminal", async () => {

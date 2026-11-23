@@ -1,7 +1,7 @@
 // The two top rows of the screen. The header, across the whole width, says Skelcrew, its version
 // and, on a remote, where it runs, then has a tab for each repository. Under it is the top of the
-// box round each side, which for a while after a file dropped was on another machine also says
-// how to drop it.
+// box round each side. For a while after a file dropped was on another machine, they also say how
+// to drop it, on more rows when the screen is too narrow for one.
 import type { Tab } from "../list/rows.ts";
 import { fitted, removeControlCodes } from "./look.ts";
 import { dim, lit } from "./screen.ts";
@@ -172,8 +172,10 @@ export type Top = {
 // the sides share always, and the rest is dim, as tmux draws the lines below. While the right
 // side fills the terminal, tmux hides the panes that draw the boxes' lines, so the whole boxes'
 // row is lit, as the one mark left that your typing goes to the agent, with no corner over lines
-// that aren't there. It reads nothing, so what you see can be tested without a terminal.
-export function drawTop(top: Top, size: Size): { header: string; boxes: string } {
+// that aren't there. For a while after a file dropped was on another machine, the boxes' row also
+// says how to drop it, or rows below it do when the command doesn't fit there. It reads nothing,
+// so what you see can be tested without a terminal.
+export function drawTop(top: Top, size: Size): { header: string; boxes: string; below: string[] } {
   // The header's own part covers the pad, the sidebar and the lines beside it, and the tabs' the
   // right side and its pad. What each needs to show whole: the header's name, its longest version
   // and the place, with a space after, and every tab.
@@ -197,10 +199,16 @@ export function drawTop(top: Top, size: Size): { header: string; boxes: string }
   const after = " ".repeat(Math.max(width - split - tabs.width, 0));
   const [left, right] = top.fullScreen ? [lit, lit] : top.typingRight ? [dim, lit] : [lit, dim];
   const [outer, corner] = top.fullScreen ? [lit, "─"] : [dim, "┬"];
-  const rightEdge =
+  const command =
     top.elsewhere === null
-      ? inColour(right, `${"─".repeat(Math.max(size.right, 0))}${corner}`)
-      : `${elsewhereLine(top.elsewhere, size.right, right)}${inColour(right, corner)}`;
+      ? ""
+      : `sc --remote ${removeControlCodes(top.elsewhere) || "<user@host>"}`;
+  const inLine =
+    command !== "" && Bun.stringWidth(command) <= (top.fullScreen ? width : size.right) - 4;
+  const rightEdge =
+    inLine && !top.fullScreen
+      ? `${elsewhereLine(command, size.right, right)}${inColour(right, corner)}`
+      : inColour(right, `${"─".repeat(Math.max(size.right, 0))}${corner}`);
   const boxes = [
     inColour(outer, "─"),
     inColour(left, `${corner}${"─".repeat(Math.max(size.sidebar, 0))}`),
@@ -210,18 +218,16 @@ export function drawTop(top: Top, size: Size): { header: string; boxes: string }
   ].join("");
   return {
     header: `${header(top.where, split, top.versions, side)}${tabs.text}${after}`,
-    boxes:
-      top.fullScreen && top.elsewhere !== null ? elsewhereLine(top.elsewhere, width, lit) : boxes,
+    boxes: top.fullScreen && inLine ? elsewhereLine(command, width, lit) : boxes,
+    below: command !== "" && !inLine ? elsewhereRows(command, width) : [],
   };
 }
 
 // Returns a line `width` columns wide in `colour`, with the longest way of saying how to drop a file
-// from another machine that fits in it. It goes along the right side's box, or along the whole
-// row while one side fills the terminal, so the box your typing goes to still shows. `machine` is
-// this one as sc --remote takes it, or empty when unknown. The command is cut only when it is
-// wider than the line, as half a name would be another machine.
-function elsewhereLine(machine: string, width: number, colour: string): string {
-  const command = `sc --remote ${removeControlCodes(machine) || "<user@host>"}`;
+// from another machine that fits in it, which `command`, sc --remote and this machine, always does.
+// It goes along the right side's box, or along the whole row while one side fills the terminal,
+// so the box your typing goes to still shows.
+function elsewhereLine(command: string, width: number, colour: string): string {
   const said = [
     `That file is on another machine. To drop files, run ${command} from that machine.`,
     `That file is on another machine. To drop files, run ${command} there.`,
@@ -229,10 +235,35 @@ function elsewhereLine(machine: string, width: number, colour: string): string {
     `To drop files: ${command}`,
     command,
   ];
-  const line = (length: number) => inColour(colour, "─".repeat(length));
-  if (width < 4) return line(Math.max(width, 0));
   const room = width - 4;
-  const text = said.find((one) => Bun.stringWidth(one) <= room) ?? fitted(command, room);
-  const rest = Math.max(room - Bun.stringWidth(text), 0);
-  return `${line(2)} #[fg=colour231]${escaped(text)}#[default] ${line(rest)}`;
+  const text = said.find((one) => Bun.stringWidth(one) <= room) ?? command;
+  const line = (length: number) => inColour(colour, "─".repeat(length));
+  return `${line(2)} #[fg=colour231]${escaped(text)}#[default] ${line(room - Bun.stringWidth(text))}`;
+}
+
+// The most rows a notice adds under the boxes' row, as tmux shows at most five status lines.
+const mostRowsBelow = 3;
+
+// Returns the rows, each `width` columns wide, that say how to drop a file from another machine
+// when `command` doesn't fit along the boxes' row, such as on a phone. Words wrap, and a word
+// longer than a row, such as a long hostname, goes on over the next, so the command shows whole.
+// When that takes too many rows, the command alone fills them.
+function elsewhereRows(command: string, width: number): string[] {
+  const room = Math.max(width - 1, 1);
+  const wrapped = (words: string[]) => {
+    const rows = [""];
+    for (const word of words) {
+      const last = rows.length - 1;
+      const longer = rows[last] ? `${rows[last]} ${word}` : word;
+      if (Bun.stringWidth(longer) <= room) rows[last] = longer;
+      else for (let at = 0; at < word.length; at += room) rows.push(word.slice(at, at + room));
+    }
+    return rows.filter((row) => row !== "");
+  };
+  const told = wrapped(`To drop files, run ${command}`.split(" "));
+  const rows = told.length <= mostRowsBelow ? told : wrapped([command]);
+  return rows.map((row) => {
+    const rest = " ".repeat(Math.max(width - 1 - Bun.stringWidth(row), 0));
+    return ` #[fg=colour231]${escaped(row)}#[default]${rest}`;
+  });
 }

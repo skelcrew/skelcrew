@@ -624,8 +624,9 @@ export async function runSidebar(
       elsewhere: Date.now() - Number(droppedAt) < dropNoticeFor ? machine : null,
     };
     const top = drawTop(look, { sidebar, right });
-    if (`${top.header}\n${top.boxes}` !== lastTop) {
-      lastTop = `${top.header}\n${top.boxes}`;
+    const topText = [top.header, top.boxes, ...top.below].join("\n");
+    if (topText !== lastTop) {
+      lastTop = topText;
       doing("drawing the top row", () => showTop(agents, session, top));
     }
     // The footer, also only when it changed.
