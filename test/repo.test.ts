@@ -192,8 +192,8 @@ function onGitHub(
 }
 
 async function skel(args: string[], typed = "", cwd = home, more: Record<string, string> = {}) {
-  // sc init asks for each role's harness and model, then setup, test and the thread limit.
-  if (args[0] === "init" && typed === "") typed = "\n\n\n\n\n\nnone\nnone\n\n";
+  // sc init asks for each role's harness.
+  if (args[0] === "init" && typed === "") typed = "\n\n\n";
   const run = Bun.spawn([process.execPath, main, ...args], {
     cwd,
     env: {
@@ -1084,13 +1084,14 @@ test:
 limits: {threads: 3}
 # Keeps this repository on git alone, with no tracker.
 # tracker: none
+# A role can take a model: line, such as model: <name>. Without one, your config's model or the harness's default runs.
 roles:
   lead:
     harness: claude
   builder:
     harness: claude
   reviewer:
-    harness: codex
+    harness: claude
 plugins:
   - skelcrew/skelcrew-github
 `,
@@ -1116,7 +1117,8 @@ plugins:
   expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
   expect(await listed()).toEqual([]);
   expect(calls()).not.toContain("daemon");
-  // With no terminal to answer, it commits and installs nothing, and says how to.
+  // With no terminal to answer, it commits nothing, and says how to. The GitHub plugin is
+  // installed here already, so sc install has nothing to do.
   const paths = "skelcrew.yaml skelcrew.lock .agents/";
   expect(run.out).toEndWith(
     [
@@ -1129,7 +1131,7 @@ plugins:
       "",
       "  git push origin HEAD:main",
       "",
-      "Run sc install, then sc, and tell your lead what to build.",
+      "Run sc and tell your lead what to build.",
       "",
     ].join("\n"),
   );
@@ -1171,6 +1173,10 @@ function checkoutWithOwnChanges(): string {
 
 const bare = () => join(home, "github", "simon/app.git");
 
+// How sc init ends when the machine lacks a plugin its files name.
+const next =
+  "\n\nNext, install the plugins it names:\n\n  sc install\n\nThen run sc and tell your lead what to build.\n";
+
 // A yes commits only what sc init wrote, with your own git, and pushes it to the default branch,
 // so the next sc finds skelcrew.yaml there. What else you changed or staged stays as it was.
 test("init at a terminal commits only its own files and pushes them to the default branch on a yes", async () => {
@@ -1179,7 +1185,7 @@ test("init at a terminal commits only its own files and pushes them to the defau
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
-    "Wrote skelcrew.yaml, skelcrew.lock and .agents/. Commit and push them to main? [Y/n]",
+    "Wrote skelcrew.yaml, skelcrew.lock and .agents/.\nCommit and push them to main? [Y/n]",
   );
   expect(run.out).toContain("Committed them and pushed them to main.");
   expect(git(bare(), "log", "-1", "--format=%s", "main").trim()).toBe("Set up Skelcrew");
@@ -1381,7 +1387,7 @@ test("init writes a skelcrew.lock that pins nothing for a repository that isn't 
     roles: {
       lead: { harness: "claude" },
       builder: { harness: "claude" },
-      reviewer: { harness: "codex" },
+      reviewer: { harness: "claude" },
     },
   });
 });
@@ -1437,27 +1443,20 @@ test("init on a machine with Skelcrew's state leaves that state as it was", asyn
   expect(state()).toEqual(before);
 });
 
-// sc init installs the plugins it wrote, at the pins it wrote, so no sc install step follows: on a
-// machine where Skelcrew never ran, the forge's plugin is installed once init ends.
-test("init on a fresh machine leaves the plugins it wrote installed, and ends by saying to run sc", async () => {
+// Only sc install installs plugins, so on a machine where Skelcrew never ran, sc init installs
+// the forge's plugin it wrote no more than any other, runs no sign-in, and ends naming sc install.
+test("init on a fresh machine installs nothing, and ends with sc install on its own line", async () => {
   const checkout = checkoutWithOwnChanges();
   const commit = publishGitHubPlugin();
   rmSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
   const run = await initAtTerminal(checkout, "y\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Committed them and pushed them to main.");
-  expect(run.out).toContain(
-    "Installing github 0.1.0 from skelcrew/skelcrew-github (runs as you, outside the agents' sandbox).",
+  expect(run.out.replace(/\r/g, "")).toEndWith(
+    `Wrote skelcrew.yaml, skelcrew.lock and .agents/.\nCommit and push them to main? [Y/n] Committed them and pushed them to main.${next}`,
   );
-  expect(run.out).not.toContain("Install the github plugin");
-  expect(run.out).toContain("Installed github 0.1.0.");
-  expect(run.out).not.toContain("sc install");
-  expect(run.out.replace(/\r/g, "")).toEndWith("\n\nRun sc and tell your lead what to build.\n");
-  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  const plugins = db.query("SELECT name, source FROM plugins").all();
-  db.close();
-  expect(plugins).toEqual([{ name: "github", source: "skelcrew/skelcrew-github" }]);
+  expect(run.out).not.toContain("Installing");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins"))).toBe(false);
   expect(parse(readFileSync(join(checkout, "skelcrew.lock"), "utf8"))).toEqual({
     "skelcrew/skelcrew-github": { name: "github", version: "0.1.0", commit },
   });
@@ -1679,8 +1678,8 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
 });
 
-// sc init installs only what you chose in it. A plugin the files named already runs nothing
-// here, even at a terminal, and is left to sc install, which its last line names.
+// Only sc install installs plugins. A plugin the files named already runs nothing in sc init,
+// even at a terminal, and its last lines name sc install.
 test("init at a terminal installs no plugin the files named before it, and says to run sc install", async () => {
   const checkout = checkoutWithOwnChanges();
   const file = join(checkout, "skelcrew.yaml");
@@ -1699,9 +1698,7 @@ test("init at a terminal installs no plugin the files named before it, and says 
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("Installing");
   expect(run.out).not.toContain("other");
-  expect(run.out.replace(/\r/g, "")).toEndWith(
-    "\n\nRun sc install, then sc, and tell your lead what to build.\n",
-  );
+  expect(run.out.replace(/\r/g, "")).toEndWith(next);
 });
 
 // Being able to push isn't having read what a teammate wrote in .agents/, so init writes nothing
@@ -2278,23 +2275,71 @@ test("sc says once that rounds: replaces max_rounds: in your config.yaml, here a
   expect(readFileSync(file, "utf8")).toBe(yours);
 });
 
+// With one harness installed, sc init asks nothing about the crew and says which one it found.
+test("init with one harness installed puts every role on it and says so", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  githubInstalledAsYours();
+  rmSync(join(home, "bin", "codex"));
+  const run = await skel(["init"], "", checkout);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Claude Code is the only coding agent installed, so Skelcrew puts the lead, builders and reviewers on it.",
+  );
+  expect(run.out).not.toContain("Choose the coding agent");
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).roles).toEqual({
+    lead: { harness: "claude" },
+    builder: { harness: "claude" },
+    reviewer: { harness: "claude" },
+  });
+});
+
+// Completing a skelcrew.yaml, it names only the roles it fills in, as the others keep theirs.
+test("init with one harness installed names only the roles it fills in", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  githubInstalledAsYours();
+  rmSync(join(home, "bin", "codex"));
+  writeFileSync(
+    join(checkout, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 3 }\nroles: { builder: { harness: codex }, reviewer: { harness: codex } }\n",
+  );
+  const run = await skel(["init"], "", checkout);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Claude Code is the only coding agent installed, so Skelcrew puts the lead on it.",
+  );
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).roles).toEqual({
+    lead: { harness: "claude" },
+    builder: { harness: "codex" },
+    reviewer: { harness: "codex" },
+  });
+});
+
+// Every role is offered the same list, in the same order, and no model is asked: each role runs
+// its harness's own default until skelcrew.yaml gives it a model: line.
 test("init writes the chosen crew without changing personal settings or logins", async () => {
   const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   fake("codex", "exit 0");
   const config = join(home, ".config", "skelcrew", "config.yaml");
   const before = readFileSync(config, "utf8");
-  const typed = "\nmy-lead\nj\nmy-builder\n\nmy-reviewer\n";
-  const run = await skel(["init"], typed, checkout);
+  const run = await skel(["init"], "j\n\n\n", checkout);
   expect(run.code).toBe(0);
-  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toMatchObject({
-    limits: { threads: 3 },
-    roles: {
-      lead: { harness: "claude", model: "my-lead" },
-      builder: { harness: "codex", model: "my-builder" },
-      reviewer: { harness: "claude", model: "my-reviewer" },
-    },
+  const text = readFileSync(join(checkout, "skelcrew.yaml"), "utf8");
+  expect(parse(text)).toMatchObject({ limits: { threads: 3 } });
+  expect(parse(text).roles).toEqual({
+    lead: { harness: "codex" },
+    builder: { harness: "claude" },
+    reviewer: { harness: "claude" },
   });
+  expect(text).toContain("# A role can take a model: line, such as model: <name>.");
+  expect(run.out).not.toContain("model (Enter");
+  expect(run.out).not.toContain("second opinion");
+  const lists = run.out.split("Choose the coding agent for ").slice(1);
+  expect(lists.map((list) => list.indexOf("Claude Code") < list.indexOf("Codex"))).toEqual([
+    true,
+    true,
+    true,
+  ]);
   expect(readFileSync(config, "utf8")).toBe(before);
   expect(run.out).not.toContain("Sign in");
 });

@@ -182,7 +182,7 @@ function nameAndPin(folder: string, source: string, locked: Locked): void {
 // Returns the installed plugins without changing Skelcrew's state: none on a machine where Skelcrew
 // never ran, and none when its state can't be read as it is, such as before an older Skelcrew
 // made its plugins table.
-function installedReadOnly(): Plugin[] {
+export function installedReadOnly(): Plugin[] {
   const file = join(dataDir(), "skelcrew.db");
   if (!existsSync(file)) return [];
   try {
@@ -406,14 +406,17 @@ export function installRepositoryPlugins(needs: Need[]): { changed: boolean; mis
 // Returns the plugins the repository's files in `folder` name that this machine lacks at the
 // version and commit its skelcrew.lock pins, each by its source and the name the lock gives it:
 // ones not installed, removed with sc plugin rm, at another pin, with no pin, or ones sc install
-// refuses, such as a runtime plugin. Throws when the files can't be read.
-export function pluginsToInstall(folder: string): { source: string; name: string }[] {
-  const db = openDb();
+// refuses, such as a runtime plugin. `installed` is what this machine has, read from Skelcrew's
+// state unless given. Throws when the files can't be read.
+export function pluginsToInstall(
+  folder: string,
+  installed: Plugin[] = installedPlugins(openDb()),
+): { source: string; name: string }[] {
   const { plugins, lock } = repositoryPlugins(folder);
   return plugins
     .filter((source) => {
       const locked = lock[source];
-      const here = installedPlugins(db).find((plugin) => plugin.source === source);
+      const here = installed.find((plugin) => plugin.source === source);
       if (!locked || !here || !matchesLock(here, locked)) return true;
       const manifest = readManifest(here.folder);
       return manifest.kind === "runtime" || manifest.name !== locked.name;
