@@ -19,6 +19,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { z } from "zod";
+import { hasAgentLogin } from "../src/agents/login.ts";
 import { leadPlaces } from "../src/paths.ts";
 import {
   answer,
@@ -157,7 +158,6 @@ beforeEach(() => {
   mkdirSync(join(home, "run"), { mode: 0o700 });
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The tracker answers every poll with issue 12.
   plugin = fakePlugin(home);
   answer(plugin, "changed", {
     items: [taskItem("12", "Add export", { body: "-n as JSON" })],
@@ -171,6 +171,7 @@ beforeEach(() => {
     join(home, ".gitconfig"),
     `[url "file://${join(home, "github")}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
   );
+  saveLogin();
   addApp();
 });
 afterEach(async () => {
@@ -352,6 +353,10 @@ function setThread(sql: string): void {
   db.run(sql);
   db.close();
 }
+
+test("Codex agents have a saved login before the daemon starts", () => {
+  expect(hasAgentLogin("codex", home)).toBe(true);
+});
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there agents can't start.
 describe.skipIf(insideSandbox)("codex", () => {
