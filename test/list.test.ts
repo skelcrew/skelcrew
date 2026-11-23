@@ -2454,10 +2454,10 @@ test("the number keys open and close the stages, which stay so in another reposi
   type("2");
   await until(() => !seen().includes("○ 7 "), "Building closed");
   expect(seen()).toContain("○ #31 ");
-  press("Tab");
+  type("\x1b[1;4C");
   // The open repository's tab has no badge, so another's shows only while it is open.
   await until(() => seen().includes(" app •"), "site's list");
-  press("Tab");
+  type("\x1b[1;4C");
   await until(() => seen().includes(" site •1"), "app's list again");
   expect(seen()).toContain("○ #31 ");
   expect(seen()).not.toContain("○ 7 ");
@@ -2658,21 +2658,21 @@ test("m on a task ready for review asks first, and y merges it at the commit you
   await until(() => asked.includes(`merge simon/app 41 ${approved}`), "the merge");
 });
 
-test("Tab moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
+test("Alt-Shift-Right moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
   await open();
-  press("Tab");
+  type("\x1b[1;4C");
   await until(() => seen().includes("● 3  Docs"), "site's list");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });
 
-// Shift-Tab and Alt-Shift with an arrow move between repositories too, in every form a terminal
-// sends them, each way round from the last to the first and back.
-test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wrapping round", async () => {
+// Alt-Shift with an arrow moves between repositories, in every form a terminal sends it, each
+// way round from the last to the first and back.
+test("Alt-Shift-Left goes back a repository, Alt-Shift-Right on, wrapping round", async () => {
   await open();
   const onSite = () => seen().includes("● 3 ");
   const onApp = () => seen().includes("● 12 ");
   // app is the first tab, so back from it wraps round to site, the last.
-  press("BTab");
+  type("\x1b[1;4D");
   await until(onSite, "site, back from app");
   type("\x1b[1;4C");
   await until(onApp, "app, on from site");
@@ -2680,10 +2680,6 @@ test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wra
   await until(onSite, "site, back from app");
   type("\x1b[1;4:1C");
   await until(onApp, "app, on from site in kitty's form");
-  type("\x1b[9;2u");
-  await until(onSite, "site, back from app with kitty's Shift-Tab");
-  type("\x1b[27;2;9~");
-  await until(onApp, "app, back from site with xterm's Shift-Tab");
   type("\x1b[1;4:1D");
   await until(onSite, "site, back from app in kitty's form");
   // Kitty's keypad arrows, in its CSI-u form, plain and with the press event.
@@ -2695,7 +2691,18 @@ test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wra
   await until(onApp, "app, on from site in kitty's CSI-u form with its event");
   type("\x1b[57417;4:1u");
   await until(onSite, "site, back from app in kitty's CSI-u form with its event");
-  expect(seen()).toContain("⇥/alt+shift+←→ repository");
+  expect(seen()).toContain("alt+shift+←→ repository");
+  expect(seen()).not.toContain("⇥");
+});
+
+// The list has no right side to switch your typing to, so Tab and Shift-Tab do nothing, in
+// every form a terminal sends them.
+test("Tab and Shift-Tab leave the list on its repository", async () => {
+  await open();
+  for (const key of ["\t", "\x1b[Z", "\x1b[9;2u", "\x1b[27;2;9~"]) type(key);
+  type("\x1b[1;4C");
+  await until(() => seen().includes("● 3 "), "site, on from app");
+  expect(asked.filter((said) => said.startsWith("open "))).toEqual(["open simon/site from a tab"]);
 });
 
 // Backlog's last row stands for the issues it doesn't show, and Enter shows them.

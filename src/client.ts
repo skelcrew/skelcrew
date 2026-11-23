@@ -572,7 +572,7 @@ export async function reportTurnInterrupted(): Promise<void> {
   await request({ command: "turn interrupted" });
 }
 
-// Has the daemon open a repository, by its owner/name, when the list moves to it with Tab, or
+// Has the daemon open a repository, by its owner/name, when the list moves to its tab, or
 // you press Enter on its lead. The daemon starts the repository's lead if it isn't running, and
 // marks it as the one you opened last. With `tab`, a repository whose tab you closed by exiting
 // its lead stays closed, as the list may still show it for a moment. Without, as Enter on the

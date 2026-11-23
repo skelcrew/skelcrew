@@ -58,9 +58,8 @@ import {
 // keys, such as Ctrl-\ as ESC[92;5u, and neither its Esc nor its letters may act as keys of
 // their own. Pressing Ctrl-\ once too often after coming back from an agent lands here too, in
 // one of its three forms, and does nothing. Alt with a letter is matched whole, or its Esc or
-// its q would quit. Shift-Tab and Alt-Shift-Left move to the previous repository, and Tab and
-// Alt-Shift-Right to the next: Shift-Tab plain, as kitty's CSI-u and as xterm's extended key,
-// and the arrows plain and with kitty's press event, which it adds when asked for events. Kitty
+// its q would quit. Alt-Shift-Left moves to the previous repository, and Alt-Shift-Right to the
+// next, plain and with kitty's press event, which it adds when asked for events. Kitty
 // sends the main arrows so even in its CSI-u mode, and its keypad arrows as CSI-u, 57417 left
 // and 57418 right. Shift-Up and Shift-Down move a queued task in its queue, plain and with kitty's
 // press event.
@@ -75,18 +74,14 @@ const keyNames: Record<string, string> = {
   "\x1bOB": "down",
   "\r": "enter",
   "\n": "enter",
-  "\t": "tab",
-  "\x1b[1;4C": "tab",
-  "\x1b[1;4:1C": "tab",
-  "\x1b[57418;4u": "tab",
-  "\x1b[57418;4:1u": "tab",
-  "\x1b[Z": "back tab",
-  "\x1b[9;2u": "back tab",
-  "\x1b[27;2;9~": "back tab",
-  "\x1b[1;4D": "back tab",
-  "\x1b[1;4:1D": "back tab",
-  "\x1b[57417;4u": "back tab",
-  "\x1b[57417;4:1u": "back tab",
+  "\x1b[1;4C": "next repository",
+  "\x1b[1;4:1C": "next repository",
+  "\x1b[57418;4u": "next repository",
+  "\x1b[57418;4:1u": "next repository",
+  "\x1b[1;4D": "previous repository",
+  "\x1b[1;4:1D": "previous repository",
+  "\x1b[57417;4u": "previous repository",
+  "\x1b[57417;4:1u": "previous repository",
   "\x1b[5~": "page up",
   "\x1b[6~": "page down",
   "\x03": "q",
@@ -678,8 +673,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if ((key === "earlier" || key === "later") && row)
       return reorder(row, key === "earlier" ? -1 : 1);
-    if (key === "tab") return nextRepository(1);
-    if (key === "back tab") return nextRepository(-1);
+    if (key === "next repository") return nextRepository(1);
+    if (key === "previous repository") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
     const numberedSection = /^\d$/.test(key) ? numbered[Number(key)] : undefined;
     if (numberedSection) return toggleSection(numberedSection);

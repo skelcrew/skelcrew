@@ -106,7 +106,7 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const now = row?.startNow ? ["f start now"] : [];
   const reorder = row?.section === "task queue" && row.place !== null ? ["shift+↑↓ reorder"] : [];
-  const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
+  const tab = tabs > 1 ? ["alt+shift+←→ repository"] : [];
   return [
     "↑↓ move",
     ...open,
