@@ -33,7 +33,6 @@ import { needsInstall } from "../plugins/repository.ts";
 import { filesFor, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
 import { capture } from "../run.ts";
-import type { Settings } from "../settings.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { openTasks, threadTask } from "./copy.ts";
 import { fetchBranch, noMaintenance } from "./git.ts";
@@ -97,6 +96,7 @@ export function startThread(
         flow?: string | undefined;
         keep?: string[] | undefined;
         now?: boolean | undefined;
+        setup?: boolean | undefined;
       }
     | {
         repo: string;
@@ -105,6 +105,7 @@ export function startThread(
         short?: string | undefined;
         flow?: string | undefined;
         keep?: string[] | undefined;
+        setup?: boolean | undefined;
       },
   claimed = false,
 ): Promise<Thread> {
@@ -128,7 +129,13 @@ async function recordThread(
   const agents = approvedAgents({ owner, repo });
   const flow = given.flow ?? "default";
   checkFlow({ owner, repo, agents }, name, flow);
-  builderSettings({ owner, repo, agents, flow });
+  const { setup, test } = builderSettings({ owner, repo, agents, flow });
+  const setupThread = given.setup === true;
+  if (setupThread && setup !== null && test !== null)
+    throw new Error(
+      `${name}'s setup and test are set already, so start it without --setup, as any other thread.`,
+    );
+  repositoryCommands({ owner, repo, setup_thread: setupThread }, name);
   const refuseMissingPlugins = () => {
     if (needsInstall(cloneDir(owner, repo)))
       throw new Error(
@@ -319,6 +326,7 @@ async function recordThread(
       agents,
       flow,
       queued_since: queued ? joinTime(db) : null,
+      setup_thread: setupThread,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
@@ -351,8 +359,8 @@ async function recordThread(
     db.run(
       `INSERT OR REPLACE INTO tasks
         (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow,
-          queued_since, issue, alias, issue_ref, stay_true)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          queued_since, issue, alias, issue_ref, stay_true, setup_thread)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -370,6 +378,7 @@ async function recordThread(
         thread.alias,
         issueRef,
         JSON.stringify(thread.stay_true),
+        setupThread,
       ],
     );
     const claims = [owner, repo, issue ?? ""];
@@ -488,7 +497,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 // builder can't read your config from its sandbox, so it is told.
 export function builderInstructions(
   role: string,
-  commands: Pick<Settings, "setup" | "test">,
+  commands: { setup: string[]; test: string[] },
 ): string {
   const instructions = role.replace(/\n$/, "");
   const { setup, test } = commands;

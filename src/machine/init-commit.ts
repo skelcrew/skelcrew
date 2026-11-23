@@ -24,7 +24,7 @@ const listed = (names: string[]) =>
 function byHand(files: string[], target: string): void {
   const paths = files.join(" ");
   console.log(
-    `To commit and push them yourself, run:\n${toRun([`git add -- ${paths}`, `git commit -m "${message}" -- ${paths}`, `git push origin HEAD:${target}`])}`,
+    `To commit and push them yourself, run:\n${toRun([`git add -- ${paths}`, `git commit -m "${message}" -- ${paths}`, `git push origin HEAD:${target}`]).trimEnd()}`,
   );
 }
 
@@ -99,7 +99,7 @@ export async function offerCommit(root: string, remote: string, files: string[])
   console.log(`Committed them, but ${base} refused the push:\n${pushed.err}`);
   if (!yes(`Push them to a branch, ${setupBranch}, and open a pull request instead?`)) {
     console.log(
-      `To push them to a branch yourself, run:\n${toRun([`git push origin HEAD:${setupBranch}`])}`,
+      `To push them to a branch yourself, run:\n${toRun([`git push origin HEAD:${setupBranch}`]).trimEnd()}`,
     );
     return;
   }

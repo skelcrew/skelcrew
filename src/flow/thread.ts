@@ -286,6 +286,9 @@ export const Thread = z.object({
   alias: z.string().nullable(),
   // The issue as its tracker wrote it as the task started, such as #12, or null.
   issue_ref: z.string().nullable(),
+  // Whether the task is the lead's setup thread, started with --setup while the repository's
+  // setup or test wasn't set yet, so it runs with neither.
+  setup_thread: z.coerce.boolean().optional(),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -442,7 +445,7 @@ export function record(
         // The IDs seen, the lead's updates and Skelcrew's review on the PR are kept as JSON.
         [
           ...columns.map(([, value]) =>
-            typeof value === "object" && value !== null ? JSON.stringify(value) : value,
+            typeof value === "object" && value !== null ? JSON.stringify(value) : (value ?? null),
           ),
           folder,
         ],

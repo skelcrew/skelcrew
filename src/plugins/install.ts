@@ -357,7 +357,9 @@ export function refusePersonal(manifest: Manifest, io: boolean | undefined): voi
 
 // Installs a plugin and returns whether it did. `given` is either owner/repo, installed from that
 // GitHub repository's newest version tag or the one `tag` names, or a path to a folder of yours,
-// used where it is. It shows what the plugin runs and asks first. Then it runs the plugin's build
+// used where it is. It shows what the plugin runs and asks first, unless `ask` is false, as for
+// sc install, where running it is your yes: then it says in a line what it installs. Either way
+// it installs only at a terminal. Then it runs the plugin's build
 // and setup, and writes your lock when `pin` says to, before the plugin counts as
 // installed. A write that fails leaves the files as they were and the plugin not installed.
 export function installPlugin(given: string, options: Options = {}): boolean {
@@ -392,7 +394,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   const { staged, manifest } = cloned;
   try {
     const here = installedPlugins(db).find((plugin) => plugin.name === manifest.name);
-    if (here?.source && here.source !== given && ask && process.stdin.isTTY) {
+    if (here?.source && here.source !== given && process.stdin.isTTY) {
       checkSkelcrewVersion(manifest);
       refusePersonal(manifest, io);
       refuseOtherName(manifest, called);
@@ -416,13 +418,16 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     checkSkelcrewVersion(manifest);
     refusePersonal(manifest, io);
     refuseOtherName(manifest, called);
-    const answer = ask ? confirmPlugin(manifest, given, "Install") : true;
+    const answer = ask ? confirmPlugin(manifest, given, "Install") : process.stdin.isTTY || null;
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
     if (!answer) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return false;
     }
-    if (!ask) console.log(`Installing ${manifest.name} ${manifest.version} from ${given}...`);
+    if (!ask)
+      console.log(
+        `Installing ${manifest.name} ${manifest.version} from ${given} (runs as you, outside the agents' sandbox).`,
+      );
     const folder = join(pluginsDir(), manifest.name, manifest.version);
     rmSync(dirname(folder), { recursive: true, force: true });
     mkdirSync(dirname(folder), { recursive: true });
@@ -477,7 +482,8 @@ export function newestLocked(source: string): Locked {
 
 // Updates one plugin. One from a folder is built again from it, so your edits count. One from
 // GitHub moves to its newest version tag, or to the one `tag` names at the lock's `commit`, after
-// showing what it runs and asking, as installing does. Its old version's folder goes, and your
+// showing what it runs and asking, as installing does, or with `ask` false, as for sc install,
+// saying so in a line, only at a terminal. Its old version's folder goes, and your
 // lock pins the new one, unless `pin` is false.
 export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}): void {
   const { ask = true, tag: wanted, commit, pin = true, io, called } = options;
@@ -517,12 +523,16 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     checkSkelcrewVersion(manifest);
     refusePersonal(manifest, io);
     refuseOtherName(manifest, called);
-    const answer = ask ? confirmPlugin(manifest, source, "Update") : true;
+    const answer = ask ? confirmPlugin(manifest, source, "Update") : process.stdin.isTTY || null;
     if (answer === null) throw unanswered(`updating ${name}`);
     if (!answer) {
       console.log(`Skelcrew didn't update ${name}.`);
       return;
     }
+    if (!ask)
+      console.log(
+        `Updating ${name} ${current.version} to ${manifest.version === current.version ? `its commit ${cloned.commit.slice(0, 12)}` : manifest.version} from ${source} (runs as you, outside the agents' sandbox).`,
+      );
     const versionFolder = join(pluginsDir(), name, manifest.version);
     const newFolder =
       versionFolder === folder ? `${versionFolder}-${cloned.commit.slice(0, 12)}` : versionFolder;
@@ -758,8 +768,8 @@ export function installYourPlugins(
       if (here && matchesLock(here, locked)) return;
       changed = true;
       const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
-      if (here) updatePlugin(db, here, pinned);
-      else installPlugin(source, pinned);
+      if (here) updatePlugin(db, here, { ...pinned, ask: false });
+      else installPlugin(source, { ...pinned, ask: false });
     },
   );
   const left = Object.entries(lock)

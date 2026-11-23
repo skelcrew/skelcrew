@@ -331,7 +331,7 @@ test("runs the test commands in one shell, so a cd or an export holds for the ne
   expect(read(join(home, "where"))).toBe("me sub\n");
 }, 60_000);
 
-test("says what skelcrew.yaml lacks when no test command is set, and runs nothing when it is none", async () => {
+test("says to ask the lead while no test command is set yet, and runs nothing when it is none", async () => {
   writeFileSync(
     join(home, ".local", "share", "skelcrew", "repos", "simon", "app", "skelcrew.yaml"),
     "setup: []\n",
@@ -341,7 +341,7 @@ test("says what skelcrew.yaml lacks when no test command is set, and runs nothin
   const folder = checkout("a");
   const missing = await check(folder).ended;
   expect(missing.code).toBe(1);
-  expect(missing.err).toContain("simon/app's skelcrew.yaml has no test: line.");
+  expect(missing.err).toContain("simon/app's test isn't set yet. Ask the lead to set it up.");
   config("test: []\n");
   const none = await check(folder).ended;
   expect(none.code).toBe(0);

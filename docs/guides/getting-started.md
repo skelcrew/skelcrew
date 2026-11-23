@@ -46,29 +46,17 @@ git switch main
 sc init
 ```
 
-It writes `skelcrew.yaml`, `skelcrew.lock` and an `.agents/` folder, and nothing else. These tell Skelcrew how agents work on this repository. It ends with:
+It asks which coding agent the lead, builders and reviewers use. Then it writes `skelcrew.yaml`, `skelcrew.lock` and an `.agents/` folder. These tell Skelcrew how agents work on this repository. It leaves the setup and test commands to the lead, and allows 3 builders at once, which you can change in `skelcrew.yaml`.
+
+Skelcrew's agents read these files only from the default branch. So `sc init` offers to commit and push them. Say yes, or run the git commands it prints.
+
+Then it installs the plugins it wrote, such as the GitHub plugin. Running `sc init` is your yes, so it asks nothing. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository. From then on, Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It ends with:
 
 ```
-Next: sc install
+Run sc and tell your lead what to build.
 ```
 
-So run it, here in the checkout:
-
-```sh
-sc install
-```
-
-It reads the files, as `npm install` reads `package.json`. It asks before installing the GitHub plugin. Say yes. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository. From then on, Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. Then it adds the repository to Skelcrew.
-
-Skelcrew's agents read these files only from the default branch. So commit and push them:
-
-```sh
-git add skelcrew.yaml skelcrew.lock .agents
-git commit -m "Set up Skelcrew"
-git push
-```
-
-A teammate who clones the repository then needs only `sc install`. A repository without a `skelcrew.yaml` can still be added as it is, with `sc repo add`.
+A teammate who clones the repository then needs only `sc install`.
 
 ## 4. Talk to the lead
 

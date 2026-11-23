@@ -387,8 +387,8 @@ export function installRepositoryPlugins(needs: Need[]): { changed: boolean; mis
         pin: false,
         io: true,
       };
-      if (here) updatePlugin(db, here, pinned);
-      else installPlugin(source, pinned);
+      if (here) updatePlugin(db, here, { ...pinned, ask: false });
+      else installPlugin(source, { ...pinned, ask: false });
     },
   );
   const left = needs.filter(({ source, locked, conflict }) => {

@@ -60,6 +60,7 @@ export async function addCommand(args: string[]): Promise<void> {
     "--keep",
     "--from",
     "--now",
+    "--setup",
   ];
   const onStdin = named.includes(rest[0] ?? "");
   const words = onStdin ? [] : rest.slice(0, 2);
@@ -78,7 +79,7 @@ export async function addCommand(args: string[]): Promise<void> {
     if (flag === "--now")
       throw new Error("Only sc start <task> takes --now, such as sc start APP-12 --now.");
     if (flags.has(flag)) usage("add");
-    if (flag === "--issue" || flag === "--start") flags.set(flag, "");
+    if (flag === "--issue" || flag === "--start" || flag === "--setup") flags.set(flag, "");
     else if (flag === "--asked-file" && value) {
       flags.set(flag, value);
       at++;
@@ -92,8 +93,10 @@ export async function addCommand(args: string[]): Promise<void> {
   const askedFile = flags.get("--asked-file");
   const short = flags.get("--short");
   const flow = flags.get("--flow");
+  const setup = flags.has("--setup") ? true : undefined;
   if (askedFile !== undefined && !issue) usage("add");
-  if ((short !== undefined || flow !== undefined || keep.length > 0) && !start) usage("add");
+  if ((short !== undefined || flow !== undefined || keep.length > 0 || setup) && !start)
+    usage("add");
   if (keep.length === 1 || keep.length > 4) usage("add");
   if (issue && start)
     throw new Error(
@@ -110,7 +113,7 @@ export async function addCommand(args: string[]): Promise<void> {
   }
   if (!given) usage("add");
   if (start) {
-    console.log(await startNew(repository, given.title, given.body, short, flow, keep));
+    console.log(await startNew(repository, given.title, given.body, short, flow, keep, setup));
     return;
   }
   if (issue) {

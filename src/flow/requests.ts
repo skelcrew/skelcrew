@@ -78,6 +78,8 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     keep: KeepTrue.optional(),
     // Starts it at once, over the repository's limits.threads, for sc start --now.
     now: z.literal(true).optional(),
+    // Starts the lead's setup thread, for --setup, while setup or test isn't set yet.
+    setup: z.literal(true).optional(),
   }),
   z.object({
     command: z.literal("start new"),
@@ -87,6 +89,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     short: ShortTitle.optional(),
     flow: FlowName.optional(),
     keep: KeepTrue.optional(),
+    setup: z.literal(true).optional(),
   }),
   z.object({
     command: z.literal("review"),

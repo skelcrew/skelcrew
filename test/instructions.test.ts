@@ -206,10 +206,12 @@ test("a lead is told its repository and each setup and test command, or what kee
     },
     false,
   );
-  // No thread can fix a missing line, as no builder starts without it, so the human does.
+  // No thread can fix a missing line, as no builder starts without it, so the human does. Setup
+  // and test not set yet are the one exception: the lead's setup thread writes them.
   expect(told).toContain(
-    "When it says something keeps builders from starting, such as a line skelcrew.yaml lacks, tell the human first, in plain words, with the line to add.",
+    "When it says something else keeps builders from starting, such as a line skelcrew.yaml lacks, tell the human first, in plain words, with the line to add.",
   );
+  expect(told).toContain("on the human's yes start the setup thread with --setup.");
   expect(told).not.toContain("finishes the setup");
   expect(told).toContain(
     "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\n",
@@ -239,6 +241,26 @@ test("a lead is told its repository and each setup and test command, or what kee
   ).toContain(
     "\nWhen this session started, no builder can start in simon/app until this is fixed on its default branch: simon/app's skelcrew.yaml has no test: line. Add it. Before anything else, tell the human so in plain words, with the line to add.\n",
   );
+});
+
+// Setup and test not decided yet aren't a line for the human to add: the lead finds them in the
+// repository and proposes them, telling unset apart from none.
+test("a lead whose setup or test isn't set yet is told to find and propose them", () => {
+  const told = (commands: { setup: string[] | null; test: string[] | null }) =>
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", commands, false);
+  const unset = told({ setup: null, test: null });
+  expect(unset).toContain(
+    "\nWhen this session started, setup wasn't set yet, and test wasn't set yet, so no builder can start in simon/app yet. Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README.",
+  );
+  expect(told({ setup: [], test: null })).toContain(
+    "\nWhen this session started, setup was configured as none, and test wasn't set yet, so no builder can start in simon/app yet.",
+  );
+  const set = told({ setup: [], test: ["make test"] });
+  expect(set).toContain(
+    "\nWhen this session started, setup was configured as none, and the test command was `make test`.\n",
+  );
+  expect(unset).toContain('sc add <repo> "<title>" "<body>" --start --setup');
+  expect(set).not.toContain("read the repository to find them");
 });
 
 // The human wants each lead to understand the other repositories and review their leads' work,

@@ -38,16 +38,17 @@ import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
 import {
   githubPlugin,
+  installRepositoryPlugins,
   lockStart,
   namePlugin,
   pinRepositoryPlugin,
   pluginsToInstall,
+  repositoryNeeds,
   repositoryPlugins,
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
 import type { RoleName } from "../roles.ts";
 import { dropsFolder } from "../screen/drops.ts";
-import type { Role } from "../settings.ts";
 import { refreshBacklog } from "./backlog.ts";
 import {
   checkPush,
@@ -660,51 +661,27 @@ export async function addRepo(
   return repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
 }
 
-type Asked = {
-  roles: Partial<Record<RoleName, Role>>;
-  setup?: string[] | undefined;
-  test?: string[] | undefined;
-  threads?: number | undefined;
-};
+// The lines sc init writes for setup and test, which it leaves to the lead, as the lead reads the
+// repository and proposes them. A bare line is not decided yet, distinct from [] for none.
+const unsetCommands = [
+  "# Not decided yet: the lead reads the repository and proposes them. [] means none.",
+  "setup:",
+  "test:",
+];
 
-async function askMissing(
-  root: string,
-  missing: {
-    roles: RoleName[];
-    builderOn?: HarnessName | undefined;
-    commands: ("setup" | "test")[];
-    threads: boolean;
-  },
-): Promise<Asked> {
+// The line sc init writes for the thread limit, with what it limits and that it is yours to change.
+const threadsLine = [
+  "# At most this many builders at once in this repository. Change it to suit your machine and CI.",
+  "limits: {threads: 3}",
+];
+
+async function newSkelcrewYaml(): Promise<string> {
   const { chooseCrew } = await import("../machine/crew.ts");
-  const { confirmCommands } = await import("../machine/commands.ts");
-  const { askLine } = await import("../machine/pick.ts");
-  const roles = missing.roles.length > 0 ? chooseCrew(missing.roles, missing.builderOn) : {};
-  const commands = confirmCommands(root, missing.commands);
-  let threads = missing.threads ? 0 : undefined;
-  while (threads === 0) {
-    const answer = askLine("At most how many builders at once in this repository? Enter for 4: ");
-    if (answer === null)
-      throw new Error("sc init stopped before you gave the thread limit, so it wrote nothing");
-    threads = answer === "" ? 4 : /^[1-9]\d*$/.test(answer) ? Number(answer) : 0;
-  }
-  return { roles, ...commands, threads };
-}
-
-async function newSkelcrewYaml(root: string): Promise<string> {
-  const { roles, setup, test, threads } = await askMissing(root, {
-    roles: ["lead", "builder", "reviewer"],
-    commands: ["setup", "test"],
-    threads: true,
-  });
-  const flow = (value: unknown) =>
-    stringify(value, { collectionStyle: "flow", flowCollectionPadding: false }).trim();
+  const roles = chooseCrew(["lead", "builder", "reviewer"]);
   return [
     "# Shared with everyone who works on this repository. Never put a secret here.",
-    `setup: ${flow(setup)}`,
-    `test: ${flow(test)}`,
-    "# At most this many builders at once in this repository.",
-    `limits: ${flow({ threads })}`,
+    ...unsetCommands,
+    ...threadsLine,
     "# Keeps this repository on git alone, with no tracker.",
     "# tracker: none",
     stringify({ roles }),
@@ -724,26 +701,20 @@ async function completeSkelcrewYaml(root: string): Promise<string[]> {
       isMapping(line) && line.harness ? line.harness : isMapping(old) ? old.harness : undefined;
     return HarnessName.safeParse(found).data;
   };
-  const missing = {
-    roles: (["lead", "builder", "reviewer"] as const).filter((name) => !harnessOf(name)),
-    builderOn: harnessOf("builder"),
-    commands: (["setup", "test"] as const).filter(
-      (key) => data[key] === undefined || data[key] === null,
-    ),
-    threads: limits.threads === undefined || limits.threads === null,
-  };
+  const missingRoles = (["lead", "builder", "reviewer"] as const).filter(
+    (name) => !harnessOf(name),
+  );
+  const missingCommands = (["setup", "test"] as const).filter((key) => !(key in data));
+  const missingThreads = limits.threads === undefined || limits.threads === null;
   const lacked = [
-    ...missing.commands.map((key) => `${key}:`),
-    ...(missing.threads ? ["limits: { threads }"] : []),
-    ...missing.roles.map((name) => `the ${name}'s harness`),
+    ...missingCommands.map((key) => `${key}:`),
+    ...(missingThreads ? ["limits: { threads }"] : []),
+    ...missingRoles.map((name) => `the ${name}'s harness`),
   ];
   if (lacked.length === 0) return [];
   console.log(`skelcrew.yaml has no ${lacked.join(", ")}, which every repository needs.`);
-  const asked = await askMissing(root, {
-    ...missing,
-    roles: [...missing.roles],
-    commands: [...missing.commands],
-  });
+  const { chooseCrew } = await import("../machine/crew.ts");
+  const asked = missingRoles.length > 0 ? chooseCrew([...missingRoles], harnessOf("builder")) : {};
   const { setSkelcrewLine } = await import("../plugins/repository.ts");
   const set = (key: string, value: unknown) => {
     try {
@@ -752,12 +723,11 @@ async function completeSkelcrewYaml(root: string): Promise<string[]> {
       console.log(`Skelcrew couldn't add ${key}: ${errorText(error)}.`);
     }
   };
-  if (asked.setup) set("setup", asked.setup);
-  if (asked.test) set("test", asked.test);
-  if (asked.threads) set("limits", { ...limits, threads: asked.threads });
-  if (missing.roles.length > 0) {
+  for (const key of missingCommands) set(key, null);
+  if (missingThreads) set("limits", { ...limits, threads: 3 });
+  if (missingRoles.length > 0) {
     const merged = Object.fromEntries(
-      Object.entries({ ...roles, ...asked.roles }).map(([name, role]) => [
+      Object.entries({ ...roles, ...asked }).map(([name, role]) => [
         name,
         isMapping(roles[name]) ? { ...roles[name], ...(isMapping(role) ? role : {}) } : role,
       ]),
@@ -818,7 +788,7 @@ export async function initRepo(): Promise<void> {
     );
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  if (!hasConfig) writeFileSync(file, await newSkelcrewYaml(root), { flag: "wx" });
+  if (!hasConfig) writeFileSync(file, await newSkelcrewYaml(), { flag: "wx" });
   const completed = hasConfig ? await completeSkelcrewYaml(root) : [];
   const forge = addForgePlugin(root, remote);
   const lock = join(root, "skelcrew.lock");
@@ -842,7 +812,27 @@ export async function initRepo(): Promise<void> {
     const { offerCommit } = await import("../machine/init-commit.ts");
     await offerCommit(root, remote, wrote);
   }
-  console.log("Next: sc install");
+  const installed = installWrittenPlugins(root, forge === null ? [] : [githubPlugin]);
+  console.log(
+    `\n${installed ? "Run sc" : "Run sc install, then sc,"} and tell your lead what to build.`,
+  );
+}
+
+// Installs the plugins this sc init wrote into the checkout's files, `written` by source, at the
+// versions its skelcrew.lock pins, so sc install needn't follow sc init. A plugin the files named
+// already is left to sc install, as you chose none of it here. Only a yes at a terminal installs
+// one, so without a terminal it touches nothing. Returns whether every plugin the files name is
+// installed now.
+function installWrittenPlugins(root: string, written: string[]): boolean {
+  if (!process.stdin.isTTY) return false;
+  try {
+    const needs = repositoryNeeds(false, undefined, root);
+    installRepositoryPlugins(needs.filter(({ source }) => written.includes(source)));
+    return pluginsToInstall(root).length === 0;
+  } catch (error) {
+    console.log(`${errorText(error)}.`);
+    return false;
+  }
 }
 
 export function approveCheckout(): void {
