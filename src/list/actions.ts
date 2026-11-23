@@ -1,6 +1,4 @@
-// What the list's keys do on a row that isn't an agent's, for sc --list and the screen's sidebar
-// alike: opening a task's PR, going ahead with a start or a merge you said yes to, answering the
-// lead's item in Needs you, and picking an option of Skelcrew's own item there.
+// Actions shared by sc --list and the sidebar: answering items, opening PRs, starting and merging tasks.
 import type { Database } from "bun:sqlite";
 import { type Letter, letters } from "../flow/requests.ts";
 import { typedTask } from "../flow/thread.ts";
@@ -150,12 +148,15 @@ export function itemKey(
   here: number,
   targets: Target[],
   key: string,
+  visible: string[] = [],
 ): Pick | null {
   if (!row?.ask) return null;
   const pick = key === "r" ? "reply" : letters.find((letter) => letter === key);
-  const shown = targets.some(
-    (target) => target !== null && "row" in target && target.row === here && target.pick === pick,
-  );
+  const shown =
+    visible.some((line) => Bun.stripANSI(line).trimStart().startsWith(`│ ${key}) `)) ||
+    targets.some(
+      (target) => target !== null && "row" in target && target.row === here && target.pick === pick,
+    );
   return pick !== undefined && shown ? pick : null;
 }
 

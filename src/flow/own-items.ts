@@ -112,7 +112,7 @@ function itemFor(thread: Thread): OwnItem {
       (finding, at) => `${at + 1}. ${removeControlCodes(finding)}`,
     );
     return {
-      title: `Review still wants changes after ${round.rounds} rounds`,
+      title: `Review still wants changes after ${round.review_round ?? round.rounds} rounds`,
       text: ["The latest review asks:", ...findings].join("\n"),
       options: [
         { label: "Go on: fix the findings", act: "go on" },

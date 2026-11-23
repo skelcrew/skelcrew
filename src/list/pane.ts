@@ -1,6 +1,5 @@
-// The details pane beside the list, as lines for your terminal: the row you are on, with its
-// task's details at the top and its agent at work, live, below them. It reads nothing, so what
-// it shows can be tested without a terminal.
+// The right pane's item box, task details and live agent output, as terminal lines.
+// It reads nothing, so its wrapping and scrolling can be tested without a terminal.
 import type { TaskView } from "../flow/list.ts";
 import {
   bright,
@@ -14,7 +13,7 @@ import {
   yellow,
 } from "../screen/look.ts";
 import type { Details } from "./details.ts";
-import { itemBox, sectionNames } from "./layout.ts";
+import { drawItem, itemBox, sectionNames } from "./layout.ts";
 import { markdownLines } from "./markdown.ts";
 import type { Row } from "./rows.ts";
 
@@ -314,6 +313,10 @@ export function drawPane(
   scroll = 0,
 ): Pane {
   const blank = (count: number) => Array.from({ length: Math.max(count, 0) }, () => "");
+  if (row?.part === "ask" && row.ask && details === null) {
+    const item = drawItem(row, 0, width, height, scroll);
+    return { lines: item.lines, scroll: item.scroll, room: height };
+  }
   if (!row || details === null) return { lines: blank(height), scroll: 0, room: 0 };
   const least = full ? liveLeast : stripLines + 1;
   const room = Math.max(
