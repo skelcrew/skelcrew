@@ -1391,6 +1391,9 @@ test("a busy row's line too long for the list cuts its step, keeping its word, P
   expect(Bun.stripANSI(lines[at + 1] ?? "")).toBe(
     "     changes · Editing src/lis… · #40 ● r2 · 5m",
   );
+  const narrow = drawList(shown, headings, 1, 0, frame, { width: 30, height: 26 }).lines;
+  const there = narrow.findIndex((line) => line.includes("Login redirect"));
+  expect(Bun.stripANSI(narrow[there + 1] ?? "")).toBe("     changes · #40 ● r2 · 5m");
 });
 
 test("the lead heads the list with its state and step, then a divider directly before Needs you", () => {

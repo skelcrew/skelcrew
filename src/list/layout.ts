@@ -437,7 +437,7 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   const whole = piecesOf(row.step);
   const over = Bun.stringWidth(whole.map((piece) => piece.sign).join("")) - room;
   const stepRoom = Bun.stringWidth(row.step) - over;
-  const pieces = over > 0 && stepRoom > 0 ? piecesOf(fitted(row.step, stepRoom)) : whole;
+  const pieces = over > 0 ? piecesOf(stepRoom > 0 ? fitted(row.step, stepRoom) : "") : whole;
   let doing = fitted(pieces.map((piece) => piece.sign).join(""), room);
   const cut: { sign: string; code: string }[] = [];
   for (const { sign, code } of pieces) {
