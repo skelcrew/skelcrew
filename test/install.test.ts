@@ -321,6 +321,12 @@ describe("adding ~/.local/bin to the PATH", () => {
     expect(startup(".zshrc")).toBe(`${exportLine}\n`);
   });
 
+  test("adds the line when ~/.zshrc has it only in a comment", async () => {
+    writeFileSync(join(home, ".zshrc"), `# ${exportLine}\n`);
+    await installAtTerminal("y\n", { SHELL: "/bin/zsh" });
+    expect(startup(".zshrc")).toBe(`# ${exportLine}\n${marked(exportLine)}`);
+  });
+
   test("keeps what ~/.zshrc already holds", async () => {
     writeFileSync(join(home, ".zshrc"), "alias ll='ls -l'\n");
     await installAtTerminal("y\n", { SHELL: "/usr/bin/zsh" });
