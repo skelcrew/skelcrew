@@ -2277,7 +2277,10 @@ test("while attached the title names the agent and the key back, and the list sh
   tmux("select-pane", "-t", "=one:", "-T", "my shell");
   // Enter opens its item, whose first option opens the builder.
   press("Enter");
-  await until(() => seen().includes("a) Open the builder"), "the item");
+  await until(
+    () => seen().includes("a) Open the builder") && seen().includes("esc back"),
+    "the item open",
+  );
   type("a");
   await until(() => seen().includes("I am app-12"), "app-12's agent");
   await until(() => title() === "APP-12 · ctrl+\\ back\n", "the title");
@@ -2550,7 +2553,10 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   // The host has a key of its own to come back, so the list doesn't offer tmux's.
   press("Enter");
-  await until(() => seen().includes("a) Open the builder"), "the item");
+  await until(
+    () => seen().includes("a) Open the builder") && seen().includes("esc back"),
+    "the item open",
+  );
   expect(seen()).toContain("⏎ attach  ");
   expect(seen()).not.toContain("ctrl+\\ back");
   type("a");
@@ -2655,7 +2661,7 @@ test("a merge picked on an item asks in its box, any other key leaves it, and y 
   press("Down");
   await until(() => here().startsWith("▸ ● 14 "), "the ready row");
   press("Enter");
-  await until(() => seen().includes("a) Merge it"), "the item");
+  await until(() => seen().includes("a) Merge it") && seen().includes("esc back"), "the item open");
   const inBox = () => seen().includes("│ Merge app#41 into main? y/n");
   type("a");
   await until(inBox, "the question in the box");
@@ -3003,7 +3009,10 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   await until(() => !liveSeen().includes("step one"), "the strip again");
   // Its item's first option still attaches to the builder.
   press("Enter");
-  await until(() => seen().includes("a) Open the builder"), "the item");
+  await until(
+    () => seen().includes("a) Open the builder") && seen().includes("esc back"),
+    "the item open",
+  );
   type("a");
   await until(
     () => !seen().includes("q/esc quit") && !seen().includes("esc back"),
