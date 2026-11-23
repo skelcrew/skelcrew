@@ -2,6 +2,7 @@
 // options that act directly, until the lead posts an item of its own for the thread.
 import { removeControlCodes } from "../screen/look.ts";
 import { limitOf, roundOf } from "./ledger.ts";
+import { mergingWord } from "./marks.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { needsYou, threadWord } from "./status.ts";
 import type { Thread } from "./thread.ts";
@@ -21,21 +22,24 @@ const toBuilder = [
   { label: "Let the lead handle it", act: "lead" },
 ] as const;
 
-// What a task says while a pick on its item runs, by what the pick does. Opening the builder and
-// handing the item to the lead are done at once, so they have none.
-export const pickingWords: Partial<Record<Act, string>> = {
-  "go on": "going on…",
-  "skip review": "merging…",
-  stop: "stopping…",
-  merge: "merging…",
-  restart: "starting…",
-};
+// What a task says while a pick on its item runs, by what the pick does. A merge takes the task
+// out of Needs you at once. The others say it in the item's box, which stays until they are done,
+// as a start can still fail. Opening the builder and handing the item to the lead are done at
+// once, so they have none.
+export const pickingWord = (act: Act): string | null =>
+  act === "merge" || act === "skip review"
+    ? mergingWord
+    : act === "go on" || act === "restart"
+      ? "starting…"
+      : act === "stop"
+        ? "stopping…"
+        : null;
 
 // Returns the item for what Skelcrew sees the thread needs you for, or null when it needs you for
-// nothing, its item went to the lead, the lead posted its own, which `asked` says, or a pick on it
-// runs.
+// nothing, its item went to the lead, the lead posted its own, which `asked` says, or a merge
+// picked on it runs.
 export function ownItem(thread: Thread, asked: boolean): OwnItem | null {
-  if (asked || thread.status === "done" || thread.picking !== null || !needsYou(thread))
+  if (asked || thread.status === "done" || thread.picking === mergingWord || !needsYou(thread))
     return null;
   const item = itemFor(thread);
   return thread.handed === handedKey(item) ? null : item;
@@ -53,8 +57,7 @@ export type Picking = {
 // so a pick does what the command does: sc start to go on, sc stop, sc merge --skip-review with
 // the PR you saw, the merge m makes with the commit you saw approved, and the screen's restart.
 // A builder that isn't running, as its session ended or its host is gone, has nothing to restart,
-// so it is stopped and started again, which resumes it on the current host, or only started when
-// it is stopped already, such as after a start that failed. Opening the builder
+// so it is stopped and started again, which resumes it on the current host. Opening the builder
 // and handing the item to the lead make none.
 export function pickRequests(
   act: Act,
@@ -79,7 +82,6 @@ export function pickRequests(
         ? []
         : [{ command: "merge", repo, pr: thread.pr, commit }];
     case "restart":
-      if (thread.status === "stopped") return [start];
       return runs && thread.needs_you_for === null
         ? [{ command: "restart", repo, task }]
         : [stop, start];
@@ -92,11 +94,8 @@ export function pickRequests(
 // one, such as another question, shows.
 export const handedKey = (item: OwnItem) => `${item.title}\n${item.text}`;
 
-// A stopped thread's word says only that it stopped, so its item is told by what it would say at
-// work, such as an error it stopped on.
 function itemFor(thread: Thread): OwnItem {
-  const asLive = thread.status === "stopped" ? { ...thread, status: "working" as const } : thread;
-  const word = threadWord(asLive, limitOf(asLive));
+  const word = threadWord(thread, limitOf(thread));
   const said = thread.said?.split("\n").map(removeControlCodes).join("\n").trim() || null;
   const round = roundOf(thread);
   const pr = thread.pr === null ? "Its branch" : `#${thread.pr}`;

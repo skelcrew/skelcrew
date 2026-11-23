@@ -43,7 +43,6 @@ import {
   builderStartOf,
   endEarlierBuilder,
   failThread,
-  keepToStartAgain,
   refuseSecondBuilder,
   restartBuilder,
   setUpThread,
@@ -542,9 +541,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Does what an option of Skelcrew's own item on a thread does, by the very requests its
   // command makes, each handled as yours, and returns what the last one said. Starting again
-  // waits until the builder is back, and one that couldn't start is kept stopped rather than
-  // failed, so its item comes back to pick again. A merge without approval waits on its first
-  // try, as mergeSoon makes it.
+  // waits until the builder is back, so a start that fails fails the pick. A merge without
+  // approval waits on its first try, as mergeSoon makes it.
   const runPick = async (act: Act, thread: Thread, picking: Picking) => {
     const name = threadName(db, thread);
     if (act === "open") return `Opening ${name}'s builder.`;
@@ -555,23 +553,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const requests = pickRequests(act, thread, picking, runs);
     if (requests.length === 0) throw new Error(`${name} has nothing to ${act} now`);
     let said = "";
-    try {
-      for (const request of requests) {
-        const reply = await handle(request, "you");
-        const stopped = z.object({ stopped: z.string() }).safeParse(reply);
-        said = stopped.success
-          ? `Stopped ${stopped.data.stopped}.`
-          : (Object.values(reply).find((value) => typeof value === "string") ?? said);
-      }
-      if (act === "restart") {
-        const failed = (await comingBack.get(thread.folder)) ?? null;
-        comingBack.delete(thread.folder);
-        if (failed !== null)
-          throw new Error(`${name}'s builder couldn't start again: ${errorText(failed)}`);
-      }
-    } catch (error) {
-      if (act === "restart") keepToStartAgain(db, thread);
-      throw error;
+    for (const request of requests) {
+      const reply = await handle(request, "you");
+      const stopped = z.object({ stopped: z.string() }).safeParse(reply);
+      said = stopped.success
+        ? `Stopped ${stopped.data.stopped}.`
+        : (Object.values(reply).find((value) => typeof value === "string") ?? said);
+    }
+    if (act === "restart") {
+      const failed = (await comingBack.get(thread.folder)) ?? null;
+      comingBack.delete(thread.folder);
+      if (failed !== null)
+        throw new Error(`${name}'s builder couldn't start again: ${errorText(failed)}`);
     }
     if (act === "skip review") {
       const soon = mergesSoon.get(thread.folder) ?? Promise.resolve();

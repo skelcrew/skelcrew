@@ -9,7 +9,7 @@ import { openTasks } from "./copy.ts";
 import { leadOf } from "./lead.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { noticeItem } from "./notify.ts";
-import { type Act, handedKey, ownItem, pickingWords } from "./own-items.ts";
+import { type Act, handedKey, ownItem, pickingWord } from "./own-items.ts";
 import { findRepository } from "./repo.ts";
 import { letters } from "./requests.ts";
 import { reportStatus } from "./status.ts";
@@ -228,7 +228,7 @@ export async function pickOwnItem(
   const recorded = decides
     ? "\n\nSkelcrew recorded this pick as the human's decision on the task."
     : "";
-  const picking = pickingWords[option.act] ?? null;
+  const picking = pickingWord(option.act);
   db.transaction(() => {
     noteForLead(db, sessions, thread, `${told}${recorded}`, null, true);
     const change = {

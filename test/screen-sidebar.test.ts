@@ -249,8 +249,10 @@ ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", nee
   sql(
     "UPDATE threads SET picking = NULL, pick_failed = 'GitHub refused the merge' WHERE folder = 'app-14'",
   );
-  await until(() => right().includes("GitHub refused the merge"), "the reason in the box");
-  expect(left().join("\n")).toContain("Needs you");
+  await until(
+    () => right().includes("GitHub refused the merge") && isOpen("Needs you"),
+    "the reason in the box, under Needs you",
+  );
 });
 
 // The notice comes from the database, which the daemon writes once it installed a release.
