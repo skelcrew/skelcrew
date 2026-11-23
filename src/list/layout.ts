@@ -145,27 +145,32 @@ const sectionNameWidth = Math.max(...Object.values(sectionNames).map((name) => n
 const keyOf = (section: Section) =>
   section === "needs you" ? " " : String(numbered.indexOf(section));
 
-// Returns a section's heading as a line: the number key that opens and closes it, dim, then its
-// name, bold while open, then how many tasks it has, lined up under the other headings' counts,
-// such as `2 Building  4`. A stage has no colour of its own: an empty one is dim, and Needs you
-// is yellow, as it shows only while a task waits on you. Task queue then says dim how full the
-// builders are, such as `4/4 threads · 3 queued`, which goes first on a narrow terminal. Cut to
-// fit on a terminal narrower still, all in the heading's colour.
 function headingLine(heading: Heading, countWidth: number, width: number): string {
   const key = keyOf(heading.section);
   const name = sectionNames[heading.section].padEnd(sectionNameWidth);
   const count = String(heading.count).padStart(countWidth);
   const plain = ` ${key} ${name} ${count}`;
   const colour = heading.section === "needs you" ? yellow : heading.count === 0 ? grey : "";
+  const note = heading.note;
+  if (note && Bun.stringWidth(`${plain}  ${note.text}`) > width) {
+    const capacity = note.text.split(" · ")[0] ?? note.text;
+    const space = Math.max(width - Bun.stringWidth(plain) - 2, Bun.stringWidth(capacity));
+    const text = fitted(
+      space === Bun.stringWidth(capacity) ? capacity : note.text,
+      Math.min(space, width),
+    );
+    const room = width - Bun.stringWidth(text) - 2;
+    const prefix = room > 0 ? `${fitted(plain, room)}  ` : "";
+    return `${colour ? paint(colour, prefix) : prefix}${note.full ? text : paint(grey, text)}`;
+  }
   if (Bun.stringWidth(plain) > width) {
     const cut = fitted(plain, width);
     return colour ? paint(colour, cut) : cut;
   }
   const style = [heading.open ? "1" : "", colour].filter(Boolean).join(";");
   const shown = style ? paint(style, name) : name;
-  const fits = heading.note && Bun.stringWidth(`${plain}  ${heading.note}`) <= width;
-  const note = fits ? `  ${paint(grey, heading.note)}` : "";
-  return ` ${paint(grey, key)} ${shown} ${colour ? paint(colour, count) : count}${note}`;
+  const extra = note ? `  ${note.full ? note.text : paint(grey, note.text)}` : "";
+  return ` ${paint(grey, key)} ${shown} ${colour ? paint(colour, count) : count}${extra}`;
 }
 
 // A repository's tab on the top line, the columns it takes, counted from 1 as your terminal

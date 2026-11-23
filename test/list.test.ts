@@ -272,15 +272,15 @@ test("a task approved past the round limit waits on you to merge, not on the lim
 // section how many of its builders are at work, such as APP-7.
 test("each section's heading counts its tasks, open or closed", () => {
   const opened = new Set<Section>(["needs you", "task queue", "building"]);
-  expect(sectionHeadings(rows(), opened, "1/1 threads")).toEqual([
-    { section: "needs you", count: 2, open: true, note: "" },
-    { section: "backlog", count: 1, open: false, note: "" },
-    { section: "task queue", count: 1, open: true, note: "1/1 threads" },
-    { section: "building", count: 1, open: true, note: "" },
-    { section: "reviewing", count: 0, open: false, note: "" },
-    { section: "checks", count: 0, open: false, note: "" },
-    { section: "ready", count: 0, open: false, note: "" },
-    { section: "done", count: 0, open: false, note: "" },
+  expect(sectionHeadings(rows(), opened, { text: "1/1 threads", full: true })).toEqual([
+    { section: "needs you", count: 2, open: true, note: null },
+    { section: "backlog", count: 1, open: false, note: null },
+    { section: "task queue", count: 1, open: true, note: { text: "1/1 threads", full: true } },
+    { section: "building", count: 1, open: true, note: null },
+    { section: "reviewing", count: 0, open: false, note: null },
+    { section: "checks", count: 0, open: false, note: null },
+    { section: "ready", count: 0, open: false, note: null },
+    { section: "done", count: 0, open: false, note: null },
   ]);
 });
 
@@ -382,11 +382,14 @@ test("with every builder busy, Task queue's heading says how full they are, and 
   queueTwo();
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { buildersNote } from ${JSON.stringify(source("list/rows.ts"))};
-console.log(buildersNote(openDb(), { owner: "simon", repo: "app" }));`;
+console.log(JSON.stringify(buildersNote(openDb(), { owner: "simon", repo: "app" })));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
-  expect(run.stdout.toString().trim()).toBe("3/3 threads · 2 queued");
+  expect(JSON.parse(run.stdout.toString())).toEqual({ text: "3/3 threads · 2 queued", full: true });
   const all = rows();
-  const headings = sectionHeadings(all, new Set(sections), "3/3 threads · 2 queued");
+  const headings = sectionHeadings(all, new Set(sections), {
+    text: "3/3 threads · 2 queued",
+    full: true,
+  });
   const frame: Frame = {
     versions: ["v0.6.0"],
     where: "",
@@ -400,9 +403,16 @@ console.log(buildersNote(openDb(), { owner: "simon", repo: "app" }));`;
   expect(drawn.map((line) => Bun.stripANSI(line).trimEnd())).toContain(
     " 1 Task queue 3  3/3 threads · 2 queued",
   );
-  expect(drawn.find((line) => line.includes("3/3 threads"))).toContain(
-    "\x1b[90m3/3 threads · 2 queued\x1b[22;39m",
-  );
+  expect(drawn.find((line) => line.includes("3/3 threads"))).toContain("  3/3 threads · 2 queued");
+  expect(drawn.find((line) => line.includes("3/3 threads"))).not.toContain("\x1b[90m3/3");
+  for (const width of [37, 24]) {
+    const { lines } = drawRows(all, headings, 0, 0, width, 40);
+    const queue = lines.find((line) => line.includes("3/3 threads"));
+    expect(queue).toBeDefined();
+    expect(queue).not.toContain("\x1b[90m3/3");
+    if (width === 37) expect(Bun.stripANSI(queue ?? "")).toContain("Task queue");
+    expect(lines.every((line) => Bun.stringWidth(line) <= width)).toBe(true);
+  }
   expect(all.find((row) => row.name === "APP#31")?.start).toEqual({
     ask: "Queue APP#31? 3 of 3 builders busy, so it starts after the 2 queued. y/n",
     working: "Queueing APP#31…",
@@ -425,12 +435,37 @@ console.log(buildersNote(openDb(), { owner: "simon", repo: "app" }));`;
   ).toContain("s queue");
 });
 
+test("Task queue keeps its capacity grey while threads have room, even with no queued tasks", () => {
+  queueTwo();
+  sql("UPDATE threads SET status = 'stopped' WHERE folder IN ('app-7', 'app-20', 'app-21');");
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { buildersNote } from ${JSON.stringify(source("list/rows.ts"))};
+console.log(JSON.stringify(buildersNote(openDb(), { owner: "simon", repo: "app" })));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(JSON.parse(run.stdout.toString())).toEqual({ text: "2/3 threads", full: false });
+  const all = rows();
+  for (const width of [80, 24]) {
+    const { lines } = drawRows(
+      shownRows(all, new Set(), false),
+      sectionHeadings(all, new Set(), { text: "2/3 threads", full: false }),
+      0,
+      0,
+      width,
+      40,
+    );
+    expect(lines.find((line) => line.includes("2/3 threads"))).toContain(
+      "\x1b[90m2/3 threads\x1b[22;39m",
+    );
+    expect(lines.every((line) => Bun.stringWidth(line) <= width)).toBe(true);
+  }
+});
+
 test("without limits.threads, Task queue's heading says nothing of the builders and s starts", () => {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { buildersNote } from ${JSON.stringify(source("list/rows.ts"))};
 console.log(JSON.stringify(buildersNote(openDb(), { owner: "simon", repo: "app" })));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
-  expect(run.stdout.toString().trim()).toBe('""');
+  expect(run.stdout.toString().trim()).toBe("null");
   expect(rows().find((row) => row.name === "APP#31")?.start?.queues).toBe(false);
 });
 
