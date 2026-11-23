@@ -9,15 +9,16 @@ import { dim, lit } from "./screen.ts";
 type Size = { sidebar: number; right: number };
 
 // The sidebar's fixed colours of a tab's badge, as tmux names them.
-const tmuxColours = { green: "colour120", yellow: "colour221", red: "colour210" };
+const tmuxColours = { grey: "colour250", yellow: "colour221", red: "colour210" };
 
 // Returns a tab's badge as its dots, each with its colour: how many threads need you, in red when
-// any went wrong and yellow otherwise, then how many are ready to merge, in green, such as •2 •1.
+// any went wrong and yellow otherwise, then how many are ready to merge, in the light grey of a
+// tab's name, as only what needs attention is coloured, such as •2 •1.
 // Each is left out at none.
 function dots(tab: Tab): [keyof typeof tmuxColours, string][] {
   const shown: [keyof typeof tmuxColours, string][] = [];
   if (tab.needYou) shown.push([tab.colour, `•${tab.needYou}`]);
-  if (tab.ready) shown.push(["green", `•${tab.ready}`]);
+  if (tab.ready) shown.push(["grey", `•${tab.ready}`]);
   return shown;
 }
 

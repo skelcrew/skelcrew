@@ -179,8 +179,8 @@ const otherTab = "48;5;236";
 // Returns the top line and where each repository's tab is on it. Skelcrew in bold and the longest
 // name of its version that fits and where it runs, dim, then every repository's tab, in order, left
 // to right. The open one is white on a lighter grey. Each other one has a yellow dot and how many
-// of its threads need you, or red when one went wrong, then a green dot and how many wait for you
-// to merge. They are counted apart, so a finished task is never told twice. Another repository's
+// of its threads need you, or red when one went wrong, then a dot in the tab's light grey and how
+// many wait for you to merge. They are counted apart, so a finished task is never told twice. Another repository's
 // tab that doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
   // Each tab's text, with a space either side inside its background.
@@ -188,7 +188,7 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
     const open = tab.name === frame.name;
     const colour = tab.colour === "red" ? markColours.red : yellow;
     const needing = !open && tab.needYou ? [{ code: colour, badge: `•${tab.needYou}` }] : [];
-    const ready = tab.ready && !open ? [{ code: green, badge: `•${tab.ready}` }] : [];
+    const ready = tab.ready && !open ? [{ code: lightGrey, badge: `•${tab.ready}` }] : [];
     const badges = [...needing, ...ready];
     const text = ` ${[tab.name, ...badges.map(({ badge }) => badge)].join(" ")} `;
     return { tab, open, badges, size: Bun.stringWidth(text) };

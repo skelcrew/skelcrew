@@ -1609,7 +1609,7 @@ test("on a narrow terminal every line fits, the row you are on and a question in
   }
 });
 
-test("another repository's badge counts what needs you in yellow and what is ready to merge in green", () => {
+test("another repository's badge counts what needs you in yellow and what is ready to merge in the tab's grey", () => {
   const tabs = [
     { name: "app", fullName: "simon/app", needYou: 0, colour: "yellow" as const, ready: 0 },
     { name: "docs", fullName: "simon/docs", needYou: 0, colour: "yellow" as const, ready: 1 },
@@ -1618,7 +1618,8 @@ test("another repository's badge counts what needs you in yellow and what is rea
   const [top = ""] = drawnWith(0, { ...frame, tabs }, { width: 80, height: 20 });
   // Every tab is on the left, the open one without its badge, each with a space inside it.
   expect(Bun.stripANSI(top)).toBe(" Skelcrew v0.6.0   app    docs •1    site •2 •1 ");
-  expect(top).toContain("\x1b[38;5;34m•1");
+  expect(top).toContain("\x1b[38;5;250m•1");
+  expect(top).not.toContain("\x1b[38;5;34m");
   expect(top).toContain("\x1b[38;5;136m•2");
 });
 
