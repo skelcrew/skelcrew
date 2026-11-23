@@ -12,6 +12,7 @@ import {
   footer,
   given,
   home,
+  litBox,
   noteRefreshes,
   onLead,
   open,
@@ -31,6 +32,7 @@ import {
   tmux,
   toSecondThread,
   type,
+  typingToSidebar,
   until,
 } from "./screen.ts";
 
@@ -103,6 +105,26 @@ test("each side has a whole box, from under the header to the line above the foo
     const line = seen().split("\n")[row] ?? "";
     expect(`${line[0]}${line[119]}`).toBe("──");
   }
+});
+
+// The row of the divider under the lead, counted from the top, and its part from the sidebar's
+// left line to the line the sides share.
+const dividerAt = () =>
+  seen()
+    .split("\n")
+    .findIndex((line) => line[1] === "│" && line.includes("───"));
+const divider = () => (seen().split("\n")[dividerAt()] ?? "").slice(1, sidebar + 1);
+
+test("the divider under the lead stops short of the sidebar's box on both sides, whichever box is lit", async () => {
+  open("lead");
+  await ready("lead");
+  const clean = `│ ${"─".repeat(sidebar - 4)} │`;
+  await until(() => divider() === clean, "the divider");
+  expect(litBox("one", dividerAt())).toBe("right");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar to take your typing");
+  expect(divider()).toBe(clean);
+  expect(litBox("one", dividerAt())).toBe("sidebar");
 });
 
 test("the boxes stay whole however the terminal is resized", async () => {
