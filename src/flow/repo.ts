@@ -102,8 +102,8 @@ function requirePlugins(folder: string): void {
 // sets anything up. One Skelcrew has needs a skelcrew.yaml on its default branch. A new one is
 // cloned to a temporary folder, with its forge's login when an installed forge claims it, as
 // bringing it in would, and also needs the plugins its files name. Returns what Skelcrew found of
-// a new one, for bringInFrom, so its forge is asked once. One no forge or remote names gets its
-// error printed rather than thrown, so sc still attaches, and null is returned.
+// a new one, for bringInFrom, so its forge is asked once. Throws, stopping sc, when it can't tell
+// which repository that is, such as when a forge fails or needs a setup no one is there to run.
 export async function checkRepository(from: string | undefined): Promise<RepositoryDetails | null> {
   const named = from ?? originHere();
   if (!named) return null;
@@ -113,13 +113,7 @@ export async function checkRepository(from: string | undefined): Promise<Reposit
     await requireSkelcrewYaml(db, known);
     return null;
   }
-  let details: RepositoryDetails;
-  try {
-    details = await identifyRepository(db, named);
-  } catch (error) {
-    console.error(`Skelcrew: ${errorText(error)}`);
-    return null;
-  }
+  const details = await identifyRepository(db, named);
   const { owner, repo, remote, claimed } = details;
   const repository = {
     name: `${owner}/${repo}`,
@@ -533,8 +527,8 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
 
 // Brings in the repository you ran sc from, so its lead can open. `from` is a checkout's
 // remote URL or a repository's owner/name on its forge. Without it, the checkout you are in is
-// used. `details` are what checkRepository found of a new one. A failure is printed rather than thrown, so sc still attaches. Returns the repository's
-// owner/repo once Skelcrew has it, so sc opens its lead. A repository you didn't trust isn't
+// used. `details` are what checkRepository found of a new one. A failure is printed rather than
+// thrown, so sc still attaches. Returns the repository's owner/repo once Skelcrew has it, so sc opens its lead. A repository you didn't trust isn't
 // in, so nothing is returned for it. A repository Skelcrew has already costs no call to a
 // forge. A folder with no remote gets no complaint. Throws the lines that stop sc, which start
 // with "This repository": one with no skelcrew.yaml on its default branch, or whose files name
