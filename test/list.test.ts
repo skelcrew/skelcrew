@@ -1372,10 +1372,10 @@ test("the lead heads the list with its state and step, then a line across and th
     "   Needs you  2",
   ]);
   expect(targets.slice(0, 5)).toEqual([{ row: 0 }, { row: 0 }, null, null, null]);
-  // Each count is in the colour of what it counts, and the line across is dim.
+  // The counts are plain text, and the line across is dim.
   expect(lines[2]).toStartWith("\x1b[90m─");
   // APP-14 waits only for you to merge it, so it counts as ready, though it shows under Needs you.
-  expect(lines[3]).toContain("\x1b[38;5;34m1 ready");
+  expect(lines[3]).toBe("   1 running\x1b[90m · \x1b[22;39m1 ready");
   expect(Bun.stripANSI(lines[3] ?? "")).not.toContain("needs you");
   // On the lead's row, both its lines are shaded. Narrow, its title gives way to its state.
   const narrow = drawRows(shown, sectionHeadings(all, opened), 0, 0, 30, 30).lines;
@@ -1499,7 +1499,8 @@ ${threadSql({ task: "19", title: "Merged", status: "done", merged: 1, pr: 49 })}
   expect(line("Under review")).toContain("\x1b[90m○");
   expect(line("Merged")).toContain("\x1b[90m○");
   expect(line("Rate limit the API")).toContain("\x1b[38;5;136m●");
-  expect(line("Fix the export header")).toContain("\x1b[38;5;34m●");
+  // Approved is bright, not green, as Ready has no colour of its own either.
+  expect(line("Fix the export header")).toContain("\x1b[1m●");
   expect(line("Failed")).toContain("\x1b[38;5;203m○");
   // A failed check is still red, in the stage of its task.
   const failing = all.map((row) =>
@@ -1515,6 +1516,11 @@ ${threadSql({ task: "19", title: "Merged", status: "done", merged: 1, pr: 49 })}
   ).lines;
   const at = checked.findIndex((one) => one.includes("Login redirect"));
   expect(checked[at + 1]).toContain("\x1b[38;5;203m✗");
+  // Cut on a narrow terminal, an empty stage stays dim and Needs you yellow.
+  const narrow = drawRows(shownRows(all, opened, false), sectionHeadings(all, opened), 0, 0, 8, 80);
+  const cut = (text: string) => narrow.lines.find((one) => Bun.stripANSI(one).startsWith(text));
+  expect(cut(`   Need`)).toStartWith("\x1b[38;5;136m");
+  expect(cut(` ${Bun.stripANSI(empty).trim().slice(0, 5)}`)).toStartWith("\x1b[90m");
   // Without colour, the shape still says it: filled needs you, hollow doesn't.
   expect(Bun.stripANSI(line("Rate limit the API"))).toContain("● 12");
 });

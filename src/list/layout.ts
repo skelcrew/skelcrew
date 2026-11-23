@@ -150,14 +150,17 @@ const keyOf = (section: Section) =>
 // such as `2 Building  4`. A stage has no colour of its own: an empty one is dim, and Needs you
 // is yellow, as it shows only while a task waits on you. Task queue then says dim how full the
 // builders are, such as `Building 4/4 · 3 queued`, which goes first on a narrow terminal. Cut to
-// fit, without its colours, on a terminal narrower still.
+// fit on a terminal narrower still, all in the heading's colour.
 function headingLine(heading: Heading, countWidth: number, width: number): string {
   const key = keyOf(heading.section);
   const name = sectionNames[heading.section].padEnd(sectionNameWidth);
   const count = String(heading.count).padStart(countWidth);
   const plain = ` ${key} ${name} ${count}`;
-  if (Bun.stringWidth(plain) > width) return fitted(plain, width);
   const colour = heading.section === "needs you" ? yellow : heading.count === 0 ? grey : "";
+  if (Bun.stringWidth(plain) > width) {
+    const cut = fitted(plain, width);
+    return colour ? paint(colour, cut) : cut;
+  }
   const style = [heading.open ? "1" : "", colour].filter(Boolean).join(";");
   const shown = style ? paint(style, name) : name;
   const fits = heading.note && Bun.stringWidth(`${plain}  ${heading.note}`) <= width;
@@ -185,7 +188,7 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
     const open = tab.name === frame.name;
     const colour = tab.colour === "red" ? markColours.red : yellow;
     const needing = !open && tab.needYou ? [{ code: colour, badge: `•${tab.needYou}` }] : [];
-    const ready = tab.ready && !open ? [{ code: markColours.green, badge: `•${tab.ready}` }] : [];
+    const ready = tab.ready && !open ? [{ code: green, badge: `•${tab.ready}` }] : [];
     const badges = [...needing, ...ready];
     const text = ` ${[tab.name, ...badges.map(({ badge }) => badge)].join(" ")} `;
     return { tab, open, badges, size: Bun.stringWidth(text) };
@@ -592,17 +595,15 @@ function leadBlock(
   const merges = headings.find((heading) => heading.section === "needs you")?.merges ?? 0;
   const running = headings.reduce((sum, heading) => sum + heading.working, 0);
   const parts = [
-    { count: running, word: "running", code: "" },
-    { count: count("ready") + merges, word: "ready", code: green },
+    { count: running, word: "running" },
+    { count: count("ready") + merges, word: "ready" },
   ].filter((part) => part.count > 0);
   const said = parts.map((part) => `${part.count} ${part.word}`);
   const plain = `   ${said.join(" · ") || "nothing under way"}`;
   const summary =
     Bun.stringWidth(plain) > width || parts.length === 0
       ? paint(grey, fitted(plain, width))
-      : `   ${parts
-          .map(({ code }, at) => (code ? paint(code, said[at] ?? "") : (said[at] ?? "")))
-          .join(paint(grey, " · "))}`;
+      : `   ${said.join(paint(grey, " · "))}`;
   return {
     lines: [
       ...marked(second ? [first, second] : [first], here, width),

@@ -15,8 +15,15 @@ export const [green, yellow, red] = ["38;5;34", "38;5;136", "38;5;203"];
 export const bright = "1";
 // Dim text is the theme's own grey, so it stays quiet whatever the theme.
 export const grey = "90";
-// The colour each kind of mark is drawn in.
-export const markColours: Record<Colour, string> = { green, yellow, red, bright, dim: grey };
+// The colour each kind of mark is drawn in. Approved is bright, not green, as only what needs
+// attention is coloured: needs you yellow, and what failed red.
+export const markColours: Record<Colour, string> = {
+  green: bright,
+  yellow,
+  red,
+  bright,
+  dim: grey,
+};
 // A light grey, for text that matters more than dim text but less than a title. It is a fixed
 // one, as a theme has no grey between its dim one and its text.
 export const lightGrey = "38;5;250";
