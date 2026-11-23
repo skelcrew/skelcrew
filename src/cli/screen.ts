@@ -1,12 +1,11 @@
 // The commands that open the screen: plain sc and sc --list, which open the lead, and the
 // screen's parts beside it: the sidebar, the footer and the details.
-import { existsSync } from "node:fs";
 import { errorText, toRun } from "../format.ts";
 import { usage } from "./input.ts";
 
 export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { attachToLead } = await import("../attach.ts");
-  const { dbFile, openDb } = await import("../db.ts");
+  const { mayHaveRepositories, openDb } = await import("../db.ts");
   const {
     bringInFrom,
     approveCheckout,
@@ -25,8 +24,7 @@ export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { ensureDaemon, loginPath } = await import("../machine/service.ts");
   const { prepareMachine, signInForAgents } = await import("../machine/setup.ts");
   process.env.PATH = loginPath();
-  const hasRepositories = () => existsSync(dbFile()) && repositories(openDb()).length > 0;
-  if (from === undefined && Bun.which("git") && checkoutTop() === null && !hasRepositories()) {
+  if (from === undefined && Bun.which("git") && checkoutTop() === null && !mayHaveRepositories()) {
     console.log(noRepositories);
     return;
   }

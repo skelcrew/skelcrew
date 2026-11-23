@@ -195,6 +195,16 @@ openDb();`;
   expect(Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } }).success).toBe(true);
   expect(await skel()).toEqual(run);
   expect(existsSync(unit())).toBe(false);
+  // Nor is a database from an older Skelcrew brought up to date.
+  rmSync(state, { recursive: true });
+  mkdirSync(state, { recursive: true });
+  const old = new Database(join(state, "skelcrew.db"));
+  old.run("CREATE TABLE repositories (name TEXT)");
+  old.close();
+  const before = readFileSync(join(state, "skelcrew.db"));
+  expect(await skel()).toEqual(run);
+  expect(readFileSync(join(state, "skelcrew.db"))).toEqual(before);
+  expect(readdirSync(state)).toEqual(["skelcrew.db"]);
 });
 
 test("takes every step on the first run, and none on the second", async () => {

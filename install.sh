@@ -133,7 +133,7 @@ offer_path() {
   esac
   for file in $files; do
     mkdir -p "$(dirname "$HOME/$file")"
-    grep -qsF "$marker" "$HOME/$file" || printf '\n%s\n%s\n' "$marker" "$line" >>"$HOME/$file"
+    grep -qsF -e "$marker" -e "$line" "$HOME/$file" || printf '\n%s\n%s\n' "$marker" "$line" >>"$HOME/$file"
   done
   echo "To use sc now, open a new terminal or run exec \$SHELL."
 }
