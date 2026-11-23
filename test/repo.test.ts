@@ -2193,6 +2193,9 @@ test("sc says once which old role keys your config.yaml uses, what replaces them
     "lead: { may_arm_merges: true }\n";
   writeFileSync(file, yours);
   const checkout = onGitHub("simon/app", "WRITE");
+  // Plain sc signs in to every harness the repository uses, and its reviewer runs Codex.
+  mkdirSync(join(home, ".local", "share", "skelcrew", "codex"), { recursive: true });
+  writeFileSync(join(home, ".local", "share", "skelcrew", "codex", "auth.json"), "{}");
   const first = await skel([], "", checkout);
   expect(first.out).toContain(
     "Your config.yaml's builder: is read as roles: { builder: … }, which replaces it.",
@@ -2265,6 +2268,9 @@ test("sc says once that rounds: replaces max_rounds: in your config.yaml, here a
   const yours = "harness: claude\nmax_rounds: 5\nrepos:\n  simon/app: { max_rounds: 2 }\n";
   writeFileSync(file, yours);
   const checkout = onGitHub("simon/app", "WRITE");
+  // Plain sc signs in to every harness the repository uses, and its reviewer runs Codex.
+  mkdirSync(join(home, ".local", "share", "skelcrew", "codex"), { recursive: true });
+  writeFileSync(join(home, ".local", "share", "skelcrew", "codex", "auth.json"), "{}");
   const first = await skel([], "", checkout);
   expect(first.out).toContain(
     "Your config.yaml's max_rounds: is read as rounds:, which replaces it.",
