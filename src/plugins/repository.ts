@@ -404,31 +404,33 @@ export function installRepositoryPlugins(needs: Need[]): { changed: boolean; mis
 }
 
 // Returns the plugins the repository's files in `folder` name that this machine lacks at the
-// version and commit its skelcrew.lock pins, by the name the lock gives them: ones not installed,
-// at another pin, with no pin, or ones sc install refuses, such as a runtime plugin. A plugin you
-// removed with sc plugin rm doesn't count. Throws when the files can't be read.
-export function pluginsToInstall(folder: string): string[] {
+// version and commit its skelcrew.lock pins, each by its source and the name the lock gives it:
+// ones not installed, removed with sc plugin rm, at another pin, with no pin, or ones sc install
+// refuses, such as a runtime plugin. Throws when the files can't be read.
+export function pluginsToInstall(folder: string): { source: string; name: string }[] {
   const db = openDb();
   const { plugins, lock } = repositoryPlugins(folder);
   return plugins
     .filter((source) => {
-      if (db.query("SELECT 1 FROM removed_plugins WHERE source = ?").get(source)) return false;
       const locked = lock[source];
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
       if (!locked || !here || !matchesLock(here, locked)) return true;
       const manifest = readManifest(here.folder);
       return manifest.kind === "runtime" || manifest.name !== locked.name;
     })
-    .map((source) => lock[source]?.name ?? source);
+    .map((source) => ({ source, name: lock[source]?.name ?? source }));
 }
 
 // Reports whether the repository Skelcrew keeps in `folder` needs you to run sc install: it names
-// plugins this machine lacks, or its files can't be read, which sc install then says. The daemon
-// can't install anything itself, as only a yes at your terminal can, so the repository's row in
-// sc repo ls says to.
+// plugins this machine lacks, or its files can't be read, which sc install then says. A plugin you
+// removed with sc plugin rm doesn't count, so its tasks still start. The daemon can't install
+// anything itself, as only a yes at your terminal can, so the repository's row in sc repo ls says
+// to.
 export function needsInstall(folder: string): boolean {
   try {
-    return pluginsToInstall(folder).length > 0;
+    const removed = (source: string) =>
+      openDb().query("SELECT 1 FROM removed_plugins WHERE source = ?").get(source) !== null;
+    return pluginsToInstall(folder).some(({ source }) => !removed(source));
   } catch {
     return true;
   }

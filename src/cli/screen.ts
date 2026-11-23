@@ -12,7 +12,7 @@ export async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { ensureDaemon } = await import("../machine/service.ts");
   const { prepareMachine, signInForAgents } = await import("../machine/setup.ts");
   prepareMachine();
-  await checkRepository(from);
+  const details = await checkRepository(from);
   await ensureDaemon();
   const origin = originHere();
   if (from === undefined && origin === null && checkoutTop() !== null) {
@@ -22,7 +22,7 @@ export async function leadCommand(list: boolean, from?: string): Promise<void> {
     console.log("Then run sc again.");
     process.exit(1);
   }
-  const found = await bringInFrom(from);
+  const found = await bringInFrom(from, details);
   if (from === undefined) approveCheckout();
   signInForAgents(found);
   const { tellOldKeys } = await import("../config.ts");

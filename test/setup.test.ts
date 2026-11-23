@@ -753,6 +753,22 @@ test("on a fresh machine, a GitHub checkout with no skelcrew.yaml gets only the 
   expect(recorded("simon", "site")).toBeNull();
 });
 
+// A remote Skelcrew can't read stops plain sc there too, before anything is set up, rather than
+// leaving what it would have found to a later step.
+test("a remote Skelcrew can't read stops plain sc with one line, before anything is set up", async () => {
+  const site = siteOnGitHub();
+  rmSync(join(home, "github", "simon", "site.git"), { recursive: true, force: true });
+  const run = await atTerminal("y\nsk-ant-oat01-good\n", site);
+  expect(run.out).toBe("");
+  expect(run.err).toStartWith(
+    "Skelcrew: Skelcrew couldn't read this repository's default branch, to see its skelcrew.yaml: ",
+  );
+  expect(run.code).toBe(1);
+  expect(existsSync(token())).toBe(false);
+  expect(existsSync(unit())).toBe(false);
+  expect(recorded("simon", "site")).toBeNull();
+});
+
 // Plain sc never installs a plugin: a repository whose files name one this machine lacks gets the
 // line naming sc install, and isn't brought in without its forge. Once sc install has put the
 // plugin in, sc brings the repository in with GitHub as its forge.
@@ -775,6 +791,12 @@ test("a skelcrew.yaml naming a plugin this machine lacks gets the sc install lin
   );
   expect(stopped.code).toBe(1);
   expect(pluginRows()).toEqual([]);
+  expect(recorded("simon", "site")).toBeNull();
+  // A plugin you removed with sc plugin rm is still missing for a repository coming in.
+  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+openDb().run("INSERT INTO removed_plugins (source) VALUES ('skelcrew/skelcrew-github')");`;
+  expect(Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } }).success).toBe(true);
+  expect((await atTerminal("y\n", site)).err).toBe(stopped.err);
   expect(recorded("simon", "site")).toBeNull();
   const installed = await atTerminal("y\n", site, ["install"]);
   expect(installed.out).toContain("Installed github 0.1.0.");

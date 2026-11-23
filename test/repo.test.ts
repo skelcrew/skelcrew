@@ -415,6 +415,11 @@ const noRemoteLine =
 // With no forge to say you can push to it, Skelcrew can't vouch for what is in it.
 test("asks about a repository no forge claims, and does nothing in one with no origin", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
+  // git reaches the same repository at gitlab.com, which no forge here claims.
+  appendFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${home}/github/"]\n\tinsteadOf = https://gitlab.com/\n`,
+  );
   git(checkout, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
   const elsewhere = await skel([], "", checkout);
   expect(elsewhere.err).toBe("");
