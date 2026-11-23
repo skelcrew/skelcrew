@@ -60,15 +60,6 @@ async function runCommand(args: string[]): Promise<void> {
 
   if (!onScreen && outOfDate()) process.exit(outdated);
 
-  if (!onScreen && command !== "install" && process.env.SKELCREW_LAPTOP_LOCK && !runByAgent()) {
-    const { lockDiffers } = await import("./machine/your-files.ts");
-    const where = serverName();
-    if (lockDiffers())
-      console.error(
-        `Your lock on ${where} differs from your laptop's. To send yours there, run on your laptop:\n  sc --remote ${where} install`,
-      );
-  }
-
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
     return;
