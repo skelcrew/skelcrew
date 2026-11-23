@@ -260,7 +260,8 @@ const answeredBy = (ask: Ask) =>
 // Returns an item in a box `width` columns wide, drawn with box-drawing characters in the
 // colour of the screen's other edges: its short title, its whole text, then each option by its
 // letter, then the line for a reply on the lead's item, each wrapped to the box, never cut, with
-// what tapping each line answers. The details pane and an item opened full-size both show it.
+// what tapping each line answers. Last come what a pick on it does while it runs, why the last
+// pick failed, in red, and the y/n question a pick asks, in yellow. The details pane and an item opened full-size both show it.
 export function itemBox(ask: Ask, width: number): { text: string; pick: Pick | null }[] {
   const room = Math.max(width - 4, 1);
   const wrapped = (text: string) =>
@@ -280,6 +281,10 @@ export function itemBox(ask: Ask, width: number): { text: string; pick: Pick | n
     text: paint(grey, `${left}${"─".repeat(room + 2)}${right}`),
     pick: null,
   });
+  const said = (code: string, text: string | undefined) =>
+    text === undefined
+      ? []
+      : [inside(null, ""), ...wrapped(text).map((line) => inside(code, line))];
   return [
     edge("┌", "┐"),
     ...wrapped(ask.title).map((line) => inside(bright, line)),
@@ -288,6 +293,9 @@ export function itemBox(ask: Ask, width: number): { text: string; pick: Pick | n
     inside(null, ""),
     ...options,
     ...reply,
+    ...said(bright, ask.doing),
+    ...said(red, ask.failed),
+    ...said(yellow, ask.confirm),
     edge("└", "┘"),
   ];
 }

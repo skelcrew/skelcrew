@@ -58,6 +58,15 @@ export type Asking = {
   offer: "start" | "startNow" | "merge" | "pick";
 };
 
+// Returns the rows with the y/n question a pick asks in its item's box too, while it waits on
+// your answer, so you read it where you picked.
+export const askingInBox = (rows: Row[], asking: Asking | null): Row[] =>
+  rows.map((row) =>
+    asking?.offer === "pick" && row.name === asking.row && row.ask
+      ? { ...row, ask: { ...row.ask, confirm: asking.question.ask } }
+      : row,
+  );
+
 // Returns the start or merge to go ahead with once you said yes, given the rows read again just
 // now, or what the bottom line says instead. The task can change while the question is open: CI
 // can fail, the approval can go, or the issue can start elsewhere. So it goes ahead only while

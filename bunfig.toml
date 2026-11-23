@@ -1,4 +1,4 @@
-# Every test run gets the check that it didn't inherit Skelcrew's sandbox, and that it leaves
-# nothing running.
+# Every test run gets the check that it didn't inherit Skelcrew's sandbox, that it leaves
+# nothing running, and that no process it waits for can hold it up for good.
 [test]
-preload = ["./test/inherited.ts", "./test/leftovers.ts"]
+preload = ["./test/inherited.ts", "./test/leftovers.ts", "./test/child-limit.ts"]

@@ -323,6 +323,8 @@ async function recordThread(
       needs_you_for: null,
       said: null,
       handed: null,
+      picking: null,
+      pick_failed: null,
       agents,
       flow,
       queued_since: queued ? joinTime(db) : null,

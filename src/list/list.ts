@@ -14,6 +14,7 @@ import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { versionLabels } from "../version.ts";
 import {
   type Asking,
+  askingInBox,
   canOpenLinks,
   itemFooter,
   itemKey,
@@ -142,7 +143,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   let builders: ReturnType<typeof buildersNote> = null;
   const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
   let wholeBacklog = false;
-  const showing = () => shownRows(all, opened, wholeBacklog);
+  const showing = () => askingInBox(shownRows(all, opened, wholeBacklog), asking);
   let here = -1;
   let top = 0;
   // What a click on each line of the screen reaches, as it was last drawn.
@@ -423,11 +424,13 @@ export async function runList(agents: string, repository: string): Promise<void>
       }
       return openRow(row);
     }
+    if ("confirm" in does) {
+      asking = { question: does.confirm, row: row.name, offer: "pick" };
+      return reshow();
+    }
     item = null;
     if ("answer" in does) return answerRow(row, { pick: does.answer });
-    if ("run" in does) return goAhead(does.run);
-    asking = { question: does.confirm, row: row.name, offer: "pick" };
-    return draw();
+    return goAhead(does.run);
   };
   // Asks whether to merge a task ready for review, as m does, or says why it can't.
   const mergeRow = (row: Row) => {
@@ -652,7 +655,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (asking) {
       const action = asking;
       asking = null;
-      if (key !== "y") return draw();
+      if (key !== "y") return reshow();
+      if (action.offer === "pick") item = null;
       refresh();
       const offer = stillOffered(action, all);
       return typeof offer === "string" ? say(offer) : goAhead(offer);

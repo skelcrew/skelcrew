@@ -57,7 +57,8 @@ export const typed = () => read(join(builder(), "typed"));
 export const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the builder, it commits a round and runs sc submit, then
-// waits at a ❯ prompt, keeping what is typed into it. Told to merge a branch, for a conflict or
+// waits at a ❯ prompt, keeping what is typed into it. While the file hold-submit is in its
+// config folder, it waits before it submits. Told to merge a branch, for a conflict or
 // its own branch that moved, it fetches origin and merges it, as Claude Code would, keeping
 // what git said, unless the file no-merge is in its config folder. While the file
 // busy is in its config folder, it looks busy, as Claude Code does mid-turn.
@@ -67,6 +68,7 @@ export function fakeClaude(): void {
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 echo 1 > change
 git add -A && git commit -qm "round 1"
+while test -e "$CLAUDE_CONFIG_DIR/hold-submit"; do sleep 0.1; done
 sc submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
 while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
 clear
