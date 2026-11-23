@@ -53,7 +53,8 @@ export type Picking = {
 // so a pick does what the command does: sc start to go on, sc stop, sc merge --skip-review with
 // the PR you saw, the merge m makes with the commit you saw approved, and the screen's restart.
 // A builder that isn't running, as its session ended or its host is gone, has nothing to restart,
-// so it is stopped and started again, which resumes it on the current host. Opening the builder
+// so it is stopped and started again, which resumes it on the current host, or only started when
+// it is stopped already, such as after a start that failed. Opening the builder
 // and handing the item to the lead make none.
 export function pickRequests(
   act: Act,
@@ -78,6 +79,7 @@ export function pickRequests(
         ? []
         : [{ command: "merge", repo, pr: thread.pr, commit }];
     case "restart":
+      if (thread.status === "stopped") return [start];
       return runs && thread.needs_you_for === null
         ? [{ command: "restart", repo, task }]
         : [stop, start];
@@ -116,7 +118,8 @@ function itemFor(thread: Thread): OwnItem {
       text: said ?? "Its builder asked a question in its session.",
       options: [...toBuilder],
     };
-  if (word === "error")
+  const stoppedOnError = thread.status === "stopped" && thread.erred && !thread.limited;
+  if (word === "error" || stoppedOnError)
     return {
       title: "Its harness stopped on an error",
       text: said ?? "Its builder's harness stopped on an error.",

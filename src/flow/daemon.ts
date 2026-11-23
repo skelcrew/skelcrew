@@ -506,13 +506,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Polls the thread's repository twice at once, once a merge is armed, so a PR that is ready
   // already merges now rather than at the polls to come: the first posts the record of who
-  // asked, and the second merges. sc merge doesn't wait for it. A pick takes it, by the thread's
+  // asked, and the second merges. One the forge refused or failed already tries no more here, so
+  // a pick sees that refusal. sc merge doesn't wait for it. A pick takes it, by the thread's
   // folder, to wait for that one try and say when it failed.
   const mergesSoon = new Map<string, Promise<void>>();
   const mergeSoon = (thread: Thread) => {
     const fullName = `${thread.owner}/${thread.repo}`;
     const soon = polling.promise.then(async (poll) => {
       await poll(fullName);
+      if (readThread(db, thread.folder).merge_waits?.startsWith("the forge, which ")) return;
       await poll(fullName);
     });
     soon.catch((error) => console.log(errorText(error)));
@@ -538,7 +540,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       : `Skelcrew can't tell whether its builder runs, as ${restarted.gone}.`;
   };
   // Does what an option of Skelcrew's own item on a thread does, by the very requests its
-  // command makes, each handled as yours, and returns what the last one said.
+  // command makes, each handled as yours, and returns what the last one said. Starting again
+  // waits until the builder is back, and one that couldn't start is kept stopped rather than
+  // failed, so its item comes back to pick again. A merge without approval waits on its first
+  // try, as mergeSoon makes it.
   const runPick = async (act: Act, thread: Thread, picking: Picking) => {
     const name = threadName(db, thread);
     if (act === "open") return `Opening ${name}'s builder.`;
@@ -549,12 +554,24 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const requests = pickRequests(act, thread, picking, runs);
     if (requests.length === 0) throw new Error(`${name} has nothing to ${act} now`);
     let said = "";
-    for (const request of requests) {
-      const reply = await handle(request, "you");
-      const stopped = z.object({ stopped: z.string() }).safeParse(reply);
-      said = stopped.success
-        ? `Stopped ${stopped.data.stopped}.`
-        : (Object.values(reply).find((value) => typeof value === "string") ?? said);
+    try {
+      for (const request of requests) {
+        const reply = await handle(request, "you");
+        const stopped = z.object({ stopped: z.string() }).safeParse(reply);
+        said = stopped.success
+          ? `Stopped ${stopped.data.stopped}.`
+          : (Object.values(reply).find((value) => typeof value === "string") ?? said);
+      }
+      if (act === "restart") {
+        const failed = (await comingBack.get(thread.folder)) ?? null;
+        comingBack.delete(thread.folder);
+        if (failed !== null)
+          throw new Error(`${name}'s builder couldn't start again: ${errorText(failed)}`);
+      }
+    } catch (error) {
+      if (act === "restart" && readThread(db, thread.folder).status === "failed")
+        record(db, thread.folder, { status: "stopped" }, "kept stopped, to start again");
+      throw error;
     }
     if (act === "skip review") {
       const soon = mergesSoon.get(thread.folder) ?? Promise.resolve();
@@ -609,17 +626,24 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       );
     record(db, now.folder, { flow, ...(short ? { short } : {}) }, `given the flow ${flow}`);
   };
+  // A stopped thread coming back, by its folder, until its builder is back, with why it couldn't
+  // come back, or null. A pick that starts it again waits on it, to say when the start failed.
+  const comingBack = new Map<string, Promise<unknown>>();
   const resume = async (stopped: Thread, short?: string) => {
     const change = { status: statusOnceBack(stopped), ...(short ? { short } : {}) };
-    await comeBack(record(db, stopped.folder, change, "started again"));
+    const back = comeBack(record(db, stopped.folder, change, "started again"));
+    comingBack.set(stopped.folder, back);
+    await back;
   };
-  const comeBack = async (thread: Thread) => {
+  const comeBack = async (thread: Thread): Promise<unknown> => {
     try {
       await listenFor(thread);
       if ((await bringBack(db, sessions, thread)) !== "not wanted")
         resumeRound(db, sessions, thread.folder);
+      return null;
     } catch (error) {
       failThread(db, sessions, thread, error);
+      return error;
     }
   };
   // sc start names its task as typed, and the name is looked up here: once as it comes in, and

@@ -402,7 +402,8 @@ console.log(JSON.stringify({ decided, before, refused, afterRefused, decisions: 
 // Each option makes of the daemon exactly the requests its command makes, which the daemon handles
 // as yours: sc start, sc stop, sc merge --skip-review with the PR you saw, the merge m makes, and
 // the screen's restart, or a stop and a start for a builder that isn't running or whose host is
-// gone. Opening the builder and handing the item to the lead make none.
+// gone, or a start alone for one already stopped. Opening the builder and handing the item to the
+// lead make none.
 test("each option of Skelcrew's own items sends exactly its command's request", () => {
   const seen = inProcess(`
 const { ownItem, pickRequests } = await import(${JSON.stringify(source("flow/own-items.ts"))});
@@ -414,6 +415,7 @@ const marks = {
   question: { asking: true },
   error: { erred: true },
   host: { host: "herdr", needs_you_for: "run sc install: its session host herdr is missing" },
+  stopped: { status: "stopped", erred: true },
 };
 const fresh = { status: "working", rounds: 0, verdict: null, held: null, needs_you: false, asking: false, erred: false, host: "tmux", needs_you_for: null, pr: null };
 const out = {};
@@ -454,6 +456,11 @@ console.log(JSON.stringify(out));`);
   });
   expect(seen.host).toEqual({
     "Start it again": both([stop, start]),
+    "Open the builder": both([]),
+  });
+  // A thread already stopped, such as after a start that failed, has nothing to stop.
+  expect(seen.stopped).toEqual({
+    "Start it again": both([start]),
     "Open the builder": both([]),
   });
 });
