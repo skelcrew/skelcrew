@@ -683,7 +683,7 @@ async function newSkelcrewYaml(): Promise<string> {
     ...threadsLine,
     "# Keeps this repository on git alone, with no tracker.",
     "# tracker: none",
-    "# A role can take a model: line, such as model: <name>. Without one, its harness's own default runs.",
+    "# A role can take a model: line, such as model: <name>. Without one, your config's model or the harness's default runs.",
     stringify({ roles }),
   ].join("\n");
 }

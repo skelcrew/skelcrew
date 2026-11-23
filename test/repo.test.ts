@@ -1084,7 +1084,7 @@ test:
 limits: {threads: 3}
 # Keeps this repository on git alone, with no tracker.
 # tracker: none
-# A role can take a model: line, such as model: <name>. Without one, its harness's own default runs.
+# A role can take a model: line, such as model: <name>. Without one, your config's model or the harness's default runs.
 roles:
   lead:
     harness: claude
@@ -2283,13 +2283,34 @@ test("init with one harness installed puts every role on it and says so", async 
   const run = await skel(["init"], "", checkout);
   expect(run.code).toBe(0);
   expect(run.out).toContain(
-    "Claude Code is the only coding agent installed, so every role runs on it.",
+    "Claude Code is the only coding agent installed, so Skelcrew puts the lead, builders and reviewers on it.",
   );
   expect(run.out).not.toContain("Choose the coding agent");
   expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).roles).toEqual({
     lead: { harness: "claude" },
     builder: { harness: "claude" },
     reviewer: { harness: "claude" },
+  });
+});
+
+// Completing a skelcrew.yaml, it names only the roles it fills in, as the others keep theirs.
+test("init with one harness installed names only the roles it fills in", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  githubInstalledAsYours();
+  rmSync(join(home, "bin", "codex"));
+  writeFileSync(
+    join(checkout, "skelcrew.yaml"),
+    "setup: []\ntest: []\nlimits: { threads: 3 }\nroles: { builder: { harness: codex }, reviewer: { harness: codex } }\n",
+  );
+  const run = await skel(["init"], "", checkout);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Claude Code is the only coding agent installed, so Skelcrew puts the lead on it.",
+  );
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).roles).toEqual({
+    lead: { harness: "claude" },
+    builder: { harness: "codex" },
+    reviewer: { harness: "codex" },
   });
 });
 

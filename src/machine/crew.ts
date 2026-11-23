@@ -15,10 +15,16 @@ export function chooseCrew(names: RoleName[]): Partial<Record<RoleName, Role>> {
     throw new Error(
       "sc init needs an installed coding agent: install Claude Code, Codex or Pi first",
     );
-  const [only] = installed;
-  if (only && installed.length === 1)
-    console.log(`${only.title} is the only coding agent installed, so every role runs on it.`);
   const titles = { lead: "the lead", builder: "builders", reviewer: "reviewers" };
+  const [only] = installed;
+  if (only && installed.length === 1) {
+    const roles = names.map((name) => titles[name]);
+    const listed =
+      roles.length > 1 ? `${roles.slice(0, -1).join(", ")} and ${roles.at(-1)}` : roles.join("");
+    console.log(
+      `${only.title} is the only coding agent installed, so Skelcrew puts ${listed} on it.`,
+    );
+  }
   const crew: Partial<Record<RoleName, Role>> = {};
   for (const name of names) {
     const role = titles[name];
