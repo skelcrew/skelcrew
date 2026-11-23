@@ -344,7 +344,7 @@ Every command that lists or shows something takes `--json`. Commands that do som
 - **The lead's, for its tasks:** `sc decide` records a decision on a task, and `sc keep` sets what its change must keep true. Builders and reviewers can't run them.
 - **The agents':** `sc notify` for the lead, to send you a message you asked for, `sc submit` for a builder's round, `sc tell lead` to ask its lead or brief another, `sc review` for a builder's own task and never another's, and `sc check`, which reviewers and you can run too.
 
-**Plugins.** `sc plugin add` refuses a second plugin of the same name, and a plugin of yours from a folder, which has no version to pin. `sc plugin rm` refuses the tracker or forge of a repository Skelcrew has, and removes a plugin's settings and tokens from the machine once nothing else uses it.
+**Plugins.** `sc plugin add` offers to replace a GitHub source of the same name, as **Plugins** says. It refuses a plugin of yours from a folder, which has no version to pin. `sc plugin rm` refuses the tracker or forge of a repository Skelcrew has, and removes a plugin's settings and tokens from the machine once nothing else uses it.
 
 **Tasks.** A task is never filed or started with an empty description. Each `sc add` files a task of its own, the same words twice included, but a filing whose answer the remote lost is never filed twice: it fails, saying to run the same command again once the remote is back. Run again, it first asks the remote whether the earlier try's claim is there, and when it is, names that task and files nothing more. A claim Skelcrew couldn't look up is never taken for another machine's, and filings on one machine run one at a time per repository, each noting its own try. `sc review` refuses while a review of that commit already waits or runs.
 
@@ -534,6 +534,8 @@ A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at 
 Messages and the sandbox stay in core, between the two. Work comes in through an I/O plugin, becomes a message, and reaches an agent through the runtime. No plugin can provide messages or the sandbox, so the rules about who may reach whom, and what an agent can touch, are Skelcrew's on every setup. Harnesses are never plugins: each is built into Skelcrew, one module per harness, because that module draws the sandbox boundary.
 
 A runtime plugin is always personal, added with `sc plugin add -g`, since how you run and watch your agents is yours. So is a notifier, as it reaches you, and a repository's files can't name one. Any other I/O plugin is usually the repository's, in `plugins:`.
+
+When a GitHub plugin source changes, `sc plugin add` can replace its installed source after asking with both sources shown. This handles renamed repositories without uninstalling the plugin. It asks for the version as an update does. The plugin keeps its settings, sign-ins and jobs throughout. Its recorded source and any personal pin and plugin list move only after the update succeeds. Without approval, a different source with the same plugin name is refused.
 
 ### The manifest
 
