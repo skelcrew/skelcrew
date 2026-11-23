@@ -15,7 +15,7 @@ import { readThread, record, repositoryOf, Thread, threadName } from "./thread.t
 
 // Returns how many of the repository's builders run, its threads at work or waiting, those still
 // setting up included, and how many of its tasks wait in the queue. The list shows both, such as
-// `Building 4/4 · 3 queued`.
+// `4/4 threads · 3 queued`.
 export function counted(db: Database, { owner, repo }: { owner: string; repo: string }) {
   const row = db
     .query(

@@ -272,10 +272,10 @@ test("a task approved past the round limit waits on you to merge, not on the lim
 // section how many of its builders are at work, such as APP-7.
 test("each section's heading counts its tasks, open or closed", () => {
   const opened = new Set<Section>(["needs you", "task queue", "building"]);
-  expect(sectionHeadings(rows(), opened, "Building 1/1")).toEqual([
+  expect(sectionHeadings(rows(), opened, "1/1 threads")).toEqual([
     { section: "needs you", count: 2, open: true, note: "" },
     { section: "backlog", count: 1, open: false, note: "" },
-    { section: "task queue", count: 1, open: true, note: "Building 1/1" },
+    { section: "task queue", count: 1, open: true, note: "1/1 threads" },
     { section: "building", count: 1, open: true, note: "" },
     { section: "reviewing", count: 0, open: false, note: "" },
     { section: "checks", count: 0, open: false, note: "" },
@@ -384,9 +384,9 @@ test("with every builder busy, Task queue's heading says how full they are, and 
 import { buildersNote } from ${JSON.stringify(source("list/rows.ts"))};
 console.log(buildersNote(openDb(), { owner: "simon", repo: "app" }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
-  expect(run.stdout.toString().trim()).toBe("Building 3/3 · 2 queued");
+  expect(run.stdout.toString().trim()).toBe("3/3 threads · 2 queued");
   const all = rows();
-  const headings = sectionHeadings(all, new Set(sections), "Building 3/3 · 2 queued");
+  const headings = sectionHeadings(all, new Set(sections), "3/3 threads · 2 queued");
   const frame: Frame = {
     versions: ["v0.6.0"],
     where: "",
@@ -398,7 +398,10 @@ console.log(buildersNote(openDb(), { owner: "simon", repo: "app" }));`;
   };
   const drawn = drawList(all, headings, 0, 0, frame, { width: 80, height: 40 }).lines;
   expect(drawn.map((line) => Bun.stripANSI(line).trimEnd())).toContain(
-    " 1 Task queue 3  Building 3/3 · 2 queued",
+    " 1 Task queue 3  3/3 threads · 2 queued",
+  );
+  expect(drawn.find((line) => line.includes("3/3 threads"))).toContain(
+    "\x1b[90m3/3 threads · 2 queued\x1b[22;39m",
   );
   expect(all.find((row) => row.name === "APP#31")?.start).toEqual({
     ask: "Queue APP#31? 3 of 3 builders busy, so it starts after the 2 queued. y/n",
@@ -406,7 +409,6 @@ console.log(buildersNote(openDb(), { owner: "simon", repo: "app" }));`;
     request: { command: "start", repo: "simon/app", task: "#31" },
     queues: true,
   });
-  // Only a queued task in the task queue can be moved in the queue, and only it offers the key.
   const queued = all.find((row) => row.name === "APP-20");
   expect(keysFor(queued, 1)).toContain("shift+↑↓ reorder");
   expect(

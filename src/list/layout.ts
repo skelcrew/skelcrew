@@ -149,7 +149,7 @@ const keyOf = (section: Section) =>
 // name, bold while open, then how many tasks it has, lined up under the other headings' counts,
 // such as `2 Building  4`. A stage has no colour of its own: an empty one is dim, and Needs you
 // is yellow, as it shows only while a task waits on you. Task queue then says dim how full the
-// builders are, such as `Building 4/4 · 3 queued`, which goes first on a narrow terminal. Cut to
+// builders are, such as `4/4 threads · 3 queued`, which goes first on a narrow terminal. Cut to
 // fit on a terminal narrower still, all in the heading's colour.
 function headingLine(heading: Heading, countWidth: number, width: number): string {
   const key = keyOf(heading.section);

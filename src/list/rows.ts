@@ -433,13 +433,10 @@ function buildersOf(db: Database, open: Open) {
   return { ...counted(db, open), limit };
 }
 
-// Returns what Task queue's heading says of the builders, such as `Building 4/4 · 3 queued`: how
-// many run of how many may, and how many tasks wait. Without limits.threads nothing waits, so it
-// says nothing.
 export function buildersNote(db: Database, open: Open): string {
   const { running, queued, limit } = buildersOf(db, open);
   if (limit === null) return "";
-  return `Building ${running}/${limit}${queued > 0 ? ` · ${queued} queued` : ""}`;
+  return `${running}/${limit} threads${queued > 0 ? ` · ${queued} queued` : ""}`;
 }
 
 // Returns the repository's rows as the database has them now, at a moment in milliseconds: its
