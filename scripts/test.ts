@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { socketFolderInside } from "../src/agents/sandbox.ts";
 import { shardFiles, timesOfFiles } from "./shards.ts";
+import { overdue, running, whatRuns } from "./stuck.ts";
 import { timings } from "./timings.ts";
 
 // CI splits the tests into shards, as --shard=2/4. The split is made here, by the time each
@@ -22,16 +23,16 @@ import { timings } from "./timings.ts";
 const given = Bun.argv.slice(2);
 const shardArg = given.find((arg) => arg.startsWith("--shard="));
 let args = given;
+const timesFile = join("test", "times.json");
+const times = existsSync(timesFile)
+  ? timesOfFiles.parse(JSON.parse(readFileSync(timesFile, "utf8")))
+  : {};
 if (shardArg) {
   const [index, count] = shardArg.slice("--shard=".length).split("/").map(Number);
   if (!index || !count || index > count) throw new Error(`${shardArg} isn't a shard such as 2/4`);
   const files = [...new Bun.Glob("**/*.test.ts").scanSync(".")].filter(
     (file) => !file.startsWith("node_modules/"),
   );
-  const timesFile = join("test", "times.json");
-  const times = existsSync(timesFile)
-    ? timesOfFiles.parse(JSON.parse(readFileSync(timesFile, "utf8")))
-    : {};
   const mine = shardFiles(files, times, index, count);
   // Bun given no file runs every file, so a shard with none ends here.
   if (mine.length === 0) {
@@ -74,15 +75,23 @@ if (inside) {
 // that start a real sandbox run only outside Skelcrew's own, so CI is where their times show.
 const report = process.env.GITHUB_ACTIONS === "true" ? join(own, "report.xml") : "";
 const fileTimes = join(own, "file-times.jsonl");
+// In CI, each worker also notes the file and test it runs, so a run that hangs says where.
+const runningNow = join(own, "running");
 const reporting = report
   ? [
       "--reporter=junit",
       `--reporter-outfile=${report}`,
       "--preload",
       join(import.meta.dir, "file-times.ts"),
+      "--preload",
+      join(import.meta.dir, "running.ts"),
     ]
   : [];
-if (report) env.TEST_FILE_TIMES = fileTimes;
+if (report) {
+  env.TEST_FILE_TIMES = fileTimes;
+  env.TEST_RUNNING = runningNow;
+  mkdirSync(runningNow);
+}
 // Written when the run is stopped at its limit, so a file that would start after that never does.
 const stoppedMark = join(own, "stopped");
 env.TEST_RUN_STOPPED = stoppedMark;
@@ -109,6 +118,23 @@ const run = Bun.spawn(
   { env, stdio: ["inherit", "inherit", "inherit"] },
 );
 
+// In CI, a file that runs far past its recorded time is named once, with what the run has
+// running then, so a hang shows where it is while the run goes on.
+const named = new Set<string>();
+const watch = setInterval(() => {
+  if (!report) return;
+  const now = Date.now();
+  for (const file of running(runningNow)) {
+    if (named.has(file.file) || !overdue(file, times[file.file], now)) continue;
+    named.add(file.file);
+    const recorded =
+      times[file.file] === undefined ? "no recorded time" : `${times[file.file]} s recorded`;
+    console.log(
+      `\n${file.file} runs far past its time, with ${recorded}. The run has running:\n${whatRuns(running(runningNow), now)}`,
+    );
+  }
+}, 10_000);
+
 // The whole run ends within this, even if something keeps it from ever finishing, such as a
 // process a test started that never exits. A full run takes about two minutes on eight cores
 // without the tests that start a real sandbox. CI runs those too, and took 13 to 16 minutes with
@@ -119,6 +145,7 @@ let stopped = false;
 const stop = setTimeout(async () => {
   stopped = true;
   console.error(`\nThe tests ran past ${limit / 1000} seconds, so they were stopped.`);
+  if (report) console.error(`It had running:\n${whatRuns(running(runningNow), Date.now())}`);
   // From now on, a file a worker would start ends that worker before any of its code runs.
   writeFileSync(stoppedMark, "");
   // Bun writes its report only when it ends by itself, so its workers are stopped rather than
@@ -148,6 +175,7 @@ const stop = setTimeout(async () => {
 // success.
 run.exited.then(async (code) => {
   clearTimeout(stop);
+  clearInterval(watch);
   // A report that can't be read is said, and the run still ends as its tests did.
   if (report && existsSync(report))
     try {

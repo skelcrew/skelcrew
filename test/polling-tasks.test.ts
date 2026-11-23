@@ -189,14 +189,23 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
     first?.kill();
     await first?.exited;
     // With its session gone too, the daemon brings the builder back as it starts, and its
-    // first poll ends that builder while the daemon still watches it start.
+    // first poll ends that builder while the daemon still watches it start. The builder
+    // brought back holds its submit, so the test sends it once the thread is done.
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    writeFileSync(join(builder(), "hold-submit"), "");
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     serve();
     await until(() => thread().status === "done");
+    await until(() => fakeBuilders().length === 0);
+    // The submit the builder brought back runs as it starts, coming in after the thread ended.
+    const runDir = join(home, "run", "skelcrew");
+    const hashed = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const late = Bun.spawnSync([process.execPath, main, "submit", "Round 1"], {
+      env: { ...env(), SKELCREW_SOCKET: join(runDir, "threads", hashed, "skelcrew.sock") },
+      stderr: "pipe",
+    });
+    expect(late.stderr.toString()).toContain("this thread is done, so Skelcrew won't push it");
     // Watching a builder start takes a second, and only then could it call the thread failed.
-    // The builder brought back also runs sc submit as it starts, which can come in after the
-    // merge ended the thread, and is refused then.
     await Bun.sleep(1500);
     expect(thread().status).toBe("done");
     expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
