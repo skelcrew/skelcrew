@@ -919,10 +919,11 @@ export async function runSidebar(
     });
   };
 
-  // Acts on a press of the mouse at a column and line, counted from 1. A click on a row, the
-  // lead's or a task's, moves to it and opens it as Enter does. A click on a stage's heading, or
-  // its name pinned at an edge, opens or closes it. The wheel moves one row up or down. On an item
-  // open full-size, the wheel scrolls it a line, and a tap on its ↑ more or ↓ more a page.
+  // Acts on a press of the mouse at a column and line, counted from 1. A click on a task's row
+  // moves to it, which shows its details, and a click on the row you are on opens it as Enter does.
+  // A click on the lead's row opens the lead at once. A click on a stage's heading, or its name
+  // pinned at an edge, opens or closes it. The wheel moves one row up or down. On an item open
+  // full-size, the wheel scrolls it a line, and a tap on its ↑ more or ↓ more a page.
   const click = (button: string, column: number, line: number) => {
     if ((button === "64" || button === "65") && item !== null) {
       if (!narrow) {
@@ -949,6 +950,7 @@ export async function runSidebar(
     const tapped = rows[target.row];
     if (target.pick && tapped)
       return target.row === here ? pickOn(tapped, target.pick) : moveTo(target.row);
+    if (target.row !== here && tapped?.part !== "lead") return moveTo(target.row);
     moveTo(target.row);
     enter();
   };
