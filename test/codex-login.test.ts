@@ -34,6 +34,8 @@ import {
   takeSharedLogin,
 } from "../src/agents/harness.ts";
 
+import { stillRunning } from "../src/agents/sessions.ts";
+
 let home = "";
 let server: Server<undefined>;
 // The refresh tokens the stand-in for OpenAI was sent, in turn.
@@ -329,8 +331,6 @@ test("a session's copy goes as the session ends, and an agent that ignores the h
   await started.launch(async () => {});
   const [copy = ""] = readdirSync(join(data(), "codex-logins"));
   const folder = join(data(), "codex-logins", copy);
-  // The step that removes the copy, around an agent that ignores a hang-up and writes what it
-  // reads, in place of the sandbox, which can't start everywhere tests run.
   const agent = `trap "" HUP; read line; echo "$line" > ${join(home, "read")}; echo $$ > ${join(home, "pid")}; exec sleep 300`;
   const command = [...started.argv.slice(0, 4), "sh", "-c", agent];
   const tmux = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
@@ -343,7 +343,7 @@ test("a session's copy goes as the session ends, and an agent that ignores the h
     expect(readFileSync(join(home, "read"), "utf8")).toBe("typed\n");
     const pid = Number(readFileSync(join(home, "pid"), "utf8"));
     run("kill-server");
-    const alive = () => Bun.spawnSync(["kill", "-0", String(pid)]).success;
+    const alive = () => stillRunning([pid]).length > 0;
     for (let i = 0; i < 100 && (alive() || existsSync(folder)); i++) await Bun.sleep(20);
     expect(alive()).toBe(false);
     expect(existsSync(folder)).toBe(false);
