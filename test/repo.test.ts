@@ -1117,7 +1117,8 @@ plugins:
   expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
   expect(await listed()).toEqual([]);
   expect(calls()).not.toContain("daemon");
-  // With no terminal to answer, it commits and installs nothing, and says how to.
+  // With no terminal to answer, it commits nothing, and says how to. The GitHub plugin is
+  // installed here already, so sc install has nothing to do.
   const paths = "skelcrew.yaml skelcrew.lock .agents/";
   expect(run.out).toEndWith(
     [
@@ -1130,7 +1131,7 @@ plugins:
       "",
       "  git push origin HEAD:main",
       "",
-      "Run sc install, then sc, and tell your lead what to build.",
+      "Run sc and tell your lead what to build.",
       "",
     ].join("\n"),
   );
@@ -1171,6 +1172,10 @@ function checkoutWithOwnChanges(): string {
 }
 
 const bare = () => join(home, "github", "simon/app.git");
+
+// How sc init ends when the machine lacks a plugin its files name.
+const next =
+  "\n\nNext, install the plugins it names:\n\n  sc install\n\nThen run sc and tell your lead what to build.\n";
 
 // A yes commits only what sc init wrote, with your own git, and pushes it to the default branch,
 // so the next sc finds skelcrew.yaml there. What else you changed or staged stays as it was.
@@ -1438,27 +1443,20 @@ test("init on a machine with Skelcrew's state leaves that state as it was", asyn
   expect(state()).toEqual(before);
 });
 
-// sc init installs the plugins it wrote, at the pins it wrote, so no sc install step follows: on a
-// machine where Skelcrew never ran, the forge's plugin is installed once init ends.
-test("init on a fresh machine leaves the plugins it wrote installed, and ends by saying to run sc", async () => {
+// Only sc install installs plugins, so on a machine where Skelcrew never ran, sc init installs
+// the forge's plugin it wrote no more than any other, runs no sign-in, and ends naming sc install.
+test("init on a fresh machine installs nothing, and ends with sc install on its own line", async () => {
   const checkout = checkoutWithOwnChanges();
   const commit = publishGitHubPlugin();
   rmSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
   const run = await initAtTerminal(checkout, "y\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Committed them and pushed them to main.");
-  expect(run.out).toContain(
-    "Installing github 0.1.0 from skelcrew/skelcrew-github (runs as you, outside the agents' sandbox).",
+  expect(run.out.replace(/\r/g, "")).toEndWith(
+    `Wrote skelcrew.yaml, skelcrew.lock and .agents/.\nCommit and push them to main? [Y/n] Committed them and pushed them to main.${next}`,
   );
-  expect(run.out).not.toContain("Install the github plugin");
-  expect(run.out).toContain("Installed github 0.1.0.");
-  expect(run.out).not.toContain("sc install");
-  expect(run.out.replace(/\r/g, "")).toEndWith("\n\nRun sc and tell your lead what to build.\n");
-  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  const plugins = db.query("SELECT name, source FROM plugins").all();
-  db.close();
-  expect(plugins).toEqual([{ name: "github", source: "skelcrew/skelcrew-github" }]);
+  expect(run.out).not.toContain("Installing");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins"))).toBe(false);
   expect(parse(readFileSync(join(checkout, "skelcrew.lock"), "utf8"))).toEqual({
     "skelcrew/skelcrew-github": { name: "github", version: "0.1.0", commit },
   });
@@ -1680,8 +1678,8 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
 });
 
-// sc init installs only what you chose in it. A plugin the files named already runs nothing
-// here, even at a terminal, and is left to sc install, which its last line names.
+// Only sc install installs plugins. A plugin the files named already runs nothing in sc init,
+// even at a terminal, and its last lines name sc install.
 test("init at a terminal installs no plugin the files named before it, and says to run sc install", async () => {
   const checkout = checkoutWithOwnChanges();
   const file = join(checkout, "skelcrew.yaml");
@@ -1700,9 +1698,7 @@ test("init at a terminal installs no plugin the files named before it, and says 
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("Installing");
   expect(run.out).not.toContain("other");
-  expect(run.out.replace(/\r/g, "")).toEndWith(
-    "\n\nRun sc install, then sc, and tell your lead what to build.\n",
-  );
+  expect(run.out.replace(/\r/g, "")).toEndWith(next);
 });
 
 // Being able to push isn't having read what a teammate wrote in .agents/, so init writes nothing
