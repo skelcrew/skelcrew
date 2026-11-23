@@ -433,13 +433,15 @@ function buildersOf(db: Database, open: Open) {
   return { ...counted(db, open), limit };
 }
 
-// Returns what Task queue's heading says of the builders, such as `Building 4/4 · 3 queued`: how
-// many run of how many may, and how many tasks wait. Without limits.threads nothing waits, so it
-// says nothing.
-export function buildersNote(db: Database, open: Open): string {
+export type BuildersNote = { text: string; full: boolean };
+
+export function buildersNote(db: Database, open: Open): BuildersNote | null {
   const { running, queued, limit } = buildersOf(db, open);
-  if (limit === null) return "";
-  return `Building ${running}/${limit}${queued > 0 ? ` · ${queued} queued` : ""}`;
+  if (limit === null) return null;
+  return {
+    text: `${running}/${limit} threads${queued > 0 ? ` · ${queued} queued` : ""}`,
+    full: running >= limit,
+  };
 }
 
 // Returns the repository's rows as the database has them now, at a moment in milliseconds: its
@@ -767,32 +769,24 @@ export function shownRows(all: Row[], opened: Set<Section>, wholeBacklog: boolea
   ];
 }
 
-// A section's heading: its section, how many tasks it has, whether it is open, which shows its
-// rows, what it says after its count, dim, which only Task queue has: how full the builders
-// are, how many of its tasks wait only for you to merge them, which only Needs you has, and how
-// many have a builder at work this moment.
 export type Heading = {
   section: Section;
   count: number;
   open: boolean;
-  note: string;
-  merges: number;
-  working: number;
+  note: BuildersNote | null;
 };
 
-// Returns the heading of every section, in order, from all the rows, whether their section is open
-// or not, given the sections that are open. Needs you has none while no task needs you, as
-// shownRows has it. `builders` is what Task queue's heading says of the builders, from
-// buildersNote.
-export function sectionHeadings(rows: Row[], opened: Set<Section>, builders = ""): Heading[] {
+export function sectionHeadings(
+  rows: Row[],
+  opened: Set<Section>,
+  builders: BuildersNote | null = null,
+): Heading[] {
   return sections.flatMap((section) => {
     const ours = rows.filter((row) => row.section === section);
     if (section === "needs you" && ours.length === 0) return [];
-    const note = section === "task queue" ? builders : "";
-    const merges = ours.filter((row) => row.mark.sign === "●" && row.mark.colour === "green");
+    const note = section === "task queue" ? builders : null;
     const count = ours.length;
-    const working = ours.filter((row) => row.working).length;
-    return [{ section, count, open: opened.has(section), note, merges: merges.length, working }];
+    return [{ section, count, open: opened.has(section), note }];
   });
 }
 

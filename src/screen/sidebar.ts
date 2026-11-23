@@ -272,7 +272,7 @@ export async function runSidebar(
   let rows: Row[] = [];
   const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
   // What Task queue's heading says of the builders, read with the rows.
-  let builders = "";
+  let builders: ReturnType<typeof buildersNote> = null;
   let wholeBacklog = false;
   let here = 0;
   let top = 0;
@@ -566,11 +566,11 @@ export async function runSidebar(
       }
     });
     builders = doing("reading how full the builders are", () => {
-      if (empty) return "";
+      if (empty) return null;
       try {
         return buildersNote(db, open);
       } catch {
-        return "";
+        return null;
       }
     });
     reshow();

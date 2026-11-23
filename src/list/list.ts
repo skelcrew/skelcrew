@@ -144,7 +144,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   let all: Row[] = [];
   let rows: Row[] = [];
   // What Task queue's heading says of the builders, read with the rows.
-  let builders = "";
+  let builders: ReturnType<typeof buildersNote> = null;
   const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
   let wholeBacklog = false;
   const showing = () => shownRows(all, opened, wholeBacklog);
