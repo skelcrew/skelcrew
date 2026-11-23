@@ -1376,6 +1376,26 @@ test("a row's word is in its colour, then its step and PR dim, its CI's mark and
   ]);
 });
 
+test("a busy row's line too long for the list cuts its step, keeping its word, PR, CI, round and time", () => {
+  const review = { round: 2, colour: "yellow" as const };
+  const step = "Editing src/list/layout.ts and its tests";
+  const all = rows().map((row) =>
+    row.name === "APP-7"
+      ? { ...row, says: "changes", step, pr: "#40", ci: "running" as const, review }
+      : row,
+  );
+  const shown = all.filter((row) => row.part === "lead" || row.part === "building");
+  const headings = sectionHeadings(all, new Set<Section>(["building"]));
+  const { lines } = drawList(shown, headings, 1, 0, frame, { width: 48, height: 26 });
+  const at = lines.findIndex((line) => line.includes("Login redirect"));
+  expect(Bun.stripANSI(lines[at + 1] ?? "")).toBe(
+    "     changes · Editing src/lis… · #40 ● r2 · 5m",
+  );
+  const narrow = drawList(shown, headings, 1, 0, frame, { width: 30, height: 26 }).lines;
+  const there = narrow.findIndex((line) => line.includes("Login redirect"));
+  expect(Bun.stripANSI(narrow[there + 1] ?? "")).toBe("     changes · #40 ● r2 · 5m");
+});
+
 test("the lead heads the list with its state and step, then a divider directly before Needs you", () => {
   sql("UPDATE repositories SET lead_state = 'working' WHERE repo = 'app';");
   const all = rows().map((row) =>

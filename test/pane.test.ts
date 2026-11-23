@@ -507,12 +507,12 @@ const frame: Frame = {
 test("the list takes a little over a quarter of the terminal, and the pane the rest", () => {
   // Returns how wide the list's rows are beside the pane, past the line between them.
   const list = (width: number) => width - 1 - paneWidth(width) - 3;
-  expect(list(200)).toBe(56);
+  expect(list(160)).toBe(44);
   // On a terminal not that wide, the list keeps room for a row's name, short title and word.
   expect(list(120)).toBe(40);
   expect(paneWidth(120)).toBe(76);
-  // On a very wide one, it stops at what a task's two lines need, and the pane takes the rest.
-  expect(list(300)).toBe(58);
+  // On a very wide one, it stops at what a busy task's second line needs, and the pane takes the rest.
+  expect(list(300)).toBe(48);
   // A terminal too narrow for both shows no pane.
   expect(paneWidth(113)).toBe(0);
   expect(paneWidth(114)).toBe(70);

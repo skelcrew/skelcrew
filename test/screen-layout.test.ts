@@ -369,7 +369,7 @@ test("the line the sides share runs from under the header down to the footer's l
       .join("");
   const whole = `┌${"│".repeat(26)}┴`;
   await until(() => column() === whole, "the line");
-  for (const width of [150, 90, 120]) {
+  for (const width of [200, 150, 90, 120]) {
     lineAt = sidebarFor(width);
     tmux(terminal, "resize-window", "-t", "=one:", "-x", String(width), "-y", "30");
     // tmux stretches the sidebar for a moment before the screen's hook sets its width back.
