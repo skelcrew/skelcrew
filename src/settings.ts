@@ -1,6 +1,6 @@
 // Reads every setting, from your overrides for the repository under repos: in your config.yaml,
 // the repository's files in Skelcrew's clone, the rest of your config.yaml and the built-in
-// defaults. Each setting comes from the first of them that sets it.
+// defaults. Roles use your general config before the repository's files.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
@@ -315,18 +315,10 @@ function sayIn(data: unknown, path: string[], problem: string): Say {
   return { harness: field("harness", HarnessName), model: field("model", Model) };
 }
 
-// Returns the harness and model one role runs on, for `repository` when there is one. Each layer
-// says something of it, the one that wins first: your override under repos:, the repository's
-// role file, its skelcrew.yaml's line, then your config. In each, roles: goes over the old role
-// line, which goes over the layer's own harness and model for every role. Throws, naming the
-// file and where in it, when a harness or model that changes the role isn't valid. One that
-// can't change it, such as one your override replaces, stops nothing.
-// `run` is the role that runs as `name`, which differs for a flow that names one of the
-// repository's own, such as tester for the builder. Its roles: lines and its role file then
-// count, and the old builder: and reviewer: lines, which are the built-in roles', don't.
+// Returns a role's harness and model, with your repository override first, then your general
+// settings, the repository's role file and skelcrew.yaml, and the built-in defaults.
 function roleOf(name: RoleName, run: string, repository: Repository | undefined): Role {
   const says: Say[] = [];
-  // The old line for the role in a file, which counts only for the built-in role it names.
   const line = (data: unknown, problem: string): Say[] =>
     run === name ? [sayIn(data, [name], problem)] : [];
   const yourFile = `${join(configDir(), "config.yaml")} isn't valid`;
@@ -338,8 +330,10 @@ function roleOf(name: RoleName, run: string, repository: Repository | undefined)
       ...sayIn(entry, [], problem),
       everyRole: true,
     });
-    // The role file's frontmatter, whose keys are checked as the file is read. It is the file of
-    // the role that runs.
+    says.push(sayIn(yours, ["roles", run], yourFile), ...line(yours, yourFile), {
+      ...sayIn(yours, [], yourFile),
+      everyRole: true,
+    });
     const role = `.agents/roles/${run}.md in ${repository.owner}/${repository.repo} isn't valid`;
     says.push(sayIn(repositoryRole(run, repository).frontmatter, [], role));
     const shared = repositoryData(repository);
@@ -348,18 +342,13 @@ function roleOf(name: RoleName, run: string, repository: Repository | undefined)
       ...line(shared, "the repository's skelcrew.yaml isn't valid"),
     );
   }
-  says.push(sayIn(yours, ["roles", run], yourFile), ...line(yours, yourFile));
+  if (!repository) says.push(sayIn(yours, ["roles", run], yourFile), ...line(yours, yourFile));
   const top = sayIn(yours, [], yourFile);
-  // A bad value stops the role only when the role would differ with it as some valid value.
-  // The first such one, from the top, is refused. Should none change the role on its own,
-  // though they do together, the first bad one is.
   const bad = badValues(says, top);
   const all = outcomes(says, top, new Map());
   const [only] = all.values();
   if (all.size === 1 && only) return only;
   for (const v of bad) {
-    // With v pinned to each of its choices, and the others free, a different set of roles means
-    // v alone changes the role.
     const pinned = choicesFor(v, says, top, new Map()).map((c) =>
       [...outcomes(says, top, new Map([[v, c]])).keys()].sort().join("|"),
     );

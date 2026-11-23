@@ -104,13 +104,13 @@ test("your config goes over the built-in defaults", () => {
   });
 });
 
-test("the repository's skelcrew.yaml goes over your config, key by key", () => {
+test("your config overrides repository role settings", () => {
   files(
     "harness: claude\nmodel: opus\nmax_rounds: 5\nbuilder: { model: sonnet }\n",
     "max_rounds: 2\nlead: { model: haiku }\nsetup: [make]\ntracker: none\n",
   );
   expect(read(all).settings).toEqual({
-    lead: { harness: "claude", model: "haiku" },
+    lead: { harness: "claude", model: "opus" },
     builder: { harness: "claude", model: "sonnet" },
     reviewer: { harness: "claude", model: "opus" },
     rounds: 2,
@@ -129,13 +129,13 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
   });
 });
 
-test("a role your config puts on another harness gets your model back when skelcrew.yaml puts it on yours", () => {
+test("your role overrides the repository harness and model", () => {
   files(
     "harness: claude\nmodel: opus\nreviewer: { harness: codex, model: gpt-6 }\n",
     "reviewer: { harness: claude }\n",
   );
   expect(read(roleGroups).settings).toMatchObject({
-    reviewer: { harness: "claude", model: "opus" },
+    reviewer: { harness: "codex", model: "gpt-6" },
   });
 });
 
@@ -181,9 +181,9 @@ test("a setting skelcrew.yaml sets isn't read from your config, so a bad one the
     "reviewer: { harness: codex }\n",
   );
   expect(read(roleGroups).err).toContain("config.yaml isn't valid");
-  // With no model in your line, its harness can't count, so it stops nothing.
+  // Your role takes precedence, even without a model.
   files("harness: claude\nreviewer: { harness: nope }\n", "reviewer: { harness: codex }\n");
-  expect(read(["reviewer"]).settings?.reviewer).toEqual({ harness: "codex" });
+  expect(read(["reviewer"]).err).toContain("config.yaml isn't valid");
 });
 
 test("the reviewer's fallback and a review's time come from your config alone, else the defaults", () => {
@@ -348,7 +348,7 @@ test("a harness your repos: override names goes over the repository's role lines
   expect([alone?.lead, alone?.builder, alone?.reviewer]).toEqual([
     { harness: "claude", model: "sonnet" },
     { harness: "claude", model: "sonnet" },
-    { harness: "codex" },
+    { harness: "claude", model: "sonnet" },
   ]);
   // A role the override names itself goes over its own harness for every role.
   files(
@@ -436,17 +436,17 @@ test("a role your repos: override decides whole isn't read below it, so a bad on
   const bare = read(["builder"]);
   expect(bare.err).toBe("");
   expect(bare.settings?.builder).toEqual({ harness: "codex" });
-  // A model there counts if the line is on that harness, so its harness is still read.
+  // Your general harness takes precedence over the repository line.
   files(
     "harness: claude\nrepos: { simon/app: { harness: codex } }\n",
     "builder: { harness: invalid, model: gpt }\n",
   );
-  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.harness");
+  expect(read(["builder"]).err).toBe("");
   files(
     "harness: claude\nrepos: { simon/app: { harness: codex } }\n",
     "builder: { harness: codex, model: gpt }\n",
   );
-  expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex" });
 });
 
 test("an override that decides a role from several of its own lines reads nothing below it", () => {
@@ -474,10 +474,10 @@ test("a lower role's model your override replaces isn't checked, while the harne
   );
   const settings = read(["builder"]);
   expect(settings.err).toBe("");
-  expect(settings.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+  expect(settings.settings?.builder).toEqual({ harness: "claude", model: "gpt" });
   // Without the override, the bad model counts, and is refused, saying where.
   files("harness: claude\n", "builder: { harness: codex, model: [bad] }\n");
-  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.model");
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude" });
 });
 
 test("a model alone in your repos: override isn't read for a role it can't fit", () => {
@@ -486,8 +486,7 @@ test("a model alone in your repos: override isn't read for a role it can't fit",
     "builder: { harness: codex }\n",
   );
   const settings = read(["builder"]);
-  expect(settings.err).toBe("");
-  expect(settings.settings?.builder).toEqual({ harness: "codex" });
+  expect(settings.err).toContain("isn't valid under repos: simon/app: model");
   // For a role on your harness it counts, and is refused.
   expect(read(["lead"]).err).toContain("isn't valid under repos: simon/app: model");
 });
@@ -534,7 +533,7 @@ test("a harness or model left empty isn't valid, and is refused where it counts"
   files("harness: claude\nbuilder: { harness: null }\n", null);
   expect(read(["builder"]).err).toContain("builder.harness");
   files("harness: claude\nbuilder: { model: null }\n", "builder: { model: }\n");
-  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.model");
+  expect(read(["builder"]).err).toContain("config.yaml isn't valid: builder.model");
   files("harness: null\n", null);
   expect(read(["lead"]).err).toContain("config.yaml isn't valid: harness");
   // An empty one in your override counts over everything below it, so it is refused.
@@ -566,7 +565,7 @@ test("a harness or model under repos: goes over the repository's role lines, as 
   );
   expect(read(["builder", "reviewer"]).settings).toMatchObject({
     builder: { harness: "claude", model: "sonnet" },
-    reviewer: { harness: "codex" },
+    reviewer: { harness: "claude", model: "sonnet" },
   });
   // The override's own role lines still go over its harness.
   files(
@@ -586,7 +585,7 @@ test("a model alone under repos: goes over the repository's role models on your 
   );
   expect(read(["builder", "reviewer"]).settings).toMatchObject({
     builder: { harness: "claude", model: "sonnet" },
-    reviewer: { harness: "codex", model: "gpt-6" },
+    reviewer: { harness: "claude", model: "sonnet" },
   });
 });
 
@@ -629,7 +628,7 @@ test("many bad role values below an override that decides the role stop nothing,
     "harness: invalid\nmodel: [1]\nroles: { builder: { harness: nope, model: [2] } }\nbuilder: { harness: no, model: [3] }\n",
     "builder: { harness: bad, model: [4] }\n",
   );
-  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.harness");
+  expect(read(["builder"]).err).toContain("config.yaml isn't valid: roles.builder.harness");
   // Every harness and model bad, in every layer: trying each combination of them took seconds.
   files(
     "harness: a\nmodel: [1]\nroles: { builder: { harness: b, model: [2] } }\nbuilder: { harness: c, model: [3] }\nrepos: { simon/app: { harness: d, model: [4], roles: { builder: { harness: e, model: [5] } }, builder: { harness: f, model: [6] } } }\n",
@@ -642,12 +641,12 @@ test("many bad role values below an override that decides the role stop nothing,
   expect(Date.now() - worst).toBeLessThan(3_000);
 });
 
-test("repository roles set the harness unless your repository override replaces it", () => {
+test("your general and repository overrides replace repository roles", () => {
   files(
     "roles: { builder: { harness: claude } }\n",
     "roles: { builder: { harness: codex, model: gpt } }\n",
   );
-  expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude" });
   files(
     "repos: { simon/app: { roles: { builder: { harness: claude } } } }\n",
     "roles: { builder: { harness: codex, model: gpt } }\n",
