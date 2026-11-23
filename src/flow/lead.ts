@@ -120,15 +120,41 @@ export function lastOpened(db: Database): Repository | null {
   return Repository.nullable().parse(row);
 }
 
-export type Commands = Pick<Settings, "setup" | "test"> | { problem: string };
+// The repository's setup and test commands, and whether it has code yet, or what keeps builders
+// from starting there.
+export type Commands =
+  | (Pick<Settings, "setup" | "test"> & { noCode?: boolean })
+  | { problem: string };
 
 function commandsOf(repository: Repository): Commands {
   try {
     const { setup, test } = builderSettings(repository);
-    return { setup, test };
+    const unset = setup === null || test === null;
+    return { setup, test, noCode: unset && !hasCode(cloneDir(repository.owner, repository.repo)) };
   } catch (error) {
     return { problem: errorText(error) };
   }
+}
+
+// Returns whether the clone holds anything to set up or test: a file that isn't docs, Markdown,
+// a licence, git's own or Skelcrew's, such as a package file, a build file, CI or a source. A
+// clone git can't list counts as code, so its lead still proposes the commands.
+function hasCode(clone: string): boolean {
+  const listed = Bun.spawnSync(["git", "-C", clone, "ls-files", "-z"], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (!listed.success) return true;
+  const notCode = (file: string) =>
+    file.endsWith(".md") ||
+    file.startsWith("docs/") ||
+    file.startsWith(".agents/") ||
+    ["skelcrew.yaml", "skelcrew.lock", ".gitignore", ".gitattributes"].includes(file) ||
+    /^(readme|license|licence|copying)(\.\w+)?$/i.test(file);
+  return listed.stdout
+    .toString()
+    .split("\0")
+    .some((file) => file !== "" && !notCode(file));
 }
 
 // Returns whether the repository's setup or test isn't decided yet, which keeps builders from
@@ -136,7 +162,9 @@ function commandsOf(repository: Repository): Commands {
 const unsetCommands = (commands: Commands) =>
   !("problem" in commands) && (commands.setup === null || commands.test === null);
 
-const proposeCommands = `Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README. Propose them to the human in plain words, such as "Setup installs the dependencies with bun install, and the tests run with bun run check", or none where it needs none. On a yes, start the setup thread with sc add <repo> "<title>" "<body>" --start --setup, its body asking for just those lines in skelcrew.yaml: setup: and test:, each a list of commands, [] for none. It is the only thread that starts while they aren't set. It runs with no setup command and no test suite, so its PR's own CI is the only check of it. Once its PR merges, every other thread can start`;
+const proposeCommands = `Before anything else, read the repository to find them: its CI workflows above all, then its package files, Makefile and README. Propose them to the human in plain words, such as "Setup installs the dependencies with bun install, and the tests run with bun run check", or none where it needs none. On a yes, start the setup thread with sc add <repo> "<title>" "<body>" --start --setup, its body asking for just those lines in skelcrew.yaml: setup: and test:, each a list of commands, [] for none. It is the only thread that starts while they aren't set. It runs no setup command. Once its branch sets test, its sc check and its reviewer run it, and with test: [] they run nothing. Once its PR merges, every other thread can start`;
+
+const waitForCode = `The repository has no code yet to set up or test: no package files, build files, CI or sources. So don't propose a setup thread now. Say in a line that setup and test can wait until there's code, and ask what to build. Start the first thread that adds code, on the human's yes, with sc add <repo> "<title>" "<body>" --start --setup, as it is the only thread that starts while they aren't set. Say in its body that it also sets setup: and test: in skelcrew.yaml, in the same PR, to the commands that set up and test the code it adds, each a list of commands, [] for none. Once its branch sets them, its sc check and its reviewer run them. Once its PR merges, every other thread can start`;
 
 // Returns the lead's instructions: its role's, from `role`, then Skelcrew's rules for every lead
 // when the role is a repository's own, whether you let it arm a merge when ready and how, the
@@ -162,7 +190,7 @@ export function leadInstructions(
   const told =
     "problem" in commands
       ? `no builder can start in ${repository} until this is fixed on its default branch: ${commands.problem} Before anything else, tell the human so in plain words, with the line to add`
-      : `${said("setup", commands.setup)}, and ${said("test", commands.test)}${unsetCommands(commands) ? `, so no builder can start in ${repository} yet. ${proposeCommands}` : ""}`;
+      : `${said("setup", commands.setup)}, and ${said("test", commands.test)}${unsetCommands(commands) ? `, so no builder can start in ${repository} yet. ${commands.noCode ? waitForCode : proposeCommands}` : ""}`;
   const ruled =
     role === builtInRole("lead").instructions
       ? role
@@ -316,13 +344,16 @@ const opening = "Skelcrew: this is your first start";
 
 // Returns the note that gives a lead its opening turn on its first start: greet the human, then
 // say what keeps builders from starting, if anything does, or else say what it can do and ask
-// what to work on.
+// what to work on. Setup and test not set yet are proposed, unless the repository has no code
+// yet, where they wait for the first thread that adds some.
 function openingNote(commands: Commands): string {
   const then =
     "problem" in commands
       ? "Then, as your instructions say, tell them what keeps builders from starting."
       : unsetCommands(commands)
-        ? "Then, as your instructions say, propose the repository's setup and test commands."
+        ? commands.noCode
+          ? "Then, as your instructions say, say in a line that setup and test can wait until there's code, and ask what to build."
+          : "Then, as your instructions say, propose the repository's setup and test commands."
         : "Then say in a line what you can do here, and ask what to work on.";
   return `${opening}, and the human hasn't written anything yet. Greet them in a line or two. ${then}`;
 }

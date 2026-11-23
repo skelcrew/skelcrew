@@ -762,12 +762,50 @@ ${code}`,
 console.log(JSON.stringify(repositoryCommands(readThread(db, thread.folder))));`);
   expect(started.stderr.toString()).toBe("");
   expect(JSON.parse(started.stdout.toString())).toEqual({ setup: [], test: [] });
+  // Its sc check runs the test the skelcrew.yaml in its clone sets, once it sets one, and none
+  // while it sets none. One it can't read as a plain file is refused, never followed.
+  const branch =
+    start(`import { cloneSkelcrewYaml, commitSkelcrewYaml, threadTest } from ${JSON.stringify(source("config.ts"))};
+import { cloneOf } from ${JSON.stringify(source("flow/thread.ts"))};
+const fs = require("node:fs");
+const thread = await startThread(db, { repo: "app", title: "Code", body: "b", setup: true });
+fs.mkdirSync(cloneOf(thread), { recursive: true });
+const yaml = cloneOf(thread) + "/skelcrew.yaml";
+const test = () => { try { return threadTest(readThread(db, thread.folder), () => cloneSkelcrewYaml(cloneOf(thread))); } catch (error) { return error.message; } };
+const seen = [test()];
+fs.writeFileSync(yaml, "setup: [make]\\ntest: [make test]\\n");
+seen.push(test());
+fs.writeFileSync(yaml, "setup: []\\ntest: []\\n");
+seen.push(test());
+fs.rmSync(yaml);
+seen.push(test());
+fs.symlinkSync("/etc/hostname", yaml);
+seen.push(test());
+// Its reviewer runs the test the commit it reviews sets.
+fs.rmSync(yaml);
+fs.writeFileSync(yaml, "test: [make check]\\n");
+const git = (...args) => Bun.spawnSync(["git", "-C", cloneOf(thread), "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+git("init", "-q");
+git("add", "skelcrew.yaml");
+git("commit", "-qm", "c");
+fs.writeFileSync(yaml, "test: [not committed]\\n");
+seen.push(threadTest(readThread(db, thread.folder), () => commitSkelcrewYaml(cloneOf(thread), "HEAD")));
+console.log(JSON.stringify(seen));`);
+  expect(branch.stderr.toString()).toBe("");
+  expect(JSON.parse(branch.stdout.toString())).toEqual([
+    [],
+    ["make test"],
+    [],
+    [],
+    "the skelcrew.yaml on the thread's branch isn't a plain file, so Skelcrew won't read it",
+    ["make check"],
+  ]);
   const other = start(`await startThread(db, { repo: "app", title: "Other", body: "b" });`);
   expect(other.stderr.toString()).toContain(
     "app's setup and test aren't set yet. Ask the lead to set them up.",
   );
   const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
-  // With one of them set, as the setup thread writes them, it still runs with neither.
+  // With one of them set on the default branch, it still starts with neither.
   writeFileSync(join(clone, "skelcrew.yaml"), `setup: [make]\ntest:\n${crew}`);
   const half =
     start(`const thread = await startThread(db, { repo: "app", title: "Half", body: "b", setup: true });

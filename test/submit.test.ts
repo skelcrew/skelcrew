@@ -232,6 +232,40 @@ describe.skipIf(insideSandbox)("sc submit", () => {
 
   // A repository's flow without a review: stage, for changes too small to need one, goes from
   // build straight to CI. Its check says it wasn't reviewed, and the PR stays quiet.
+  // The first thread in a repository with no code yet adds the code and sets setup and test in
+  // the same PR. So its own sc check and its review run the test its branch sets, and the first
+  // code is tested before it merges.
+  test("a setup thread runs the test its branch's skelcrew.yaml sets, in its sc check and in its review", async () => {
+    const work = addApp();
+    writeFileSync(
+      join(work, "skelcrew.yaml"),
+      "tracker: github\nsetup:\ntest:\nlimits: { threads: 9 }\n",
+    );
+    git(work, "commit", "-qam", "setup and test unset");
+    git(work, "push", "-q", "origin", "main");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(
+      join(builder(), "skelcrew.yaml"),
+      "tracker: github\nsetup: []\ntest: ['echo the branch test ran']\nlimits: { threads: 9 }\n",
+    );
+    writeFileSync(join(builder(), "check"), "");
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "check-1"), "");
+    verdict(1, "approve", "Ready to merge.");
+    serve();
+    await untilCloned();
+    expect((await skel(["start", "app-12", "--setup"])).err).toBe("");
+    await until(() => existsSync(join(codexHome(), "sessions", "checked-1")), longWait);
+    expect(read(join(builder(), "told"))).toContain(
+      "This thread sets the repository's setup and test commands",
+    );
+    expect(read(join(builder(), "checked-1"))).toContain("the branch test ran");
+    expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain(
+      "which runs `echo the branch test ran`",
+    );
+    expect(read(join(codexHome(), "sessions", "checked-1"))).toContain("the branch test ran");
+  }, 90_000);
+
   test("on a flow with no review stage, a submit runs no reviewer, posts nothing on the PR, and waits on CI", async () => {
     addApp({ ".agents/flows/noreview.yaml": "build:\n  role: builder\n" });
     await startNoReview({ every: 1_000 });

@@ -1,13 +1,23 @@
 // Your config.yaml as the first run edits it, and the settings the rest of Skelcrew asks for,
 // each read through the one loader in settings.ts.
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import type { HarnessName } from "./agents/harness.ts";
 import { flowRoles, hasFlowFile, repositoryFlows } from "./flows.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import type { RoleName } from "./roles.ts";
-import { type Repository, type Role, readSettings } from "./settings.ts";
+import { type Repository, type Role, readSettings, setupThreadCommands } from "./settings.ts";
 
 // Returns the path of your settings file.
 export const configFile = () => join(configDir(), "config.yaml");
@@ -87,7 +97,7 @@ export function reviewConfig(repository: Repository): {
 // Returns the repository's setup and test commands, from its skelcrew.yaml or your config over
 // it, an empty list when it needs none. Throws while either isn't decided yet, naming the
 // repository as `name` and the lead who sets them up, so every builder and reviewer uses the
-// same ones and none guesses. The lead's setup thread, which writes them, runs with neither,
+// same ones and none guesses. The lead's setup thread, which writes them, starts with neither,
 // even one set already or set while it runs, as it is the thread that decides them.
 export function repositoryCommands(
   repository: Repository & { setup_thread?: boolean | undefined },
@@ -104,6 +114,50 @@ export function repositoryCommands(
         : "test isn't";
   const them = setup === null && test === null ? "them" : "it";
   throw new Error(`${name}'s ${unset} set yet. Ask the lead to set ${them} up.`);
+}
+
+// Returns the test commands a thread's sc check and its reviewer run: the repository's. The
+// lead's setup thread runs those the skelcrew.yaml on its branch sets, as `branch` reads it,
+// or none while it sets none. So the first code a repository gets is tested before it merges.
+export function threadTest(
+  thread: Repository & { setup_thread?: boolean | undefined },
+  branch: () => string | null,
+): string[] {
+  if (!thread.setup_thread) return repositoryCommands(thread).test;
+  return setupThreadCommands(thread, branch()).test;
+}
+
+// Returns the skelcrew.yaml a builder's clone holds now, saved or not, or null with none. The
+// builder can write there, so a link or a pipe is refused, never followed or waited on.
+export function cloneSkelcrewYaml(clone: string): string | null {
+  const file = join(clone, "skelcrew.yaml");
+  let fd: number;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw new Error(
+      "the skelcrew.yaml on the thread's branch isn't a plain file, so Skelcrew won't read it",
+    );
+  }
+  try {
+    if (!fstatSync(fd).isFile())
+      throw new Error(
+        "the skelcrew.yaml on the thread's branch isn't a plain file, so Skelcrew won't read it",
+      );
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Returns the skelcrew.yaml the commit holds in the clone, or null when it has none.
+export function commitSkelcrewYaml(clone: string, commit: string): string | null {
+  const shown = Bun.spawnSync(["git", "-C", clone, "cat-file", "blob", `${commit}:skelcrew.yaml`], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return shown.success ? shown.stdout.toString() : null;
 }
 
 export const builderSettings = (repository: Repository) =>

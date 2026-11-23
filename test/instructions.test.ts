@@ -140,6 +140,14 @@ test("a builder is told each command configured as none, and asks the lead rathe
   );
 });
 
+// The setup thread writes the commands, so its builder is told that, never that the repository
+// has no tests: once its branch sets test, sc check runs it.
+test("the setup thread's builder is told it sets setup and test, and that sc check runs its branch's", () => {
+  expect(builderInstructions(instructions, { setup: [], test: [] }, true)).toEndWith(
+    "\n\nThis thread sets the repository's setup and test commands, under setup: and test: in skelcrew.yaml, so Skelcrew ran no setup command. Once the skelcrew.yaml in your clone sets test, `sc check` runs it once one of this machine's check slots is free, and your reviewer runs the one your commit sets. Until then, and with test: [], it runs nothing.\n",
+  );
+});
+
 // The human talks to the lead, so a builder's question goes there, framed for someone who
 // hasn't read the code. A question asked in the builder's own session would make the human
 // open it to answer.
@@ -211,7 +219,7 @@ test("a lead is told its repository and each setup and test command, or what kee
   expect(told).toContain(
     "When it says something else keeps builders from starting, such as a line skelcrew.yaml lacks, tell the human first, in plain words, with the line to add.",
   );
-  expect(told).toContain("on the human's yes start the setup thread with --setup.");
+  expect(told).toContain("which you start with --setup on the human's yes.");
   expect(told).not.toContain("finishes the setup");
   expect(told).toContain(
     "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\n",
@@ -261,6 +269,26 @@ test("a lead whose setup or test isn't set yet is told to find and propose them"
   );
   expect(unset).toContain('sc add <repo> "<title>" "<body>" --start --setup');
   expect(set).not.toContain("read the repository to find them");
+});
+
+// A repository with no code yet has nothing to propose, so the first thread that adds code sets
+// setup and test in its own PR, and runs them before it merges.
+test("a lead whose repository has no code yet lets the first thread that adds code set setup and test", () => {
+  const told = leadInstructions(
+    builtInRole("lead").instructions,
+    "simon/app",
+    "/c",
+    { setup: null, test: null, noCode: true },
+    false,
+  );
+  expect(told).toContain(
+    "\nWhen this session started, setup wasn't set yet, and test wasn't set yet, so no builder can start in simon/app yet. The repository has no code yet to set up or test: no package files, build files, CI or sources. So don't propose a setup thread now. Say in a line that setup and test can wait until there's code, and ask what to build.",
+  );
+  expect(told).toContain(
+    'Start the first thread that adds code, on the human\'s yes, with sc add <repo> "<title>" "<body>" --start --setup',
+  );
+  expect(told).toContain("Once its branch sets them, its sc check and its reviewer run them.");
+  expect(told).not.toContain("read the repository to find them");
 });
 
 // The human wants each lead to understand the other repositories and review their leads' work,
