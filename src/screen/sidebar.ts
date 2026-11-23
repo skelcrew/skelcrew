@@ -89,15 +89,14 @@ const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // anywhere. The plain ones come only while your typing goes to the sidebar. Alt with a digit and
 // the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte from anywhere,
 // for Alt-Tab, Ctrl-\ or Ctrl-4, to switch your typing, and Shift-Enter as CSI-u, only while
-// your typing is here already. `a` does what Shift-Enter does, for a terminal that sends Shift-Enter as plain
-// Enter, except on an item you opened, where it picks option a. Alt-W and plain w ask whether to close or remove the open repository.
+// your typing is here already. Only Enter and Shift-Enter attach: a letter that isn't a pick
+// does nothing. Alt-W and plain w ask whether to close or remove the open repository.
 const keyNames: Record<string, string> = {
   "\x1c": "switch",
   "\x1bw": "close",
   w: "close",
   "\x1b": "esc",
   "\x1b[13;2u": "full screen",
-  a: "full screen",
   "\x1b[1;3A": "up",
   "\x1b[1;3B": "down",
   "\x1b[A": "up",
@@ -121,7 +120,7 @@ const keyNames: Record<string, string> = {
 function sidebarFooter(row: Row, restarts: boolean): string {
   const first = "↑↓ move  w/⌥W close";
   const end = `${restarts ? "  R restart" : ""}  q/⌥Q quit`;
-  if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎/a full screen  0-6 sections${end}`;
+  if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎ full screen  0-6 sections${end}`;
   if (row.part === "heading") {
     const fixed = row.section === "needs you";
     return `${first}${fixed ? "" : "  ⏎ open/close"}  0-6 sections${end}`;
@@ -131,7 +130,7 @@ function sidebarFooter(row: Row, restarts: boolean): string {
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const now = row.startNow ? "  f start now" : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
-  const full = "⇧⏎/a full screen";
+  const full = "⇧⏎ full screen";
   const enter = row.ask
     ? `⏎ open item  ${full}`
     : enterAttaches(row)

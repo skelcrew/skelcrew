@@ -39,7 +39,7 @@ Press Alt+Tab (⌥Tab on a Mac) or Ctrl+\ to bring your typing to the sidebar. T
 | ↑ ↓ | Move one row |
 | 0 to 6 | Open or close a section: 0 is Backlog, 6 is Done |
 | Enter | Open the row you are on |
-| Shift+Enter, or `a` | Open the row's agent full screen. In an item you opened, `a` picks option a instead. |
+| Shift+Enter | Open the row's agent full screen. |
 | `s` | Start a task from the Backlog |
 | `m` | Merge a task that is `ready to merge` |
 | Shift+R | Restart the row's agent, keeping its conversation |
@@ -112,7 +112,7 @@ On Linux and Windows, the desktop usually takes Alt+Tab to switch windows. Use C
 
 ## Full screen
 
-Shift+Enter, or `a`, gives the row's agent the whole terminal. Alt+Tab or Ctrl+\ brings the sidebar back, and pressed again gives the agent the whole terminal again.
+Shift+Enter gives the row's agent the whole terminal. Alt+Tab or Ctrl+\ brings the sidebar back, and pressed again gives the agent the whole terminal again.
 
 In an item you opened from Needs you, `a` answers it with option a. Esc back to the list first.
 

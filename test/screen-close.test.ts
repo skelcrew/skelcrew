@@ -15,6 +15,7 @@ import {
   daemon,
   endTest,
   footer,
+  given,
   home,
   onLead,
   open,
@@ -115,11 +116,12 @@ for (const [key, how] of [
   ["M-Tab", "Alt-Tab"],
 ] as const)
   test(`Alt-W from a lead in full screen asks in the sidebar, and ${how} gives the lead back full screen`, async () => {
+    given.extendedKeys = true;
     open("lead");
     await ready("lead");
     press("C-\\");
     await until(typingToSidebar, "the sidebar's typing");
-    type("a");
+    press("S-Enter");
     await until(zoomed, "the lead full screen");
     press("M-w");
     await until(() => seen().includes("Close app?") && !zoomed(), "the question beside the lead");

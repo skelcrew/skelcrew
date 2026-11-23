@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   click,
   endTest,
+  given,
   home,
   open,
   press,
@@ -88,12 +89,13 @@ test("resizing past 80 columns either way switches the layout and keeps where yo
   await until(() => read("lead.typed").includes("still here"), "your typing still in the lead");
 });
 
-test("Shift-Enter's stand-in a still gives the agent the terminal on a narrow screen", async () => {
+test("Shift-Enter gives the agent the terminal on a narrow screen", async () => {
+  given.extendedKeys = true;
   open("lead", "one", "xterm-256color", "60");
   await leadAlone();
   press("C-\\");
   await until(() => showing() === "sidebar", "the sidebar alone");
-  type("a");
+  press("S-Enter");
   await until(() => showing() === "agent", "the lead alone again");
 });
 

@@ -10,6 +10,7 @@ import {
   attachTo,
   daemon,
   endTest,
+  given,
   home,
   noteRefreshes,
   onDetails,
@@ -91,12 +92,13 @@ test("on a phone-wide screen the notice wraps under the top rows, with the comma
 });
 
 test("the notice that a dropped file is elsewhere shows while the agent fills the terminal", async () => {
+  given.extendedKeys = true;
   daemon();
   open("lead");
   await ready("lead");
   press("M-S-Down");
   await until(onDetails, "APP-12's details");
-  type("a");
+  press("S-Enter");
   const zoomed = () =>
     tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
   await until(() => zoomed().trim() === "1", "app-12 full screen");
@@ -122,6 +124,7 @@ test("a file dropped onto a builder you attached to reaches it in its clone", as
 });
 
 test("a file dropped onto a builder you opened full screen reaches it in its clone", async () => {
+  given.extendedKeys = true;
   daemon();
   const notes = join(home, "notes.txt");
   writeFileSync(notes, "notes");
@@ -129,7 +132,7 @@ test("a file dropped onto a builder you opened full screen reaches it in its clo
   await ready("lead");
   press("M-S-Down");
   await until(onDetails, "APP-12's details");
-  type("a");
+  press("S-Enter");
   // tmux zooms the right side, so it fills the terminal.
   const zoomed = () =>
     tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
@@ -174,8 +177,8 @@ test("a drop right after a key that moves off the lead goes with that move, so n
 });
 
 test("a file dropped while your typing goes to the sidebar presses none of its keys", async () => {
-  // 2 closes Building and a attaches full screen, and the test's own folder adds more such
-  // letters and digits, so any key pressed would show.
+  // 2 closes Building, and the test's own folder adds letters and digits, so any key
+  // pressed would show.
   const dir = join(home, "2a");
   mkdirSync(dir);
   const notes = join(dir, "notes.txt");
@@ -198,8 +201,7 @@ function intoSidebar(text: string): void {
 }
 
 // Opens the screen on APP-12's details, where your typing goes to the sidebar, and returns a
-// paste of a path whose letters and digits would press its keys: 2 closes Building and a
-// attaches full screen.
+// paste of a path whose letters and digits would press its keys: 2 closes Building.
 async function onAppDetails(): Promise<string> {
   const dir = join(home, "2a");
   mkdirSync(dir);
@@ -248,12 +250,12 @@ test("a paste whose end comes cut in two still ends, however late its rest, so t
   }
 }, 60_000);
 
-test("Esc in the sidebar, then a a while later, are two keys, so a attaches full screen", async () => {
+test("Esc in the sidebar, then Shift-Enter a while later, are two keys, so Shift-Enter attaches full screen", async () => {
   daemon();
   await onAppDetails();
   intoSidebar("\x1b");
   await Bun.sleep(300);
-  intoSidebar("a");
+  intoSidebar("\x1b[13;2u");
   const zoomed = () =>
     tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:`, "#{window_zoomed_flag}").out;
   await until(() => zoomed().trim() === "1", "app-12 full screen");
