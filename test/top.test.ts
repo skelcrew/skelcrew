@@ -131,11 +131,11 @@ test("under the header, the boxes' row is whole, with a corner over each of tmux
 });
 
 test("the box your typing goes to is lit, with clean corners the dim lines stop at", () => {
-  const [lit, dim] = ["#[fg=colour33]", "#[fg=brightblack]"];
+  const [lit, dim] = ["#[fg=colour136]", "#[fg=brightblack]"];
   const toRight = boxRow();
   expect(toRight).toStartWith(`${dim}─#[default]${dim}┬─`);
   expect(toRight).toContain(`─#[default]${lit}┌#[default]${lit}─`);
-  expect(toRight).toMatch(/#\[fg=colour33\]─+┐#\[default\]#\[fg=brightblack\]─#\[default\]$/);
+  expect(toRight).toMatch(/#\[fg=colour136\]─+┐#\[default\]#\[fg=brightblack\]─#\[default\]$/);
   const toSidebar = boxRow({ typingRight: false });
   expect(toSidebar).toStartWith(`${dim}─#[default]${lit}┌─`);
   expect(toSidebar).toContain(`─#[default]${lit}┐#[default]${dim}─`);
@@ -296,7 +296,7 @@ test("after a drop from another machine, the right box's edge says how to drop i
 });
 
 test("the notice keeps the box your typing goes to lit, and the other dim", () => {
-  const [lit, dim] = ["#[fg=colour33]", "#[fg=brightblack]"];
+  const [lit, dim] = ["#[fg=colour136]", "#[fg=brightblack]"];
   const toRight = boxRow({ elsewhere: "simon@workbox" });
   expect(toRight).toStartWith(`${dim}─#[default]${dim}┬─`);
   expect(toRight).toContain(`${lit}┌#[default]${lit}──#[default] #[fg=colour231]`);

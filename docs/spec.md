@@ -774,7 +774,7 @@ The daemon calls `status` for every change, from wherever it came: a hook, the s
 
 The screen is how you see and steer a repository's work. It guarantees:
 
-- **Three ways in.** Plain `sc` shows the repository's list as a sidebar, with the lead or the row you are on beside it. `sc --list` shows the list alone with a details pane. `sc attach` attaches full screen to one agent.
+- **Three ways in.** Plain `sc` shows the repository's list as a sidebar, with the lead or the row you are on beside it. `sc --list` shows the list alone with a details pane. `sc attach` attaches full screen to one agent. In the sidebar and the list, a click on a task's row selects it and shows its details, as moving to it with the keys does. A click on the row already selected opens it as Enter does. A click on the lead's row opens the lead at once.
 - **The lead first.** The screen starts on the lead, so what you type first goes to it.
 - **Tasks, not threads**, in sections: everything that waits on you, so one key reaches it; then the stages, with the task queue, what waits for a builder in the order it starts, as a stage between Backlog and Building. What waits on you is always open, and shows only while something does, so it never hides and never asks for a look in vain. Each task shows in exactly one place, decided from its state alone.
 - **Words, not colours.** A task's word always says what is happening. Outside text has its control codes removed first. Colour only marks what needs attention: what needs you is yellow and what failed is red. A stage has no colour of its own: its name is plain while it has tasks and dim while it has none. Everything reads without colour, on a light terminal as on a dark one.

@@ -94,14 +94,19 @@ test("Alt-Down and Alt-Up move the sidebar, and Enter on a task types to its bui
   await until(() => existsSync(join(home, "app-12.typed")), "the typing");
 });
 
-test("a click on a task types to its builder, and a click on the lead types to the lead", async () => {
+test("a click on a task shows its details, a second click types to its builder, and a click on the lead types to the lead", async () => {
   open("lead");
   await ready("lead");
   const lines = seen().split("\n");
   const y = lines.findIndex((line) => /[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(line));
   const lead = lines.findIndex((line) => line.includes("◆ Lead"));
   click(5, y + 1);
-  await until(() => / 7\b/.test(selected()) && seen().includes("I am app-7"), "app-7");
+  await until(() => / 7\b/.test(selected()) && onDetails(), "app-7's details");
+  await Bun.sleep(300);
+  expect(onDetails()).toBe(true);
+  expect(seen()).not.toContain("I am app-7");
+  click(5, y + 1);
+  await until(() => !onDetails() && seen().includes("I am app-7"), "app-7");
   type("hello\r");
   await until(() => read("app-7.typed").endsWith("\n"), "the typing");
   click(5, lead + 1);

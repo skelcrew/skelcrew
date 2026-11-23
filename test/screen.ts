@@ -92,7 +92,7 @@ export function litBox(window = "one", at = 2): string {
   const row = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out.split("\n")[at];
   const parts = (row ?? "").split("│");
   // The colours that were set last before a line, as the text before it ends.
-  const lit = (before: string) => before.lastIndexOf("38;5;33") > before.lastIndexOf("\x1b[9");
+  const lit = (before: string) => before.lastIndexOf("38;5;136") > before.lastIndexOf("\x1b[9");
   const [sidebar, right] = [lit(parts[0] ?? ""), lit(parts.at(-2) ?? "")];
   return sidebar && right ? "both" : sidebar ? "sidebar" : right ? "right" : "none";
 }

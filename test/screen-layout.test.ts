@@ -135,12 +135,12 @@ test("the lit box has clean corners the grey lines stop at, and the divider unde
   const clean = `│ ${"─".repeat(sidebar - 4)} │`;
   await until(() => divider() === clean, "the divider");
   expect(litBox("one", dividerAt())).toBe("right");
-  expect(corners()).toEqual(["┬90", "┌38;5;33", "┐38;5;33"]);
+  expect(corners()).toEqual(["┬90", "┌38;5;136", "┐38;5;136"]);
   press("C-\\");
   await until(typingToSidebar, "the sidebar to take your typing");
   expect(divider()).toBe(clean);
   expect(litBox("one", dividerAt())).toBe("sidebar");
-  await until(() => corners().join(" ") === "┌38;5;33 ┐38;5;33 ┬90", "the sidebar's corners");
+  await until(() => corners().join(" ") === "┌38;5;136 ┐38;5;136 ┬90", "the sidebar's corners");
 });
 
 test("the boxes stay whole however the terminal is resized", async () => {
