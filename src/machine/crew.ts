@@ -1,11 +1,15 @@
 // The crew sc init writes into a repository: the installed harnesses and optional models
 // its lead, builders and reviewers run on.
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import type { RoleName } from "../roles.ts";
 import type { Role } from "../settings.ts";
 import { askLine, pick } from "./pick.ts";
 import { loginPath } from "./service.ts";
 
-export function chooseCrew(): { lead: Role; builder: Role; reviewer: Role } {
+export function chooseCrew(
+  names: RoleName[],
+  builderOn?: HarnessName,
+): Partial<Record<RoleName, Role>> {
   const PATH = loginPath();
   const installed = HarnessName.options
     .map(harnessNamed)
@@ -34,7 +38,12 @@ export function chooseCrew(): { lead: Role; builder: Role; reviewer: Role } {
     const model = askLine(`${role} model (Enter for the harness default): `) || undefined;
     return model ? { harness: chosen.name, model } : { harness: chosen.name };
   };
-  const lead = choose("the lead");
-  const builder = choose("builders");
-  return { lead, builder, reviewer: choose("reviewers", builder.harness) };
+  const titles = { lead: "the lead", builder: "builders", reviewer: "reviewers" };
+  const crew: Partial<Record<RoleName, Role>> = {};
+  for (const name of names)
+    crew[name] = choose(
+      titles[name],
+      name === "reviewer" ? (crew.builder?.harness ?? builderOn) : undefined,
+    );
+  return crew;
 }

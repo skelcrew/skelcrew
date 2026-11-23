@@ -621,7 +621,26 @@ function checkoutWith(name: string, remote?: string): string {
   mkdirSync(folder, { recursive: true });
   git(folder, "init", "-q", "-b", "main");
   if (remote) git(folder, "remote", "add", "origin", remote);
+  if (remote?.startsWith("git@example.com:")) onExample(remote);
   return folder;
+}
+
+// Puts the repository at a git@example.com: remote in home/example, which git reaches for it,
+// with a skelcrew.yaml on its default branch, as sc install reads there.
+function onExample(remote: string): void {
+  const bare = join(home, "example", remote.slice("git@example.com:".length));
+  if (existsSync(bare)) return;
+  const work = join(home, "example-work", remote.slice("git@example.com:".length));
+  mkdirSync(work, { recursive: true });
+  writeFileSync(join(work, "skelcrew.yaml"), "setup: []\ntest: []\nlimits: { threads: 4 }\n");
+  git(work, "init", "-q", "-b", "main");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "start");
+  git(home, "clone", "-q", "--bare", work, bare);
+  appendFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${home}/example/"]\n\tinsteadOf = git@example.com:\n`,
+  );
 }
 
 // What d shows at the offer: what the plugin is and runs.
@@ -1767,10 +1786,7 @@ test("sc install in a checkout installs the plugins its skelcrew.lock pins after
   cloneEach();
   const second = await atTerminal("", app, ["install"]);
   expect(second.err).toBe("");
-  // Its remote is out of reach, so sc install goes by the checkout.
-  expect(second.out).toBe(
-    "Skelcrew couldn't read the repository's default branch, so it went by this checkout's skelcrew.yaml.\nNothing to install: this machine has everything your files ask for.\n",
-  );
+  expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
   expect(calls()).toBe("");
   // Your own plugins and lock never take it in, even read later on a machine with no lock.
   await atTerminal("", home, ["plugin", "ls"]);
@@ -1791,10 +1807,7 @@ test("sc install in a checkout asks nothing for a plugin of yours the repository
   cloneEach();
   const run = await atTerminal("", app, ["install"]);
   expect(run.err).toBe("");
-  // Its remote is out of reach, so sc install goes by the checkout.
-  expect(run.out).toBe(
-    "Skelcrew couldn't read the repository's default branch, so it went by this checkout's skelcrew.yaml.\nNothing to install: this machine has everything your files ask for.\n",
-  );
+  expect(run.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
 });
 
 // A machine holds one version of a plugin, so a repository pinning another version than yours
@@ -2213,6 +2226,7 @@ test("install reads only this checkout's plugins and asks no machine questions",
   mkdirSync(root);
   git(root, "init", "-q", "-b", "main");
   git(root, "remote", "add", "origin", "git@example.com:simon/app.git");
+  onExample("git@example.com:simon/app.git");
   writeFileSync(join(root, "skelcrew.yaml"), "plugins: [simon/skelcrew-fake]\n");
   writeFileSync(
     join(root, "skelcrew.lock"),

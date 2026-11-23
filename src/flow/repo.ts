@@ -12,8 +12,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { z } from "zod";
+import { HarnessName } from "../agents/harness.ts";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly } from "../agents/sessions.ts";
 import {
@@ -41,7 +42,9 @@ import {
   repositoryPlugins,
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
+import type { RoleName } from "../roles.ts";
 import { dropsFolder } from "../screen/drops.ts";
+import type { Role } from "../settings.ts";
 import { refreshBacklog } from "./backlog.ts";
 import {
   checkPush,
@@ -72,6 +75,7 @@ async function requireSkelcrewYaml(db: Database, repository: Repository): Promis
     (error) => errorText(error) !== noCommits(repository) && hasSkelcrewYaml(repository),
   );
   if (!onDefaultBranch) throw new Error(noSkelcrewYaml);
+  if (!hasSkelcrewYaml(repository)) await refreshClone(db, repository);
 }
 
 // Returns the file of trusted repositories, kept with your settings so a clone can't bring
@@ -582,19 +586,43 @@ export async function addRepo(
   return repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
 }
 
-async function newSkelcrewYaml(root: string): Promise<string> {
+type Asked = {
+  roles: Partial<Record<RoleName, Role>>;
+  setup?: string[] | undefined;
+  test?: string[] | undefined;
+  threads?: number | undefined;
+};
+
+async function askMissing(
+  root: string,
+  missing: {
+    roles: RoleName[];
+    builderOn?: HarnessName | undefined;
+    commands: ("setup" | "test")[];
+    threads: boolean;
+  },
+): Promise<Asked> {
   const { chooseCrew } = await import("../machine/crew.ts");
   const { confirmCommands } = await import("../machine/commands.ts");
   const { askLine } = await import("../machine/pick.ts");
-  const roles = chooseCrew();
-  const { setup, test } = confirmCommands(root);
-  let threads = 0;
+  const roles = missing.roles.length > 0 ? chooseCrew(missing.roles, missing.builderOn) : {};
+  const commands = confirmCommands(root, missing.commands);
+  let threads = missing.threads ? 0 : undefined;
   while (threads === 0) {
     const answer = askLine("At most how many builders at once in this repository? Enter for 4: ");
     if (answer === null)
       throw new Error("sc init stopped before you gave the thread limit, so it wrote nothing");
     threads = answer === "" ? 4 : /^[1-9]\d*$/.test(answer) ? Number(answer) : 0;
   }
+  return { roles, ...commands, threads };
+}
+
+async function newSkelcrewYaml(root: string): Promise<string> {
+  const { roles, setup, test, threads } = await askMissing(root, {
+    roles: ["lead", "builder", "reviewer"],
+    commands: ["setup", "test"],
+    threads: true,
+  });
   const flow = (value: unknown) =>
     stringify(value, { collectionStyle: "flow", flowCollectionPadding: false }).trim();
   return [
@@ -607,6 +635,62 @@ async function newSkelcrewYaml(root: string): Promise<string> {
     "# tracker: none",
     stringify({ roles }),
   ].join("\n");
+}
+
+async function completeSkelcrewYaml(root: string): Promise<string[]> {
+  const isMapping = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  const read: unknown = parse(readFileSync(join(root, "skelcrew.yaml"), "utf8"));
+  const data = isMapping(read) ? read : {};
+  const roles = isMapping(data.roles) ? data.roles : {};
+  const limits = isMapping(data.limits) ? data.limits : {};
+  const harnessOf = (name: RoleName) => {
+    const [line, old] = [roles[name], data[name]];
+    const found =
+      isMapping(line) && line.harness ? line.harness : isMapping(old) ? old.harness : undefined;
+    return HarnessName.safeParse(found).data;
+  };
+  const missing = {
+    roles: (["lead", "builder", "reviewer"] as const).filter((name) => !harnessOf(name)),
+    builderOn: harnessOf("builder"),
+    commands: (["setup", "test"] as const).filter(
+      (key) => data[key] === undefined || data[key] === null,
+    ),
+    threads: limits.threads === undefined || limits.threads === null,
+  };
+  const lacked = [
+    ...missing.commands.map((key) => `${key}:`),
+    ...(missing.threads ? ["limits: { threads }"] : []),
+    ...missing.roles.map((name) => `the ${name}'s harness`),
+  ];
+  if (lacked.length === 0) return [];
+  console.log(`skelcrew.yaml has no ${lacked.join(", ")}, which every repository needs.`);
+  const asked = await askMissing(root, {
+    ...missing,
+    roles: [...missing.roles],
+    commands: [...missing.commands],
+  });
+  const { setSkelcrewLine } = await import("../plugins/repository.ts");
+  const set = (key: string, value: unknown) => {
+    try {
+      setSkelcrewLine(root, key, value);
+    } catch (error) {
+      console.log(`Skelcrew couldn't add ${key}: ${errorText(error)}.`);
+    }
+  };
+  if (asked.setup) set("setup", asked.setup);
+  if (asked.test) set("test", asked.test);
+  if (asked.threads) set("limits", { ...limits, threads: asked.threads });
+  if (missing.roles.length > 0) {
+    const merged = Object.fromEntries(
+      Object.entries({ ...roles, ...asked.roles }).map(([name, role]) => [
+        name,
+        isMapping(roles[name]) ? { ...roles[name], ...(isMapping(role) ? role : {}) } : role,
+      ]),
+    );
+    set("roles", merged);
+  }
+  return lacked;
 }
 
 function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
@@ -661,11 +745,12 @@ export async function initRepo(): Promise<void> {
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   if (!hasConfig) writeFileSync(file, await newSkelcrewYaml(root), { flag: "wx" });
+  const completed = hasConfig ? await completeSkelcrewYaml(root) : [];
   const forge = addForgePlugin(root, remote);
   const lock = join(root, "skelcrew.lock");
   const newLock = lstatSync(lock, { throwIfNoEntry: false }) === undefined;
   if (newLock) writeFileSync(lock, lockStart, { flag: "wx" });
-  if (hasConfig)
+  if (hasConfig && completed.length === 0)
     console.log(
       forge === null
         ? "skelcrew.yaml is there already, so Skelcrew left it as it is."
@@ -675,7 +760,7 @@ export async function initRepo(): Promise<void> {
   if (!hasAgents) writeAgents(root);
   else console.log(".agents/ is there already, so Skelcrew left it as it is.");
   const wrote = [
-    hasConfig && forge === null ? null : "skelcrew.yaml",
+    hasConfig && forge === null && completed.length === 0 ? null : "skelcrew.yaml",
     forge === "pinned" || newLock ? "skelcrew.lock" : null,
     hasAgents ? null : ".agents/",
   ].filter((name) => name !== null);

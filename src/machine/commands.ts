@@ -83,7 +83,7 @@ export function foundCommands(root: string): Partial<Commands> {
   return { ...(setup ? { setup } : {}), ...(test ? { test } : {}) };
 }
 
-export function confirmCommands(root: string): Commands {
+export function confirmCommands(root: string, names: (keyof Commands)[]): Partial<Commands> {
   const found = foundCommands(root);
   const ask = (name: "setup" | "test", what: string): string[] => {
     const shown = found[name]?.join(" && ");
@@ -110,8 +110,9 @@ export function confirmCommands(root: string): Commands {
       return answer.split("&&").map((command) => command.trim());
     }
   };
-  return {
-    setup: ask("setup", "Setup runs once in each builder's fresh clone."),
-    test: ask("test", "Test runs the whole test suite."),
+  const what = {
+    setup: "Setup runs once in each builder's fresh clone.",
+    test: "Test runs the whole test suite.",
   };
+  return Object.fromEntries(names.map((name) => [name, ask(name, what[name])]));
 }

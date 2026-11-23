@@ -1,6 +1,6 @@
-// sc install installs the plugins named by a checkout and by the personal lock, and stops in a
-// checkout whose repository has no skelcrew.yaml on its default branch. It never chooses
-// harnesses, signs agents in, or sets up the daemon.
+// sc install installs the plugins named by a checkout, or by its default branch when the checkout
+// has no skelcrew.yaml, and by the personal lock. It stops for a repository with no skelcrew.yaml
+// on its default branch. It never chooses harnesses, signs agents in, or sets up the daemon.
 import { lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,10 @@ export function installFiles(from?: string): boolean {
   const temporary = from ? mkdtempSync(join(tmpdir(), "skelcrew-install-")) : null;
   try {
     let root = checkoutTop();
+    const origin = root !== null && !from ? originHere(root) : null;
+    const hasFile = (folder: string) =>
+      lstatSync(join(folder, "skelcrew.yaml"), { throwIfNoEntry: false }) !== undefined;
+    if (root !== null && origin && !hasFile(root)) return installFiles(origin);
     if (from && temporary) {
       if (!parseRemote(from)) throw new Error(`${from} isn't a repository remote`);
       root = join(temporary, "repository");
@@ -23,16 +27,16 @@ export function installFiles(from?: string): boolean {
       if (!cloned.success)
         throw new Error(`couldn't read ${from}: ${cloned.stderr.toString().trim()}`);
     }
-    if (root !== null && !lstatSync(join(root, "skelcrew.yaml"), { throwIfNoEntry: false }))
-      throw new Error(noSkelcrewYaml);
-    if (root !== null && !from && originHere(root)) {
+    if (root !== null && !hasFile(root)) throw new Error(noSkelcrewYaml);
+    if (root !== null && origin) {
       const git = (args: string[]) =>
         Bun.spawnSync(["git", "-C", root, ...args], { stdout: "pipe", stderr: "pipe" });
-      if (!git(["fetch", "--quiet", "origin", "HEAD"]).success)
-        console.log(
-          "Skelcrew couldn't read the repository's default branch, so it went by this checkout's skelcrew.yaml.",
+      const fetched = git(["fetch", "--quiet", "origin", "HEAD"]);
+      if (!fetched.success)
+        throw new Error(
+          `Skelcrew couldn't read the repository's default branch, to see its skelcrew.yaml: ${fetched.stderr.toString().trim()}`,
         );
-      else if (!git(["cat-file", "-e", "FETCH_HEAD:skelcrew.yaml"]).success)
+      if (!git(["cat-file", "-e", "FETCH_HEAD:skelcrew.yaml"]).success)
         throw new Error(noSkelcrewYaml);
     }
     const unreadable: string[] = [];
