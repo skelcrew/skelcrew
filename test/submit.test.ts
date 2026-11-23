@@ -29,6 +29,7 @@ import {
   finished,
   github,
   home,
+  lead,
   longWait,
   morePolls,
   opened,
@@ -459,6 +460,47 @@ describe.skipIf(insideSandbox)("sc submit", () => {
         .map((q) => q.body),
     ).toEqual(["Round 2\n\nCloses #12", "Round 3\n\nCloses #12"]);
   }, 120_000);
+
+  // Only a description that still holds a summary Skelcrew wrote is replaced, so what a person
+  // wrote into it on GitHub stays. The builder's new summary goes to the lead instead.
+  test("a PR description someone edited on the forge is kept, and the builder and lead hear so", async () => {
+    addApp();
+    const issue = taskItem("12", "Add export", { body: "As JSON" });
+    const pr = prItem("7", "Add export", {
+      branch: "skelcrew/12-add-export",
+      body: "Round 1\r\n\r\nCloses #12\r\n\r\nAlso check the CSV export.",
+    });
+    answer(plugin, "changed", { items: [issue, pr], next: null });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => read(join(lead(), "typed")).includes("Round 2"), longWait);
+    expect(asked(plugin).filter((q) => q.ask === "edit pr")).toEqual([]);
+    expect(read(join(builder(), "typed"))).toContain(
+      "Someone edited PR #7's description on the forge, so Skelcrew kept it and left your new summary out.",
+    );
+    const note = read(join(lead(), "typed"));
+    expect(note).toContain("app-12: someone edited PR #7's description on the forge");
+    expect(note).toContain("Round 2");
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      "kept PR #7's description, which someone edited on the forge",
+    );
+  }, 90_000);
+
+  // A description Skelcrew can't read may hold what a person wrote, so it is kept.
+  test("a PR description the forge can't give is kept, and the builder hears so", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => opened() !== undefined, longWait);
+    writeFileSync(join(plugin, "fail-changed"), "the forge is down");
+    await until(() => read(join(builder(), "typed")).includes("couldn't read"), longWait);
+    expect(read(join(builder(), "typed"))).toContain(
+      "Skelcrew couldn't read PR #7's description, so it kept it and left your new summary out: the forge is down",
+    );
+    expect(asked(plugin).filter((q) => q.ask === "edit pr")).toEqual([]);
+  }, 90_000);
 
   // A forge that can't edit gets a new review only when what it says changed, so a round that
   // finds the same problems again adds nothing to the PR.
