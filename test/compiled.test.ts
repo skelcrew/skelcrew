@@ -78,7 +78,7 @@ async function run(args: string[], file = skel, typed = "") {
 test("runs commands with its state", async () => {
   const listed = await run(["repo", "ls"]);
   expect(listed.err).toBe("");
-  expect(listed.out).toBe("Skelcrew has no repositories yet. Run sc in a checkout of one.\n");
+  expect(listed.out).toBe("Skelcrew has no repositories yet. Run sc inside a git repository.\n");
 });
 
 test("runs a plugin's bun commands on the Bun inside it", async () => {
@@ -108,7 +108,7 @@ test("points the daemon's service at itself", async () => {
   mkdirSync(join(unit, ".."), { recursive: true });
   writeFileSync(unit, "");
   fake("systemctl", 'test "$2" = daemon-reload');
-  await run([]);
+  await run(["serve", "--bg"]);
   expect(readFileSync(unit, "utf8")).toContain(`ExecStart="${skel}" serve\n`);
 });
 

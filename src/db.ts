@@ -1,6 +1,6 @@
 // Skelcrew's state on this machine: one SQLite file.
 import { Database } from "bun:sqlite";
-import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { stuckWait } from "./flow/decide.ts";
@@ -384,6 +384,21 @@ export function nextSequence(db: Database): number {
     "UPDATE sqlite_sequence SET seq = seq + 1 WHERE name = 'notes' RETURNING seq",
   );
   return z.object({ seq: z.number() }).parse(row.get()).seq;
+}
+
+export function mayHaveRepositories(): boolean {
+  const file = join(dataDir(), "skelcrew.db");
+  if (!existsSync(file)) return false;
+  try {
+    const db = new Database(file, { readonly: true });
+    try {
+      return db.query("SELECT 1 FROM repositories LIMIT 1").get() !== null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return true;
+  }
 }
 
 export function openDb(): Database {

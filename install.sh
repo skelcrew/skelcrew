@@ -82,20 +82,78 @@ download() {
   curl -fL --progress-bar -o "$2" "$1" || fail "couldn't download $1"
 }
 
+# Prints the line that puts ~/.local/bin on the PATH, for you to add yourself.
+print_path_line() {
+  echo "~/.local/bin isn't on your PATH. Add this line to $1:"
+  echo
+  echo "  $2"
+  echo
+  echo "Then open a new terminal."
+}
+
+# Offers to add ~/.local/bin to the PATH in your shell's startup files, once, marked as
+# Skelcrew's. It asks on the terminal, as stdin is the script itself under curl | sh. With no
+# terminal, a shell it doesn't know, or SKELCREW_NO_MODIFY_PATH=1, it prints the line instead.
+offer_path() {
+  marker="# Added by Skelcrew's installer"
+  line='export PATH="$HOME/.local/bin:$PATH"'
+  shown="~/.zshrc"
+  case "${SHELL:-}" in
+    */zsh) files=".zshrc" ;;
+    */bash)
+      files=".bashrc"
+      shown="~/.bashrc"
+      if [ "$(uname -s)" = Darwin ]; then
+        files=".bashrc .bash_profile"
+        shown="~/.bashrc and ~/.bash_profile"
+      fi
+      ;;
+    */fish)
+      files=".config/fish/config.fish"
+      shown="~/.config/fish/config.fish"
+      line="fish_add_path ~/.local/bin"
+      ;;
+    *)
+      print_path_line "your shell's startup file, such as ~/.zshrc or ~/.bashrc" "$line"
+      return
+      ;;
+  esac
+  if [ "${SKELCREW_NO_MODIFY_PATH:-}" = 1 ] || ! (: </dev/tty) 2>/dev/null; then
+    print_path_line "$shown" "$line"
+    return
+  fi
+  printf "Add ~/.local/bin to your PATH in %s? [Y/n] " "$shown"
+  read -r answer </dev/tty || answer=n
+  case "$answer" in
+    "" | y | Y | yes | Yes) ;;
+    *)
+      print_path_line "$shown" "$line"
+      return
+      ;;
+  esac
+  for file in $files; do
+    mkdir -p "$(dirname "$HOME/$file")"
+    grep -qsxF -e "$marker" -e "$line" "$HOME/$file" || printf '\n%s\n%s\n' "$marker" "$line" >>"$HOME/$file"
+  done
+  echo "To use sc now, open a new terminal or run exec \$SHELL."
+}
+
 # Says sc is in place and what to do next, first how to reach it if the PATH doesn't.
 finish() {
   echo "Installed $1 in ~/.local/bin."
   case ":$PATH:" in
-    *":$2:"*) echo "Run sc to get started." ;;
-    *)
-      echo "~/.local/bin isn't on your PATH. Add this line to your shell's startup file,"
-      echo "such as ~/.zshrc or ~/.bashrc:"
-      echo
-      echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-      echo
-      echo "Then open a new terminal and run sc to get started."
-      ;;
+    *":$2:"*) ;;
+    *) offer_path ;;
   esac
+  echo
+  echo "Skelcrew is installed."
+  echo
+  echo "In a checkout of your git repository, run:"
+  echo
+  echo "  sc init      to set it up for Skelcrew"
+  echo "  sc install   if it already has a skelcrew.yaml"
+  echo
+  echo "Then run sc and tell your lead what to build."
 }
 
 # Installs sc. Everything happens in a folder beside the final file, so the last step is a

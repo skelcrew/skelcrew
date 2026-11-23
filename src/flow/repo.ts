@@ -30,7 +30,7 @@ import {
   holdsBuiltInAgents,
 } from "../approved-agents.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
-import { errorText } from "../format.ts";
+import { errorText, toRun } from "../format.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
@@ -62,10 +62,18 @@ import { closeTabAndEndLead, leadOf } from "./lead.ts";
 import { taskName } from "./thread.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
-export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
+export const noRepositories = "Skelcrew has no repositories yet. Run sc inside a git repository.";
 
-export const noSkelcrewYaml =
-  "This repository has no skelcrew.yaml. Run sc init to create one, then commit and push it.";
+export const noSkelcrewYaml = `This repository has no skelcrew.yaml. Create one with:\n${toRun(["sc init"])}\nThen commit and push it.`;
+
+const lacksPlugins = "This repository's skelcrew.yaml names plugins this machine doesn't have: ";
+
+// Returns whether an error is one of the stops that tell you what to run before sc can open the
+// repository, which plain sc shows as steps rather than as a failure.
+export function stopsWithSteps(error: unknown): boolean {
+  const text = errorText(error);
+  return text === noSkelcrewYaml || text.startsWith(lacksPlugins);
+}
 
 const hasSkelcrewYaml = ({ owner, repo }: { owner: string; repo: string }) =>
   lstatSync(join(cloneDir(owner, repo), "skelcrew.yaml"), { throwIfNoEntry: false }) !== undefined;
@@ -94,7 +102,7 @@ function requirePlugins(folder: string): void {
   }
   if (lacked.length > 0)
     throw new Error(
-      `This repository's skelcrew.yaml names plugins this machine doesn't have: ${lacked.map((plugin) => plugin.name).join(", ")}. Run sc install, then sc again.`,
+      `${lacksPlugins}${lacked.map((plugin) => plugin.name).join(", ")}. Install them with:\n${toRun(["sc install"])}\nThen run sc again.`,
     );
 }
 

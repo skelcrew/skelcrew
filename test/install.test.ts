@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inTerminal } from "./harness.ts";
 
 const script = join(import.meta.dir, "..", "install.sh");
 const assets = [
@@ -74,7 +75,11 @@ function machine(system: string, cpu: string): void {
 
 // Runs the script the way the install line does, fed to the shell through a pipe, and returns
 // what it said. Not spawnSync, as the fake server runs in this process and must answer.
-async function install(shell: string[], path = `${join(home, "fakes")}:/usr/bin:/bin`) {
+async function install(
+  shell: string[],
+  path = `${join(home, "fakes")}:/usr/bin:/bin`,
+  more: Record<string, string> = {},
+) {
   // By its full path, as a test's PATH can leave the shell out.
   const [name = "", ...flags] = shell;
   const proc = Bun.spawn([Bun.which(name) ?? name, ...flags], {
@@ -83,6 +88,7 @@ async function install(shell: string[], path = `${join(home, "fakes")}:/usr/bin:
       PATH: path,
       HOME: home,
       SKELCREW_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
+      ...more,
     },
     stdin: new Blob([readFileSync(script, "utf8")]),
     stdout: "pipe",
@@ -96,7 +102,34 @@ async function install(shell: string[], path = `${join(home, "fakes")}:/usr/bin:
   return { out, err, code };
 }
 
+// Runs the script as curl | sh does in a terminal: the script comes through a pipe, and what you
+// type reaches it through the terminal.
+function installAtTerminal(
+  typed: string,
+  more: Record<string, string>,
+  path = `${join(home, "fakes")}:/usr/bin:/bin`,
+) {
+  return inTerminal(["/bin/sh", "-c", `exec sh < '${script}'`], {
+    typed,
+    env: {
+      PATH: path,
+      HOME: home,
+      SKELCREW_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
+      ...more,
+    },
+    cwd: home,
+  });
+}
+
 const installed = () => join(home, ".local", "bin", "sc");
+const closing =
+  "Skelcrew is installed.\n\nIn a checkout of your git repository, run:\n\n  sc init      to set it up for Skelcrew\n  sc install   if it already has a skelcrew.yaml\n\nThen run sc and tell your lead what to build.\n";
+const exportLine = 'export PATH="$HOME/.local/bin:$PATH"';
+const marked = (line: string) => `\n# Added by Skelcrew's installer\n${line}\n`;
+const startup = (name: string) => {
+  const file = join(home, name);
+  return existsSync(file) ? readFileSync(file, "utf8") : "";
+};
 const onPath = (shell: string[]) =>
   install(shell, `${join(home, ".local", "bin")}:${join(home, "fakes")}:/usr/bin:/bin`);
 
@@ -108,7 +141,7 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     expect(done.code).toBe(0);
     expect(readFileSync(installed(), "utf8")).toBe(binary("skelcrew-linux-x64"));
     expect(Bun.spawnSync([installed()]).success).toBe(true);
-    expect(done.out).toContain("Run sc");
+    expect(done.out).toEndWith(`in ~/.local/bin.\n\n${closing}`);
     expect(done.out).not.toContain("PATH");
   });
 
@@ -140,8 +173,8 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     const done = await install(shell);
     expect(done.code).toBe(0);
     expect(done.out).toContain("isn't on your PATH");
-    expect(done.out).toContain('export PATH="$HOME/.local/bin:$PATH"');
-    expect(done.out).toContain("run sc");
+    expect(done.out).toContain(`\n  ${exportLine}\n`);
+    expect(done.out).toEndWith(closing);
   });
 
   test("a download that doesn't match its checksum installs nothing and keeps the old Skelcrew", async () => {
@@ -266,5 +299,87 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     });
     await half.exited;
     expect(existsSync(join(home, ".local"))).toBe(false);
+  });
+});
+
+describe("adding ~/.local/bin to the PATH", () => {
+  test("asks in a terminal, adds it to ~/.zshrc once, and says how to use it now", async () => {
+    const done = await installAtTerminal("\n", { SHELL: "/bin/zsh" });
+    expect(done.code).toBe(0);
+    expect(done.out).toContain("Add ~/.local/bin to your PATH in ~/.zshrc? [Y/n] ");
+    expect(done.out).toContain("To use sc now, open a new terminal or run exec $SHELL.\n");
+    expect(done.out).toEndWith(closing);
+    expect(startup(".zshrc")).toBe(marked(exportLine));
+    await installAtTerminal("y\n", { SHELL: "/bin/zsh" });
+    expect(startup(".zshrc")).toBe(marked(exportLine));
+  });
+
+  test("adds nothing to a file that already has the line", async () => {
+    writeFileSync(join(home, ".zshrc"), `${exportLine}\n`);
+    const done = await installAtTerminal("y\n", { SHELL: "/bin/zsh" });
+    expect(done.code).toBe(0);
+    expect(startup(".zshrc")).toBe(`${exportLine}\n`);
+  });
+
+  test("adds the line when ~/.zshrc has it only in a comment", async () => {
+    writeFileSync(join(home, ".zshrc"), `# ${exportLine}\n`);
+    await installAtTerminal("y\n", { SHELL: "/bin/zsh" });
+    expect(startup(".zshrc")).toBe(`# ${exportLine}\n${marked(exportLine)}`);
+  });
+
+  test("keeps what ~/.zshrc already holds", async () => {
+    writeFileSync(join(home, ".zshrc"), "alias ll='ls -l'\n");
+    await installAtTerminal("y\n", { SHELL: "/usr/bin/zsh" });
+    expect(startup(".zshrc")).toBe(`alias ll='ls -l'\n${marked(exportLine)}`);
+  });
+
+  test("bash gets ~/.bashrc, and on a Mac ~/.bash_profile too", async () => {
+    await installAtTerminal("y\n", { SHELL: "/bin/bash" });
+    expect(startup(".bashrc")).toBe(marked(exportLine));
+    expect(startup(".bash_profile")).toBe("");
+    rmSync(join(home, ".bashrc"));
+    machine("Darwin", "arm64");
+    const done = await installAtTerminal("y\n", { SHELL: "/bin/bash" });
+    expect(done.out).toContain("in ~/.bashrc and ~/.bash_profile? [Y/n] ");
+    expect(startup(".bashrc")).toBe(marked(exportLine));
+    expect(startup(".bash_profile")).toBe(marked(exportLine));
+  });
+
+  test("fish gets fish_add_path in its config file", async () => {
+    const done = await installAtTerminal("y\n", { SHELL: "/usr/bin/fish" });
+    expect(done.out).toContain("in ~/.config/fish/config.fish? [Y/n] ");
+    expect(startup(".config/fish/config.fish")).toBe(marked("fish_add_path ~/.local/bin"));
+  });
+
+  test("a no writes nothing and prints the line to add", async () => {
+    const done = await installAtTerminal("n\n", { SHELL: "/bin/zsh" });
+    expect(done.code).toBe(0);
+    expect(done.out).toContain(`Add this line to ~/.zshrc:\n\n  ${exportLine}\n`);
+    expect(existsSync(join(home, ".zshrc"))).toBe(false);
+  });
+
+  test("asks nothing with SKELCREW_NO_MODIFY_PATH=1, and prints the line", async () => {
+    const done = await installAtTerminal("y\n", {
+      SHELL: "/bin/zsh",
+      SKELCREW_NO_MODIFY_PATH: "1",
+    });
+    expect(done.out).not.toContain("[Y/n]");
+    expect(done.out).toContain(`\n  ${exportLine}\n`);
+    expect(existsSync(join(home, ".zshrc"))).toBe(false);
+  });
+
+  test("with no terminal to ask on, prints the line and writes nothing", async () => {
+    const done = await install(["sh"], undefined, { SHELL: "/bin/zsh" });
+    expect(done.code).toBe(0);
+    expect(done.out).not.toContain("[Y/n]");
+    expect(done.out).toContain(`Add this line to ~/.zshrc:\n\n  ${exportLine}\n`);
+    expect(existsSync(join(home, ".zshrc"))).toBe(false);
+  });
+
+  test("asks nothing when ~/.local/bin is on the PATH already", async () => {
+    const path = `${join(home, ".local", "bin")}:${join(home, "fakes")}:/usr/bin:/bin`;
+    const done = await installAtTerminal("y\n", { SHELL: "/bin/zsh" }, path);
+    expect(done.out).not.toContain("[Y/n]");
+    expect(existsSync(join(home, ".zshrc"))).toBe(false);
   });
 });

@@ -12,7 +12,7 @@ Five steps take you from nothing to a first merged task.
 
 ### 1. Install
 
-The script runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bin`. If that folder isn't on your PATH, the script says so and gives the line to add to your shell's startup file. Add it and open a new terminal, or `sc` won't be found. Then plain `sc` starts Skelcrew when you are ready to open a repository.
+The script runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bin`. If that folder isn't on your PATH, the script offers to add it to your shell's startup file, such as `~/.zshrc`. Then open a new terminal, or run `exec $SHELL`, or `sc` won't be found. With `SKELCREW_NO_MODIFY_PATH=1`, or a shell it doesn't know, it only prints the line to add. Then, in a checkout of your repository, `sc init` sets it up for Skelcrew, and plain `sc` opens it.
 
 ```sh
 curl -fsSL https://skelcrew.dev/install.sh | sh

@@ -12,7 +12,7 @@ curl -fsSL https://skelcrew.dev/install.sh | sh
 
 This puts `sc` in `~/.local/bin`. It needs no sudo.
 
-If that folder isn't on your PATH, the script says so and gives you the line to add. Add it, then open a new terminal.
+If that folder isn't on your PATH, the script offers to add it to your shell's startup file, such as `~/.zshrc`. Say yes, then open a new terminal or run `exec $SHELL`. To have the script only print the line to add, run it with `SKELCREW_NO_MODIFY_PATH=1`.
 
 ## 2. Set up your machine
 
