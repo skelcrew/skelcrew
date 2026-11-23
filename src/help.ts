@@ -121,6 +121,7 @@ const sections: [string, [string, string][]][] = [
       ["alt + w, w", "close the repository's tab, or remove it from Skelcrew"],
       ["alt + q", "quit, agents run on"],
       ["↑/↓, 0-6", "in the sidebar: move, open or close a section"],
+      ["tab, shift + tab", "in the sidebar: type to the lead or agent again"],
       ["enter", "open the row you are on: its item, its agent, or a stage"],
       ["shift + enter", "type to the row's agent full screen"],
       ["shift + ↑/↓", "move a queued task in the task queue"],
