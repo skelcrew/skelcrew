@@ -59,7 +59,7 @@ import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { versionLabels } from "../version.ts";
-import { dropAnswerOption, dropAsk, escapeTime, unfinished } from "./drops.ts";
+import { dropAnswerOption, dropAsk, dropNoticeOption, escapeTime, unfinished } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, grey, pad, paint, removeControlCodes } from "./look.ts";
 import { attachedMark, leadOnHost, narrowBelow, panes, sidebarFor, zoomIn } from "./screen.ts";
@@ -547,10 +547,12 @@ export async function runSidebar(
     // Your typing goes to the right side while its pane is the active one, such as on the lead's
     // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
     // anything is drawn, as the top rows and the footer show it.
-    // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it.
-    const format = "#{pane_active} #{window_zoomed_flag} #{window_width}";
-    const [active, zoomed, across] = doing("asking tmux where your typing goes", () =>
-      screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim().split(" "),
+    // Whether the right side fills the terminal, after Shift-Enter or a, is asked with it, and
+    // when a dropped file was last on another machine, and this machine's name for sc --remote.
+    const format = `#{pane_active} #{window_zoomed_flag} #{window_width} #{${dropNoticeOption}}`;
+    const [active, zoomed, across, droppedAt = "0", machine = ""] = doing(
+      "asking tmux where your typing goes",
+      () => screenTmux(agents, ["display", "-p", "-t", rightPane, format]).out.trim().split(" "),
     );
     typingRight = active === "1";
     const fullScreen = zoomed === "1";
@@ -619,10 +621,12 @@ export async function runSidebar(
       typingRight,
       fullScreen,
       side: narrow ? (typingRight ? name : "sidebar") : "",
+      elsewhere: Date.now() - Number(droppedAt) < dropNoticeFor ? machine : null,
     };
     const top = drawTop(look, { sidebar, right });
-    if (`${top.header}\n${top.boxes}` !== lastTop) {
-      lastTop = `${top.header}\n${top.boxes}`;
+    const topText = [top.header, top.boxes, ...top.below].join("\n");
+    if (topText !== lastTop) {
+      lastTop = topText;
       doing("drawing the top row", () => showTop(agents, session, top));
     }
     // The footer, also only when it changed.
@@ -1110,6 +1114,9 @@ function keyLines(keys: string, room: number): string[] {
   }
   return lines.map((line) => paint(grey, `${pad}${line}`));
 }
+
+// How long, in milliseconds, the notice that a dropped file is on another machine shows.
+const dropNoticeFor = 30_000;
 
 // Returns the lines that go above the rest of the sidebar for a notice, such as a release installed
 // in the background, or none without one. Cut at words to fit a sidebar `width` columns wide, and
