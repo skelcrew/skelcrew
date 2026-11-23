@@ -767,6 +767,13 @@ console.log(JSON.stringify(repositoryCommands(readThread(db, thread.folder))));`
     "app's setup and test aren't set yet. Ask the lead to set them up.",
   );
   const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
+  // With one of them set, as the setup thread writes them, it still runs with neither.
+  writeFileSync(join(clone, "skelcrew.yaml"), `setup: [make]\ntest:\n${crew}`);
+  const half =
+    start(`const thread = await startThread(db, { repo: "app", title: "Half", body: "b", setup: true });
+console.log(JSON.stringify(repositoryCommands(readThread(db, thread.folder))));`);
+  expect(half.stderr.toString()).toBe("");
+  expect(JSON.parse(half.stdout.toString())).toEqual({ setup: [], test: [] });
   writeFileSync(join(clone, "skelcrew.yaml"), `setup: []\ntest: [make test]\n${crew}`);
   const late = start(
     `await startThread(db, { repo: "app", title: "Again", body: "b", setup: true });`,
