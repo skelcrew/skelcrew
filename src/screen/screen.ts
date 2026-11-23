@@ -23,6 +23,7 @@ import {
   escapeTime,
   runWithDrops,
 } from "./drops.ts";
+import { tmuxYellow } from "./look.ts";
 
 // The screen's panes, by their place in tmux's list, which runs left to right and then down: a
 // pad of one column at the left edge, the sidebar, the right side, a pad at the right edge, and
@@ -68,9 +69,9 @@ export const zoomIn = (pane: string) => [
 const padCommand = ["sh", "-c", "exec cat >/dev/null"];
 
 // The colour of the box around the side your typing goes to, and of the other side's lines,
-// which only part the screen. A fixed blue, as it reads on a light theme as on a dark one, and
-// no mark or word uses blue. The dim lines are the theme's own grey.
-export const [lit, dim] = ["colour33", "brightblack"];
+// which only part the screen. The screen's yellow accent, the same as needs you, as it reads on
+// a light theme as on a dark one. The dim lines are the theme's own grey.
+export const [lit, dim] = [tmuxYellow, "brightblack"];
 
 // A word in the command of a right side attached to a builder. The screen's tmux finds it there,
 // so Ctrl-\ ends only that attachment, never the lead or a task's details.

@@ -1,5 +1,5 @@
-// The look: what the list, the screen's sidebar and its footer share to draw text, which is the
-// colours, the padding, and making text from outside safe and fit to show.
+// The look: what the list, the screen's sidebar, its footer and its lit box share to draw text,
+// which is the colours, the padding, and making text from outside safe and fit to show.
 import type { Colour } from "../flow/marks.ts";
 
 // The colours of marks and words. 256-colour numbers, as they reach
@@ -8,7 +8,10 @@ import type { Colour } from "../flow/marks.ts";
 // 3:1 contrast on a white theme, a dark one and the grey of the row you are looking at, and each
 // has a hue of its own. They are the same on the row you are looking at, so a mark never changes
 // colour as you move onto it.
-export const [green, yellow, red] = ["38;5;34", "38;5;136", "38;5;203"];
+const yellowNumber = 136;
+export const [green, yellow, red] = ["38;5;34", `38;5;${yellowNumber}`, "38;5;203"];
+// The same yellow as tmux names it, for the box around the side your typing goes to.
+export const tmuxYellow = `colour${yellowNumber}`;
 // Bright text, for the mark of a builder at work. It is the theme's own text in bold, not a fixed
 // white, so it reads on a light theme too. On the row you are looking at it is white, as there
 // the theme's own text can be dark on the grey.
