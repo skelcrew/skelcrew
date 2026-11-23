@@ -703,36 +703,37 @@ export async function removeYourPlugin(given: string): Promise<void> {
   if (!plugin && source === undefined)
     throw new Error(`there is no plugin named ${given}: sc plugin ls lists them`);
   const name = plugin?.name ?? (source ? lock[source]?.name : undefined) ?? given;
-  console.log(`Removing ${name} deletes its settings and tokens.`);
-  for (const { job, names } of plugin ? usesOf(db, plugin.name) : []) {
-    const change =
-      job === "forge"
-        ? "Skelcrew will work without a forge: no PRs or CI; pushes use your own git login"
-        : job === "tracker"
-          ? "Skelcrew will work without issues; existing issues stay on the tracker"
-          : "Skelcrew can no longer reach these sessions";
-    console.log(`${name} is the ${job} of ${names.join(", ")}. ${change}.`);
-  }
+  const uses = plugin ? usesOf(db, plugin.name) : [];
+  const changes: string[] = [];
+  const forge = uses.find((use) => use.job === "forge");
+  const tracker = uses.find((use) => use.job === "tracker");
+  const host = uses.find((use) => use.job === "session host");
+  if (forge)
+    changes.push(
+      `${forge.names.join(", ")} ${forge.names.length === 1 ? "loses its" : "lose their"} forge: no PRs, pushes use your git login.`,
+    );
+  if (tracker) changes.push(`No issues in ${tracker.names.join(", ")}.`);
+  if (host) changes.push(`Skelcrew loses access to ${host.names.join(", ")}.`);
+  const notes: string[] = [];
   for (const repository of repositories(db).filter((r) => r.forge === name)) {
     const count = openPrs(db, repository.owner, repository.repo).length;
-    console.log(
-      `${count} open PRs in ${repository.name} stay on ${name}; Skelcrew stops following them.`,
-    );
+    const where = forge?.names.length === 1 ? "" : ` in ${repository.name}`;
+    if (count > 0)
+      notes.push(
+        `${count} open PR${count === 1 ? "" : "s"}${where} stay${count === 1 ? "s" : ""} on ${name === "github" ? "GitHub" : name}, unfollowed.`,
+      );
     try {
       await checkPush(
         db,
         { ...repository, forge: null },
         cloneDir(repository.owner, repository.repo),
       );
-      console.log(`${repository.name}: your git login can push without the forge.`);
-    } catch (error) {
-      console.log(
-        `${repository.name}: your git login cannot push without the forge: ${error instanceof Error ? error.message : String(error)}. Give the daemon a login it can use without you, such as a key with no passphrase or a credential helper.`,
-      );
+    } catch {
+      notes.push(`Your git login can't push to ${repository.name}.`);
     }
   }
-  console.log("Repository plugin files stay unchanged; sc install can install it again.");
-  const answer = askLine(`Remove the ${name} plugin? [y/N]`);
+  const question = `Remove ${name}? ${changes.length > 0 ? `${changes.join(" ")} ` : ""}[y/N]`;
+  const answer = askLine(notes.length > 0 ? `${question}\n${notes.join(" ")}` : question);
   if (answer === null)
     throw new Error(
       `removing ${name} needs your yes at a terminal. Run sc plugin rm ${name} in your terminal`,

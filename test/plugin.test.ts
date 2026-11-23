@@ -488,6 +488,14 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
   );
 });
 
+test("rm asks one short question when nothing depends on the plugin", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["plugin", "add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const run = await skel(["plugin", "rm", "fake"], "\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toBe("Remove fake? [y/N] Kept fake.\n");
+});
+
 test("rm explains every affected job and defaults to no, then removes on yes", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");
   await skel(["plugin", "add", "-g", "skelcrew/skelcrew-fake"], "y\n");
@@ -504,7 +512,12 @@ test("rm explains every affected job and defaults to no, then removes on yes", a
   for (const text of ["app", "PRs", "pushes", "issues", "APP-12", "lead of app", "[y/N]"])
     expect(no.out).toContain(text);
   expect(no.out).toContain("Kept fake");
-  expect(no.out).toContain("your git login cannot push without the forge");
+  expect(no.out).toStartWith(
+    "Remove fake? app loses its forge: no PRs, pushes use your git login.",
+  );
+  expect(no.out).toContain("Your git login can't push to app.");
+  expect(no.out).not.toContain("0 open PRs");
+  expect(no.out).not.toContain("Repository plugin files");
   expect(existsSync(join(settings("fake"), "token"))).toBe(true);
   const piped = await skel(["plugin", "rm", "-g", "fake"], "yes\n", "", {}, home, false);
   expect(piped.code).toBe(1);
@@ -610,9 +623,10 @@ for (const job of ["forge", "tracker"]) {
     const removed = await skel(["plugin", "rm", "fake"], "yes\n");
     expect(removed.code).toBe(0);
     if (job === "forge") {
-      expect(removed.out).toContain("no PRs or CI");
-      expect(removed.out).toContain("3 open PRs in app stay on fake");
-      expect(removed.out).toContain("your git login can push without the forge");
+      expect(removed.out).toContain("no PRs, pushes use your git login");
+      expect(removed.out).toContain("3 open PRs stay on fake, unfollowed.");
+      expect(removed.out).not.toContain("git login can push");
+      expect(removed.out).not.toContain("can't push");
     }
     const run = await asDaemon(`
 import { openDb } from ${JSON.stringify(source("db.ts"))};
