@@ -1514,7 +1514,7 @@ test("sc install on a machine with no lock pins nothing, and keeps the plugins r
   expect(existsSync(lock())).toBe(false);
 });
 
-test("sc install installs the commit your lock pins, even after its tag moved, and a changed commit asks again", async () => {
+test("sc install installs the commit your lock pins, even after its tag moved, and moves to a changed commit", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
@@ -1537,15 +1537,18 @@ test("sc install installs the commit your lock pins, even after its tag moved, a
   expect(calls()).toBe("fake setup 0.1.0\n");
   const folder = join(home, ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
   expect(git(folder, "rev-parse", "HEAD")).toBe(before);
-  // Your lock from another machine pins the new commit, which asks again, and moves the plugin
-  // with the lock left as it was.
+  // Your lock from another machine pins the new commit, which sc install moves the plugin to
+  // without asking, as running it is the yes, with the lock left as it was.
   writeFileSync(config(), "harness: claude\n");
   lockFake("0.1.0");
   const newLock = readFileSync(lock(), "utf8");
   writeFileSync(join(home, "calls"), "");
-  const moved = await install("y\n");
+  const moved = await install();
   expect(moved.err).toBe("");
-  expect(moved.out).toContain("Update the fake plugin? [Y/n]");
+  expect(moved.out).toContain(
+    `Updating fake 0.1.0 to its commit ${fakeCommit("0.1.0").slice(0, 12)} from simon/skelcrew-fake (runs as you, outside the agents' sandbox).`,
+  );
+  expect(moved.out).not.toContain("[Y/n]");
   expect(calls()).toBe("fake setup 0.1.0\n");
   expect(readFileSync(lock(), "utf8")).toBe(newLock);
   expect(newLock).toContain(fakeCommit("0.1.0"));
@@ -1824,7 +1827,7 @@ test("sc install in a checkout that pins a plugin of yours at another version sa
 });
 
 // The plugin of that name installed here is this very plugin, so moving its pin updates it.
-test("sc install updates a repository's plugin when its skelcrew.lock moves to another version, after asking", async () => {
+test("sc install updates a repository's plugin when its skelcrew.lock moves to another version, without asking", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0", "0.2.0");
@@ -1833,10 +1836,13 @@ test("sc install updates a repository's plugin when its skelcrew.lock moves to a
   repositoryLocksFake(app, "0.1.0");
   expect((await atTerminal("y\n", app, ["install"])).out).toContain("Installed fake 0.1.0.");
   repositoryLocksFake(app, "0.2.0");
-  const run = await atTerminal("y\n", app, ["install"]);
+  const run = await atTerminal("", app, ["install"]);
   expect(run.err).toBe("");
   expect(run.out).not.toContain("installed already");
-  expect(run.out).toContain("Update the fake plugin? [Y/n]");
+  expect(run.out).toContain(
+    "Updating fake 0.1.0 to 0.2.0 from simon/skelcrew-fake (runs as you, outside the agents' sandbox).",
+  );
+  expect(run.out).not.toContain("[Y/n]");
   expect(run.out).toContain("Updated fake from 0.1.0 to 0.2.0.");
   expect((await atTerminal("", app, ["install"])).out).toContain("Nothing to install");
 });
@@ -1853,7 +1859,7 @@ test("sc install outside a checkout ignores repository plugins", async () => {
   expect(existsSync(fakeFolder())).toBe(false);
 });
 
-test("a changed commit in a repository's skelcrew.lock asks again", async () => {
+test("a changed commit in a repository's skelcrew.lock moves the plugin to it", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
@@ -1864,9 +1870,11 @@ test("a changed commit in a repository's skelcrew.lock asks again", async () => 
   publishFake("0.1.0");
   repositoryLocksFake(app, "0.1.0");
   writeFileSync(join(home, "calls"), "");
-  const moved = await atTerminal("y\n", app, ["install"]);
+  const moved = await atTerminal("", app, ["install"]);
   expect(moved.err).toBe("");
-  expect(moved.out).toContain("Update the fake plugin? [Y/n]");
+  expect(moved.out).toContain(
+    `Updating fake 0.1.0 to its commit ${fakeCommit("0.1.0").slice(0, 12)} from simon/skelcrew-fake`,
+  );
   expect(calls()).toBe("fake setup 0.1.0\n");
   expect((await atTerminal("", app, ["install"])).out).toContain("Nothing to install");
 });
@@ -2046,9 +2054,9 @@ test("sc install moves a runtime plugin that isn't yours to a pinned version tha
   git(plugin, "tag", "v0.2.0");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
   repositoryLocksFake(app, "0.2.0");
-  const run = await atTerminal("y\n", app, ["install"]);
+  const run = await atTerminal("", app, ["install"]);
   expect(run.err).toBe("");
-  expect(run.out).toContain("Update the fake plugin? [Y/n]");
+  expect(run.out).toContain("Updating fake 0.1.0 to 0.2.0 from simon/skelcrew-fake");
   expect(run.out).toContain("Updated fake from 0.1.0 to 0.2.0.");
 });
 

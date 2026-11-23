@@ -498,7 +498,8 @@ export function newestLocked(source: string): Locked {
 
 // Updates one plugin. One from a folder is built again from it, so your edits count. One from
 // GitHub moves to its newest version tag, or to the one `tag` names at the lock's `commit`, after
-// showing what it runs and asking, as installing does. Its old version's folder goes, and your
+// showing what it runs and asking, as installing does, or with `ask` false, as for sc install,
+// saying so in a line, only at a terminal. Its old version's folder goes, and your
 // lock pins the new one, unless `pin` is false.
 export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}): void {
   const { ask = true, tag: wanted, commit, pin = true, io, called } = options;
@@ -538,12 +539,16 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     checkSkelcrewVersion(manifest);
     refusePersonal(manifest, io);
     refuseOtherName(manifest, called);
-    const answer = ask ? confirmPlugin(manifest, source, "Update") : true;
+    const answer = ask ? confirmPlugin(manifest, source, "Update") : process.stdin.isTTY || null;
     if (answer === null) throw unanswered(`updating ${name}`);
     if (!answer) {
       console.log(`Skelcrew didn't update ${name}.`);
       return;
     }
+    if (!ask)
+      console.log(
+        `Updating ${name} ${current.version} to ${manifest.version === current.version ? `its commit ${cloned.commit.slice(0, 12)}` : manifest.version} from ${source} (runs as you, outside the agents' sandbox).`,
+      );
     const versionFolder = join(pluginsDir(), name, manifest.version);
     const newFolder =
       versionFolder === folder ? `${versionFolder}-${cloned.commit.slice(0, 12)}` : versionFolder;
@@ -780,7 +785,7 @@ export function installYourPlugins(
       if (here && matchesLock(here, locked)) return;
       changed = true;
       const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
-      if (here) updatePlugin(db, here, pinned);
+      if (here) updatePlugin(db, here, { ...pinned, ask: false });
       else installPlugin(source, { ...pinned, ask: false });
     },
   );

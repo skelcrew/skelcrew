@@ -396,7 +396,7 @@ export function installRepositoryPlugins(needs: Need[]): { changed: boolean; mis
         pin: false,
         io: true,
       };
-      if (here) updatePlugin(db, here, pinned);
+      if (here) updatePlugin(db, here, { ...pinned, ask: false });
       else installPlugin(source, { ...pinned, ask: false });
     },
   );
