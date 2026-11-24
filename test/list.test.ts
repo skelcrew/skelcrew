@@ -413,6 +413,9 @@ console.log(JSON.stringify(buildersNote(openDb(), { owner: "simon", repo: "app" 
   expect(drawn.filter((line) => line.includes("3/3"))).toHaveLength(1);
   expect(drawn.map((line) => Bun.stripANSI(line).trimEnd())).toContain(" 1 Task queue 3");
   expect(buildersLine(builders, 20)).toBe("      3/3 · 2 queued");
+  expect(buildersLine(builders, 22)).toBe("3/3 threads · 2 queued");
+  expect(buildersLine(builders, 14)).toBe("3/3 · 2 queued");
+  expect(buildersLine(builders, 3)).toBe("3/3");
   expect(buildersLine(builders, 10)).toBe("       3/3");
   expect(buildersLine(builders, 2)).toBe("3…");
   expect(all.find((row) => row.name === "APP#31")?.start).toEqual({

@@ -171,7 +171,7 @@ export function buildersLine(builders: BuildersNote | null, width: number): stri
   const count = `${running}/${limit}`;
   const waiting = queued > 0 ? ` · ${queued} queued` : "";
   const fits = [`${count} threads${waiting}`, `${count}${waiting}`, count].find(
-    (text) => text.length < width,
+    (text) => Bun.stringWidth(text) <= width,
   );
   const text = fits ?? fitted(count, width);
   const shown = running >= limit ? text : paint(grey, text);
