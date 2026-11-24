@@ -2,7 +2,7 @@
 // needing you, the daily digest, and what the lead sends when you ask, each through a notifier.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { notifySettings, yourName, yourNameForAgents } from "../config.ts";
+import { notifySettings, yourNameForAgents } from "../config.ts";
 import { errorText } from "../format.ts";
 import { pluginsWithJob } from "../plugins/ask.ts";
 import { callPlugin, installedPlugins, readManifest } from "../plugins/plugin.ts";
@@ -256,7 +256,6 @@ function savedPrLink(db: Database, thread: Thread): string | null {
 
 export function digestOf(db: Database, since: number): Message {
   const links: Message["links"] = [];
-  const asked = `merged as ${yourName() ?? "you"} asked`;
   const parts = repositories(db).map((r) => {
     const threads = db
       .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? ORDER BY rowid")
@@ -277,7 +276,7 @@ export function digestOf(db: Database, since: number): Message {
     };
     const merged = threads
       .filter((t) => t.status === "done" && t.merged && (t.changed ?? 0) >= since)
-      .map((t) => named(t, t.merge_by === null ? "merged" : asked));
+      .map((t) => named(t, t.merge_by === null ? "merged" : "merged as you asked"));
     const live = threads.filter((t) => t.status !== "done");
     const waitsFor = (t: Thread) => itemOf(db, r.owner, r.repo, t.task)?.text ?? needsYouFor(t);
     const repoItem = itemOf(db, r.owner, r.repo, "");

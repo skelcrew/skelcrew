@@ -396,12 +396,11 @@ await notify.sendNotifications(db);`);
   return messages(email).find((m) => m.type === "digest")?.body;
 }
 
-test("the digest says a merge went as you asked, by your name", () => {
-  expect(digestOfMerge("name: Simon\n")).toContain("APP-13 · merged as Simon asked");
-});
-
-test("without your name, the digest says a merge went as you asked", () => {
-  expect(digestOfMerge("")).toContain("APP-13 · merged as you asked");
+// The digest goes out through a notifier, so it never carries your name, even one you set.
+test("the digest says a merge went as you asked, never with your name", () => {
+  const body = digestOfMerge("name: Simon\n");
+  expect(body).toContain("APP-13 · merged as you asked");
+  expect(body).not.toContain("Simon asked");
 });
 
 test("the digest lists every task, however many there are", () => {
