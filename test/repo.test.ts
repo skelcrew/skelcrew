@@ -1068,6 +1068,7 @@ test("init writes a complete skelcrew.yaml, skelcrew.lock and .agents/ from the 
   const run = await skel(["init"], "", join(checkout, "src"));
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
+  expect(run.out).toStartWith("Found GitHub at simon/app (origin)\nAdding GitHub plugin\n");
   expect(run.out).not.toContain("tracker");
   expect(run.out).not.toContain("Approve");
   // The GitHub plugin installed as yours is pinned at its version, with nothing to install.
@@ -1374,6 +1375,7 @@ test("init writes a skelcrew.lock that pins nothing for a repository that isn't 
   git(checkout, "remote", "set-url", "origin", "git@gitlab.com:simon/app.git");
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
+  expect(run.out).not.toContain("GitHub");
   expect(run.out).toContain("Wrote skelcrew.yaml, skelcrew.lock and .agents/.\n");
   expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(
     "# Written by sc plugin add and sc plugin update. Commit it.\n",
@@ -1501,6 +1503,7 @@ test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin",
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(readFileSync(file, "utf8")).toBe(`${complete}plugins:\n  - skelcrew/skelcrew-github\n`);
+  expect(run.out).toStartWith("Found GitHub at simon/app (origin)\nAdding GitHub plugin\n");
   expect(run.out).toContain(
     "skelcrew.yaml is there already, so Skelcrew only added skelcrew/skelcrew-github to its plugins.",
   );
@@ -1671,6 +1674,7 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
   expect(readFileSync(file, "utf8")).toBe(text);
+  expect(run.out).not.toContain("Found GitHub");
   expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(
     "# Written by sc plugin add and sc plugin update. Commit it.\n",
   );
