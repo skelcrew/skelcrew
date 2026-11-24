@@ -1,7 +1,8 @@
 // The daemon on a Mac: a launchd agent in place of the systemd user service. It loads at
 // login, starts the daemon, and starts it again after a crash.
+import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // The name launchd knows the daemon's agent by.
 const label = "dev.skelcrew.daemon";
@@ -54,43 +55,66 @@ export function plistText(skel: string, path: string, log: string): string {
 `;
 }
 
-// Runs launchctl quietly and returns whether it worked, and what it said.
-function launchctl(args: string[]): { ok: boolean; said: string } {
+// Runs launchctl quietly and returns whether it worked, its exit code, and what it said.
+function launchctl(args: string[]): { ok: boolean; code: number; said: string } {
   const run = Bun.spawnSync(["launchctl", ...args], { stdout: "pipe", stderr: "pipe" });
-  return { ok: run.success, said: `${run.stdout}${run.stderr}`.trim() };
+  return { ok: run.success, code: run.exitCode, said: `${run.stdout}${run.stderr}`.trim() };
 }
 
-// Loads the agent from its file, which starts the daemon. launchd keeps a definition it has
-// loaded, so one already loaded is taken out first, or a moved bun, claude or checkout would
-// never reach it. That stops the daemon, while agents keep running in tmux. Taking out one
-// that isn't loaded fails, which is fine.
-export function loadLaunchAgent(): void {
-  launchctl(["bootout", `${domain()}/${label}`]);
-  const loaded = launchctl(["bootstrap", domain(), plistFile()]);
-  if (!loaded.ok) throw new Error(`launchctl couldn't load Skelcrew's daemon: ${loaded.said}`);
+const service = () => `${domain()}/${label}`;
+
+// Whether launchd has the agent, asked with print, as launchctl promises no stable message or
+// exit code for a missing service.
+const hasAgent = () => launchctl(["print", service()]).ok;
+
+// Loads the agent from its file, which starts the daemon, and notes `why` in the daemon's log.
+// launchd keeps a definition it has loaded, so one already loaded is taken out first, or a moved
+// bun, claude or checkout would never reach it. That stops the daemon, while agents keep running
+// in tmux. bootout returns before launchd has dropped the agent, and a bootstrap meanwhile fails
+// with error 5, so the load waits for print to stop finding it. A bootstrap that still fails with
+// error 5 is tried once more, and an agent launchd then has is started instead.
+export function loadLaunchAgent(why: string): void {
+  mkdirSync(dirname(daemonLog()), { recursive: true });
+  appendFileSync(daemonLog(), `${new Date().toISOString()} sc reloads the launchd agent: ${why}\n`);
+  launchctl(["bootout", service()]);
+  const began = Date.now();
+  let waiting = false;
+  while (hasAgent() && Date.now() < began + 10_000) {
+    if (!waiting && Date.now() > began + 1000) {
+      console.log("Waiting for macOS to stop Skelcrew's old daemon…");
+      waiting = true;
+    }
+    Bun.sleepSync(100);
+  }
+  let loaded = launchctl(["bootstrap", domain(), plistFile()]);
+  if (loaded.ok) return;
+  if (loaded.code === 5) {
+    Bun.sleepSync(500);
+    loaded = launchctl(["bootstrap", domain(), plistFile()]);
+    if (loaded.ok) return;
+    if (hasAgent() && launchctl(["kickstart", service()]).ok) return;
+  }
+  throw new Error(`launchctl couldn't load Skelcrew's daemon: ${loaded.said}`);
 }
 
 // Starts the daemon through launchd, ending a running one first when `restart` holds. launchd
 // can lose the agent while its file stays, so Skelcrew thinks the daemon installed, and kickstart
 // then fails with "Could not find service". The agent is then loaded from its file, which starts
-// the daemon. Whether launchd has the agent is asked with print, not read from kickstart's
-// message or exit code, which launchctl doesn't promise to keep.
+// the daemon. Any other failure is launchd refusing a daemon it has, so it is reported as is.
 function kickstart(restart: boolean): void {
-  const service = `${domain()}/${label}`;
-  const started = launchctl(["kickstart", ...(restart ? ["-k"] : []), service]);
+  const started = launchctl(["kickstart", ...(restart ? ["-k"] : []), service()]);
   if (started.ok) return;
-  // Any other failure is launchd refusing a daemon it has, so it is reported as is.
-  if (launchctl(["print", service]).ok) {
+  if (hasAgent()) {
     const doing = restart ? "restart" : "start";
     throw new Error(`launchctl couldn't ${doing} Skelcrew's daemon: ${started.said}`);
   }
-  loadLaunchAgent();
+  loadLaunchAgent("launchd had lost it while its file stayed");
 }
 
 // Returns the process id of the daemon launchd runs as the agent, or 0 when it runs none.
 // launchctl print has no stable format, so a line such as "pid = 123" is looked for.
 export function launchAgentPid(): number {
-  const printed = launchctl(["print", `${domain()}/${label}`]);
+  const printed = launchctl(["print", service()]);
   return printed.ok ? Number(printed.said.match(/^\s*pid = (\d+)$/m)?.[1] ?? 0) : 0;
 }
 

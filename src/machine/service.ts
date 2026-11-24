@@ -133,7 +133,7 @@ export function installService(): void {
     // crash, so a changed file is loaded at once. That restarts the daemon, and agents keep
     // running in tmux.
     if (mac) {
-      loadLaunchAgent();
+      loadLaunchAgent(before === null ? "its file is new" : "its file changed");
       return;
     }
     // An installed service only needs systemd to read its file again. It runs the new one

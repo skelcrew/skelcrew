@@ -462,10 +462,13 @@ function asMac(): void {
   rmSync(join(bin, "systemctl"));
   rmSync(join(bin, "loginctl"));
   fake("sandbox-exec", "exit 0");
+  // The fake launchctl keeps what launchd has in files.
+  for (const tool of ["rm", "cat"]) symlinkSync(Bun.which(tool) ?? tool, join(bin, tool));
   fake(
     "launchctl",
     `case "$1" in
   bootstrap|kickstart) : > "$HOME/started" ;;
+  bootout) rm -f "$HOME/started" ;;
   print) test -e "$HOME/started" && echo "pid = 1" ;;
 esac`,
   );
@@ -545,6 +548,7 @@ esac`,
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
+  expect(launchdLog()).toContain("launchd had lost it");
 });
 
 // launchd restarts a daemon that crashed on the definition it loaded, not on the file. So once
@@ -584,6 +588,84 @@ esac`,
   expect((await skelOnMac("", `${bin}:/usr/bin`)).code).toBe(0);
   expect(calls()).not.toContain("bootout");
   expect(calls()).not.toContain("bootstrap");
+});
+
+// launchd drops a service after bootout returns, so a bootstrap at once fails with error 5.
+// Like launchd, this one keeps the agent for the prints the file "dropping" counts down.
+function slowBootout(prints: number, bootstrap = ': > "$HOME/loaded"'): void {
+  writeFileSync(join(home, "loaded"), "");
+  fake(
+    "launchctl",
+    `case "$1" in
+  bootout) rm -f "$HOME/loaded"; echo ${prints} > "$HOME/dropping" ;;
+  bootstrap)
+    left=$(cat "$HOME/dropping" 2>/dev/null || echo 0)
+    test "$left" -gt 0 && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
+    ${bootstrap} ;;
+  kickstart) : > "$HOME/started" ;;
+  print)
+    left=$(cat "$HOME/dropping" 2>/dev/null || echo 0)
+    test "$left" -gt 0 && { echo $((left - 1)) > "$HOME/dropping"; echo "pid = 1"; exit 0; }
+    test -e "$HOME/loaded" && { : > "$HOME/started"; echo "pid = 1"; exit 0; }
+    echo "Could not find service" >&2; exit 113 ;;
+esac`,
+  );
+}
+
+const launchdLog = () => readFileSync(join(home, "Library", "Logs", "skelcrew.log"), "utf8");
+
+test("on a Mac, waits for launchd to drop the old agent before loading the changed one", async () => {
+  asMac();
+  await skelOnMac("sk-ant-oat01-good\n");
+  writeFileSync(plist(), readFileSync(plist(), "utf8").replace("serve", "up"));
+  slowBootout(3);
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("Waiting for macOS");
+  expect(calls().match(/bootstrap/g)).toHaveLength(1);
+  expect(launchdLog()).toContain("its file changed");
+});
+
+test("on a Mac, says it waits when launchd takes over a second to drop the old agent", async () => {
+  asMac();
+  await skelOnMac("sk-ant-oat01-good\n");
+  writeFileSync(plist(), readFileSync(plist(), "utf8").replace("serve", "up"));
+  slowBootout(15);
+  const run = await skelOnMac();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out.split("Waiting for macOS to stop Skelcrew's old daemon…")).toHaveLength(2);
+});
+
+test("on a Mac, loads the agent again once when launchd still drops it after print says gone", async () => {
+  asMac();
+  await skelOnMac("sk-ant-oat01-good\n");
+  writeFileSync(plist(), readFileSync(plist(), "utf8").replace("serve", "up"));
+  // The first bootstrap fails as launchd still drops the agent, which print no longer shows.
+  slowBootout(
+    0,
+    'test -e "$HOME/failed" || { : > "$HOME/failed"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }; : > "$HOME/loaded"',
+  );
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(calls().match(/bootstrap/g)).toHaveLength(2);
+});
+
+test("on a Mac, starts the agent launchd has loaded when loading it again fails", async () => {
+  asMac();
+  await skelOnMac("sk-ant-oat01-good\n");
+  writeFileSync(plist(), readFileSync(plist(), "utf8").replace("serve", "up"));
+  slowBootout(0, ': > "$HOME/loaded"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5');
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(calls().match(/bootstrap/g)).toHaveLength(2);
+  expect(calls()).toContain(`launchctl kickstart gui/${uid}/dev.skelcrew.daemon\n`);
 });
 
 test("on a Mac, escapes a PATH for the agent's definition", async () => {
