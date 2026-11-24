@@ -86,18 +86,22 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead again");
 });
 
-test("in the sidebar Tab and Shift-Tab switch your typing back to the lead, as Alt-Tab does", async () => {
+test("in the sidebar Tab and Shift-Tab do nothing, and Alt-Tab switches your typing", async () => {
   addSite();
   daemon();
   open("lead");
   await ready("lead");
+  press("M-Tab");
+  await until(typingToSidebar, "the sidebar to take your typing");
   for (const key of ["Tab", "BTab"]) {
-    press("M-Tab");
-    await until(typingToSidebar, "the sidebar to take your typing");
     press(key);
-    await until(() => !typingToSidebar(), `${key} to give your typing to the lead`);
+    await Bun.sleep(300);
+    expect(typingToSidebar()).toBe(true);
     expect(seen()).toContain("I am lead");
+    expect(seen()).not.toContain(`I am ${siteLead}`);
   }
+  press("M-Tab");
+  await until(() => !typingToSidebar(), "the lead to take your typing");
   type("hi\r");
   await until(() => read("lead.typed") === "hi\n", "the typing to reach app's lead");
 });

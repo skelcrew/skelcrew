@@ -240,10 +240,7 @@ test("on an 80-column terminal, a task's row still shows the close key in the fo
   await ready("lead");
   press("M-S-Down");
   await until(() => / 12\b/.test(selected()), "APP-12's row");
-  await until(
-    () => footer().startsWith("  ↑↓ move  ⇥ switch  w/⌥W close  ⏎ attach"),
-    "the task's keys",
-  );
+  await until(() => footer().startsWith("  ↑↓ move  w/⌥W close  ⏎ attach"), "the task's keys");
   // The footer is cut: the row's last keys don't fit.
   expect(footer()).not.toContain("^D^D quit");
 });

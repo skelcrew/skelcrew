@@ -92,8 +92,8 @@ const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // anywhere. The plain ones come only while your typing goes to the sidebar. Alt with a digit and
 // the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte from anywhere,
 // for Alt-Tab, Ctrl-\ or Ctrl-4, to switch your typing, and Shift-Enter as CSI-u, only while
-// your typing is here already. Plain Tab and Shift-Tab switch your typing too, so a missed Alt
-// never moves to another repository. Only Enter and Shift-Enter attach: a letter that isn't a pick
+// your typing is here already. Plain Tab and Shift-Tab do nothing, so a missed Alt does nothing
+// either. Only Enter and Shift-Enter attach: a letter that isn't a pick
 // does nothing. Alt-W and plain w ask whether to close or remove the open repository.
 const keyNames: Record<string, string> = {
   "\x1c": "switch",
@@ -113,8 +113,6 @@ const keyNames: Record<string, string> = {
   "\x1b[1;4B": "next section",
   "\x1b[1;4C": "next repository",
   "\x1b[1;4D": "previous repository",
-  "\t": "switch",
-  "\x1b[Z": "switch",
   "\r": "enter",
   "\n": "enter",
   "\x1b[5~": "page up",
@@ -122,7 +120,7 @@ const keyNames: Record<string, string> = {
 };
 
 function sidebarFooter(row: Row, restarts: boolean): string {
-  const first = "↑↓ move  ⇥ switch  w/⌥W close";
+  const first = "↑↓ move  w/⌥W close";
   const end = `${restarts ? "  R restart" : ""}  ^D^D quit`;
   if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎ full screen  0-6 sections${end}`;
   if (row.part === "heading") {
