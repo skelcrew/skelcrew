@@ -28,8 +28,9 @@ const running: Subprocess[] = [];
 // The release file for this machine, as the install script names it.
 const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
 const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
-// A stand-in for a Skelcrew binary that says which release it is.
-const binary = (version: string) => `#!/bin/sh\necho "skelcrew ${version}"\n`;
+// A stand-in for a Skelcrew binary that says which release it is, and notes any other command.
+const binary = (version: string) =>
+  `#!/bin/sh\ntest "$1" = --version && echo "skelcrew ${version}" && exit 0\necho "sc $*" >> "$HOME/calls"\n`;
 const installed = () => join(home, "bin", "sc");
 // The release the daemon noted it installed, from the database, or null with none.
 function marker(): string | null {
@@ -454,6 +455,8 @@ await updateItself(${JSON.stringify(installed())});`,
   return { ...done, calls };
 }
 
+// The new release itself points the service at its file and restarts the daemon on it, as the
+// service could run another copy of Skelcrew than the one updated.
 test("sc update installs the latest release over Skelcrew and restarts the daemon on it", async () => {
   latest(binary("0.4.3"));
   await daemon({}, {});
@@ -461,8 +464,17 @@ test("sc update installs the latest release over Skelcrew and restarts the daemo
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
   expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.3"));
-  expect(done.calls).toBe(restartCall);
-  expect(done.out).toStartWith("Updated Skelcrew 0.4.2 → 0.4.3.\nRestarted the daemon on ");
+  expect(done.calls).toBe("sc serve --bg\n");
+  expect(done.out).toBe("Updated Skelcrew 0.4.2 → 0.4.3.\n");
+});
+
+test("sc update says how to restart the daemon when the new release can't", async () => {
+  latest(`${binary("0.4.3")}exit 1\n`);
+  await daemon({}, {});
+  const done = await update();
+  expect(done.code).toBe(1);
+  expect(done.out).toBe("Updated Skelcrew 0.4.2 → 0.4.3.\n");
+  expect(done.err).toContain("sc serve --bg");
 });
 
 // The next sc starts the daemon on the new release.

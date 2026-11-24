@@ -113,14 +113,21 @@ export function keepUpToDate(db: Database): void {
 
 export async function updateItself(file: string): Promise<void> {
   const { openDb } = await import("../db.ts");
-  const { daemonStatus, restartDaemon } = await import("./service.ts");
+  const { daemonStatus } = await import("./service.ts");
   const installed = await installLatest(file, releases, openDb());
   if (!installed) {
     console.log(`Skelcrew ${release} is the latest.`);
     return;
   }
   console.log(`Updated Skelcrew ${release} → ${installed}.`);
-  if (await daemonStatus()) await restartDaemon();
+  if (!(await daemonStatus())) return;
+  const moved = Bun.spawnSync([file, "serve", "--bg"], {
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  if (!moved.success)
+    throw new Error(
+      `Skelcrew ${installed} is installed, but couldn't restart the daemon on it. Run sc serve --bg.`,
+    );
 }
 
 // Returns the notice of a release installed in the background, for the list and the sidebar, or
