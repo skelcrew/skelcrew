@@ -81,7 +81,7 @@ export function loadLaunchAgent(why: string, wait = true): void {
   launchctl(["bootout", service()]);
   const began = Date.now();
   let waiting = false;
-  let dropped = !hasAgent();
+  let dropped = !wait || !hasAgent();
   while (wait && !dropped && Date.now() < began + 10_000) {
     if (!waiting && Date.now() > began + 1000) {
       console.log("Waiting for macOS to stop Skelcrew's old daemon…");

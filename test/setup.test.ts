@@ -727,6 +727,9 @@ test("on a Mac, sc restart loads a lost agent with no wait or second try", async
   expect(run.code).toBe(1);
   expect(run.err).toContain("couldn't load Skelcrew's daemon: Bootstrap failed: 5");
   expect(calls().match(/bootstrap/g)).toHaveLength(1);
+  expect(readFileSync(join(home, "calls"), "utf8")).toContain(
+    `launchctl bootout gui/${uid}/dev.skelcrew.daemon\nlaunchctl bootstrap gui/${uid} ${plist()}\n`,
+  );
 });
 
 test("on a Mac, escapes a PATH for the agent's definition", async () => {
