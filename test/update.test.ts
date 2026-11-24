@@ -472,7 +472,17 @@ test("sc update installs the latest release over Skelcrew and restarts the daemo
 // so only a restart moves it to the new file.
 test("sc update restarts the daemon on a new build of the same release", async () => {
   latest(`${binary("0.4.2")}# the native build\n`);
-  await daemon({}, {});
+  await daemon({ release: "0.4.2" }, {});
+  const done = await update();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe("sc serve --bg\nsc restart\n");
+});
+
+// sc serve --bg goes by the daemon's release, which can be newer than the sc you run.
+test("sc update restarts a daemon already on the release it installs", async () => {
+  latest(`${binary("0.4.3")}# the native build\n`);
+  await daemon({ release: "0.4.3" }, {});
   const done = await update();
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
