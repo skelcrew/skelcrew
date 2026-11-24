@@ -16,7 +16,7 @@ Only pairs with five imports or more are drawn. `root` is the files directly in 
 flowchart TD
   cli["cli<br/>the commands"]
   screen["screen<br/>the sidebar screen"]
-  list["list<br/>sc --list"]
+  list["list<br/>the list of tasks"]
   machine["machine<br/>service, setup, remote"]
   flow["flow<br/>the daemon and the flow"]
   plugins["plugins<br/>installing and asking"]
@@ -49,7 +49,7 @@ flowchart TD
 | `flow/` | 34 | The daemon and the flow: threads, rounds, polling, deciding, messages, merging | `root`, `agents`, `plugins` |
 | `agents/` | 16 | The base modules that run agents, and one module per harness | `root` |
 | `plugins/` | 7 | Installing plugins, reading manifests, asking trackers, forges and hosts | `root`, `flow` |
-| `list/` | 8 | `sc --list`: rows, layout and the details pane | `flow`, `screen` |
+| `list/` | 8 | The list of tasks: rows, layout and the details pane | `flow`, `screen` |
 | `screen/` | 9 | The sidebar screen: sidebar, top, footer, dropped files | `list`, `flow`, `agents` |
 | `machine/` | 10 | This machine: the service, setup, updates and `--remote` | `root`, `agents` |
 | `cli/` | 8 | One file per group of commands | `root`, `agents` |

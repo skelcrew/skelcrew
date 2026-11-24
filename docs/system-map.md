@@ -86,7 +86,7 @@ flowchart TB
 | `src/flow/` | The daemon and the flow: threads, rounds, polling, deciding, messages, merging |
 | `src/agents/` | The base modules that run agents: sessions, transport, sandbox, and one module per harness |
 | `src/plugins/` | Installing plugins and asking them |
-| `src/screen/`, `src/list/` | What you see: the sidebar screen and `sc --list` |
+| `src/screen/`, `src/list/` | What you see: the screen, and the list of tasks it shows |
 | `src/cli/` | One file per group of commands, each asking the daemon through `src/client.ts` |
 | `src/machine/` | This machine: the service, setup, updates and `--remote` |
 | `src/db.ts` | The one SQLite file |
