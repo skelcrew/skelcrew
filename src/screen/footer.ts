@@ -2,7 +2,7 @@
 // that closes their boxes. It has the keys you need most, then those for what the right side shows, and the machine's
 // load at its right end. It runs in the screen's last pane, across the bottom.
 import { cpus } from "node:os";
-import { screenTmux } from "../agents/tmux.ts";
+import { envWithoutTmux, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "./load.ts";
 import { fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
 import { panes } from "./screen.ts";
@@ -35,10 +35,33 @@ export function drawFooter(said: string, width: number, load: string): string {
 
 // Tells the footer of the screen's session what it says now, as text typed into its pane, which
 // it reads as the sidebar reads a click on a tab. What it says can hold a forge's words, so
-// control codes go, as one could end the message.
+// control codes go, as one could end the message. It starts tmux at once but never waits for it,
+// so a slow tmux holds up nothing else the sidebar draws. While one message is on its way, only
+// the last one told after it follows, so the footer ends on what it was told last.
+let sending = false;
+let next: string[] | null = null;
+const sendNext = () => {
+  const command = next;
+  next = null;
+  sending = command !== null;
+  if (command) Bun.spawn(command, { env: envWithoutTmux() }).exited.then(sendNext);
+};
 export function tellFooter(agents: string, session: string, said: string): void {
   const message = `\x1b]skel-footer;${removeControlCodes(said)}\x07`;
-  screenTmux(agents, ["send-keys", "-t", `=${session}:.${panes.footer}`, "-l", message]);
+  const target = `=${session}:.${panes.footer}`;
+  next = [
+    "tmux",
+    "-L",
+    screenSocket(agents),
+    "-f",
+    "/dev/null",
+    "send-keys",
+    "-t",
+    target,
+    "-l",
+    message,
+  ];
+  if (!sending) sendNext();
 }
 
 // What the footer reads: what the sidebar tells it to say.

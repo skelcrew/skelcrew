@@ -151,15 +151,15 @@ export function noteRefreshes(): void {
   given.before = `PATH=${folder}:$PATH `;
 }
 
-// Puts a tmux in front of the real one that, while the test holds it, waits before telling the
-// footer anything or starting the right side again, as a slow tmux would. It must be set before
-// the screen opens.
-export function slowTmux(): void {
+// Puts a tmux in front of the real one that, while the test holds it, waits before a call whose
+// words match `held`, a shell pattern such as *respawn-pane*, as a slow tmux would. It must be set
+// before the screen opens.
+export function slowTmux(held: string): void {
   const folder = join(home, "slow");
   mkdirSync(folder);
   writeFileSync(
     join(folder, "tmux"),
-    `#!/bin/sh\ncase "$*" in *skel-footer*|*respawn-pane*) while test -e ${join(home, "held")}; do sleep 0.05; done ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
+    `#!/bin/sh\ncase "$*" in ${held}) while test -e ${join(home, "held")}; do sleep 0.05; done ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
     { mode: 0o755 },
   );
   given.before = `PATH=${folder}:$PATH `;

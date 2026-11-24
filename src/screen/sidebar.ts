@@ -658,12 +658,12 @@ export async function runSidebar(
         return [];
       }
     });
-  // Draws the footer, only when it changed.
+  // Draws the footer, only when it changed. tmux draws it later, as the sidebar never waits for it.
   const drawFooter = () => {
     const footer = doing("reading the footer's harness", footerText);
     if (footer === lastFooter) return;
     lastFooter = footer;
-    doing("drawing the footer", () => tellFooter(agents, session, footer));
+    tellFooter(agents, session, footer);
   };
 
   // Opens another repository: its rows on the left at once, on its lead's row, and its lead on
@@ -817,7 +817,6 @@ export async function runSidebar(
     const { request } = action;
     sent = row !== null && request.command === "pick" ? { row, pick: request.pick } : null;
     reshow();
-    draw();
     drawFooter();
     draw();
     if (sent) askInBox(sent.row);
