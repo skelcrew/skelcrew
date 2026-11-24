@@ -25,6 +25,11 @@ import {
 } from "./drops.ts";
 import { tmuxYellow } from "./look.ts";
 
+// The key table your terminal is in after a first Ctrl-D, where a second one leaves the screen,
+// and what the first one types into the footer.
+export const closeTable = "close-screen";
+export const closeAsk = "\x1b]skel-close\x07";
+
 // The screen's panes, by their place in tmux's list, which runs left to right and then down: a
 // pad of one column at the left edge, the sidebar, the right side, a pad at the right edge, and
 // the footer across the bottom. tmux draws its lines only between panes, so the pads are what
@@ -117,9 +122,12 @@ const config = [
   // terminal's title on the way in and puts it back on the way out, on terminals that keep one.
   ["set", "-g", "set-titles", "on"],
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
-  // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
-  // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
-  // Mac terminal that doesn't send Option as Alt. Alt-Tab, Ctrl-\ and Ctrl-4 switch your typing
+  // which would swallow your typing, and its prefix belongs to the agents' server. Ctrl-D twice
+  // leaves the whole screen, and never reaches an agent, where one press would end it. The
+  // first press moves your terminal to a key table of its own and tells the footer, which
+  // shows the hint and moves it back after 2 seconds. Any other key moves it back too, and goes
+  // on to the pane you type to, as tmux would otherwise drop it. The screen's own keys are bound
+  // in that table too, below, so they still act. Alt-Tab, Ctrl-\ and Ctrl-4 switch your typing
   // between the sidebar and the right side, from either side. They never reach a pane: Ctrl-\
   // would detach the agents' server or a host's own client and leave the right side empty. tmux
   // types Ctrl-\'s byte into the sidebar, which decides where your typing goes. Ctrl-4 is there
@@ -132,8 +140,14 @@ const config = [
   ["set", "-g", "prefix", "None"],
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
-  ["bind", "-n", "M-q", "kill-session"],
-  ["bind", "-n", "C-q", "kill-session"],
+  [
+    "bind",
+    "-n",
+    "C-d",
+    `switch-client -T ${closeTable} ; send-keys -t :.${panes.footer} -l "${closeAsk}"`,
+  ],
+  ["bind", "-T", closeTable, "C-d", "kill-session"],
+  ["bind", "-T", closeTable, "Any", "switch-client -T root ; send-keys"],
   ...["M-Tab", "C-\\", "C-4"].map((key) => [
     "bind",
     "-n",
@@ -180,8 +194,8 @@ const config = [
   ["bind", "-n", "M-S-Left", "send-keys", "-t", toSidebar, "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", toSidebar, "M-S-Right"],
   // Alt-W asks whether to close or remove the open repository, from anywhere, full screen too.
-  // The sidebar takes your typing for the question, and gives it back on Esc. Like Alt-Q, it never
-  // reaches an agent.
+  // The sidebar takes your typing for the question, and gives it back on Esc. Like Ctrl-D, it
+  // never reaches an agent.
   ["bind", "-n", "M-w", "send-keys", "-t", toSidebar, "M-w"],
   ...["0", "1", "2", "3", "4", "5", "6"].map((digit) => [
     "bind",
@@ -311,6 +325,23 @@ const config = [
   ["set-hook", "-g", "after-select-pane", zoomWhenNarrow],
 ];
 
+// The screen's own keys, bound again in the table a first Ctrl-D moves your terminal to, so they
+// act there too, and take it back to the usual keys. Each command's words are quoted for tmux to
+// read them as one line. The mouse's keys are left out, as their commands hold quotes of their own.
+const afterFirstClose = config.flatMap(([verb, flag, key = "", ...command]) =>
+  verb === "bind" && flag === "-n" && key !== "C-d" && !/Mouse|Wheel|Click/.test(key)
+    ? [
+        [
+          "bind",
+          "-T",
+          closeTable,
+          key,
+          `switch-client -T root ; ${command.map((word) => `'${word}'`).join(" ")}`,
+        ],
+      ]
+    : [],
+);
+
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
 // single file runs itself. Otherwise Bun runs this checkout's main file.
 export function skelcrewCommand(...words: string[]): string[] {
@@ -355,7 +386,7 @@ export function leadOnHost(
 }
 
 // Opens the screen in your terminal on the named agent session. `lead` is the open repository's
-// lead's session and `repository` its owner/name. It returns when you leave with Alt-Q, and
+// lead's session and `repository` its owner/name. It returns when you leave with Ctrl-D twice, and
 // prints that your agents keep running. Each terminal gets a screen session of its own, named
 // after this process, which runs as long as the terminal has it open. Agents' sessions are never
 // touched.
@@ -391,6 +422,7 @@ export async function openScreen(
   const left = sidebarCommand(agents, name, where, repository, onHost ?? "");
   const open = [
     ...config,
+    ...afterFirstClose,
     ["new-session", "-s", name, "--", ...right],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
     // The sidebar's side, then its pad split off at its left, which leaves the sidebar's pane

@@ -1,5 +1,7 @@
 // Actions shared by sc --list and the sidebar: answering items, opening PRs, starting and merging tasks.
 import type { Database } from "bun:sqlite";
+import { mergingWord } from "../flow/marks.ts";
+import { pickingWord } from "../flow/own-items.ts";
 import { type Letter, letters } from "../flow/requests.ts";
 import { typedTask } from "../flow/thread.ts";
 import { enterAttaches, type Pick, type Target } from "./layout.ts";
@@ -66,6 +68,23 @@ export const askingInBox = (rows: Row[], asking: Asking | null): Row[] =>
       ? { ...row, ask: { ...row.ask, confirm: asking.question.ask } }
       : row,
   );
+
+// A pick on the item of a row, by its name, on its way to the daemon.
+export type Sent = { row: string; pick: Letter };
+
+// Returns the rows with a pick on its way to the daemon shown as the daemon shows it once it has
+// it, so your answer shows at once: a merge takes the task out of Needs you, and another pick
+// says what it does in the item's box.
+export const pickSent = (rows: Row[], sent: Sent | null): Row[] =>
+  rows.map((row) => {
+    const act = sent?.row === row.name ? row.ask?.acts?.[letters.indexOf(sent.pick)] : undefined;
+    const doing = act === undefined ? null : pickingWord(act);
+    if (doing === null || !row.ask) return row;
+    if (doing !== mergingWord) return { ...row, ask: { ...row.ask, doing } };
+    const { part } = row;
+    if (part === "lead" || part === "heading" || part === "ask") return row;
+    return { ...row, section: part, says: mergingWord, ask: null };
+  });
 
 // Returns the start or merge to go ahead with once you said yes, given the rows read again just
 // now, or what the bottom line says instead. The task can change while the question is open: CI

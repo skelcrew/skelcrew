@@ -1,14 +1,19 @@
 // The footer: the bottom row of the screen, across the sidebar and the right side, under the line
 // that closes their boxes. It has the keys you need most, then those for what the right side shows, and the machine's
-// load at its right end. It runs in the screen's last pane, across the bottom.
+// load at its right end. After a first Ctrl-D it asks for a second instead. It runs in the screen's
+// last pane, across the bottom.
 import { cpus } from "node:os";
-import { screenTmux } from "../agents/tmux.ts";
+import { envWithoutTmux, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "./load.ts";
 import { fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
-import { panes } from "./screen.ts";
+import { closeTable, panes } from "./screen.ts";
 
 // The keys you need most, which the footer always starts with.
-const always = "⌥↑↓ move  ⌥W close  ⌥Q quit";
+const always = "⌥↑↓ move  ⌥W close  ^D^D quit";
+
+// What the footer says after a first Ctrl-D, and how long a second one leaves the screen.
+export const closeHint = "Press Ctrl-D again to close";
+export const closeWithin = 2000;
 
 // Returns the footer's text while your typing goes to an agent on the right side, named by
 // `name`, such as lead or APP-12: which one it is and the key that switches to the sidebar, then
@@ -35,14 +40,38 @@ export function drawFooter(said: string, width: number, load: string): string {
 
 // Tells the footer of the screen's session what it says now, as text typed into its pane, which
 // it reads as the sidebar reads a click on a tab. What it says can hold a forge's words, so
-// control codes go, as one could end the message.
+// control codes go, as one could end the message. It starts tmux at once but never waits for it,
+// so a slow tmux holds up nothing else the sidebar draws. While one message is on its way, only
+// the last one told after it follows, so the footer ends on what it was told last.
+let sending = false;
+let next: string[] | null = null;
+const sendNext = () => {
+  const command = next;
+  next = null;
+  sending = command !== null;
+  if (command) Bun.spawn(command, { env: envWithoutTmux() }).exited.then(sendNext);
+};
 export function tellFooter(agents: string, session: string, said: string): void {
   const message = `\x1b]skel-footer;${removeControlCodes(said)}\x07`;
-  screenTmux(agents, ["send-keys", "-t", `=${session}:.${panes.footer}`, "-l", message]);
+  const target = `=${session}:.${panes.footer}`;
+  next = [
+    "tmux",
+    "-L",
+    screenSocket(agents),
+    "-f",
+    "/dev/null",
+    "send-keys",
+    "-t",
+    target,
+    "-l",
+    message,
+  ];
+  if (!sending) sendNext();
 }
 
 // What the footer reads: what the sidebar tells it to say.
 const input = new RegExp(`${"\x1b"}\\]skel-footer;([^\x07]*)\x07`, "g");
+const closing = new RegExp(`${"\x1b"}\\]skel-close\x07`);
 
 // Runs the footer until its pane goes. `agents` names the agents' tmux server and `session` the
 // screen's session, whose last pane this is. It shows what it was last told, and reads the
@@ -54,6 +83,7 @@ export async function runFooter(agents: string, session: string): Promise<void> 
   const self = `=${session}:.${panes.footer}`;
   let said = always;
   let lastFrame = "";
+  let askedToClose: ReturnType<typeof setInterval> | undefined;
   // The machine's load, which shows from the second sample on, as the CPU figure needs two.
   const fixed = process.env.SKELCREW_FIXED_LOAD;
   let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
@@ -66,7 +96,8 @@ export async function runFooter(agents: string, session: string): Promise<void> 
       screenTmux(agents, ["resize-pane", "-t", self, "-y", "1"]);
     // The row is cleared before it is written, not after: a row as wide as the pane leaves the
     // cursor on its last letter, which clearing after would take away.
-    const frame = `\x1b[K${drawFooter(said, process.stdout.columns || 80, load)}`;
+    const text = askedToClose ? closeHint : said;
+    const frame = `\x1b[K${drawFooter(text, process.stdout.columns || 80, load)}`;
     if (frame === lastFrame) return;
     lastFrame = frame;
     process.stdout.write(`\x1b[H${frame}\x1b[J`);
@@ -75,9 +106,37 @@ export async function runFooter(agents: string, session: string): Promise<void> 
   // Without the cursor hidden it would blink in the footer. ?7l cuts a line at the edge rather
   // than wrap it.
   process.stdout.write("\x1b[?25l\x1b[?7l");
-  // Takes the last of what the sidebar said, then draws.
+  // Lists the terminals on this screen's session, each with the key table it is in.
+  const terminals = () =>
+    screenTmux(agents, [
+      "list-clients",
+      "-t",
+      `=${session}`,
+      "-F",
+      "#{client_name}\t#{client_key_table}",
+    ])
+      .out.split("\n")
+      .map((line) => line.split("\t"));
+  // Shows the hint from a first Ctrl-D until another key took the terminal back to the usual
+  // keys, or for 2 seconds, after which it takes the terminal back itself.
+  const askToClose = () => {
+    clearInterval(askedToClose);
+    const until = Date.now() + closeWithin;
+    askedToClose = setInterval(() => {
+      const waiting = terminals().filter(([, table]) => table === closeTable);
+      if (waiting.length > 0 && Date.now() < until) return;
+      for (const [name = ""] of waiting)
+        screenTmux(agents, ["switch-client", "-c", name, "-T", "root"]);
+      clearInterval(askedToClose);
+      askedToClose = undefined;
+      draw();
+    }, 100);
+  };
+  // Takes the last of what the sidebar said, and a first Ctrl-D, then draws.
   process.stdin.on("data", (bytes) => {
-    for (const [, value] of bytes.toString().matchAll(input)) said = value ?? "";
+    const typed = bytes.toString();
+    for (const [, value] of typed.matchAll(input)) said = value ?? "";
+    if (closing.test(typed)) askToClose();
     draw();
   });
   // Reads the load every 5 seconds, and draws only when its text changed. A pinned load is never

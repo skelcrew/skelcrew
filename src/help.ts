@@ -106,11 +106,10 @@ const sections: [string, [string, string][]][] = [
       ["--version", "Which release of Skelcrew this is"],
     ],
   ],
-  // The screen's keys, in words, read as "alt + q to quit, agents run on". Ctrl + \ brings your
-  // typing to the sidebar from anywhere, which a Mac needs, as there Option with a digit types a
-  // character. Those that work anywhere come first, then those for the sidebar, where the list's
-  // keys work without Alt. Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal
-  // that doesn't send Option as Alt. alt + w works anywhere, and w only in the sidebar.
+  // The screen's keys, in words, read as "ctrl + d twice to close, agents run on". Ctrl + \ brings
+  // your typing to the sidebar from anywhere, which a Mac needs, as there Option with a digit types
+  // a character. Those that work anywhere come first, then those for the sidebar, where the list's
+  // keys work without Alt. alt + w works anywhere, and w only in the sidebar.
   [
     "KEYS",
     [
@@ -120,7 +119,7 @@ const sections: [string, [string, string][]][] = [
       ["alt + 0-6", "open or close a stage"],
       ["alt + shift + ←/→", "switch repository"],
       ["alt + w, w", "close the repository's tab, or remove it from Skelcrew"],
-      ["alt + q", "quit, agents run on"],
+      ["ctrl + d, ctrl + d", "close the screen, agents run on"],
       ["↑/↓, 0-6", "in the sidebar: move, open or close a section"],
       ["tab, shift + tab", "in the sidebar: type to the lead or agent again"],
       ["enter", "open the row you are on: its item, its agent, or a stage"],

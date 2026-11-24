@@ -7,8 +7,10 @@ import { openDb } from "../db.ts";
 import { leadSession } from "../flow/lead.ts";
 import { builderSession, readThread, typedTask } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
+import { endOfSequence, isCtrlD, keyPattern } from "../keys.ts";
 import { updateNotice } from "../machine/update.ts";
 import { attachOnHost, type Host } from "../plugins/runtime.ts";
+import { closeHint, closeWithin } from "../screen/footer.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { versionLabels } from "../version.ts";
@@ -53,13 +55,13 @@ import {
 } from "./rows.ts";
 
 // The keys the list reads, as your terminal sends them. Arrows come in either of the two forms a
-// terminal may use, and Ctrl-C leaves as q does, since the terminal is raw. Esc leaves too, but
-// first closes a question that is open. Any other escape sequence is one key, which does
+// terminal may use, and Ctrl-C leaves, since the terminal is raw. Esc leaves too, but first
+// closes a question that is open. Ctrl-D twice leaves, as on the screen. Any other escape sequence is one key, which does
 // nothing. A terminal sends one for a key with Ctrl or Alt when a program asked it for extended
 // keys, such as Ctrl-\ as ESC[92;5u, and neither its Esc nor its letters may act as keys of
 // their own. Pressing Ctrl-\ once too often after coming back from an agent lands here too, in
-// one of its three forms, and does nothing. Alt with a letter is matched whole, or its Esc or
-// its q would quit. Alt-Shift-Left moves to the previous repository, and Alt-Shift-Right to the
+// one of its three forms, and does nothing. Alt with a letter is matched whole, or its Esc would
+// quit. Alt-Shift-Left moves to the previous repository, and Alt-Shift-Right to the
 // next, plain and with kitty's press event, which it adds when asked for events. Kitty
 // sends the main arrows so even in its CSI-u mode, and its keypad arrows as CSI-u, 57417 left
 // and 57418 right. Shift-Up and Shift-Down move a queued task in its queue, plain and with kitty's
@@ -85,40 +87,19 @@ const keyNames: Record<string, string> = {
   "\x1b[57417;4:1u": "previous repository",
   "\x1b[5~": "page up",
   "\x1b[6~": "page down",
-  "\x03": "q",
+  "\x03": "leave",
   "\x1b": "escape",
 };
 const esc = "\x1b";
 // A click comes as your terminal reports the mouse, with its button, column and row. Its
 // sequence is a CSI one, so it reaches the list as one key.
 const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
-// Splits what the terminal sent into keys. Every escape sequence is one key, read or not, as
-// its Esc alone would leave the list. That covers keys such as Right, Home, F5 or Alt-x, and
-// the answers a terminal sends to tmux's questions, which reach the list once you leave an
-// agent. In order: a terminal's string ended by ST or BEL, a CSI sequence, an SS3 one, Alt
-// with a key, then any single character, a lone Esc included.
-const keyPattern = new RegExp(
-  [
-    `${esc}[P\\]X^_][\\s\\S]*?(?:${esc}\\\\|\\x07)`,
-    `${esc}\\[[0-?]*[ -/]*[@-~]`,
-    `${esc}O[\\s\\S]`,
-    `${esc}[^${esc}]`,
-    "[\\s\\S]",
-  ].join("|"),
-  "g",
-);
-// The start of an escape sequence at the end of a read, whose end may come in the next one: an
-// Esc, a CSI or SS3 sequence short of its last character, or a terminal's string short of its ST
-// or BEL.
-const endOfSequence = new RegExp(
-  `${esc}(?:\\[[0-?]*[ -/]*|O|[P\\]X^_](?:[^${esc}\\x07]|${esc}(?!\\\\))*)?$`,
-);
 // Any mouse report in SGR, a press with M or a release with m, which only the list reads.
 const mousePattern = new RegExp(`^${esc}\\[<\\d+;\\d+;\\d+[Mm]$`);
 // Ctrl-\ as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
 const back = new Set(["\x1c", "\x1b[92;5u", "\x1b[27;5;92~"]);
 
-// Runs the list in your terminal for the repository named by its owner/name, until you press q,
+// Runs the list in your terminal for the repository named by its owner/name, until you leave it,
 // then says your agents keep running. `agents` is the sessions' tmux server. It looks again each
 // second, and writes only when what shows changed, as over a slow link each write costs. In a
 // terminal wide enough, the details pane beside the list shows the row you are on, and reads its
@@ -149,6 +130,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   // What a click on each line of the screen reaches, as it was last drawn.
   let targets: Target[] = [];
   let said: string | null = null;
+  // Until when a second Ctrl-D leaves, after a first one. Zero while none was pressed.
+  let closeBy = 0;
   // The open question, with the row it is about and whether it is a merge or a start.
   let asking: Asking | null = null;
   let working = false;
@@ -342,7 +325,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   // screen is Skelcrew's. The title you had is saved first and put back after, on terminals
   // that keep one. Mouse reports among those keys are the list's, such as the rest of the click
   // that attached, and would reach the agent's prompt as text, so they are dropped, and so is the
-  // start of one cut off at the end of a read.
+  // start of one cut off at the end of a read. A Ctrl-D is dropped too, as one would end a Pi
+  // session.
   const attach = async (session: string, name: string, host: Host = agents) => {
     attached = true;
     process.stdin.pause();
@@ -350,7 +334,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const after =
       typed
         .splice(0)
-        .filter((key) => !mousePattern.test(key.sent))
+        .filter((key) => !mousePattern.test(key.sent) && !isCtrlD(key.sent))
         .map((key) => key.sent)
         .join("") + rest;
     partial = "";
@@ -362,7 +346,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       process.stdout.write(`\x1b[22;0t\x1b]2;${title}\x07`);
       failed = await attachSession(host, session);
       process.stdout.write("\x1b[23;0t");
-    } else attachOnHost(host, session);
+    } else await attachOnHost(host, session);
     takeTerminal();
     process.stdin.resume();
     attached = false;
@@ -632,7 +616,22 @@ export async function runList(agents: string, repository: string): Promise<void>
   let leave: () => void = () => {};
   let left = false;
   const press = async (key: string) => {
-    if (working || left || key === "back") return;
+    if (working || left) return;
+    if (key === "close" && Date.now() < closeBy) return leave();
+    const hinted = said === closeHint;
+    if (hinted) said = null;
+    closeBy = 0;
+    if (key === "back") return hinted ? draw() : undefined;
+    if (key === "close") {
+      closeBy = Date.now() + closeWithin;
+      said = closeHint;
+      setTimeout(() => {
+        if (left || said !== closeHint || Date.now() < closeBy) return;
+        said = null;
+        draw();
+      }, closeWithin);
+      return draw();
+    }
     if (replying) {
       const reply = replying;
       const typed = typeReply(reply, key);
@@ -651,7 +650,7 @@ export async function runList(agents: string, repository: string): Promise<void>
         return draw();
       }
     }
-    if (key === "q" || (key === "escape" && !asking)) return leave();
+    if (key === "leave" || (key === "escape" && !asking)) return leave();
     if (asking) {
       const action = asking;
       asking = null;
@@ -711,11 +710,15 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (acting) return;
     acting = true;
     while (true) {
-      // Once the list has left, nothing more is acted on: a key that came with q, such as
+      // Once the list has left, nothing more is acted on: a key that came with the one that left, such as
       // Enter, would otherwise attach after the terminal was given back.
       const key = left ? undefined : typed.shift();
       if (key === undefined) break;
-      const named = back.has(key.sent) ? "back" : (keyNames[key.sent] ?? key.sent);
+      const named = back.has(key.sent)
+        ? "back"
+        : isCtrlD(key.sent)
+          ? "close"
+          : (keyNames[key.sent] ?? key.sent);
       await press(named).catch((error) => say(errorText(error)));
       if (named === "enter" || asking) while (typed[0]?.read === key.read) typed.shift();
     }
@@ -735,6 +738,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     void act();
   };
   process.stdin.on("data", (bytes) => {
+    if (attached) return;
     clearTimeout(flush);
     const text = partial + bytes.toString();
     partial = text.match(endOfSequence)?.[0] ?? "";

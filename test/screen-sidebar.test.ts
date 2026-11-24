@@ -13,6 +13,8 @@ import {
   daemon,
   endTest,
   footer,
+  given,
+  holdTmux,
   home,
   noteRefreshes,
   onDetails,
@@ -21,6 +23,8 @@ import {
   press,
   read,
   ready,
+  release,
+  releaseTmux,
   right,
   screen,
   screenSessions,
@@ -28,6 +32,7 @@ import {
   selected,
   sidebar,
   sidebarRefreshedTwice,
+  slowTmux,
   sql,
   startTest,
   tmux,
@@ -399,6 +404,61 @@ INSERT INTO asks (owner, repo, task, title, text, options, posted)
   await Bun.sleep(500);
   expect(acted.filter((line) => line.startsWith("answer"))).toEqual([]);
 });
+
+// y on a picked merge shows your answer at once, before the daemon answers, and each part of the
+// screen as soon as its own tmux call is done: a slow call for the right side holds up neither the
+// sidebar nor the footer, and a slow call for the footer neither the sidebar nor the right side. The
+// task leaves Needs you saying it merges, and the question and the item leave the box. Once the
+// daemon answers, the list shows what the database says again, here that the task still needs you,
+// as this daemon records nothing.
+for (const { slow, held } of [
+  { slow: "the right side", held: "*respawn-pane*" },
+  { slow: "the footer", held: "*skel-footer*" },
+]) {
+  test(`y on a picked merge shows at once, while tmux is slow to draw ${slow}`, async () => {
+    daemon();
+    slowTmux(held);
+    given.holding = true;
+    const head = "9fc11d177dbffac496ad6b3496b3f91775d9057f";
+    const checks = [{ name: "test", id: "1", state: "passed" }];
+    sql(`${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head, checks })};
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1, reviewed_commit: head })}`);
+    open("lead");
+    await ready("lead");
+    press("C-\\");
+    await until(typingToSidebar, "the sidebar's typing");
+    for (let presses = 0; presses < 6 && !/ 14\b/.test(selected()); presses++) {
+      const before = selected();
+      press("Down");
+      await until(() => selected() !== before, "a move down");
+    }
+    await until(() => / 14\b/.test(selected()) && right().includes("a) Merge it"), "APP-14's item");
+    press("Enter");
+    await until(() => footer().includes("esc back"), "the item open");
+    type("a");
+    const inBox = () => right().includes("Merge app#41 into main?");
+    await until(() => inBox() && footer().includes("Merge app#41 into main?"), "the question");
+    holdTmux();
+    type("y");
+    const moved = () =>
+      !left().join("\n").includes("Needs you") && left().join("\n").includes("merging…");
+    const boxGone = () => !inBox() && !right().includes("a) Merge it");
+    const footerSays = () => footer().includes("Merge it…");
+    await until(
+      () => moved() && (held === "*respawn-pane*" ? footerSays() : boxGone()),
+      `the answer shown while tmux is slow to draw ${slow}`,
+    );
+    expect(held === "*respawn-pane*" ? inBox() : footer().includes("Merge app#41")).toBe(true);
+    releaseTmux();
+    await until(() => boxGone() && footerSays(), "the box and the footer once tmux goes on");
+    await until(() => acted.includes("pick simon/app 14 a"), "the pick");
+    release();
+    await until(
+      () => isOpen("Needs you") && right().includes("a) Merge it"),
+      "the item back once the daemon answered",
+    );
+  });
+}
 
 // The notice comes from the database, which the daemon writes once it installed a release.
 test("a release installed in the background shows as a notice above the lead", async () => {

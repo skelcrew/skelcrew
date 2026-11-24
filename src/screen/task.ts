@@ -3,9 +3,10 @@
 import { attachUntilEnded } from "../agents/sessions.ts";
 import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
-import { letters } from "../flow/requests.ts";
+import { type Letter, letters } from "../flow/requests.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
+import { pickSent } from "../list/actions.ts";
 import { type Details, readDetails } from "../list/details.ts";
 import type { Pick } from "../list/layout.ts";
 import { drawPane } from "../list/pane.ts";
@@ -21,24 +22,39 @@ const scrollKeys = new RegExp(`${esc}\\[([56])~|${esc}\\[<(6[45]);\\d+;\\d+M|${e
 
 // Returns the command that runs a task's details in the screen's right pane, by the task's row
 // name, such as app-12, in the repository named by its owner/name, with the y/n question a pick
-// on its item asks, if any.
-const detailsCommand = (agents: string, repository: string, name: string, confirm?: string) =>
-  skelcrewCommand("details", agents, repository, name, ...(confirm === undefined ? [] : [confirm]));
+// on its item asks, or empty, and the letter of a pick on its way to the daemon, if any.
+const detailsCommand = (
+  agents: string,
+  repository: string,
+  name: string,
+  confirm = "",
+  sent?: Letter,
+) =>
+  skelcrewCommand(
+    "details",
+    agents,
+    repository,
+    name,
+    ...(confirm === "" && sent === undefined ? [] : [confirm]),
+    ...(sent === undefined ? [] : [sent]),
+  );
 
 // Shows a task's details on the right side of the screen whose session is named, by the task's
-// row name, such as app-12, with `confirm` in its item's box while a pick on it asks y/n. What you
-// type stays with the sidebar, so the list's keys work and nothing reaches the builder.
+// row name, such as app-12, with `confirm` in its item's box while a pick on it asks y/n, and the
+// pick `sent` shown as the daemon shows it once it has it. What you type stays with the sidebar,
+// so the list's keys work and nothing reaches the builder.
 export function showTask(
   agents: string,
   session: string,
   repository: string,
   name: string,
-  confirm?: string,
+  confirm = "",
+  sent?: Letter,
 ): void {
   respawnPane(
     agents,
     `=${session}:.${panes.right}`,
-    detailsCommand(agents, repository, name, confirm),
+    detailsCommand(agents, repository, name, confirm, sent),
   );
   screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
 }
@@ -114,7 +130,8 @@ export async function runTaskDetails(
   agents: string,
   repository: string,
   name: string,
-  confirm?: string,
+  confirm = "",
+  sent = "",
 ): Promise<void> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
@@ -142,8 +159,10 @@ export async function runTaskDetails(
     screenTmux(agents, ["set", "-p", "-t", here, "@picks", picks]);
   };
 
+  const pick = letters.find((letter) => letter === sent);
   const refresh = () => {
-    const found = listRows(db, open, Date.now()).find((one) => one.name === name);
+    const listed = pickSent(listRows(db, open, Date.now()), pick ? { row: name, pick } : null);
+    const found = listed.find((one) => one.name === name);
     row = found?.ask && confirm ? { ...found, ask: { ...found.ask, confirm } } : found;
     details = row?.task ? readDetails(db, open, row.task, Date.now(), row.changed) : null;
     draw();

@@ -7,6 +7,7 @@ import { panes, sidebarFor } from "../src/screen/screen.ts";
 import {
   attachTo,
   click,
+  closeScreen,
   endTest,
   fixedLoad,
   footer,
@@ -158,7 +159,7 @@ test("the boxes stay whole however the terminal is resized", async () => {
     const whole = () =>
       boxesWhole(height ?? 0, width) &&
       seen().split("◆ Lead").length === 2 &&
-      seen().includes("⌥Q quit");
+      seen().includes("^D^D quit");
     await until(whole, "the boxes to be whole");
   }
 });
@@ -179,7 +180,7 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
   );
 });
 
-test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves", async () => {
+test("a terminal a few lines high still shows the agent, and Ctrl-D twice still leaves", async () => {
   noteRefreshes();
   open("lead");
   await ready("lead");
@@ -199,7 +200,7 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
   await until(() => seen().includes("I am lead"), "the agent to come back");
   await until(() => seen().includes("⌥↑↓ move"), "the footer to come back");
-  press("C-q");
+  closeScreen();
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
 
@@ -236,7 +237,7 @@ test("the footer runs across the screen under the boxes' line, with where you ty
   sql("UPDATE threads SET harness = 'codex' WHERE task = 't7'");
   open("lead");
   await ready("lead");
-  const lead = "  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude";
+  const lead = "  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   expect(aboveFooter()).toMatch(/^─┴─+┴─+┴─$/);
   expect(aboveFooter()).toHaveLength(120);
@@ -244,14 +245,15 @@ test("the footer runs across the screen under the boxes' line, with where you ty
   await until(
     () =>
       footer() ===
-      "  ↑↓ move  ⇥ switch  w/⌥W close  ⏎ attach  ⇧⏎ full screen · pgup/pgdn scroll  0-6 sections  R restart  q/⌥Q quit",
+      "  ↑↓ move  ⇥ switch  w/⌥W close  ⏎ attach  ⇧⏎ full screen · pgup/pgdn scroll  0-6 sections  R restart  ^D^D quit",
     "a task's footer",
   );
   press("M-Down");
   await attachTo("app-7");
   await until(
     () =>
-      footer() === "  typing to APP-7 · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops codex",
+      footer() ===
+      "  typing to APP-7 · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit  Esc stops codex",
     "app-7's footer",
   );
 });
@@ -261,7 +263,7 @@ test("a pinned load sits at the right end of the footer", async () => {
   await ready("lead");
   // The lead's harness reaches the footer a moment after the lead starts, so the load can show
   // before what Esc stops does. Wait for both, then check they sit on the row together.
-  const lead = "  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude";
+  const lead = "  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   await until(() => (seen().split("\n")[29] ?? "").trimEnd().endsWith(fixedLoad), "the load");
   expect(footer()).toBe(lead);
@@ -279,7 +281,7 @@ test("the footer ends with the machine's own load, even with no thread working",
   );
   expect(seen()).not.toContain(fixedLoad);
   expect(footer()).toBe(
-    "  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
+    "  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit  Esc stops claude",
   );
 });
 
@@ -395,7 +397,7 @@ test("the footer has only the keys you need most, and a click on it does nothing
   open("lead");
   await ready("lead");
   await until(
-    () => footer().startsWith("  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit"),
+    () => footer().startsWith("  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit"),
     "the footer",
   );
   expect(seen()).not.toContain("⌃Q");
@@ -405,7 +407,7 @@ test("the footer has only the keys you need most, and a click on it does nothing
   click(5, 29);
   await Bun.sleep(200);
   expect(onLead()).toBe(true);
-  expect(footer()).toStartWith("  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit");
+  expect(footer()).toStartWith("  typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit");
 });
 
 // ? is text you type to an agent, so no key of the screen's may take it, and Alt-/ is none of

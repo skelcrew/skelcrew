@@ -68,11 +68,11 @@ export async function screenCommand(args: string[]): Promise<void> {
       return;
     }
   }
-  if (command === "details" && (rest.length === 3 || rest.length === 4)) {
-    const [agents, repository, name, confirm] = rest;
+  if (command === "details" && rest.length >= 3 && rest.length <= 5) {
+    const [agents, repository, name, confirm, sent] = rest;
     if (agents && repository && name) {
       const { runTaskDetails } = await import("../screen/task.ts");
-      await runTaskDetails(agents, repository, name, confirm);
+      await runTaskDetails(agents, repository, name, confirm, sent);
       return;
     }
   }

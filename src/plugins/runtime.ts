@@ -6,6 +6,7 @@ import type { Database } from "bun:sqlite";
 import type { z } from "zod";
 import { filesPlaceholder } from "../agents/sandbox.ts";
 import { errorText } from "../format.ts";
+import { endOfSequence, isCtrlD, keyPattern } from "../keys.ts";
 import { commandFor, installedPlugins, type Manifest, quoteForSh, readManifest } from "./plugin.ts";
 
 // A runtime plugin that hosts sessions: its name, its version, its folder, its session and attach
@@ -189,14 +190,70 @@ export async function askHost<T>(
 }
 
 // Attaches your terminal full screen to a session on the host, by running the plugin's attach
-// command in it with the session's ID after its own words, and returns once you detach.
-export function attachOnHost(host: PluginHost, id: string): void {
+// command in it with the session's ID after its own words, and returns once you detach. The
+// command runs in a terminal of its own between it and yours, as no tmux of Skelcrew's is there
+// to keep Ctrl-D from the agent, where one would end it. Ctrl-D twice within 2 seconds, with no
+// other key between, ends the attach, as it closes the screen. What you type is read key by key,
+// in order, and an escape sequence cut off at the end of a read waits a moment for its end, so
+// Ctrl-D is caught in any form. Without a terminal, it runs the command as it is.
+export async function attachOnHost(host: PluginHost, id: string): Promise<void> {
   const { argv, env } = commandFor(host.plugin, host.attach);
-  Bun.spawnSync([...argv, id], {
-    cwd: host.folder,
-    env: { ...process.env, ...env },
-    stdio: ["inherit", "inherit", "inherit"],
+  const options = { cwd: host.folder, env: { ...process.env, ...env } };
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    await Bun.spawn([...argv, id], { ...options, stdio: ["inherit", "inherit", "inherit"] }).exited;
+    return;
+  }
+  const stty = (...args: string[]) =>
+    Bun.spawnSync(["stty", ...args], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
+  const saved = stty("-g").stdout.toString().trim();
+  stty("raw", "-echo");
+  const terminal = new Bun.Terminal({
+    cols: process.stdout.columns || 80,
+    rows: process.stdout.rows || 24,
+    name: process.env.TERM ?? "xterm-256color",
+    data: (_terminal, bytes) => {
+      process.stdout.write(bytes);
+    },
   });
+  const command = Bun.spawn([...argv, id], { ...options, terminal });
+  let closeBy = 0;
+  const press = (key: string) => {
+    if (!isCtrlD(key)) {
+      closeBy = 0;
+      if (!terminal.closed) terminal.write(Buffer.from(key, "latin1"));
+    } else if (Date.now() < closeBy) command.kill();
+    else closeBy = Date.now() + 2000;
+  };
+  const take = (text: string) => {
+    for (const [key] of text.matchAll(keyPattern)) press(key);
+  };
+  let partial = "";
+  let flush: ReturnType<typeof setTimeout> | undefined;
+  const typed = (bytes: Uint8Array) => {
+    clearTimeout(flush);
+    const text = partial + Buffer.from(bytes).toString("latin1");
+    partial = text.match(endOfSequence)?.[0] ?? "";
+    take(text.slice(0, text.length - partial.length));
+    if (partial)
+      flush = setTimeout(() => {
+        take(partial);
+        partial = "";
+      }, 100);
+  };
+  const resized = () => terminal.resize(process.stdout.columns || 80, process.stdout.rows || 24);
+  process.stdin.on("data", typed);
+  process.stdin.resume();
+  process.on("SIGWINCH", resized);
+  try {
+    await command.exited;
+  } finally {
+    clearTimeout(flush);
+    process.stdin.off("data", typed);
+    process.stdin.pause();
+    process.off("SIGWINCH", resized);
+    terminal.close();
+    if (saved) stty(saved);
+  }
 }
 
 // Returns a line for sh that runs the plugin's attach command on a session, in the plugin's folder
