@@ -106,14 +106,14 @@ const sections: [string, [string, string][]][] = [
       ["--version", "Which release of Skelcrew this is"],
     ],
   ],
-  // The screen's keys, in words, read as "ctrl + d twice to close, agents run on". Ctrl + \ brings
-  // your typing to the sidebar from anywhere, which a Mac needs, as there Option with a digit types
+  // The screen's keys, in words, read as "ctrl + d twice to close, agents run on". Ctrl + \ switches
+  // your typing from anywhere, which a Mac needs, as there Option with a digit types
   // a character. Those that work anywhere come first, then those for the sidebar, where the list's
   // keys work without Alt. alt + w works anywhere, and w only in the sidebar.
   [
     "KEYS",
     [
-      ["ctrl + \\", "type to the sidebar, from the lead or an agent"],
+      ["ctrl + \\", "switch your typing between the sidebar and the lead or agent"],
       ["alt + ↑/↓", "move one row"],
       ["alt + shift + ↑/↓", "jump to the next or previous section"],
       ["alt + 0-6", "open or close a stage"],
@@ -121,7 +121,6 @@ const sections: [string, [string, string][]][] = [
       ["alt + w, w", "close the repository's tab, or remove it from Skelcrew"],
       ["ctrl + d, ctrl + d", "close the screen, agents run on"],
       ["↑/↓, 0-6", "in the sidebar: move, open or close a section"],
-      ["tab, shift + tab", "in the sidebar: type to the lead or agent again"],
       ["enter", "open the row you are on: its item, its agent, or a stage"],
       ["shift + enter", "type to the row's agent full screen"],
       ["shift + ↑/↓", "move a queued task in the task queue"],
