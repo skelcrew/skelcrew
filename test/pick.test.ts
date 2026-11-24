@@ -74,6 +74,18 @@ test("arrows move in the picker, as escape [ and escape O, also split over slow 
   expect(run.restored).toBe(true);
 });
 
+test("Ctrl-C right after Esc, or inside an arrow, still stops the picker", async () => {
+  for (const keys of [["\x1b\x03"], ["\x1b[", "\x03"]]) {
+    const run = await atTerminal(
+      choose,
+      help,
+      keys.map((key): [number, string] => [100, key]),
+    );
+    expect(run.screen).toContain("code 130");
+    expect(run.restored).toBe(true);
+  }
+});
+
 const commit = `askLine("Commit and push them to main? [Y/n] ")`;
 
 test("a typed line takes what you type, with backspace and arrows ignored", async () => {

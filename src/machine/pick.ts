@@ -25,15 +25,17 @@ function readByte(): string | null {
 // Reads what follows an escape byte. A key such as an arrow sends escape [ A, or escape O A in
 // some terminals' keypad mode, at once. Nothing after it within a tenth of a second is Esc on its
 // own. Only that wait is timed, so the rest of an arrow split over a slow connection still counts.
+// Ctrl-C anywhere in it stops too.
 function afterEscape(tty: boolean): "up" | "down" | "stop" | null {
   if (tty) stty(["min", "0", "time", "1"]);
   const second = readByte();
   if (tty) stty(["min", "1", "time", "0"]);
-  if (second === null) return "stop";
+  if (second === null || second === "\x03") return "stop";
   if (second !== "[" && second !== "O") return null;
   while (true) {
     const next = readByte();
     if (next === null) return null;
+    if (next === "\x03") return "stop";
     if (next === "A") return "up";
     if (next === "B") return "down";
     if (second === "O" || /[@-~]/.test(next)) return null;
