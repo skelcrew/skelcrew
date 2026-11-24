@@ -2670,9 +2670,13 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   // Esc then Ctrl-D, typed fast, are two keys, not Alt with Ctrl-D.
   type("\x1b\x04z");
   await until(() => read(join(home, "host.typed")) === "xy\x1bz", "Esc without the Ctrl-D");
+  // Nor is it the end of a sequence cut short, such as SS3 or a terminal's string.
+  type("\x1bO\x04w\x1b]\x04v");
+  const typed = "xy\x1bz\x1bOw\x1b]v";
+  await until(() => read(join(home, "host.typed")) === typed, "the cut sequences without Ctrl-D");
   type("\x04\x04");
   await until(() => seen().includes("esc/^D^D quit"), "the list again");
-  expect(read(join(home, "host.typed"))).toBe("xy\x1bz");
+  expect(read(join(home, "host.typed"))).toBe(typed);
   expect(read(join(home, "left"))).toBe("");
 });
 

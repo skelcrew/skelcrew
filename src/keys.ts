@@ -4,13 +4,13 @@ const esc = "\x1b";
 // Splits what the terminal sent into keys. Every escape sequence is one key, read or not. That
 // covers keys such as Right, Home, F5 or Alt-x, and the answers a terminal sends to tmux's
 // questions. In order: a terminal's string ended by ST or BEL, a CSI sequence, an SS3 one, Alt
-// with a key, then any single character, a lone Esc included. Esc then Ctrl-D, typed fast, are
-// two keys, so the Ctrl-D is still caught.
+// with a key, then any single character, a lone Esc included. Ctrl-D's byte is never part of a
+// longer key, such as after a fast Esc or in a sequence cut short, so it is always caught.
 export const keyPattern = new RegExp(
   [
-    `${esc}[P\\]X^_][\\s\\S]*?(?:${esc}\\\\|\\x07)`,
+    `${esc}[P\\]X^_][^\\x04]*?(?:${esc}\\\\|\\x07)`,
     `${esc}\\[[0-?]*[ -/]*[@-~]`,
-    `${esc}O[\\s\\S]`,
+    `${esc}O[^\\x04]`,
     `${esc}[^${esc}\\x04]`,
     "[\\s\\S]",
   ].join("|"),
@@ -21,7 +21,7 @@ export const keyPattern = new RegExp(
 // Esc, a CSI or SS3 sequence short of its last character, or a terminal's string short of its ST
 // or BEL.
 export const endOfSequence = new RegExp(
-  `${esc}(?:\\[[0-?]*[ -/]*|O|[P\\]X^_](?:[^${esc}\\x07]|${esc}(?!\\\\))*)?$`,
+  `${esc}(?:\\[[0-?]*[ -/]*|O|[P\\]X^_](?:[^${esc}\\x07\\x04]|${esc}(?!\\\\))*)?$`,
 );
 
 // Ctrl-D as one byte, as kitty's CSI-u, with a press or repeat event, or as xterm's extended key.
