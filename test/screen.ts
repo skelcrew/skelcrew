@@ -151,6 +151,22 @@ export function noteRefreshes(): void {
   given.before = `PATH=${folder}:$PATH `;
 }
 
+// Puts a tmux in front of the real one that, while the test holds it, waits before telling the
+// footer anything or starting the right side again, as a slow tmux would. It must be set before
+// the screen opens.
+export function slowTmux(): void {
+  const folder = join(home, "slow");
+  mkdirSync(folder);
+  writeFileSync(
+    join(folder, "tmux"),
+    `#!/bin/sh\ncase "$*" in *skel-footer*|*respawn-pane*) while test -e ${join(home, "held")}; do sleep 0.05; done ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
+    { mode: 0o755 },
+  );
+  given.before = `PATH=${folder}:$PATH `;
+}
+export const holdTmux = () => writeFileSync(join(home, "held"), "");
+export const releaseTmux = () => rmSync(join(home, "held"), { force: true });
+
 // How many refreshes the sidebar has started.
 const refreshesStarted = () => read("refreshes").split("\n").length - 1;
 

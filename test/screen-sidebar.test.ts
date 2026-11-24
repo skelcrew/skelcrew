@@ -12,6 +12,7 @@ import {
   endTest,
   footer,
   given,
+  holdTmux,
   home,
   onDetails,
   onLead,
@@ -20,10 +21,12 @@ import {
   read,
   ready,
   release,
+  releaseTmux,
   right,
   seen,
   selected,
   sidebar,
+  slowTmux,
   sql,
   startTest,
   type,
@@ -257,11 +260,13 @@ ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", nee
   );
 });
 
-// y on a picked merge shows your answer at once, before the daemon answers: the question and the
-// item go, and the task leaves Needs you saying it merges. Once the daemon answers, the list shows
-// what the database says again, here that the task still needs you, as this daemon records nothing.
-test("y on a picked merge shows at once, while the daemon still merges", async () => {
+// y on a picked merge shows your answer at once, before tmux or the daemon answers: the task leaves
+// Needs you saying it merges, then the question and the item leave the box. Once the daemon
+// answers, the list shows what the database says again, here that the task still needs you, as
+// this daemon records nothing.
+test("y on a picked merge shows at once, while tmux and the daemon are slow", async () => {
   daemon();
+  slowTmux();
   given.holding = true;
   const head = "9fc11d177dbffac496ad6b3496b3f91775d9057f";
   const checks = [{ name: "test", id: "1", state: "passed" }];
@@ -281,15 +286,18 @@ ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", nee
   await until(() => footer().includes("esc back"), "the item open");
   type("a");
   await until(() => right().includes("│ Merge app#41 into main?"), "the question in the box");
+  holdTmux();
   type("y");
+  await until(
+    () => !left().join("\n").includes("Needs you") && left().join("\n").includes("merging…"),
+    "the answer shown while tmux is slow",
+  );
+  expect(acted).not.toContain("pick simon/app 14 a");
+  releaseTmux();
   await until(() => acted.includes("pick simon/app 14 a"), "the pick");
   await until(
-    () =>
-      !left().join("\n").includes("Needs you") &&
-      left().join("\n").includes("merging…") &&
-      !right().includes("Merge app#41 into main?") &&
-      !right().includes("a) Merge it"),
-    "the answer shown while the daemon merges",
+    () => !right().includes("Merge app#41 into main?") && !right().includes("a) Merge it"),
+    "the box without the question and the item while the daemon merges",
   );
   release();
   await until(

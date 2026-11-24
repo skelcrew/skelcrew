@@ -805,22 +805,26 @@ export async function runSidebar(
   };
 
   // Has the daemon start, merge or pick once you said y, saying so meanwhile. What you answered
-  // shows first, before anything that can be slow: a pick on the item of the row named shows as
-  // the daemon shows it once it has it. A start says what the daemon answered, as a builder can
-  // take the last free place while you are asked, and the task then waits in the queue though the
-  // question said it would start. When the daemon or the forge refuses, the footer says why until
-  // the next key.
-  const goAhead = async (action: Question, row: string | null = null) => {
+  // shows first, before anything that can be slow, such as tmux or the database: a pick on the
+  // item of the row named shows as the daemon shows it once it has it. With `asked`, the question
+  // you said y to, it goes ahead only while the rows read again still offer it, as stillOffered
+  // says. A start says what the daemon answered, as a builder can take the last free place while
+  // you are asked, and the task then waits in the queue though the question said it would start.
+  // When the daemon or the forge refuses, the footer says why until the next key.
+  const goAhead = async (action: Question, row: string | null = null, asked?: Asking) => {
     working = true;
     said = action.working;
     const { request } = action;
     sent = row !== null && request.command === "pick" ? { row, pick: request.pick } : null;
     reshow();
+    draw();
     drawFooter();
     draw();
     if (sent) askInBox(sent.row);
+    if (asked) all = readRows();
+    const offer = asked ? stillOffered(asked, all) : action;
     try {
-      said = await startOrMerge(request);
+      said = typeof offer === "string" ? offer : await startOrMerge(offer.request);
     } catch (error) {
       said = errorText(error);
     }
@@ -1049,14 +1053,8 @@ export async function runSidebar(
       asking = null;
       if (name !== "y") return action.offer === "pick" ? askInBox(action.row) : undefined;
       if (action.offer === "pick") item = null;
-      if (action.question.request.command === "restart") return void goAhead(action.question);
-      all = readRows();
-      const offer = stillOffered(action, all);
-      if (typeof offer === "string") {
-        said = offer;
-        if (action.offer === "pick") askInBox(action.row);
-      } else void goAhead(offer, action.row);
-      return;
+      const restart = action.question.request.command === "restart";
+      return void goAhead(action.question, action.row, restart ? undefined : action);
     }
     if (key === "q") {
       screenTmux(agents, ["kill-session", "-t", `=${session}`]);
