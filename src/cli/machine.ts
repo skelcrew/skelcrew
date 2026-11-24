@@ -1,4 +1,6 @@
-// The commands for the daemon on this machine: sc serve, sc serve --bg and sc restart.
+// The commands for Skelcrew on this machine: sc serve, sc serve --bg, sc restart and sc update.
+import { realpathSync } from "node:fs";
+import { release, singleFile } from "../version.ts";
 import { usage } from "./input.ts";
 
 export async function machineCommand(args: string[]): Promise<void> {
@@ -6,6 +8,15 @@ export async function machineCommand(args: string[]): Promise<void> {
   if (command === "restart" && args.length === 1) {
     const { restartDaemon } = await import("../machine/service.ts");
     await restartDaemon();
+    return;
+  }
+  if (command === "update" && args.length === 1) {
+    if (!release || !singleFile)
+      throw new Error(
+        "this Skelcrew runs from a checkout, not a release, so it doesn't update itself. Run git pull in the checkout instead.",
+      );
+    const { updateItself } = await import("../machine/update.ts");
+    await updateItself(realpathSync(process.execPath));
     return;
   }
   const { serve, DaemonSetupError } = await import("../flow/daemon.ts");

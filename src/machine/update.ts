@@ -1,6 +1,6 @@
-// Updates: a release of Skelcrew installs the latest release over itself in the background, notes
-// it in the database, and the list says so until Skelcrew runs on it. A build from a checkout never
-// does: git pull updates it.
+// Updates: a release of Skelcrew installs the latest release over itself, in the background or
+// with sc update, notes it in the database, and the list says so until Skelcrew runs on it. A
+// build from a checkout never does: git pull updates it.
 import type { Database } from "bun:sqlite";
 import { chmodSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -109,6 +109,18 @@ export function keepUpToDate(db: Database): void {
     );
   look();
   setInterval(look, 60 * 60 * 1000);
+}
+
+export async function updateItself(file: string): Promise<void> {
+  const { openDb } = await import("../db.ts");
+  const { daemonStatus, restartDaemon } = await import("./service.ts");
+  const installed = await installLatest(file, releases, openDb());
+  if (!installed) {
+    console.log(`Skelcrew ${release} is the latest.`);
+    return;
+  }
+  console.log(`Updated Skelcrew ${release} → ${installed}.`);
+  if (await daemonStatus()) await restartDaemon();
 }
 
 // Returns the notice of a release installed in the background, for the list and the sidebar, or

@@ -62,6 +62,7 @@ const sections: [string, [string, string][]][] = [
       ["serve", "Run the daemon here, until Ctrl-C"],
       ["serve --bg", "Run it as a systemd or launchd service, and return"],
       ["restart", "Restart it, here or with --remote. Agents keep running"],
+      ["update", "Install the latest release of Skelcrew and restart the daemon on it"],
     ],
   ],
   [

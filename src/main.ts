@@ -27,6 +27,7 @@ const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   "--list": "showing the list",
   restart: "restarting the daemon",
+  update: "updating Skelcrew",
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",
@@ -87,6 +88,7 @@ async function dispatch(words: string[], json: boolean): Promise<void> {
   switch (first) {
     case "serve":
     case "restart":
+    case "update":
       return machineCommand(words);
     case "sidebar":
     case "footer":
