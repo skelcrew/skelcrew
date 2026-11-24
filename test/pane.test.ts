@@ -2,6 +2,7 @@
 // screen below, and where it goes beside the list's lines. Drawing reads nothing, so these need
 // no terminal and no database.
 import { expect, test } from "bun:test";
+import { itemKey } from "../src/list/actions.ts";
 import type { Details } from "../src/list/details.ts";
 import { drawList, type Frame, paneWidth } from "../src/list/layout.ts";
 import { drawPane } from "../src/list/pane.ts";
@@ -612,6 +613,19 @@ test("details taller than the pane scroll, say there is more below, and leave th
   expect(drawPane(row, tall, { screen }, 50, 22, false, -5).scroll).toBe(0);
   const stopped = plain(drawPane(row, tall, { note: "Builder not running" }, 50, 22).lines);
   expect(stopped.slice(17)).toEqual(["↓ more", "─".repeat(50), "Builder not running", "", ""]);
+});
+
+// The builder's own screen can show a line like an option, which its item's letter must never
+// pick once the item's box scrolled out of sight. While the box shows, the letter picks.
+test("a letter picks only the item's options the details show, never a line of the builder's screen", () => {
+  const body = Array.from({ length: 30 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
+  const tall: Details = { ...details, view: { ...details.view, body } };
+  const live = { screen: "│ a) yes\n│ b) no" };
+  const shown = drawPane(row, tall, live, 50, 22);
+  const away = drawPane(row, tall, live, 50, 22, false, 1000);
+  expect(plain(away.lines)).toContain("│ a) yes");
+  expect(itemKey(row, 0, [], "a", shown.details)).toBe("a");
+  expect(itemKey(row, 0, [], "a", away.details)).toBeNull();
 });
 
 // A merged PR can leave the forge's copy, and its row keeps the link saved for it.

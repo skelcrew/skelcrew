@@ -299,9 +299,10 @@ const liveLeast = 3;
 // ask for the whole of it, so the details have the rest of the pane.
 const stripLines = 3;
 
-// What the pane drew: its lines, how far its details are scrolled, which is never past their end,
-// and how many lines of them it has room for, so a key can scroll a page.
-export type Pane = { lines: string[]; scroll: number; room: number };
+// What the pane drew: its lines, the lines of the details among them, without the agent's live
+// screen, how far the details are scrolled, which is never past their end, and how many lines of
+// them it has room for, so a key can scroll a page.
+export type Pane = { lines: string[]; details: string[]; scroll: number; room: number };
 
 export function drawPane(
   row: Row | undefined,
@@ -315,9 +316,9 @@ export function drawPane(
   const blank = (count: number) => Array.from({ length: Math.max(count, 0) }, () => "");
   if (row?.part === "ask" && row.ask && details === null) {
     const item = drawItem(row, 0, width, height, scroll);
-    return { lines: item.lines, scroll: item.scroll, room: height };
+    return { lines: item.lines, details: item.lines, scroll: item.scroll, room: height };
   }
-  if (!row || details === null) return { lines: blank(height), scroll: 0, room: 0 };
+  if (!row || details === null) return { lines: blank(height), details: [], scroll: 0, room: 0 };
   const least = full ? liveLeast : stripLines + 1;
   const room = Math.max(
     live === null
@@ -332,7 +333,12 @@ export function drawPane(
   const at = Math.min(Math.max(scroll, 0), farthest);
   const more = room > 1 && at < farthest ? [paint(grey, fitted("↓ more", width))] : [];
   const top = [...all.slice(at, at + room - more.length), ...more];
-  const drawn = (lines: string[]) => ({ lines: lines.slice(0, height), scroll: at, room });
+  const drawn = (lines: string[]) => ({
+    lines: lines.slice(0, height),
+    details: top.slice(0, height),
+    scroll: at,
+    room,
+  });
   if (live === null) return drawn([...top, ...blank(height - top.length)]);
   const gap = full ? (height - top.length > least ? [""] : []) : blank(room - top.length);
   const rule = paint(grey, "─".repeat(width));
