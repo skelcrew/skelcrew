@@ -1968,7 +1968,7 @@ test("sc install in a checkout installs the plugins its skelcrew.lock pins witho
     "Installing fake 0.1.0 from simon/skelcrew-fake (runs as you, outside the agents' sandbox).\n",
   );
   expect(first.out).not.toContain("[Y/n]");
-  expect(first.out).toContain("Installed fake 0.1.0.");
+  expect(first.out).toEndWith("Installed fake 0.1.0.\n\nRun sc to continue.\n");
   expect(calls()).toBe("fake setup 0.1.0\n");
   expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(locked);
   // Nothing is written into the checkout, and the plugin isn't yours.
@@ -1980,7 +1980,9 @@ test("sc install in a checkout installs the plugins its skelcrew.lock pins witho
   cloneEach();
   const second = await atTerminal("", app, ["install"]);
   expect(second.err).toBe("");
-  expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(second.out).toBe(
+    "Nothing to install: this machine has everything your files ask for.\n\nRun sc to continue.\n",
+  );
   expect(calls()).toBe("");
   // Your own plugins and lock never take it in, even read later on a machine with no lock.
   await atTerminal("", home, ["plugin", "ls"]);
@@ -2001,7 +2003,19 @@ test("sc install in a checkout asks nothing for a plugin of yours the repository
   cloneEach();
   const run = await atTerminal("", app, ["install"]);
   expect(run.err).toBe("");
-  expect(run.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(run.out).toBe(
+    "Nothing to install: this machine has everything your files ask for.\n\nRun sc to continue.\n",
+  );
+});
+
+test("sc install in a checkout of a repository Skelcrew doesn't have yet ends by saying to tell the lead what to build", async () => {
+  await skel("sk-ant-oat01-good\n");
+  const fresh = checkoutWith("fresh", "git@example.com:simon/fresh.git");
+  const run = await atTerminal("", fresh, ["install"]);
+  expect(run.err).toBe("");
+  expect(run.out).toBe(
+    "Nothing to install: this machine has everything your files ask for.\n\nRun sc and tell your lead what to build.\n",
+  );
 });
 
 // A machine holds one version of a plugin, so a repository pinning another version than yours
@@ -2105,6 +2119,7 @@ test("sc install without a terminal installs none of a repository's plugins", as
   const run = await skel("y\n", bin, main(), app, {}, ["install"]);
   expect(run.code).toBe(1);
   expect(run.err).toContain("Skelcrew left out simon/skelcrew-fake, as each runs its commands");
+  expect(run.out).not.toContain("Run sc");
   expect(existsSync(fakeFolder())).toBe(false);
 });
 

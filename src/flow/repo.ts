@@ -1,6 +1,6 @@
 // The repositories Skelcrew works on, each from a clone of its own: bringing one in, trusting
 // one, keeping the clones current, listing the repositories and removing one.
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import {
   appendFileSync,
   existsSync,
@@ -65,6 +65,9 @@ import { taskName } from "./thread.ts";
 export const noRepositories = "Skelcrew has no repositories yet. Run sc inside a git repository.";
 
 export const noSkelcrewYaml = `This repository has no skelcrew.yaml. Create one with:\n${toRun(["sc init"])}\nThen commit and push it.`;
+
+// What sc init and sc install end with, so you know to start Skelcrew next.
+export const tellYourLead = "sc and tell your lead what to build.";
 
 const lacksPlugins = "This repository's skelcrew.yaml names plugins this machine doesn't have: ";
 
@@ -835,8 +838,8 @@ export async function initRepo(): Promise<void> {
   }
   console.log(
     allInstalled(root)
-      ? "\nRun sc and tell your lead what to build."
-      : "\nNext, install the plugins it names:\n\n  sc install\n\nThen run sc and tell your lead what to build.",
+      ? `\nRun ${tellYourLead}`
+      : `\nNext, install the plugins it names:\n\n  sc install\n\nThen run ${tellYourLead}`,
   );
 }
 
@@ -845,6 +848,24 @@ function allInstalled(root: string): boolean {
     return pluginsToInstall(root, installedReadOnly()).length === 0;
   } catch {
     return false;
+  }
+}
+
+// Returns what to run after sc install in the checkout at `root`: plain sc when Skelcrew already
+// has its repository and so its lead, and otherwise sc with a task for the lead. Only reads state.
+export function whatToRunNext(root: string): string {
+  const remote = originHere(root);
+  const file = join(dataDir(), "skelcrew.db");
+  if (!remote || !existsSync(file)) return `Run ${tellYourLead}`;
+  try {
+    const db = new Database(file, { readonly: true });
+    try {
+      return repositoryAt(db, remote) ? "Run sc to continue." : `Run ${tellYourLead}`;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return `Run ${tellYourLead}`;
   }
 }
 
