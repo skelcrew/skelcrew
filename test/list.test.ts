@@ -2091,6 +2091,20 @@ test("a first Ctrl-D asks for a second, any other key clears that, and q leaves 
   await until(() => read(join(home, "left")) === "left", "the list to leave");
 });
 
+// A terminal asked for extended keys sends Ctrl-D as kitty's CSI-u or xterm's form.
+for (const [form, name] of [
+  ["\x1b[100;5u", "kitty's"],
+  ["\x1b[100;5:1u", "kitty's with its press event"],
+  ["\x1b[27;5;100~", "xterm's"],
+] as const)
+  test(`Ctrl-D twice in ${name} form leaves the list`, async () => {
+    await open();
+    type(form);
+    await until(() => seen().includes("Press Ctrl-D again to close"), "the hint");
+    type(form);
+    await until(() => read(join(home, "left")) === "left", "the list to leave");
+  });
+
 // Ctrl-\ pressed once too often lands on the list, and is another key between two Ctrl-Ds.
 test("Ctrl-\\ between two Ctrl-Ds clears the hint, and the list stays", async () => {
   await open();
@@ -2367,7 +2381,7 @@ test("a Ctrl-D that comes with Enter never reaches the agent", async () => {
   const labels = { repository: "simon/app", role: "builder" as const, task: "app-7" };
   startSession(agents, "app-7", { folder: home, command: [script], env: {}, labels });
   await arrowTo("▸ ○ 7 ");
-  type("\r\x04a");
+  type("\r\x04\x1b[100;5u\x1b[27;5;100~a");
   await until(() => read(join(home, "raw.typed")) === "a", "what was typed");
   type("b");
   await until(() => read(join(home, "raw.typed")) === "ab", "the next key");
@@ -2648,11 +2662,14 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   type("\x04");
   type("x");
   await until(() => read(join(home, "host.typed")) === "x", "what was typed");
-  type("\x04");
-  await Bun.sleep(100);
-  type("\x04");
+  // Kitty's Ctrl-D, cut in two reads, as over a slow link.
+  type("\x1b[100");
+  await Bun.sleep(20);
+  type(";5uy");
+  await until(() => read(join(home, "host.typed")) === "xy", "the key after it");
+  type("\x04\x04");
   await until(() => seen().includes("esc/^D^D quit"), "the list again");
-  expect(read(join(home, "host.typed"))).toBe("x");
+  expect(read(join(home, "host.typed"))).toBe("xy");
   expect(read(join(home, "left"))).toBe("");
 });
 

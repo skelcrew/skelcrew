@@ -75,11 +75,14 @@ const copied = `run-shell -d 0.3; send-keys -X copy-selection-no-clear; delete-b
 // Ctrl-D never reaches an agent, where one press would end it. Twice detaches, as on the screen.
 // The first moves your terminal to a key table where a second one detaches, and says so. Any
 // other key moves it back and goes on to the agent, as tmux would drop it, and Ctrl-\ detaches.
+// Keys that arrive together are still read as keys, not as a paste that skips these bindings, so
+// fast typing never hands Ctrl-D on. A paste that matters comes bracketed anyway.
 const askToClose = `switch-client -T close; display-message "Press Ctrl-D again to close"`;
 const tmuxConfig = `set -g status off
 unbind -n M-q
 unbind -n C-q
 bind -n C-\\\\ detach-client
+set -g assume-paste-time 0
 bind -n C-d { ${askToClose} }
 bind -T close C-d detach-client
 bind -T close Any { switch-client -T root; send-keys }

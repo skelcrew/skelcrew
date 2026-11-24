@@ -663,6 +663,7 @@ test("Ctrl-\\ and Ctrl-D twice detach with no prefix, scrolled back too, and the
   expect(tmux(["list-keys", "-T", "root", "C-d"])).toContain("switch-client -T close");
   expect(tmux(["list-keys", "-T", "copy-mode", "C-d"])).toContain("switch-client -T close");
   expect(tmux(["list-keys", "-T", "close", "C-d"])).toContain("detach-client");
+  expect(tmux(["show-options", "-g", "assume-paste-time"])).toBe("assume-paste-time 0\n");
   expect(tmux(["list-keys", "-T", "close", "Any"])).toContain("send-keys");
   expect(tmux(["list-keys", "-T", "close", "C-\\"])).toContain("detach-client");
   expect(tmux(["list-keys", "-T", "root", "M-q"])).toBe("");

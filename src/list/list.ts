@@ -7,6 +7,7 @@ import { openDb } from "../db.ts";
 import { leadSession } from "../flow/lead.ts";
 import { builderSession, readThread, typedTask } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
+import { endOfSequence, isCtrlD, keyPattern } from "../keys.ts";
 import { updateNotice } from "../machine/update.ts";
 import { attachOnHost, type Host } from "../plugins/runtime.ts";
 import { closeHint, closeWithin } from "../screen/footer.ts";
@@ -87,34 +88,12 @@ const keyNames: Record<string, string> = {
   "\x1b[5~": "page up",
   "\x1b[6~": "page down",
   "\x03": "leave",
-  "\x04": "close",
   "\x1b": "escape",
 };
 const esc = "\x1b";
 // A click comes as your terminal reports the mouse, with its button, column and row. Its
 // sequence is a CSI one, so it reaches the list as one key.
 const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
-// Splits what the terminal sent into keys. Every escape sequence is one key, read or not, as
-// its Esc alone would leave the list. That covers keys such as Right, Home, F5 or Alt-x, and
-// the answers a terminal sends to tmux's questions, which reach the list once you leave an
-// agent. In order: a terminal's string ended by ST or BEL, a CSI sequence, an SS3 one, Alt
-// with a key, then any single character, a lone Esc included.
-const keyPattern = new RegExp(
-  [
-    `${esc}[P\\]X^_][\\s\\S]*?(?:${esc}\\\\|\\x07)`,
-    `${esc}\\[[0-?]*[ -/]*[@-~]`,
-    `${esc}O[\\s\\S]`,
-    `${esc}[^${esc}]`,
-    "[\\s\\S]",
-  ].join("|"),
-  "g",
-);
-// The start of an escape sequence at the end of a read, whose end may come in the next one: an
-// Esc, a CSI or SS3 sequence short of its last character, or a terminal's string short of its ST
-// or BEL.
-const endOfSequence = new RegExp(
-  `${esc}(?:\\[[0-?]*[ -/]*|O|[P\\]X^_](?:[^${esc}\\x07]|${esc}(?!\\\\))*)?$`,
-);
 // Any mouse report in SGR, a press with M or a release with m, which only the list reads.
 const mousePattern = new RegExp(`^${esc}\\[<\\d+;\\d+;\\d+[Mm]$`);
 // Ctrl-\ as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
@@ -355,7 +334,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const after =
       typed
         .splice(0)
-        .filter((key) => !mousePattern.test(key.sent) && keyNames[key.sent] !== "close")
+        .filter((key) => !mousePattern.test(key.sent) && !isCtrlD(key.sent))
         .map((key) => key.sent)
         .join("") + rest;
     partial = "";
@@ -740,7 +719,11 @@ export async function runList(agents: string, repository: string): Promise<void>
       // Enter, would otherwise attach after the terminal was given back.
       const key = left ? undefined : typed.shift();
       if (key === undefined) break;
-      const named = back.has(key.sent) ? "back" : (keyNames[key.sent] ?? key.sent);
+      const named = back.has(key.sent)
+        ? "back"
+        : isCtrlD(key.sent)
+          ? "close"
+          : (keyNames[key.sent] ?? key.sent);
       await press(named).catch((error) => say(errorText(error)));
       if (named === "enter" || asking) while (typed[0]?.read === key.read) typed.shift();
     }

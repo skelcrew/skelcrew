@@ -6,6 +6,7 @@ import type { Database } from "bun:sqlite";
 import type { z } from "zod";
 import { filesPlaceholder } from "../agents/sandbox.ts";
 import { errorText } from "../format.ts";
+import { endOfSequence, isCtrlD, keyPattern } from "../keys.ts";
 import { commandFor, installedPlugins, type Manifest, quoteForSh, readManifest } from "./plugin.ts";
 
 // A runtime plugin that hosts sessions: its name, its version, its folder, its session and attach
@@ -188,15 +189,13 @@ export async function askHost<T>(
   }
 }
 
-// Ctrl-D as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
-const ctrlD = new RegExp(["\x04", "\x1b\\[100;5(?::\\d+)?u", "\x1b\\[27;5;100~"].join("|"), "g");
-
 // Attaches your terminal full screen to a session on the host, by running the plugin's attach
 // command in it with the session's ID after its own words, and returns once you detach. The
 // command runs in a terminal of its own between it and yours, as no tmux of Skelcrew's is there
 // to keep Ctrl-D from the agent, where one would end it. Ctrl-D twice within 2 seconds, with no
-// other key between, ends the attach, as it closes the screen. Without a terminal, it runs the
-// command as it is.
+// other key between, ends the attach, as it closes the screen. What you type is read key by key,
+// in order, and an escape sequence cut off at the end of a read waits a moment for its end, so
+// Ctrl-D is caught in any form. Without a terminal, it runs the command as it is.
 export async function attachOnHost(host: PluginHost, id: string): Promise<void> {
   const { argv, env } = commandFor(host.plugin, host.attach);
   const options = { cwd: host.folder, env: { ...process.env, ...env } };
@@ -218,15 +217,28 @@ export async function attachOnHost(host: PluginHost, id: string): Promise<void> 
   });
   const command = Bun.spawn([...argv, id], { ...options, terminal });
   let closeBy = 0;
+  const press = (key: string) => {
+    if (!isCtrlD(key)) {
+      closeBy = 0;
+      if (!terminal.closed) terminal.write(Buffer.from(key, "latin1"));
+    } else if (Date.now() < closeBy) command.kill();
+    else closeBy = Date.now() + 2000;
+  };
+  const take = (text: string) => {
+    for (const [key] of text.matchAll(keyPattern)) press(key);
+  };
+  let partial = "";
+  let flush: ReturnType<typeof setTimeout> | undefined;
   const typed = (bytes: Uint8Array) => {
-    const text = Buffer.from(bytes).toString("latin1");
-    const rest = text.replace(ctrlD, "");
-    if (rest) closeBy = 0;
-    if (rest !== text) {
-      if (Date.now() < closeBy) command.kill();
-      closeBy = Date.now() + 2000;
-    }
-    if (rest && !terminal.closed) terminal.write(Buffer.from(rest, "latin1"));
+    clearTimeout(flush);
+    const text = partial + Buffer.from(bytes).toString("latin1");
+    partial = text.match(endOfSequence)?.[0] ?? "";
+    take(text.slice(0, text.length - partial.length));
+    if (partial)
+      flush = setTimeout(() => {
+        take(partial);
+        partial = "";
+      }, 100);
   };
   const resized = () => terminal.resize(process.stdout.columns || 80, process.stdout.rows || 24);
   process.stdin.on("data", typed);
@@ -235,6 +247,7 @@ export async function attachOnHost(host: PluginHost, id: string): Promise<void> 
   try {
     await command.exited;
   } finally {
+    clearTimeout(flush);
     process.stdin.off("data", typed);
     process.stdin.pause();
     process.off("SIGWINCH", resized);
