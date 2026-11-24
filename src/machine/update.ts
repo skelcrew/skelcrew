@@ -9,9 +9,18 @@ import { errorText } from "../format.ts";
 import { capture } from "../run.ts";
 import { isRelease, release, releases, singleFile } from "../version.ts";
 
-// The release file for this machine, named as the install script names it. A Mac running sc
-// through Rosetta asks for the x64 file again, which is the one it already runs.
-const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
+// The release file for this machine, named as the install script names it. An x64 sc running
+// through Rosetta on an Apple Silicon Mac asks for the arm64 file, which runs natively.
+function asset(): string {
+  const translated =
+    process.platform === "darwin" &&
+    process.arch === "x64" &&
+    Bun.spawnSync(["sysctl", "-n", "sysctl.proc_translated"], { stderr: "ignore" })
+      .stdout.toString()
+      .trim() === "1";
+  const cpu = process.arch === "arm64" || translated ? "arm64" : "x64";
+  return `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${cpu}`;
+}
 
 // Downloads an address, or throws naming it.
 async function download(address: string): Promise<Response> {
@@ -63,10 +72,11 @@ export async function installLatest(
   db: Database,
 ): Promise<string | null> {
   const at = `${base}/latest/download`;
-  const want = await releaseSum(at, asset);
+  const name = asset();
+  const want = await releaseSum(at, name);
   // Comparing sums costs only the small checksums file.
   if ((await fileSum(file)) === want) return null;
-  const bytes = await downloadRelease(at, asset, want);
+  const bytes = await downloadRelease(at, name, want);
   // Staged in the same folder, as a rename can't cross disks.
   const staged = join(dirname(file), `.sc-update-${process.pid}`);
   try {
