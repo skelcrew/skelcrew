@@ -150,12 +150,13 @@ function linkLines(id: string, given: string, width: number): string[] {
   return [fitted(id, width), ...folded(link, width).map((piece) => linked(link, piece))];
 }
 
-// Returns the lines of a task's details, each with the option of its item it shows, if any.
+// Returns the lines of a task's details, each with the option of its item it answers, if any, and
+// whether it shows that option's letter.
 function detailLines(
   row: Row,
   details: Details,
   width: number,
-): { text: string; pick: Pick | null }[] {
+): { text: string; pick: Pick | null; labelled: boolean }[] {
   const { view, findings, events, updates } = details;
   const text = Math.min(width, textWidth);
   const value = Math.max(width - labelWidth, 1);
@@ -244,11 +245,11 @@ function detailLines(
   const kept = view.mustStayTrue.map((item, n) => `${n + 1}. ${item}`).join("\n");
   const stayTrue = kept === "" ? [] : section("Must stay true", markdownLines(kept, text));
   const activity = events.length === 0 ? [] : section("Activity", dated(events, width, folded));
-  const plain = (lines: string[]) => lines.map((text) => ({ text, pick: null }));
+  const plain = (lines: string[]) => lines.map((text) => ({ text, pick: null, labelled: false }));
   const parts = [callout, ...[card, task, decisions, stayTrue, told, activity].map(plain)].filter(
     (part) => part.length > 0,
   );
-  const gap = { text: "", pick: null };
+  const gap = { text: "", pick: null, labelled: false };
   return [...plain(top), ...parts.flatMap((part, i) => (i === 0 ? part : [gap, ...part]))];
 }
 
@@ -324,7 +325,7 @@ export function drawPane(
   if (row?.part === "ask" && row.ask && details === null) {
     const item = drawItem(row, 0, width, height, scroll);
     const picks = item.targets.flatMap((target) =>
-      target && "pick" in target && target.pick ? [target.pick] : [],
+      target && "pick" in target && target.pick && target.labelled ? [target.pick] : [],
     );
     return { lines: item.lines, picks, scroll: item.scroll, room: height };
   }
@@ -346,7 +347,7 @@ export function drawPane(
   const top = [...all.slice(at, at + room - more.length), ...more];
   const picks = marked
     .slice(at, at + room - more.length)
-    .flatMap((line) => (line.pick ? [line.pick] : []));
+    .flatMap((line) => (line.pick && line.labelled ? [line.pick] : []));
   const drawn = (lines: string[]) => ({ lines: lines.slice(0, height), picks, scroll: at, room });
   if (live === null) return drawn([...top, ...blank(height - top.length)]);
   const gap = full ? (height - top.length > least ? [""] : []) : blank(room - top.length);

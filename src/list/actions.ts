@@ -184,7 +184,12 @@ export function itemKey(
   const shown =
     beside.some((one) => one === pick) ||
     targets.some(
-      (target) => target !== null && "row" in target && target.row === here && target.pick === pick,
+      (target) =>
+        target !== null &&
+        "row" in target &&
+        target.row === here &&
+        target.pick === pick &&
+        target.labelled === true,
     );
   return pick !== undefined && shown ? pick : null;
 }

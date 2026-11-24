@@ -260,26 +260,39 @@ const answeredBy = (ask: Ask) =>
 // Returns an item in a box `width` columns wide, drawn with box-drawing characters in the
 // colour of the screen's other edges: its short title, its whole text, then each option by its
 // letter, then the line for a reply on the lead's item, each wrapped to the box, never cut, with
-// what tapping each line answers. Last come what a pick on it does while it runs, why the last
+// what tapping each line answers, and whether it is the line that shows the letter, which a key
+// needs. Last come what a pick on it does while it runs, why the last
 // pick failed, in red, and the y/n question a pick asks, in yellow. The details pane and an item opened full-size both show it.
-export function itemBox(ask: Ask, width: number): { text: string; pick: Pick | null }[] {
+export function itemBox(
+  ask: Ask,
+  width: number,
+): { text: string; pick: Pick | null; labelled: boolean }[] {
   const room = Math.max(width - 4, 1);
   const wrapped = (text: string) =>
     text.split("\n").flatMap((part) => Bun.wrapAnsi(part, room, { hard: true }).split("\n"));
-  const inside = (code: string | null, line: string, pick: Pick | null = null) => ({
+  const inside = (
+    code: string | null,
+    line: string,
+    pick: Pick | null = null,
+    labelled = false,
+  ) => ({
     text: `${paint(grey, "│")} ${filled(code === null ? line : paint(code, line), room)} ${paint(grey, "│")}`,
     pick,
+    labelled,
   });
   const options = ask.options.flatMap((option, at) => {
     const letter = letters[at];
     if (letter === undefined) return [];
-    return wrapped(`${letter}) ${option}`).map((line) => inside(null, line, letter));
+    return wrapped(`${letter}) ${option}`).map((line, i) => inside(null, line, letter, i === 0));
   });
   const reply =
-    ask.acts === null ? wrapped("r) reply").map((line) => inside(grey, line, "reply")) : [];
+    ask.acts === null
+      ? wrapped("r) reply").map((line, i) => inside(grey, line, "reply", i === 0))
+      : [];
   const edge = (left: string, right: string) => ({
     text: paint(grey, `${left}${"─".repeat(room + 2)}${right}`),
     pick: null,
+    labelled: false,
   });
   const said = (code: string, text: string | undefined) =>
     text === undefined
@@ -325,8 +338,8 @@ export function drawItem(
     text: `   ${line.text}`,
   }));
   const all = [
-    { text: `   ${paint(bright, about)}`, pick: null },
-    { text: "", pick: null },
+    { text: `   ${paint(bright, about)}`, pick: null, labelled: false },
+    { text: "", pick: null, labelled: false },
     ...box,
   ];
   if (height < 3) {
@@ -345,7 +358,7 @@ export function drawItem(
   const below = edges ? [edge(at + view < all.length, "↓", view)] : [];
   const body = shown.map((line) => ({
     text: line.text,
-    target: line.pick === null ? null : { row: here, pick: line.pick },
+    target: line.pick === null ? null : { row: here, pick: line.pick, labelled: line.labelled },
   }));
   const blank = Array.from({ length: view - shown.length }, () => ({ text: "", target: null }));
   const drawn: { text: string; target: Target }[] = [...above, ...body, ...blank, ...below];
@@ -463,14 +476,15 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
 }
 
 // What a click on a line of the list reaches: a row, by its place in the rows, which is the
-// lead's or a task's, with `pick` on a line of its item that answers it, a section's heading, a
+// lead's or a task's, with `pick` on a line of its item that answers it, and `labelled` on the
+// line that shows that option's letter, a section's heading, a
 // number of lines to scroll an item open full-size by, or nothing, such as on a blank line or an
 // edge.
 // On an edge line, a click reaches the heading pinned at its column: `pinned` has each one's
 // columns, counted from 1 as your terminal counts a click.
 export type Pinned = { from: number; to: number; section: Section };
 export type Target =
-  | { row: number; pick?: Pick }
+  | { row: number; pick?: Pick; labelled?: boolean }
   | { section: Section }
   | { pinned: Pinned[] }
   | { scroll: number }

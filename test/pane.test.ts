@@ -2,8 +2,9 @@
 // screen below, and where it goes beside the list's lines. Drawing reads nothing, so these need
 // no terminal and no database.
 import { expect, test } from "bun:test";
+import { itemKey } from "../src/list/actions.ts";
 import type { Details } from "../src/list/details.ts";
-import { drawList, type Frame, paneWidth } from "../src/list/layout.ts";
+import { drawItem, drawList, type Frame, paneWidth } from "../src/list/layout.ts";
 import { drawPane } from "../src/list/pane.ts";
 import type { Row } from "../src/list/rows.ts";
 
@@ -639,6 +640,31 @@ test("the pane counts only the item's option lines it shows, never text that loo
   const alone = drawPane(asking, tall, null, 50, 1, false, question);
   expect(plain(alone.lines)).toEqual([`│ ${"a) per user, or per key?".padEnd(46)} │`]);
   expect(alone.picks).toEqual([]);
+});
+
+// A long option wraps over several lines. Its letter answers only while the line that shows the
+// letter is in view, never from what is left of the option once that line scrolled away.
+test("a wrapped option counts only while the line with its letter shows", () => {
+  const long = "Open the builder and read its last screen before you answer anything at all";
+  const wrapped: Row = row.ask ? { ...row, ask: { ...row.ask, options: [long, "Wait"] } } : row;
+  const whole = plain(drawPane(wrapped, details, null, 50, 500).lines);
+  const letter = whole.findIndex((line) => line.includes("a) Open the builder"));
+  expect(whole[letter + 1]).not.toContain("b) Wait");
+  const at = (scroll: number) => drawPane(wrapped, details, null, 50, 22, false, scroll);
+  expect(at(letter).picks).toEqual(["a", "b"]);
+  expect(plain(at(letter + 1).lines)[0]).toBe(whole[letter + 1]);
+  expect(at(letter + 1).picks).toEqual(["b"]);
+  const opened = (scroll: number) => drawItem(wrapped, 0, 30, 6, scroll);
+  const shows = (scroll: number) =>
+    plain(opened(scroll).lines).some((line) => line.includes("a) Open"));
+  const keys = (scroll: number) =>
+    ["a", "b"].filter((key) => itemKey(wrapped, 0, opened(scroll).targets, key));
+  const first = Array.from({ length: 40 }, (_, scroll) => scroll).find(shows) ?? -1;
+  expect(keys(first)).toContain("a");
+  let past = first;
+  while (shows(past)) past++;
+  expect(plain(opened(past).lines).join("\n")).toContain("answer anything");
+  expect(keys(past)).not.toContain("a");
 });
 
 // A merged PR can leave the forge's copy, and its row keeps the link saved for it.
