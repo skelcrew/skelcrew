@@ -203,7 +203,10 @@ test("the login an earlier release shared moves out of its agents' reach and is 
   writeFileSync(join(shared, "auth.json"), JSON.stringify(login));
   // An agent from then linked the file to another name, to write it after it moves.
   linkSync(join(shared, "auth.json"), join(shared, "kept"));
-  const sharedFile = statSync(join(shared, "auth.json")).ino;
+  // A name outside the folder keeps that file alive, so its inode can't be handed to the new one.
+  const held = join(home, "held-login");
+  linkSync(join(shared, "auth.json"), held);
+  const sharedFile = statSync(held).ino;
   expect(startedShared(home, "app-12")).toBe(true);
   // While it is there, no agent gets a login of its own.
   expect(() => ownLogin(home, join(data(), "codex"))).toThrow("sc stop and sc start");
@@ -213,6 +216,7 @@ test("the login an earlier release shared moves out of its agents' reach and is 
   // Renewed at once, though fresh, as those agents knew its refresh token.
   expect(sent).toEqual(["refresh-1"]);
   expect(read(own()).tokens.refresh_token).toBe("refresh-2");
+  expect(read(held).tokens.refresh_token).toBe("refresh-1");
   // Codex run outside the sandbox finds it through Skelcrew's CODEX_HOME.
   expect(read(join(data(), "codex", "auth.json")).tokens.refresh_token).toBe("refresh-2");
   // Once is enough.
