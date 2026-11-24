@@ -668,6 +668,34 @@ test("on a Mac, starts the agent launchd has loaded when loading it again fails"
   expect(calls()).toContain(`launchctl kickstart gui/${uid}/dev.skelcrew.daemon\n`);
 });
 
+test("on a Mac, reports another error when loading the agent again fails", async () => {
+  asMac();
+  await skelOnMac("sk-ant-oat01-good\n");
+  writeFileSync(plist(), readFileSync(plist(), "utf8").replace("serve", "up"));
+  slowBootout(
+    0,
+    ': > "$HOME/loaded"; test -e "$HOME/failed" && { echo "Bootstrap failed: 37: Operation already in progress" >&2; exit 37; }; : > "$HOME/failed"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5',
+  );
+  const run = await skelOnMac();
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("Bootstrap failed: 37");
+  expect(readFileSync(plist(), "utf8")).toContain("<string>up</string>");
+});
+
+// The wait gives up after 10 seconds, so this test takes that long.
+test("on a Mac, reports a failed load while launchd still has the old agent", async () => {
+  asMac();
+  await skelOnMac("sk-ant-oat01-good\n");
+  writeFileSync(plist(), readFileSync(plist(), "utf8").replace("serve", "up"));
+  slowBootout(1000);
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac();
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("Bootstrap failed: 5");
+  expect(calls()).not.toContain("kickstart");
+  expect(readFileSync(plist(), "utf8")).toContain("<string>up</string>");
+}, 30_000);
+
 test("on a Mac, escapes a PATH for the agent's definition", async () => {
   asMac();
   const odd = join(home, "a&b");

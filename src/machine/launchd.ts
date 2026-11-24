@@ -72,19 +72,22 @@ const hasAgent = () => launchctl(["print", service()]).ok;
 // bun, claude or checkout would never reach it. That stops the daemon, while agents keep running
 // in tmux. bootout returns before launchd has dropped the agent, and a bootstrap meanwhile fails
 // with error 5, so the load waits for print to stop finding it. A bootstrap that still fails with
-// error 5 is tried once more, and an agent launchd then has is started instead.
+// error 5 is tried once more. When that fails with error 5 too, an agent launchd has since the old
+// one dropped is the new one, and is started instead. An old one that never dropped is reported.
 export function loadLaunchAgent(why: string): void {
   mkdirSync(dirname(daemonLog()), { recursive: true });
   appendFileSync(daemonLog(), `${new Date().toISOString()} sc reloads the launchd agent: ${why}\n`);
   launchctl(["bootout", service()]);
   const began = Date.now();
   let waiting = false;
-  while (hasAgent() && Date.now() < began + 10_000) {
+  let dropped = !hasAgent();
+  while (!dropped && Date.now() < began + 10_000) {
     if (!waiting && Date.now() > began + 1000) {
       console.log("Waiting for macOS to stop Skelcrew's old daemon…");
       waiting = true;
     }
     Bun.sleepSync(100);
+    dropped = !hasAgent();
   }
   let loaded = launchctl(["bootstrap", domain(), plistFile()]);
   if (loaded.ok) return;
@@ -92,7 +95,8 @@ export function loadLaunchAgent(why: string): void {
     Bun.sleepSync(500);
     loaded = launchctl(["bootstrap", domain(), plistFile()]);
     if (loaded.ok) return;
-    if (hasAgent() && launchctl(["kickstart", service()]).ok) return;
+    if (dropped && loaded.code === 5 && hasAgent() && launchctl(["kickstart", service()]).ok)
+      return;
   }
   throw new Error(`launchctl couldn't load Skelcrew's daemon: ${loaded.said}`);
 }
