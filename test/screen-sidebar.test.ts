@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { panes } from "../src/screen/screen.ts";
 import { itemSql, threadSql } from "./harness.ts";
 import {
   acted,
@@ -20,11 +21,14 @@ import {
   read,
   ready,
   right,
+  screen,
+  screenSessions,
   seen,
   selected,
   sidebar,
   sql,
   startTest,
+  tmux,
   type,
   typingToSidebar,
   until,
@@ -311,6 +315,27 @@ test("a letter picks an option shown on the right after the sidebar redraws", as
   );
   await until(() => left().some((line) => / 15\b/.test(line)), "the redraw with APP-15");
   expect(onItem()).toBe(true);
+  await pickedAtOnce();
+});
+
+// The details on the right and the sidebar each read the item once a second. Between those reads,
+// the details can still show an item the lead has since replaced, whose letter must not pick.
+test("a letter picks nothing while the right shows another item on the same row", async () => {
+  daemon();
+  approvedItem();
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onItem, "APP-14's item on the right");
+  const pane = `=${screenSessions()[0] ?? ""}:.${panes.right}`;
+  const told = () => tmux(screen, "display", "-p", "-t", pane, "#{@picks}").out.trim();
+  await until(() => told().endsWith(" a,b"), "the details to tell their options");
+  const [pid, item] = told().split(" ");
+  tmux(screen, "set", "-p", "-t", pane, "@picks", `${pid} older a,b`);
+  type("a");
+  await Bun.sleep(500);
+  expect(right()).not.toContain("Merge app#41 into main?");
+  tmux(screen, "set", "-p", "-t", pane, "@picks", `${pid} ${item} a,b`);
   await pickedAtOnce();
 });
 

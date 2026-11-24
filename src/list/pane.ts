@@ -151,7 +151,11 @@ function linkLines(id: string, given: string, width: number): string[] {
 }
 
 // Returns the lines of a task's details, each with the option of its item it shows, if any.
-function detailLines(row: Row, details: Details, width: number): { text: string; pick: Pick | null }[] {
+function detailLines(
+  row: Row,
+  details: Details,
+  width: number,
+): { text: string; pick: Pick | null }[] {
   const { view, findings, events, updates } = details;
   const text = Math.min(width, textWidth);
   const value = Math.max(width - labelWidth, 1);

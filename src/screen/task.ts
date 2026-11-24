@@ -9,7 +9,7 @@ import { errorText } from "../format.ts";
 import { type Details, readDetails } from "../list/details.ts";
 import type { Pick } from "../list/layout.ts";
 import { drawPane } from "../list/pane.ts";
-import { listRows, type Open, type Row } from "../list/rows.ts";
+import { type Ask, listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine } from "../plugins/runtime.ts";
 import { attachedMark, panes, skelcrewCommand, zoomIn } from "./screen.ts";
@@ -136,7 +136,7 @@ export async function runTaskDetails(
     if (text === lastFrame) return;
     lastFrame = text;
     process.stdout.write(text);
-    const picks = `${process.pid} ${pane.picks.join(",")}`;
+    const picks = `${process.pid} ${row?.ask ? itemId(row.ask) : "-"} ${pane.picks.join(",")}`;
     const here = process.env.TMUX_PANE;
     if (picks === toldPicks || !here) return;
     toldPicks = picks;
@@ -170,13 +170,17 @@ export async function runTaskDetails(
   await new Promise(() => {});
 }
 
-// Returns the options of the item that the details in the screen's pane `target` show now, as the
-// details told the pane. Anything else in the pane, such as a builder attached there, or details
-// still starting, tells nothing, as only the details running in the pane now count.
-export function picksBeside(agents: string, target: string): Pick[] {
+// Names an item by what it asks and what its options do, so a replaced item has another name.
+const itemId = (ask: Ask) =>
+  Bun.hash(JSON.stringify([ask.title, ask.text, ask.options, ask.acts])).toString(36);
+
+// Returns the options of `ask` that the details in the screen's pane `target` show now, as the
+// details told the pane. Anything else in the pane, such as a builder attached there, details
+// still starting, or details still showing an item since replaced, tells nothing.
+export function picksBeside(agents: string, target: string, ask: Ask): Pick[] {
   const told = screenTmux(agents, ["display", "-p", "-t", target, "#{pane_pid} #{@picks}"]);
-  const [pid, from, picks = ""] = told.out.trim().split(" ");
-  if (!told.ok || !pid || pid !== from) return [];
+  const [pid, from, item, picks = ""] = told.out.trim().split(" ");
+  if (!told.ok || !pid || pid !== from || item !== itemId(ask)) return [];
   const all: Pick[] = [...letters, "reply"];
   return all.filter((pick) => picks.split(",").includes(pick));
 }

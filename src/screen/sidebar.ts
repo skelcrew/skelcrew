@@ -989,7 +989,9 @@ export async function runSidebar(
 
   // Returns the options of `row`'s item shown on the right, while the right shows its details.
   const beside = (row: Row) =>
-    !narrow && row.ask && shown === detailsOf(row.name) ? picksBeside(agents, rightPane) : [];
+    !narrow && row.ask && shown === detailsOf(row.name)
+      ? picksBeside(agents, rightPane, row.ask)
+      : [];
 
   const press = (key: string) => {
     if (key === dropAsk) return answerDrop();
