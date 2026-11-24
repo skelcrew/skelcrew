@@ -1682,7 +1682,7 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
 });
 
-test("init says nothing of GitHub for a skelcrew.yaml that names plugins, whatever its skelcrew.lock holds", async () => {
+test("init says nothing of GitHub when it can't add the plugin, for a skelcrew.lock or plugins: it can't read", async () => {
   const checkout = onGitHub("simon/app", "WRITE", false, {});
   githubInstalledAsYours();
   writeFileSync(
@@ -1695,6 +1695,14 @@ test("init says nothing of GitHub for a skelcrew.yaml that names plugins, whatev
   rmSync(lock);
   symlinkSync(join(checkout, "skelcrew.yaml"), lock);
   expect((await skel(["init"], "", checkout)).out).not.toContain("GitHub");
+  rmSync(lock);
+  writeFileSync(
+    join(checkout, "skelcrew.yaml"),
+    `setup: [make]\ntest: [make test]\n${limitAndCrew}plugins: [simon/skelcrew-other, ./local]\n`,
+  );
+  const run = await skel(["init"], "", checkout);
+  expect(run.out).not.toContain("Found GitHub");
+  expect(run.out).toContain("Skelcrew couldn't add skelcrew/skelcrew-github");
 });
 
 // Only sc install installs plugins. A plugin the files named already runs nothing in sc init,

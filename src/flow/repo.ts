@@ -40,7 +40,6 @@ import {
   githubPlugin,
   installedReadOnly,
   lockStart,
-  namedPlugins,
   namePlugin,
   pinRepositoryPlugin,
   pluginsToInstall,
@@ -750,15 +749,17 @@ function gitHubToAdd(root: string, remote: string): { owner: string; repo: strin
   const found = parseRemote(remote);
   if (found?.host !== "github.com") return null;
   try {
-    return namedPlugins(root).length === 0 ? found : null;
+    return repositoryPlugins(root).plugins.length === 0 ? found : null;
   } catch {
-    return found;
+    return null;
   }
 }
 
-function addForgePlugin(root: string): "named" | "pinned" | null {
+function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
+  if (parseRemote(remote)?.host !== "github.com") return null;
   try {
-    const { lock } = repositoryPlugins(root);
+    const { plugins, lock } = repositoryPlugins(root);
+    if (plugins.length > 0) return null;
     if (lock[githubPlugin]) {
       namePlugin(root, githubPlugin);
       return "named";
@@ -810,7 +811,7 @@ export async function initRepo(): Promise<void> {
     console.log(`Found GitHub at ${github.owner}/${github.repo} (origin)\nAdding GitHub plugin...`);
   if (!hasConfig) writeFileSync(file, await newSkelcrewYaml(), { flag: "wx" });
   const completed = hasConfig ? await completeSkelcrewYaml(root) : [];
-  const forge = github ? addForgePlugin(root) : null;
+  const forge = addForgePlugin(root, remote);
   const lock = join(root, "skelcrew.lock");
   const newLock = lstatSync(lock, { throwIfNoEntry: false }) === undefined;
   if (newLock) writeFileSync(lock, lockStart, { flag: "wx" });

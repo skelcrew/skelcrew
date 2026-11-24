@@ -59,15 +59,10 @@ function refuseLink(file: string): void {
 // both checked. `folder` is your checkout or Skelcrew's clone. A file that isn't there names and
 // pins nothing.
 export function repositoryPlugins(folder: string): { plugins: string[]; lock: Lock } {
-  const plugins = namedPlugins(folder);
-  const lockFile = join(folder, "skelcrew.lock");
-  refuseLink(lockFile);
-  return { plugins, lock: readLockAt(lockFile) ?? {} };
-}
-
-export function namedPlugins(folder: string): string[] {
   const yamlFile = join(folder, "skelcrew.yaml");
+  const lockFile = join(folder, "skelcrew.lock");
   refuseLink(yamlFile);
+  refuseLink(lockFile);
   let data: unknown = null;
   if (lstatSync(yamlFile, { throwIfNoEntry: false })) {
     try {
@@ -79,7 +74,7 @@ export function namedPlugins(folder: string): string[] {
   // An empty file is YAML's null.
   const shared = Shared.safeParse(data ?? {});
   if (!shared.success) throw new Error(`${yamlFile} isn't valid: ${z.prettifyError(shared.error)}`);
-  return shared.data.plugins ?? [];
+  return { plugins: shared.data.plugins ?? [], lock: readLockAt(lockFile) ?? {} };
 }
 
 // Returns the text of a file in a repository, or `start` for one that isn't there yet.
