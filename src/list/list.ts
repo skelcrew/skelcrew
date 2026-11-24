@@ -663,16 +663,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     said = null;
     const row = rows[here];
-    const pick = itemKey(
-      row,
-      here,
-      targets,
-      key,
-      item !== null
-        ? (paneFor({ width: process.stdout.columns || 80, height: process.stdout.rows || 24 }) ??
-            [])
-        : [],
-    );
+    const beside = paneFor({
+      width: process.stdout.columns || 80,
+      height: process.stdout.rows || 24,
+    });
+    const pick = itemKey(row, here, targets, key, beside ?? []);
     if (pick && row) return pickOn(row, pick);
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if ((key === "earlier" || key === "later") && row)

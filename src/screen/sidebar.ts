@@ -987,6 +987,15 @@ export async function runSidebar(
     enter();
   };
 
+  // Returns the lines on the right while they show the details of `row`, with its item's box,
+  // or none: on a narrow screen, on another row's details, or with a builder attached there.
+  const boxOf = (row: Row) => {
+    if (narrow || !row.ask || shown !== detailsOf(row.name)) return [];
+    const command = screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_start_command}"]);
+    if (command.out.includes(attachedMark)) return [];
+    return screenTmux(agents, ["capture-pane", "-p", "-t", rightPane]).out.split("\n");
+  };
+
   const press = (key: string) => {
     if (key === dropAsk) return answerDrop();
     const name = keyNames[key] ?? key;
@@ -1040,11 +1049,7 @@ export async function runSidebar(
     said = null;
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
-    const visible =
-      !narrow && item !== null && row?.ask && /^[a-dr]$/.test(key)
-        ? screenTmux(agents, ["capture-pane", "-p", "-t", rightPane]).out.split("\n")
-        : [];
-    const pick = itemKey(row, here, targets, key, visible);
+    const pick = itemKey(row, here, targets, key, row && /^[a-dr]$/.test(key) ? boxOf(row) : []);
     if (pick && row) return pickOn(row, pick);
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
     if ((name === "earlier" || name === "later") && row)

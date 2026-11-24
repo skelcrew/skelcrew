@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { itemSql, threadSql } from "./harness.ts";
 import {
   acted,
+  agent,
   click,
   daemon,
   endTest,
@@ -253,6 +254,89 @@ ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", nee
     () => right().includes("GitHub refused the merge") && isOpen("Needs you"),
     "the reason in the box, under Needs you",
   );
+});
+
+// The person saw an item's options on the right, pressed a and nothing happened: a letter picked
+// only once Enter had opened the item. Each way of reaching the row, and a redraw meanwhile,
+// must let the letter pick at once, as long as the box on the right shows that row's options.
+const approvedItem = () => {
+  const head = "9fc11d177dbffac496ad6b3496b3f91775d9057f";
+  const checks = [{ name: "test", id: "1", state: "passed" }];
+  sql(`${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head, checks })};
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1, reviewed_commit: head })}`);
+};
+const onItem = () => / 14\b/.test(selected()) && right().includes("a) Merge it");
+const pickedAtOnce = async () => {
+  expect(footer()).not.toContain("esc back");
+  type("a");
+  await until(() => right().includes("│ Merge app#41 into main?"), "the question in the box");
+};
+
+test("a letter picks an option shown on the right without Enter", async () => {
+  daemon();
+  approvedItem();
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onItem, "APP-14's item on the right");
+  await pickedAtOnce();
+});
+
+test("a letter picks an option shown on the right after Tab, Alt-Tab or a click", async () => {
+  daemon();
+  approvedItem();
+  open("lead");
+  await ready("lead");
+  const lines = seen().split("\n");
+  const y = lines.findIndex((line) => / 14\b/.test(line.slice(0, sidebar)));
+  click(5, y + 1);
+  await until(onItem, "APP-14's item on the right");
+  await until(typingToSidebar, "the sidebar's typing");
+  press("Tab");
+  press("M-Tab");
+  await Bun.sleep(300);
+  expect(onItem()).toBe(true);
+  await pickedAtOnce();
+});
+
+test("a letter picks an option shown on the right after the sidebar redraws", async () => {
+  daemon();
+  approvedItem();
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onItem, "APP-14's item on the right");
+  sql(
+    threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", pr: 45 }),
+  );
+  await until(() => left().some((line) => / 15\b/.test(line)), "the redraw with APP-15");
+  expect(onItem()).toBe(true);
+  await pickedAtOnce();
+});
+
+// A builder you attached to stays on the right after a click gives the sidebar your typing. What
+// its screen shows is the builder's own, never the item's box, even where it looks like an option.
+test("a letter picks nothing from the screen of a builder attached on the right", async () => {
+  daemon();
+  sql(`${threadSql({ task: "14", title: "Fix the export header" })}
+INSERT INTO asks (owner, repo, task, title, text, options, posted)
+    VALUES ('simon', 'app', 't14', 'Keep it?', 'Keep the old header?', '["yes","no"]', 1)`);
+  agent("app-14", "printf '│ a) yes\\n'");
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(() => / 14\b/.test(selected()) && right().includes("a) yes"), "APP-14's item");
+  press("Enter");
+  await until(() => footer().includes("esc back"), "the item open");
+  press("Enter");
+  await until(() => seen().includes("I am app-14"), "app-14 attached");
+  const lines = seen().split("\n");
+  click(5, lines.findIndex((line) => / 14\b/.test(line.slice(0, sidebar))) + 1);
+  await until(typingToSidebar, "the sidebar's typing");
+  expect(seen()).toContain("I am app-14");
+  type("a");
+  await Bun.sleep(500);
+  expect(acted.filter((line) => line.startsWith("answer"))).toEqual([]);
 });
 
 // The notice comes from the database, which the daemon writes once it installed a release.
