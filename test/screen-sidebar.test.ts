@@ -11,6 +11,7 @@ import {
   daemon,
   endTest,
   footer,
+  given,
   home,
   onDetails,
   onLead,
@@ -18,6 +19,7 @@ import {
   press,
   read,
   ready,
+  release,
   right,
   seen,
   selected,
@@ -252,6 +254,47 @@ ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", nee
   await until(
     () => right().includes("GitHub refused the merge") && isOpen("Needs you"),
     "the reason in the box, under Needs you",
+  );
+});
+
+// y on a picked merge shows your answer at once, before the daemon answers: the question and the
+// item go, and the task leaves Needs you saying it merges. Once the daemon answers, the list shows
+// what the database says again, here that the task still needs you, as this daemon records nothing.
+test("y on a picked merge shows at once, while the daemon still merges", async () => {
+  daemon();
+  given.holding = true;
+  const head = "9fc11d177dbffac496ad6b3496b3f91775d9057f";
+  const checks = [{ name: "test", id: "1", state: "passed" }];
+  sql(`${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head, checks })};
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1, reviewed_commit: head })}`);
+  open("lead");
+  await ready("lead");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar's typing");
+  for (let presses = 0; presses < 6 && !/ 14\b/.test(selected()); presses++) {
+    const before = selected();
+    press("Down");
+    await until(() => selected() !== before, "a move down");
+  }
+  await until(() => / 14\b/.test(selected()) && right().includes("a) Merge it"), "APP-14's item");
+  press("Enter");
+  await until(() => footer().includes("esc back"), "the item open");
+  type("a");
+  await until(() => right().includes("│ Merge app#41 into main?"), "the question in the box");
+  type("y");
+  await until(() => acted.includes("pick simon/app 14 a"), "the pick");
+  await until(
+    () =>
+      !left().join("\n").includes("Needs you") &&
+      left().join("\n").includes("merging…") &&
+      !right().includes("Merge app#41 into main?") &&
+      !right().includes("a) Merge it"),
+    "the answer shown while the daemon merges",
+  );
+  release();
+  await until(
+    () => isOpen("Needs you") && right().includes("a) Merge it"),
+    "the item back once the daemon answered",
   );
 });
 
