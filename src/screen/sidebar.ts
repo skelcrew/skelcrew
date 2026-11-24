@@ -121,7 +121,7 @@ const keyNames: Record<string, string> = {
 
 function sidebarFooter(row: Row, restarts: boolean): string {
   const first = "↑↓ move  ⇥ switch  w/⌥W close";
-  const end = `${restarts ? "  R restart" : ""}  q/⌥Q quit`;
+  const end = `${restarts ? "  R restart" : ""}  ^D^D quit`;
   if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎ full screen  0-6 sections${end}`;
   if (row.part === "heading") {
     const fixed = row.section === "needs you";
@@ -474,7 +474,7 @@ export async function runSidebar(
     if (closing) return closingText(closing).footer;
     if (replying) return replyLine(replying);
     if (item !== null && !said && !asking) return itemFooter(rows[here]) ?? "";
-    if (empty) return "q/⌥Q quit";
+    if (empty) return "^D^D quit";
     if (said ?? asking) return said ?? asking?.question.ask ?? "";
     const row = rows[here];
     if (!typingRight && row) return sidebarFooter(row, restartOf(row) !== null);
@@ -690,7 +690,7 @@ export async function runSidebar(
 
   // Leaves the screen on its empty state once no tab is left: no rows, and on the right how to
   // open a repository, printed as given and never run. Your typing stays in the sidebar, as the
-  // right side has nothing to type to, and Alt-Q still leaves.
+  // right side has nothing to type to, and Ctrl-D twice still leaves.
   const showEmpty = () => {
     empty = true;
     all = [];
@@ -1031,10 +1031,6 @@ export async function runSidebar(
       const offer = stillOffered(action, all);
       if (typeof offer === "string") said = offer;
       else void goAhead(offer);
-      return;
-    }
-    if (key === "q") {
-      screenTmux(agents, ["kill-session", "-t", `=${session}`]);
       return;
     }
     said = null;

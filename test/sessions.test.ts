@@ -651,14 +651,21 @@ test("stopping a session kills what won't exit", async () => {
 // run ends, as the run adopts orphans, so asking the system for its ID would still find it.
 const alive = (pid: number) => stillRunning([pid]).length > 0;
 
-// Copy mode, where an agent you scrolled back is, has keys of its own, so Ctrl-\ is bound there
-// too. Alt-Q and Ctrl-Q, which an older Skelcrew bound, are gone.
-test("Ctrl-\\ detaches with no prefix, scrolled back too, and there is no status bar", async () => {
+// Copy mode, where an agent you scrolled back is, has keys of its own, so Ctrl-\ and Ctrl-D are
+// bound there too. Ctrl-D never reaches an agent, as one or two would end it: twice detaches.
+// Alt-Q and Ctrl-Q, which an older Skelcrew bound, are gone.
+test("Ctrl-\\ and Ctrl-D twice detach with no prefix, scrolled back too, and there is no status bar", async () => {
   await start("lead", ["sleep", "30"]);
   const tmux = (args: string[]) => Bun.spawnSync(["tmux", "-L", socket, ...args]).stdout.toString();
   expect(tmux(["show-options", "-g", "status"])).toBe("status off\n");
   expect(tmux(["list-keys", "-T", "root", "C-\\"])).toContain("detach-client");
   expect(tmux(["list-keys", "-T", "copy-mode", "C-\\"])).toContain("detach-client");
+  expect(tmux(["list-keys", "-T", "root", "C-d"])).toContain("switch-client -T close");
+  expect(tmux(["list-keys", "-T", "copy-mode", "C-d"])).toContain("switch-client -T close");
+  expect(tmux(["list-keys", "-T", "close", "C-d"])).toContain("detach-client");
+  expect(tmux(["show-options", "-g", "assume-paste-time"])).toBe("assume-paste-time 0\n");
+  expect(tmux(["list-keys", "-T", "close", "Any"])).toContain("send-keys");
+  expect(tmux(["list-keys", "-T", "close", "C-\\"])).toContain("detach-client");
   expect(tmux(["list-keys", "-T", "root", "M-q"])).toBe("");
   expect(tmux(["list-keys", "-T", "root", "C-q"])).toBe("");
   expect(tmux(["list-keys", "-T", "copy-mode", "C-q"])).toBe("");

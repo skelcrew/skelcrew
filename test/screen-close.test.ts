@@ -202,7 +202,7 @@ test("closing the last tab leaves the screen on how to open a repository, until 
     () => right().includes("No repository is open. Run sc in a checkout of one to open it."),
     "the empty screen",
   );
-  expect(footer()).toBe("  q/⌥Q quit");
+  expect(footer()).toBe("  ^D^D quit");
   expect(screenSessions()).toHaveLength(1);
   expect(seen()).not.toMatch(/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
   // Opening app again, such as with sc in another terminal, brings its tab back here.
@@ -245,5 +245,5 @@ test("on an 80-column terminal, a task's row still shows the close key in the fo
     "the task's keys",
   );
   // The footer is cut: the row's last keys don't fit.
-  expect(footer()).not.toContain("⌥Q quit");
+  expect(footer()).not.toContain("^D^D quit");
 });

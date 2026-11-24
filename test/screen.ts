@@ -195,6 +195,9 @@ export const type = (text: string, window = "one") =>
   tmux(terminal, "send-keys", "-t", `=${window}:`, "-l", text);
 export const press = (key: string, window = "one") =>
   tmux(terminal, "send-keys", "-t", `=${window}:`, key);
+// Closes the screen as you would: Ctrl-D twice.
+export const closeScreen = (window = "one") =>
+  tmux(terminal, "send-keys", "-t", `=${window}:`, "C-d", "C-d");
 // A press and release of the left button at a place on screen, counted from 1.
 export const click = (x: number, y: number) => type(`\x1b[<0;${x};${y}M\x1b[<0;${x};${y}m`);
 

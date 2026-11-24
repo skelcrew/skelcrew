@@ -4,17 +4,19 @@ import { agentFooter, drawFooter } from "../src/screen/footer.ts";
 
 test("under an agent the footer says which one you type to and the key back to the list, then move, quit and what Esc stops", () => {
   expect(agentFooter("lead", "claude")).toBe(
-    "typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops claude",
+    "typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit  Esc stops claude",
   );
   expect(agentFooter("APP-12", "codex")).toBe(
-    "typing to APP-12 · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit  Esc stops codex",
+    "typing to APP-12 · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit  Esc stops codex",
   );
-  expect(agentFooter("lead", "")).toBe("typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ⌥Q quit");
+  expect(agentFooter("lead", "")).toBe(
+    "typing to lead · ⌥Tab switch  ⌥↑↓ move  ⌥W close  ^D^D quit",
+  );
 });
 
 test("the footer is a dim row two columns in", () => {
-  const row = drawFooter("⌥↑↓ move  ⌥Q quit", 40, "");
-  expect(Bun.stripANSI(row)).toBe("  ⌥↑↓ move  ⌥Q quit");
+  const row = drawFooter("⌥↑↓ move  ^D^D quit", 40, "");
+  expect(Bun.stripANSI(row)).toBe("  ⌥↑↓ move  ^D^D quit");
   expect(row).toStartWith("\x1b[90m");
 });
 
@@ -24,11 +26,11 @@ test("a footer too long for the screen is cut, and a forge's control codes never
 });
 
 test("the machine's load sits at the right end of the footer", () => {
-  const row = drawFooter("⌥↑↓ move  ⌥Q quit", 50, "cpu 63%  mem 9.1/32G");
-  expect(Bun.stripANSI(row)).toBe(`  ⌥↑↓ move  ⌥Q quit${" ".repeat(9)}cpu 63%  mem 9.1/32G  `);
+  const row = drawFooter("⌥↑↓ move  ^D^D quit", 50, "cpu 63%  mem 9.1/32G");
+  expect(Bun.stripANSI(row)).toBe(`  ⌥↑↓ move  ^D^D quit${" ".repeat(7)}cpu 63%  mem 9.1/32G  `);
 });
 
 test("on a narrow screen the load gives way before the footer's keys", () => {
-  const row = drawFooter("⌥↑↓ move  ⌥Q quit", 40, "cpu 63%  mem 9.1/32G");
-  expect(Bun.stripANSI(row)).toBe("  ⌥↑↓ move  ⌥Q quit");
+  const row = drawFooter("⌥↑↓ move  ^D^D quit", 40, "cpu 63%  mem 9.1/32G");
+  expect(Bun.stripANSI(row)).toBe("  ⌥↑↓ move  ^D^D quit");
 });

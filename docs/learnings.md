@@ -646,9 +646,17 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   middle shifted every name after it, and the sidebar read `tmux` as `seen` and stopped on
   "JSON Parse error". Seen on Bun 1.3.14. New columns go at the view's end.
 - **Option with a digit types a character on a Mac**, such as `¡` for Option-1. So Alt-1 to
-  Alt-6 and Alt-Q need the terminal to send Option as Alt. Ctrl-Q quits too, even while you
-  type to an agent, for a Mac terminal that doesn't.
-- **Alt-W is taken from agents, as Alt-Q is.** The screen's tmux keeps it, to ask whether to
+  Alt-6 need the terminal to send Option as Alt. Leaving is Ctrl-D twice, which needs no Option.
+- **Ctrl-D is taken from agents.** One Ctrl-D ends a Pi session and two end Claude Code, so a
+  Ctrl-D meant for the screen would lose an agent. tmux keeps it on both servers. tmux's own
+  delayed commands (`run-shell -d`, `run-shell -b`) never ran from a key binding when tried on
+  tmux 3.6, so the screen's footer, a live process, ends the 2 seconds a second press has.
+  `switch-client -T` to a table with no keys bound fails, and the rest of the binding with it.
+  A key with no binding in a table other than root is dropped, not passed on, on tmux 3.6. So
+  the table binds `Any` to go back to root and pass the key on with plain `send-keys`, and
+  binds the screen's own keys again. `send-keys -K`, which would run the root keys, typed
+  nothing into the screen's agent pane.
+- **Alt-W is taken from agents, as Ctrl-D is.** The screen's tmux keeps it, to ask whether to
   close or remove the open repository, so no agent ever sees it. Emacs-style keys in an agent's
   prompt, where Alt-W copies, don't get it. Alt-W needs Option sent as Alt on a Mac, and plain
   `w` does the same while your typing is in the sidebar.

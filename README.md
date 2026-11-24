@@ -54,7 +54,7 @@ It proposes a thread, with a title and a one-line summary, and starts it once yo
 
 Every task gets a name, such as `APP-12`, with its issue beside it, such as `#483`. An issue no task has yet goes by `APP#483`. Use your task's name where this page says `APP-12`.
 
-The task shows in the sidebar. Your typing starts in the lead, so press Alt+Tab (⌥Tab on a Mac) to bring it to the sidebar. Then move to the task's row with the arrow keys and press Enter, or click the row, to see its builder at work beside the sidebar. Alt+Tab switches your typing between the sidebar and the builder. Ctrl+\ does the same with no Alt key. Alt+Q leaves the screen, and the agents run on.
+The task shows in the sidebar. Your typing starts in the lead, so press Alt+Tab (⌥Tab on a Mac) to bring it to the sidebar. Then move to the task's row with the arrow keys and press Enter, or click the row, to see its builder at work beside the sidebar. Alt+Tab switches your typing between the sidebar and the builder. Ctrl+\ does the same with no Alt key. Ctrl+D twice closes the screen, and the agents run on.
 
 On a Mac, Alt keys need your terminal to send ⌥ as Alt. [The screen](docs/guides/the-screen.md#alt-keys-on-a-mac) says how for each terminal.
 
@@ -91,7 +91,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 
 | Command | What it does |
 | --- | --- |
-| `sc` | Opens the lead of the repository you are in, with the sidebar of its tasks. Alt+Q quits, and the agents run on. |
+| `sc` | Opens the lead of the repository you are in, with the sidebar of its tasks. Ctrl+D twice closes it, and the agents run on. |
 | `sc --list` | Shows the repository as a list. Enter opens a row, such as an agent or a PR. Ctrl+\ comes back from an agent. In a wide terminal, a pane beside the list shows the task you are on and its agent at work. |
 | `sc ls` | Lists the tasks, with each one's stage, status, PR, CI and review. |
 | `sc show <task>` | Shows one task: its description, threads, PR, checks and review. |
