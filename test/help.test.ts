@@ -78,13 +78,14 @@ test("the help names sc serve for the daemon, and never sc up", () => {
   expect(out).not.toMatch(/^ {2}(--remote <host> )?up /m);
 });
 
-// --remote keeps Skelcrew on the other side up to date, so there is no command for it. The one
-// update command is for your plugins.
-test("the help names no update command for Skelcrew, and says --remote keeps it up to date", () => {
+// sc update updates Skelcrew itself, and plugin update your plugins. --remote keeps Skelcrew on
+// the other side up to date.
+test("the help names sc update for Skelcrew and plugin update for plugins", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("update --remote");
   expect(out.match(/^ {2}(plugin )?update.*/gm)).toEqual([
     expect.stringContaining("plugin update -g [<name>]"),
+    expect.stringContaining("latest release of Skelcrew"),
   ]);
   expect(out).toContain("up to date");
 });

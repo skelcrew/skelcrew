@@ -361,7 +361,7 @@ export const footer = (row = 29) =>
 // Stands in for the daemon on the test's own socket: it logs each repository asked to open,
 // saying when a tab asked, which must never open a tab you closed, and answers with nothing to
 // say.
-// It also logs each thread started, agent restarted and PR merged, in `acted`, answering a merge with
+// It also logs each thread started, agent restarted, PR merged and item picked, in `acted`, answering a merge with
 // `given.mergeAnswer`. While `given.holding`, those wait for `release`, so a test sees what the screen says
 // meanwhile.
 export const asked: string[] = [];
@@ -374,7 +374,7 @@ export const release = () => {
 export function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, now, verb } = z
+      const { command, from, tab, repo, task, pr, commit, by, now, verb, pick } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
@@ -386,6 +386,7 @@ export function daemon(): void {
           by: z.number().default(0),
           now: z.boolean().default(false),
           verb: z.enum(["close", "remove"]).default("close"),
+          pick: z.string().default(""),
         })
         .parse(JSON.parse(data.toString()));
       // Ends the lead as the daemon does.
@@ -419,6 +420,7 @@ export function daemon(): void {
         );
         return;
       }
+      if (command === "pick") acted.push(`pick ${repo} ${task} ${pick}`);
       if (command !== "start" && command !== "merge") {
         connection.end("{}\n");
         return;

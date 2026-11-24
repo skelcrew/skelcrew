@@ -207,7 +207,7 @@ const DaemonStatus = z
   .catch({ release: "", folder: "", commit: "", pid: 0 });
 type DaemonStatus = z.infer<typeof DaemonStatus>;
 
-async function daemonStatus(): Promise<DaemonStatus | null> {
+export async function daemonStatus(): Promise<DaemonStatus | null> {
   const reply = await ask({ command: "status" }, 2000);
   return reply === null ? null : DaemonStatus.parse(reply);
 }

@@ -40,6 +40,7 @@ export async function readAsked(file: string): Promise<string> {
 const commands = [
   "serve",
   "restart",
+  "update",
   "init",
   "repo",
   "ps",
@@ -79,7 +80,7 @@ function usageMessage(command: string, word?: string): string {
     return 'sc needs-you is gone: as the lead, ask the human with sc ask <task> "<text>" --title "<title>" --option "<choice>" --option "<choice>", which shows in Needs you.';
   if (command === "task")
     return 'sc task is gone: sc show <task> shows one, and sc add <repo> "<title>" "<body>" adds one.';
-  if (["remove", "update", "setup", "plugins"].includes(command))
+  if (["remove", "setup", "plugins"].includes(command))
     return "plugin commands are under sc plugin now: sc plugin add, rm, update, setup and ls. Run sc --help to see them.";
   if (commands.includes(command))
     return `sc ${command} was given arguments it doesn't take. Run sc --help to see how to use it.`;

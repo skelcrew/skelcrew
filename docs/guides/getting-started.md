@@ -46,7 +46,14 @@ git switch main
 sc init
 ```
 
-It asks which coding agent the lead, builders and reviewers use. Then it writes `skelcrew.yaml`, `skelcrew.lock` and an `.agents/` folder. These tell Skelcrew how agents work on this repository. It leaves the setup and test commands to the lead, and allows 3 builders at once, which you can change in `skelcrew.yaml`.
+For a repository on GitHub, it first says so, and that it adds the GitHub plugin:
+
+```
+Found GitHub at simon/app (origin)
+Adding GitHub plugin...
+```
+
+Then it asks which coding agent the lead, builders and reviewers use. Then it writes `skelcrew.yaml`, `skelcrew.lock` and an `.agents/` folder. These tell Skelcrew how agents work on this repository. It leaves the setup and test commands to the lead, and allows 3 builders at once, which you can change in `skelcrew.yaml`.
 
 Skelcrew's agents read these files only from the default branch. So `sc init` offers to commit and push them. Say yes, or run the git commands it prints.
 

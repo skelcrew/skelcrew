@@ -96,7 +96,7 @@ test("the screen opens with your typing in the lead, Ctrl-\\ moves it to the sid
   await until(
     () =>
       footer() ===
-      "  ↑↓ move  w/⌥W close  ⏎ to lead  ⇧⏎ full screen  0-6 sections  R restart  ^D^D quit",
+      "  ↑↓ move  ⇥ switch  w/⌥W close  ⏎ to lead  ⇧⏎ full screen  0-6 sections  R restart  ^D^D quit",
     "the sidebar's keys",
   );
   expect(selected()).toMatch(/^▸ ◆ Lead\b/);
@@ -292,7 +292,7 @@ test("Enter on a stage's heading closes it, keeping you there, and opens it on i
   await step("Up");
   expect(selected()).toStartWith("2 Building");
   await until(
-    () => footer() === "  ↑↓ move  w/⌥W close  ⏎ open/close  0-6 sections  ^D^D quit",
+    () => footer() === "  ↑↓ move  ⇥ switch  w/⌥W close  ⏎ open/close  0-6 sections  ^D^D quit",
     "the heading's keys",
   );
   press("Enter");

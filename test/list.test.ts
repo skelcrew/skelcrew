@@ -1870,16 +1870,18 @@ function daemon(): void {
     commit: z.string().default(""),
     by: z.number().default(0),
     now: z.boolean().default(false),
+    pick: z.string().default(""),
   });
   standIn = createServer((connection) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, now } = Request.parse(
+      const { command, from, tab, repo, task, pr, commit, by, now, pick } = Request.parse(
         JSON.parse(data.toString()),
       );
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
       if (command === "start") asked.push(`start ${repo} ${task}${now ? " now" : ""}`);
       if (command === "merge") asked.push(`merge ${repo} ${pr} ${commit}`);
       if (command === "queue move") asked.push(`queue move ${repo} ${task} ${by}`);
+      if (command === "pick") asked.push(`pick ${repo} ${task} ${pick}`);
       const said =
         command === "lead"
           ? leadAnswer
@@ -2314,7 +2316,10 @@ test("while attached the title names the agent and the key back, and the list sh
   tmux("select-pane", "-t", "=one:", "-T", "my shell");
   // Enter opens its item, whose first option opens the builder.
   press("Enter");
-  await until(() => seen().includes("a) Open the builder"), "the item");
+  await until(
+    () => seen().includes("a) Open the builder") && seen().includes("esc back"),
+    "the item open",
+  );
   type("a");
   await until(() => seen().includes("I am app-12"), "app-12's agent");
   await until(() => title() === "APP-12 · ctrl+\\ back\n", "the title");
@@ -2511,10 +2516,10 @@ test("the number keys open and close the stages, which stay so in another reposi
   type("2");
   await until(() => !seen().includes("○ 7 "), "Building closed");
   expect(seen()).toContain("○ #31 ");
-  press("Tab");
+  type("\x1b[1;4C");
   // The open repository's tab has no badge, so another's shows only while it is open.
   await until(() => seen().includes(" app •"), "site's list");
-  press("Tab");
+  type("\x1b[1;4C");
   await until(() => seen().includes(" site •1"), "app's list again");
   expect(seen()).toContain("○ #31 ");
   expect(seen()).not.toContain("○ 7 ");
@@ -2605,7 +2610,10 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
   // The host has a key of its own to come back, so the list doesn't offer tmux's.
   press("Enter");
-  await until(() => seen().includes("a) Open the builder"), "the item");
+  await until(
+    () => seen().includes("a) Open the builder") && seen().includes("esc back"),
+    "the item open",
+  );
   expect(seen()).toContain("⏎ attach  ");
   expect(seen()).not.toContain("ctrl+\\ back");
   type("a");
@@ -2735,6 +2743,27 @@ test("a merge whose checks failed while its question was open merges nothing, an
   expect(asked.filter((line) => line.startsWith("merge"))).toEqual([]);
 });
 
+// A pick that merges asks y/n in the item's box too, where you picked: any other key leaves the
+// item as it was, and y sends the pick to the daemon.
+test("a merge picked on an item asks in its box, any other key leaves it, and y sends it", async () => {
+  await open();
+  press("Down");
+  await until(() => here().startsWith("▸ ● 14 "), "the ready row");
+  press("Enter");
+  await until(() => seen().includes("a) Merge it") && seen().includes("esc back"), "the item open");
+  const inBox = () => seen().includes("│ Merge app#41 into main? y/n");
+  type("a");
+  await until(inBox, "the question in the box");
+  type("n");
+  await until(() => !inBox(), "the question to go");
+  expect(seen()).toContain("a) Merge it");
+  expect(asked.filter((line) => line.startsWith("pick"))).toEqual([]);
+  type("a");
+  await until(inBox, "the question in the box again");
+  type("y");
+  await until(() => asked.includes("pick simon/app 14 a"), "the pick");
+});
+
 test("m on a task ready for review asks first, and y merges it at the commit you saw", async () => {
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
@@ -2747,21 +2776,21 @@ test("m on a task ready for review asks first, and y merges it at the commit you
   await until(() => asked.includes(`merge simon/app 41 ${approved}`), "the merge");
 });
 
-test("Tab moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
+test("Alt-Shift-Right moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
   await open();
-  press("Tab");
+  type("\x1b[1;4C");
   await until(() => seen().includes("● 3  Docs"), "site's list");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });
 
-// Shift-Tab and Alt-Shift with an arrow move between repositories too, in every form a terminal
-// sends them, each way round from the last to the first and back.
-test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wrapping round", async () => {
+// Alt-Shift with an arrow moves between repositories, in every form a terminal sends it, each
+// way round from the last to the first and back.
+test("Alt-Shift-Left goes back a repository, Alt-Shift-Right on, wrapping round", async () => {
   await open();
   const onSite = () => seen().includes("● 3 ");
   const onApp = () => seen().includes("● 12 ");
   // app is the first tab, so back from it wraps round to site, the last.
-  press("BTab");
+  type("\x1b[1;4D");
   await until(onSite, "site, back from app");
   type("\x1b[1;4C");
   await until(onApp, "app, on from site");
@@ -2769,10 +2798,6 @@ test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wra
   await until(onSite, "site, back from app");
   type("\x1b[1;4:1C");
   await until(onApp, "app, on from site in kitty's form");
-  type("\x1b[9;2u");
-  await until(onSite, "site, back from app with kitty's Shift-Tab");
-  type("\x1b[27;2;9~");
-  await until(onApp, "app, back from site with xterm's Shift-Tab");
   type("\x1b[1;4:1D");
   await until(onSite, "site, back from app in kitty's form");
   // Kitty's keypad arrows, in its CSI-u form, plain and with the press event.
@@ -2784,7 +2809,19 @@ test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wra
   await until(onApp, "app, on from site in kitty's CSI-u form with its event");
   type("\x1b[57417;4:1u");
   await until(onSite, "site, back from app in kitty's CSI-u form with its event");
-  expect(seen()).toContain("⇥/alt+shift+←→ repository");
+  expect(seen()).toContain("alt+shift+←→ repository");
+  expect(seen()).not.toContain("⇥");
+});
+
+// The list has no right side to switch your typing to, so Tab and Shift-Tab do nothing, in
+// every form a terminal sends them.
+test("Tab and Shift-Tab leave the list on its repository", async () => {
+  await open();
+  for (const key of ["\t", "\x1b[Z", "\x1b[9;2u", "\x1b[27;2;9~"]) type(key);
+  type("\x1b[1;4C");
+  await until(() => seen().includes("● 3 "), "site, on from app");
+  await until(() => asked.includes("open simon/site from a tab"), "site opened");
+  expect(asked.filter((said) => said.startsWith("open "))).toEqual(["open simon/site from a tab"]);
 });
 
 // Backlog's last row stands for the issues it doesn't show, and Enter shows them.
@@ -3069,7 +3106,10 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   await until(() => !liveSeen().includes("step one"), "the strip again");
   // Its item's first option still attaches to the builder.
   press("Enter");
-  await until(() => seen().includes("a) Open the builder"), "the item");
+  await until(
+    () => seen().includes("a) Open the builder") && seen().includes("esc back"),
+    "the item open",
+  );
   type("a");
   await until(
     () => !seen().includes("esc/^D^D quit") && !seen().includes("esc back"),

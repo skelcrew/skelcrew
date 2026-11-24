@@ -19,6 +19,7 @@ import { cloneOf, liveThreads, typedTask } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
 import {
   type Asking,
+  askingInBox,
   canOpenLinks,
   itemFooter,
   itemKey,
@@ -89,7 +90,8 @@ const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // anywhere. The plain ones come only while your typing goes to the sidebar. Alt with a digit and
 // the digit alone open or close a stage. The screen's tmux sends Ctrl-\'s byte from anywhere,
 // for Alt-Tab, Ctrl-\ or Ctrl-4, to switch your typing, and Shift-Enter as CSI-u, only while
-// your typing is here already. Only Enter and Shift-Enter attach: a letter that isn't a pick
+// your typing is here already. Plain Tab and Shift-Tab switch your typing too, so a missed Alt
+// never moves to another repository. Only Enter and Shift-Enter attach: a letter that isn't a pick
 // does nothing. Alt-W and plain w ask whether to close or remove the open repository.
 const keyNames: Record<string, string> = {
   "\x1c": "switch",
@@ -109,8 +111,8 @@ const keyNames: Record<string, string> = {
   "\x1b[1;4B": "next section",
   "\x1b[1;4C": "next repository",
   "\x1b[1;4D": "previous repository",
-  "\t": "next repository",
-  "\x1b[Z": "previous repository",
+  "\t": "switch",
+  "\x1b[Z": "switch",
   "\r": "enter",
   "\n": "enter",
   "\x1b[5~": "page up",
@@ -118,7 +120,7 @@ const keyNames: Record<string, string> = {
 };
 
 function sidebarFooter(row: Row, restarts: boolean): string {
-  const first = "↑↓ move  w/⌥W close";
+  const first = "↑↓ move  ⇥ switch  w/⌥W close";
   const end = `${restarts ? "  R restart" : ""}  ^D^D quit`;
   if (row.part === "lead") return `${first}  ⏎ to lead  ⇧⏎ full screen  0-6 sections${end}`;
   if (row.part === "heading") {
@@ -532,7 +534,7 @@ export async function runSidebar(
     const before = rows[here]?.section;
     const moved = all.find((row) => row.name === name);
     if (moved && moved.section !== before && moved.section !== "lead") opened.add(moved.section);
-    rows = shownRows(all, opened, wholeBacklog);
+    rows = askingInBox(shownRows(all, opened, wholeBacklog), asking);
     const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
     here = at >= 0 ? at : Math.max(Math.min(here, rows.length - 1), 0);
     if (name !== undefined && rows[here]?.name !== name) follow();
@@ -844,13 +846,22 @@ export async function runSidebar(
           refresh();
         },
       );
-    else {
+    else if ("confirm" in does) {
+      asking = { question: does.confirm, row: row.name, offer: "pick" };
+      askInBox(row.name, does.confirm.ask);
+    } else {
       item = null;
       if ("refused" in does) said = does.refused;
       else if ("answer" in does) void answerRow(row, { pick: does.answer });
-      else if ("run" in does) void goAhead(does.run);
-      else asking = { question: does.confirm, row: row.name, offer: "pick" };
+      else void goAhead(does.run);
     }
+  };
+  // Shows the y/n question a pick asks in its item's box on the right too, or with null takes it
+  // off, while the right side shows that task's details. A narrow screen draws the box itself.
+  const askInBox = (name: string, question: string | null) => {
+    if (narrow || shown !== detailsOf(name)) return;
+    showTask(agents, session, `${open.owner}/${open.repo}`, name, question ?? undefined);
+    tty = paneTty(agents, rightPane);
   };
   // Asks whether to merge a task ready for review, as m does, or says why it can't.
   const mergeRow = (row: Row) => {
@@ -1012,7 +1023,9 @@ export async function runSidebar(
     if (asking) {
       const action = asking;
       asking = null;
+      if (action.offer === "pick") askInBox(action.row, null);
       if (name !== "y") return;
+      if (action.offer === "pick") item = null;
       refresh();
       if (action.question.request.command === "restart") return void goAhead(action.question);
       const offer = stillOffered(action, all);

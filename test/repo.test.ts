@@ -12,6 +12,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -1068,6 +1069,7 @@ test("init writes a complete skelcrew.yaml, skelcrew.lock and .agents/ from the 
   const run = await skel(["init"], "", join(checkout, "src"));
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
+  expect(run.out).toStartWith("Found GitHub at simon/app (origin)\nAdding GitHub plugin...\n");
   expect(run.out).not.toContain("tracker");
   expect(run.out).not.toContain("Approve");
   // The GitHub plugin installed as yours is pinned at its version, with nothing to install.
@@ -1374,6 +1376,7 @@ test("init writes a skelcrew.lock that pins nothing for a repository that isn't 
   git(checkout, "remote", "set-url", "origin", "git@gitlab.com:simon/app.git");
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
+  expect(run.out).not.toContain("GitHub");
   expect(run.out).toContain("Wrote skelcrew.yaml, skelcrew.lock and .agents/.\n");
   expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(
     "# Written by sc plugin add and sc plugin update. Commit it.\n",
@@ -1452,7 +1455,7 @@ test("init on a fresh machine installs nothing, and ends with sc install on its 
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out.replace(/\r/g, "")).toEndWith(
-    `Wrote skelcrew.yaml, skelcrew.lock and .agents/.\nCommit and push them to main? [Y/n] Committed them and pushed them to main.${next}`,
+    `Wrote skelcrew.yaml, skelcrew.lock and .agents/.\nCommit and push them to main? [Y/n] y\nCommitted them and pushed them to main.${next}`,
   );
   expect(run.out).not.toContain("Installing");
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins"))).toBe(false);
@@ -1501,6 +1504,7 @@ test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin",
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(readFileSync(file, "utf8")).toBe(`${complete}plugins:\n  - skelcrew/skelcrew-github\n`);
+  expect(run.out).toStartWith("Found GitHub at simon/app (origin)\nAdding GitHub plugin...\n");
   expect(run.out).toContain(
     "skelcrew.yaml is there already, so Skelcrew only added skelcrew/skelcrew-github to its plugins.",
   );
@@ -1671,10 +1675,34 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
   expect(readFileSync(file, "utf8")).toBe(text);
+  expect(run.out).not.toContain("Found GitHub");
   expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(
     "# Written by sc plugin add and sc plugin update. Commit it.\n",
   );
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
+});
+
+test("init says nothing of GitHub when it can't add the plugin, for a skelcrew.lock or plugins: it can't read", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  githubInstalledAsYours();
+  writeFileSync(
+    join(checkout, "skelcrew.yaml"),
+    `setup: [make]\ntest: [make test]\n${limitAndCrew}plugins: [simon/skelcrew-other]\n`,
+  );
+  const lock = join(checkout, "skelcrew.lock");
+  writeFileSync(lock, "not: [a lock\n");
+  expect((await skel(["init"], "", checkout)).out).not.toContain("GitHub");
+  rmSync(lock);
+  symlinkSync(join(checkout, "skelcrew.yaml"), lock);
+  expect((await skel(["init"], "", checkout)).out).not.toContain("GitHub");
+  rmSync(lock);
+  writeFileSync(
+    join(checkout, "skelcrew.yaml"),
+    `setup: [make]\ntest: [make test]\n${limitAndCrew}plugins: [simon/skelcrew-other, ./local]\n`,
+  );
+  const run = await skel(["init"], "", checkout);
+  expect(run.out).not.toContain("Found GitHub");
+  expect(run.out).toContain("Skelcrew couldn't add skelcrew/skelcrew-github");
 });
 
 // Only sc install installs plugins. A plugin the files named already runs nothing in sc init,
@@ -2280,6 +2308,30 @@ test("sc says once that rounds: replaces max_rounds: in your config.yaml, here a
   );
   expect((await skel([], "", checkout)).out).not.toContain("replaces it");
   expect(readFileSync(file, "utf8")).toBe(yours);
+});
+
+// Esc at any of sc init's crew questions stops it before it writes a file, as Ctrl-C does.
+for (const typed of ["\x1b", "\n\x1b", "\n\n\x1b"])
+  test(`Esc at question ${typed.length} of init's crew leaves the checkout as it was`, async () => {
+    const checkout = onGitHub("simon/app", "WRITE", false, {});
+    githubInstalledAsYours();
+    const run = await skel(["init"], typed, checkout);
+    expect(run.code).toBe(130);
+    expect(run.out).toContain("Esc to cancel");
+    expect(git(checkout, "status", "--porcelain")).toBe("");
+  });
+
+// Esc while completing a skelcrew.yaml leaves it as it was too.
+test("Esc at init's question for a missing role leaves skelcrew.yaml as it was", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  githubInstalledAsYours();
+  const file = join(checkout, "skelcrew.yaml");
+  const yours = "roles: { builder: { harness: codex }, reviewer: { harness: codex } }\n";
+  writeFileSync(file, yours);
+  const run = await skel(["init"], "\x1b", checkout);
+  expect(run.code).toBe(130);
+  expect(readFileSync(file, "utf8")).toBe(yours);
+  expect(git(checkout, "status", "--porcelain")).toBe("?? skelcrew.yaml\n");
 });
 
 // With one harness installed, sc init asks nothing about the crew and says which one it found.

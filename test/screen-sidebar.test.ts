@@ -18,6 +18,7 @@ import {
   press,
   read,
   ready,
+  right,
   seen,
   selected,
   sidebar,
@@ -208,6 +209,50 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   await until(() => footer().includes("Start APP#31? y/n"), "the question again");
   type("y");
   await until(() => acted.includes("start simon/app #31"), "the daemon to start app#31");
+});
+
+// A merge picked on an item asks y/n in the item's box on the right, where you read it: any other
+// key leaves the item, and y sends the pick. While the daemon merges, the task leaves Needs you
+// for Ready, saying so, and a merge that fails comes back with its reason in the box.
+test("a merge picked on an item asks in its box, leaves Needs you on y, and comes back on a failure", async () => {
+  daemon();
+  const head = "9fc11d177dbffac496ad6b3496b3f91775d9057f";
+  const checks = [{ name: "test", id: "1", state: "passed" }];
+  sql(`${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head, checks })};
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1, reviewed_commit: head })}`);
+  open("lead");
+  await ready("lead");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar's typing");
+  for (let presses = 0; presses < 6 && !/ 14\b/.test(selected()); presses++) {
+    const before = selected();
+    press("Down");
+    await until(() => selected() !== before, "a move down");
+  }
+  await until(() => / 14\b/.test(selected()) && right().includes("a) Merge it"), "APP-14's item");
+  press("Enter");
+  await until(() => footer().includes("esc back"), "the item open");
+  const inBox = () => right().includes("│ Merge app#41 into main?");
+  type("a");
+  await until(inBox, "the question in the box");
+  type("n");
+  await until(() => !inBox() && right().includes("a) Merge it"), "the item without the question");
+  expect(acted.filter((line) => line.startsWith("pick"))).toEqual([]);
+  type("a");
+  await until(inBox, "the question in the box again");
+  type("y");
+  await until(() => acted.includes("pick simon/app 14 a"), "the pick");
+  sql("UPDATE threads SET picking = 'merging…' WHERE folder = 'app-14'");
+  await until(() => isOpen("5 Ready") && !right().includes("a) Merge it"), "APP-14 under Ready");
+  expect(left().join("\n")).not.toContain("Needs you");
+  expect(left().join("\n")).toContain("merging…");
+  sql(
+    "UPDATE threads SET picking = NULL, pick_failed = 'GitHub refused the merge' WHERE folder = 'app-14'",
+  );
+  await until(
+    () => right().includes("GitHub refused the merge") && isOpen("Needs you"),
+    "the reason in the box, under Needs you",
+  );
 });
 
 // The notice comes from the database, which the daemon writes once it installed a release.

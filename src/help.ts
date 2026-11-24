@@ -62,6 +62,7 @@ const sections: [string, [string, string][]][] = [
       ["serve", "Run the daemon here, until Ctrl-C"],
       ["serve --bg", "Run it as a systemd or launchd service, and return"],
       ["restart", "Restart it, here or with --remote. Agents keep running"],
+      ["update", "Install the latest release of Skelcrew and restart the daemon on it"],
     ],
   ],
   [
@@ -120,6 +121,7 @@ const sections: [string, [string, string][]][] = [
       ["alt + w, w", "close the repository's tab, or remove it from Skelcrew"],
       ["ctrl + d, ctrl + d", "close the screen, agents run on"],
       ["↑/↓, 0-6", "in the sidebar: move, open or close a section"],
+      ["tab, shift + tab", "in the sidebar: type to the lead or agent again"],
       ["enter", "open the row you are on: its item, its agent, or a stage"],
       ["shift + enter", "type to the row's agent full screen"],
       ["shift + ↑/↓", "move a queued task in the task queue"],

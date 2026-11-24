@@ -2,6 +2,7 @@
 // options that act directly, until the lead posts an item of its own for the thread.
 import { removeControlCodes } from "../screen/look.ts";
 import { limitOf, roundOf } from "./ledger.ts";
+import { mergingWord } from "./marks.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { needsYou, threadWord } from "./status.ts";
 import type { Thread } from "./thread.ts";
@@ -21,10 +22,25 @@ const toBuilder = [
   { label: "Let the lead handle it", act: "lead" },
 ] as const;
 
+// What a task says while a pick on its item runs, by what the pick does. A merge takes the task
+// out of Needs you at once. The others say it in the item's box, which stays until they are done,
+// as a start can still fail. Opening the builder and handing the item to the lead are done at
+// once, so they have none.
+export const pickingWord = (act: Act): string | null =>
+  act === "merge" || act === "skip review"
+    ? mergingWord
+    : act === "go on" || act === "restart"
+      ? "starting…"
+      : act === "stop"
+        ? "stopping…"
+        : null;
+
 // Returns the item for what Skelcrew sees the thread needs you for, or null when it needs you for
-// nothing, its item went to the lead, or the lead posted its own, which `asked` says.
+// nothing, its item went to the lead, the lead posted its own, which `asked` says, a merge picked
+// on it runs, or it waits in the queue of limits.threads, as a start picked on it is then done.
 export function ownItem(thread: Thread, asked: boolean): OwnItem | null {
-  if (asked || thread.status === "done" || !needsYou(thread)) return null;
+  const gone = thread.status === "done" || thread.status === "queued";
+  if (asked || gone || thread.picking === mergingWord || !needsYou(thread)) return null;
   const item = itemFor(thread);
   return thread.handed === handedKey(item) ? null : item;
 }

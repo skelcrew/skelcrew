@@ -1,6 +1,6 @@
-// Updates: a release of Skelcrew installs the latest release over itself in the background, notes
-// it in the database, and the list says so until Skelcrew runs on it. A build from a checkout never
-// does: git pull updates it.
+// Updates: a release of Skelcrew installs the latest release over itself, in the background or
+// with sc update, notes it in the database, and the list says so until Skelcrew runs on it. A
+// build from a checkout never does: git pull updates it.
 import type { Database } from "bun:sqlite";
 import { chmodSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,9 +9,18 @@ import { errorText } from "../format.ts";
 import { capture } from "../run.ts";
 import { isRelease, release, releases, singleFile } from "../version.ts";
 
-// The release file for this machine, named as the install script names it. A Mac running sc
-// through Rosetta asks for the x64 file again, which is the one it already runs.
-const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
+// The release file for this machine, named as the install script names it. An x64 sc running
+// through Rosetta on an Apple Silicon Mac asks for the arm64 file, which runs natively.
+function asset(): string {
+  const translated =
+    process.platform === "darwin" &&
+    process.arch === "x64" &&
+    Bun.spawnSync(["sysctl", "-n", "sysctl.proc_translated"], { stderr: "ignore" })
+      .stdout.toString()
+      .trim() === "1";
+  const cpu = process.arch === "arm64" || translated ? "arm64" : "x64";
+  return `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${cpu}`;
+}
 
 // Downloads an address, or throws naming it.
 async function download(address: string): Promise<Response> {
@@ -63,10 +72,11 @@ export async function installLatest(
   db: Database,
 ): Promise<string | null> {
   const at = `${base}/latest/download`;
-  const want = await releaseSum(at, asset);
+  const name = asset();
+  const want = await releaseSum(at, name);
   // Comparing sums costs only the small checksums file.
   if ((await fileSum(file)) === want) return null;
-  const bytes = await downloadRelease(at, asset, want);
+  const bytes = await downloadRelease(at, name, want);
   // Staged in the same folder, as a rename can't cross disks.
   const staged = join(dirname(file), `.sc-update-${process.pid}`);
   try {
@@ -109,6 +119,26 @@ export function keepUpToDate(db: Database): void {
     );
   look();
   setInterval(look, 60 * 60 * 1000);
+}
+
+export async function updateItself(file: string): Promise<void> {
+  const { openDb } = await import("../db.ts");
+  const { daemonStatus } = await import("./service.ts");
+  const installed = await installLatest(file, releases, openDb());
+  if (!installed) {
+    console.log(`Skelcrew ${release} is the latest.`);
+    return;
+  }
+  console.log(`Updated Skelcrew ${release} → ${installed}.`);
+  const running = await daemonStatus();
+  if (!running) return;
+  const run = (...args: string[]) =>
+    Bun.spawnSync([file, ...args], { stdio: ["inherit", "inherit", "inherit"] }).success;
+  const moved = run("serve", "--bg") && (installed !== running.release || run("restart"));
+  if (!moved)
+    throw new Error(
+      `Skelcrew ${installed} is installed, but couldn't restart the daemon on it. Run sc serve --bg, then sc restart.`,
+    );
 }
 
 // Returns the notice of a release installed in the background, for the list and the sidebar, or

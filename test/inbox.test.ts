@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DaemonRequest } from "../src/flow/requests.ts";
+import { red } from "../src/screen/look.ts";
 import { insideSandbox, itemSql, read, runSkel, source, threadSql } from "./harness.ts";
 import {
   addApp,
@@ -457,6 +458,44 @@ console.log(JSON.stringify(out));`);
   });
 });
 
+// A pick that starts or stops a builder can still fail, so its task stays in Needs you while it
+// runs, its box saying what it does. One that fails leaves the item as it was, with the reason.
+test("a start picked on an item stays in its box until it is done, and a failure keeps the item", () => {
+  const seen = inProcess(`
+record(db, "app-12", { erred: true, said: "OAuth token has expired" });
+const item = row("APP-12").ask;
+let during = null;
+const failed = await pickOwnItem(db, "none", "app", "t12", item, "a", async () => {
+  const r = row("APP-12");
+  during = { section: r.section, ask: r.ask };
+  throw new Error("APP-12's builder couldn't start again: no sandbox");
+}).catch((error) => error.message);
+const back = row("APP-12");
+console.log(JSON.stringify({ item, during, failed, section: back.section, ask: back.ask }));`);
+  const why = "APP-12's builder couldn't start again: no sandbox";
+  expect(seen.during).toEqual({
+    section: "needs you",
+    ask: { ...(seen.item as object), doing: "starting…" },
+  });
+  expect(seen.failed).toBe(why);
+  expect(seen.section).toBe("needs you");
+  expect(seen.ask).toEqual({ ...(seen.item as object), failed: why });
+});
+
+// A start picked while every builder is busy queues the task, which is done for the pick: the
+// task waits in the task queue, and its item goes, even one a stop doesn't clear, such as a
+// missing host plugin.
+test("a start picked that joins the queue takes its task out of Needs you", () => {
+  const seen = inProcess(`
+record(db, "app-12", { host: "herdr", needs_you_for: "run sc install: its session host herdr is missing" });
+const said = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "a", async () => {
+  record(db, "app-12", { status: "queued" });
+  return "APP-12 waits in the queue.";
+});
+console.log(JSON.stringify({ said, section: row("APP-12").section, ask: row("APP-12").ask }));`);
+  expect(seen).toEqual({ said: "APP-12 waits in the queue.", section: "task queue", ask: null });
+});
+
 // A pick acts only on what you saw: once the thread needs you for something else, it is refused.
 test("a pick on Skelcrew's own item is refused once the item changed", () => {
   const seen = inProcess(`
@@ -469,6 +508,88 @@ console.log(JSON.stringify({ said, notes: notes() }));`);
     said: "what APP-12 needs you for changed as you answered, so read it again",
     notes: [],
   });
+});
+
+// A pick shows at once: while it runs, its task leaves Needs you for its stage, saying what the
+// pick does, and its tab counts it no more. One that fails comes back with its reason in red in
+// the box, until the next pick or until the thread no longer needs you.
+test("a pick takes its task out of Needs you while it runs, and a failure comes back in red", () => {
+  const seen = inProcess(`
+const { repositoryTabs } = await import(${JSON.stringify(source("list/rows.ts"))});
+const { itemBox } = await import(${JSON.stringify(source("list/layout.ts"))});
+const ready = { status: "waiting", verdict: "approve", needs_you: true, reviewed_commit: "abcdef1234567890" };
+record(db, "app-12", ready);
+const look = () => { const r = row("APP-12"); return { section: r.section, says: r.says, needsYou: r.needsYou, ask: r.ask, badge: repositoryTabs(db, null)[0].needYou + repositoryTabs(db, null)[0].ready }; };
+const before = look();
+let during = null;
+const refused = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "a", async () => { during = look(); throw new Error("GitHub refused: not mergeable"); }).catch((error) => error.message);
+const failed = look();
+const box = itemBox(failed.ask, 60).map((line) => line.text).join("\\n");
+let again = null;
+await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "a", async () => { again = look(); throw new Error("still not"); }).catch(() => {});
+record(db, "app-12", { needs_you: false });
+const cleared = thread().pick_failed;
+record(db, "app-12", { needs_you: true });
+console.log(JSON.stringify({ before, during, refused, failed, box, again, cleared, after: look() }));`);
+  expect(seen.before).toMatchObject({ section: "needs you", badge: 1 });
+  expect(seen.during).toEqual({
+    section: "ready",
+    says: "merging…",
+    needsYou: false,
+    ask: null,
+    badge: 0,
+  });
+  expect(seen.refused).toBe("GitHub refused: not mergeable");
+  expect(seen.failed).toMatchObject({
+    section: "needs you",
+    ask: { title: "Ready to merge", failed: "GitHub refused: not mergeable" },
+  });
+  expect(seen.box).toContain(`\x1b[${red}mGitHub refused: not mergeable`);
+  expect(seen.again).toMatchObject({ section: "ready", says: "merging…" });
+  expect(seen.cleared).toBeNull();
+  expect((seen.after as { ask: object }).ask).not.toHaveProperty("failed");
+});
+
+// A merge without approval arms a plan, which the forge can still refuse on its first try. The
+// pick then fails: the plan stops, and the round limit needs you again, so the item comes back with
+// the forge's reason, to pick again. So does a poll that failed before it could try. One still
+// waiting on its checks stays armed.
+test("a merge without approval the forge refuses at once brings its item back, unarmed", () => {
+  const seen = inProcess(`
+const { armMerge, takeBackFailedMerge } = await import(${JSON.stringify(source("flow/merging.ts"))});
+db.run(\`${itemSql("app", "pr", 7, "Add export", "2026-11-20T10:00:00Z", { head: "b".repeat(40) })}\`);
+db.run("UPDATE repositories SET forge = 'github'");
+record(db, "app-12", { status: "waiting", rounds: 3, verdict: "changes", held: "Fix it.", needs_you: true, pr: 7 });
+const tryMerge = (waits) => async () => {
+  armMerge(db, "none", thread(), { seen: { pr: 7, started: thread().started, head: "b".repeat(40) } }, true);
+  record(db, "app-12", { merge_waits: waits });
+  const failed = takeBackFailedMerge(db, thread(), pollFailed);
+  if (failed !== null) throw new Error(failed);
+  return "armed";
+};
+let pollFailed = null;
+const refused = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", tryMerge("the forge, which refused: Pull Request is not mergeable")).catch((error) => error.message);
+const back = row("APP-12");
+pollFailed = "github failed: GitHub is down";
+const down = await pickOwnItem(db, "none", "app", "t12", back.ask, "b", tryMerge(null)).catch((error) => error.message);
+const downBack = { section: row("APP-12").section, plan: thread().merge_plan, failed: row("APP-12").ask?.failed };
+pollFailed = null;
+const waiting = await pickOwnItem(db, "none", "app", "t12", row("APP-12").ask, "b", tryMerge("its checks"));
+console.log(JSON.stringify({ refused, section: back.section, ask: back.ask, down, downBack, plan: thread().merge_plan, waiting }));`);
+  const why = "#7 didn't merge: the forge refused: Pull Request is not mergeable";
+  expect(seen.refused).toBe(why);
+  expect(seen.section).toBe("needs you");
+  expect(seen.ask).toMatchObject({
+    title: "Review still wants changes after 3 rounds",
+    options: ["Go on: fix the findings", "Merge without approval", "Stop the builder"],
+    failed: why,
+  });
+  // A poll that failed before the forge was asked to merge takes the plan back too.
+  const down = "#7 didn't merge: github failed: GitHub is down";
+  expect(seen.down).toBe(down);
+  expect(seen.downBack).toEqual({ section: "needs you", plan: null, failed: down });
+  expect(seen.waiting).toBe("armed");
+  expect(seen.plan).toBe("armed");
 });
 
 // On the screen every option of Skelcrew's own item goes to the daemon, so the lead hears it:

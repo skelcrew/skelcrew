@@ -28,8 +28,9 @@ const running: Subprocess[] = [];
 // The release file for this machine, as the install script names it.
 const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
 const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
-// A stand-in for a Skelcrew binary that says which release it is.
-const binary = (version: string) => `#!/bin/sh\necho "skelcrew ${version}"\n`;
+// A stand-in for a Skelcrew binary that says which release it is, and notes any other command.
+const binary = (version: string) =>
+  `#!/bin/sh\ntest "$1" = --version && echo "skelcrew ${version}" && exit 0\necho "sc $*" >> "$HOME/calls"\n`;
 const installed = () => join(home, "bin", "sc");
 // The release the daemon noted it installed, from the database, or null with none.
 function marker(): string | null {
@@ -87,9 +88,18 @@ const env = () => ({
 });
 
 // Runs code that uses Skelcrew's modules in a process of its own with the test's home, as Skelcrew
-// stamped with `build` would run it, and returns what it printed. `more` adds to its environment.
+// stamped with `build` and the fake release server would run it, and returns what it printed.
+// `more` adds to its environment.
 async function inProcess(code: string, build?: string, more: Record<string, string> = {}) {
-  const define = build === undefined ? [] : ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`];
+  const define =
+    build === undefined
+      ? []
+      : [
+          "--define",
+          `SKELCREW_BUILD=${JSON.stringify(build)}`,
+          "--define",
+          `SKELCREW_RELEASES=${JSON.stringify(`http://127.0.0.1:${releases.port}`)}`,
+        ];
   const run = Bun.spawn([process.execPath, ...define, "-e", code], {
     env: { ...env(), ...more },
     stdout: "pipe",
@@ -431,6 +441,126 @@ test("sc restart is only for your own terminal, not for agents", async () => {
     "Skelcrew: restarting the daemon is only for your own terminal, not for agents\n",
   );
   expect(done.calls).toBe("");
+});
+
+// Runs sc update as a release of 0.4.2 at the stand-in Skelcrew would, and returns what it
+// printed and what the service manager was asked.
+async function update() {
+  const done = await inProcess(
+    `import { updateItself } from ${JSON.stringify(source("machine/update.ts"))};
+await updateItself(${JSON.stringify(installed())});`,
+    "0.4.2",
+  );
+  const calls = existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
+  return { ...done, calls };
+}
+
+// The new release itself points the service at its file and restarts the daemon on it, as the
+// service could run another copy of Skelcrew than the one updated.
+test("sc update installs the latest release over Skelcrew and restarts the daemon on it", async () => {
+  latest(binary("0.4.3"));
+  await daemon({}, {});
+  const done = await update();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.3"));
+  expect(done.calls).toBe("sc serve --bg\n");
+  expect(done.out).toBe("Updated Skelcrew 0.4.2 → 0.4.3.\n");
+});
+
+// Such as the arm64 build replacing an x64 one under Rosetta: the daemon runs the same release,
+// so only a restart moves it to the new file.
+test("sc update restarts the daemon on a new build of the same release", async () => {
+  latest(`${binary("0.4.2")}# the native build\n`);
+  await daemon({ release: "0.4.2" }, {});
+  const done = await update();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe("sc serve --bg\nsc restart\n");
+});
+
+// sc serve --bg goes by the daemon's release, which can be newer than the sc you run.
+test("sc update restarts a daemon already on the release it installs", async () => {
+  latest(`${binary("0.4.3")}# the native build\n`);
+  await daemon({ release: "0.4.3" }, {});
+  const done = await update();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe("sc serve --bg\nsc restart\n");
+});
+
+test("sc update says how to restart the daemon when the new release can't", async () => {
+  latest(`${binary("0.4.3")}exit 1\n`);
+  await daemon({}, {});
+  const done = await update();
+  expect(done.code).toBe(1);
+  expect(done.out).toBe("Updated Skelcrew 0.4.2 → 0.4.3.\n");
+  expect(done.err).toContain("sc serve --bg");
+});
+
+// The next sc starts the daemon on the new release.
+test("sc update starts no daemon when none runs", async () => {
+  latest(binary("0.4.3"));
+  const done = await update();
+  expect(done.err).toBe("");
+  expect(done.out).toBe("Updated Skelcrew 0.4.2 → 0.4.3.\n");
+  expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.3"));
+  expect(done.calls).toBe("");
+});
+
+test("sc update changes nothing when Skelcrew already is the latest release", async () => {
+  latest(binary("0.4.2"));
+  await daemon({}, {});
+  const done = await update();
+  expect(done.err).toBe("");
+  expect(done.out).toBe("Skelcrew 0.4.2 is the latest.\n");
+  expect(asked).toEqual(["/latest/download/SHA256SUMS"]);
+  expect(done.calls).toBe("");
+});
+
+test("sc update keeps Skelcrew as it was when the download fails its checksum", async () => {
+  latest(binary("0.4.3"), sum("something else"));
+  await daemon({}, {});
+  const done = await update();
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("failed its checksum");
+  expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.2"));
+  expect(readdirSync(join(home, "bin")).filter((file) => file.startsWith("."))).toEqual([]);
+  expect(done.calls).toBe("");
+});
+
+// Runs sc from this checkout, as you would in your terminal, and returns what it printed and its
+// exit code. `more` adds to its environment.
+async function sc(args: string[], more: Record<string, string> = {}) {
+  const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
+    env: { ...env(), ...more },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  return { out, err, code };
+}
+
+// Writing over the file it runs from would replace Bun, or nothing a checkout tracks.
+test("sc update from a checkout says to git pull, and downloads nothing", async () => {
+  latest(binary("0.4.3"));
+  const done = await sc(["update"]);
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("git pull");
+  expect(asked).toEqual([]);
+});
+
+test("sc update is only for your own terminal, not for agents", async () => {
+  const done = await sc(["update"], { SKELCREW_SANDBOX: "1" });
+  expect(done.code).toBe(1);
+  expect(done.err).toBe(
+    "Skelcrew: updating Skelcrew is only for your own terminal, not for agents\n",
+  );
+  expect(asked).toEqual([]);
 });
 
 // Runs sc stamped with `build` on a server, as --remote from a laptop on `laptop` runs it. The

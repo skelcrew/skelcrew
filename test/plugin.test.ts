@@ -923,13 +923,7 @@ test("sc plugin update without -g still points to personal updates", async () =>
 
 // The plugin commands were once at the top level, so typing one there says where it went.
 test("the old top-level plugin commands point to sc plugin", async () => {
-  for (const words of [
-    ["remove", "x"],
-    ["remove", "-g", "x"],
-    ["update"],
-    ["setup", "x"],
-    ["plugins"],
-  ]) {
+  for (const words of [["remove", "x"], ["remove", "-g", "x"], ["setup", "x"], ["plugins"]]) {
     const run = await skel(words);
     expect(run.code).toBe(1);
     expect(run.err).toBe(

@@ -18,15 +18,26 @@ const esc = "\x1b";
 const scrollKeys = new RegExp(`${esc}\\[([56])~|${esc}\\[<(6[45]);\\d+;\\d+M|${esc}\\[([AB])`, "g");
 
 // Returns the command that runs a task's details in the screen's right pane, by the task's row
-// name, such as app-12, in the repository named by its owner/name.
-const detailsCommand = (agents: string, repository: string, name: string) =>
-  skelcrewCommand("details", agents, repository, name);
+// name, such as app-12, in the repository named by its owner/name, with the y/n question a pick
+// on its item asks, if any.
+const detailsCommand = (agents: string, repository: string, name: string, confirm?: string) =>
+  skelcrewCommand("details", agents, repository, name, ...(confirm === undefined ? [] : [confirm]));
 
 // Shows a task's details on the right side of the screen whose session is named, by the task's
-// row name, such as app-12. What you type stays with the sidebar, so the list's keys work and
-// nothing reaches the builder.
-export function showTask(agents: string, session: string, repository: string, name: string): void {
-  respawnPane(agents, `=${session}:.${panes.right}`, detailsCommand(agents, repository, name));
+// row name, such as app-12, with `confirm` in its item's box while a pick on it asks y/n. What you
+// type stays with the sidebar, so the list's keys work and nothing reaches the builder.
+export function showTask(
+  agents: string,
+  session: string,
+  repository: string,
+  name: string,
+  confirm?: string,
+): void {
+  respawnPane(
+    agents,
+    `=${session}:.${panes.right}`,
+    detailsCommand(agents, repository, name, confirm),
+  );
   screenTmux(agents, ["select-pane", "-t", `=${session}:.${panes.sidebar}`]);
 }
 
@@ -97,7 +108,11 @@ export async function attachTask(
   return null;
 }
 
-export async function runTaskDetails(repository: string, name: string): Promise<void> {
+export async function runTaskDetails(
+  repository: string,
+  name: string,
+  confirm?: string,
+): Promise<void> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
   const open: Open = { owner, repo };
@@ -120,7 +135,8 @@ export async function runTaskDetails(repository: string, name: string): Promise<
   };
 
   const refresh = () => {
-    row = listRows(db, open, Date.now()).find((one) => one.name === name);
+    const found = listRows(db, open, Date.now()).find((one) => one.name === name);
+    row = found?.ask && confirm ? { ...found, ask: { ...found.ask, confirm } } : found;
     details = row?.task ? readDetails(db, open, row.task, Date.now(), row.changed) : null;
     draw();
   };

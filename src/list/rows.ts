@@ -66,7 +66,9 @@ export const numbered = sections.filter((section) => section !== "needs you");
 // started and its head as Skelcrew's copy had it, on an item that offers a merge without
 // approval, which merges only that PR at that commit. `skipping` is what that merge asks y/n of
 // first, as sc merge --skip-review does: what the review still asks, and whether it changes
-// .agents/.
+// .agents/. `failed` is why the last pick on it failed, `confirm` the y/n question a pick asks
+// first, which the box shows while it waits on your answer, and `doing` what a pick on it does
+// while it runs, such as `starting…`.
 export type Ask = {
   title: string;
   text: string;
@@ -74,6 +76,9 @@ export type Ask = {
   acts: Act[] | null;
   merging?: Seen;
   skipping?: string;
+  failed?: string;
+  confirm?: string;
+  doing?: string;
 };
 
 // A PR as you saw it, for a merge without approval.
@@ -246,13 +251,19 @@ const askOf = (item: Item): Ask => ({
   acts: null,
 });
 
-// Returns Skelcrew's own item as a row shows it, with the PR you see when it offers a merge
-// without approval.
-const ownAsk = (own: OwnItem, skip: { merging: Seen; skipping: string } | null): Ask => ({
+// Returns Skelcrew's own item as a row shows it, with what a pick on it does while it runs, or why
+// the last one failed, and the PR you see when it offers a merge without approval.
+const ownAsk = (
+  own: OwnItem,
+  thread: Thread,
+  skip: { merging: Seen; skipping: string } | null,
+): Ask => ({
   title: own.title,
   text: own.text,
   options: own.options.map((option) => option.label),
   acts: own.options.map((option) => option.act),
+  ...(thread.pick_failed === null ? {} : { failed: removeControlCodes(thread.pick_failed) }),
+  ...(thread.picking === null ? {} : { doing: thread.picking }),
   ...(skip !== null && own.options.some((option) => option.act === "skip review") ? skip : {}),
 });
 
@@ -372,6 +383,7 @@ function taskRow(
       : own &&
         ownAsk(
           own,
+          thread,
           thread.pr !== null && copy?.head
             ? {
                 merging: { pr: thread.pr, started: thread.started, head: copy.head },

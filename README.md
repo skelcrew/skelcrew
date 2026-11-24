@@ -18,6 +18,8 @@ The script runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bi
 curl -fsSL https://skelcrew.dev/install.sh | sh
 ```
 
+Skelcrew updates itself in the background. `sc update` installs the latest release at once.
+
 Plain `sc` checks for `tmux`, `git` and a sandbox (`bwrap` 0.11 or newer on Linux, `sandbox-exec` on a Mac). It names the command that fixes a missing tool or a sandbox that cannot start. It installs the background service and asks for a harness login when an agent needs one. No personal `config.yaml` is required.
 
 ### 2. Set up a repository
@@ -100,6 +102,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | `sc rm <task>` | Ends the work on a task, closing its PR and its issue. `--keep-issue` keeps the issue open, to start over. |
 | `sc merge --when-ready <task>` | Merges the PR once it is approved and green. `--cancel` disarms it. |
 | `sc plugin add <owner/repo>` | Adds a plugin to this repository, after asking. `-g` adds one of your own. |
+| `sc update` | Installs the latest release of Skelcrew and restarts the daemon on it. Agents keep running. |
 | `sc notify --via <channel> "<subject>" "<text>"` | The lead's, to send you a message you asked for, such as by email or push, with your words in `--asked-file`. Your `notify:` in `~/.config/skelcrew/config.yaml` sends the daily digest and needs-you messages to notifier plugins too. |
 
 `sc --help` lists every command and key.
