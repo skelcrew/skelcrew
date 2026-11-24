@@ -316,7 +316,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     setAsking();
     const asking = await skel(["tell", "app-12", "Hello."], "lead");
     expect(asking.code).not.toBe(0);
-    expect(asking.err).toContain("asking the person a question");
+    expect(asking.err).toContain("asking Simon a question");
     expect((await skel(["stop", "app-12"])).err).toBe("");
     const stopped = await skel(["tell", "app-12", "Hello."], "lead");
     expect(stopped.code).not.toBe(0);
