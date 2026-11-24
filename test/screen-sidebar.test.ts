@@ -223,6 +223,24 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   await until(() => acted.includes("start simon/app #31"), "the daemon to start app#31");
 });
 
+test("Tab and Shift-Tab leave a question in the footer open, and y still answers it", async () => {
+  daemon();
+  sql(itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z"));
+  open("lead");
+  await ready("lead");
+  press("M-0");
+  await until(() => / #31\b/.test(selected()), "APP#31 in Backlog");
+  await until(onDetails, "app#31's details");
+  type("s");
+  await until(() => footer().includes("Start APP#31? y/n"), "the question");
+  type("\t");
+  type("\x1b[Z");
+  await Bun.sleep(300);
+  expect(footer()).toContain("Start APP#31? y/n");
+  type("y");
+  await until(() => acted.includes("start simon/app #31"), "the daemon to start app#31");
+});
+
 // A merge picked on an item asks y/n in the item's box on the right, where you read it: any other
 // key leaves the item, and y sends the pick. While the daemon merges, the task leaves Needs you
 // for Ready, saying so, and a merge that fails comes back with its reason in the box.
