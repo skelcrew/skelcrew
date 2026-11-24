@@ -59,13 +59,13 @@ test("shows the lead, then the task queue and the stages, beside the agent", asy
   await ready("lead");
   const lines = seen().split("\n");
   const left = (y: number) => lines[y]?.slice(2, sidebar).trimEnd();
-  expect(left(2)).toBe("");
+  expect(left(2)).toMatch(/^ +2\/9 threads$/);
   expect(lines[2]).toContain("I am lead");
   expect(left(3)).toMatch(/^ ▸ ◆ Lead\b/);
   expect(left(4)).toBe("");
   expect(left(5)).toMatch(/^ ─+$/);
   expect(left(6)).toBe(" 0 Backlog    0");
-  expect(left(7)).toBe(" 1 Task queue 0  2/9 threads");
+  expect(left(7)).toBe(" 1 Task queue 0");
   expect(left(8)).toBe(" 2 Building   2");
   expect(left(9)).toMatch(/^ {3}[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 12\b/);
   expect(left(10)).toBe("");
