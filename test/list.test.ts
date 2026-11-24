@@ -2731,6 +2731,7 @@ test("Tab and Shift-Tab leave the list on its repository", async () => {
   for (const key of ["\t", "\x1b[Z", "\x1b[9;2u", "\x1b[27;2;9~"]) type(key);
   type("\x1b[1;4C");
   await until(() => seen().includes("● 3 "), "site, on from app");
+  await until(() => asked.includes("open simon/site from a tab"), "site opened");
   expect(asked.filter((said) => said.startsWith("open "))).toEqual(["open simon/site from a tab"]);
 });
 

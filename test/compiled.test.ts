@@ -2,6 +2,7 @@
 // it runs, installs its daemon's service, and agents can run it in their sandbox.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -301,6 +302,21 @@ exit 0`,
     expect(done.err).toContain(
       `http://127.0.0.1:${server.port}/download/v0.4.2/skelcrew-linux-x64`,
     );
+  });
+
+  // A copy of the release, as sc update replaces the file it runs from.
+  test("sc update replaces the release with the latest one", async () => {
+    const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
+    const newer = '#!/bin/sh\necho "skelcrew 0.4.3"\n';
+    files.set(`/latest/download/${asset}`, newer);
+    files.set("/latest/download/SHA256SUMS", `${sum(newer)}  ${asset}\n`);
+    const copy = join(home, "updating", "sc");
+    mkdirSync(join(copy, ".."));
+    copyFileSync(released, copy);
+    const done = await run(["update"], copy);
+    expect(done.err).toBe("");
+    expect(done.out).toBe("Updated Skelcrew 0.4.2 → 0.4.3.\n");
+    expect(readFileSync(copy, "utf8")).toBe(newer);
   });
 });
 
