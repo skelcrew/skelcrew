@@ -806,7 +806,7 @@ export async function initRepo(): Promise<void> {
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   const github = gitHubToAdd(root, remote);
   if (github)
-    console.log(`Found GitHub at ${github.owner}/${github.repo} (origin)\nAdding GitHub plugin`);
+    console.log(`Found GitHub at ${github.owner}/${github.repo} (origin)\nAdding GitHub plugin...`);
   if (!hasConfig) writeFileSync(file, await newSkelcrewYaml(), { flag: "wx" });
   const completed = hasConfig ? await completeSkelcrewYaml(root) : [];
   const forge = github ? addForgePlugin(root) : null;

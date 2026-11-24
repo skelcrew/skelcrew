@@ -1068,7 +1068,7 @@ test("init writes a complete skelcrew.yaml, skelcrew.lock and .agents/ from the 
   const run = await skel(["init"], "", join(checkout, "src"));
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toStartWith("Found GitHub at simon/app (origin)\nAdding GitHub plugin\n");
+  expect(run.out).toStartWith("Found GitHub at simon/app (origin)\nAdding GitHub plugin...\n");
   expect(run.out).not.toContain("tracker");
   expect(run.out).not.toContain("Approve");
   // The GitHub plugin installed as yours is pinned at its version, with nothing to install.
@@ -1503,7 +1503,7 @@ test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin",
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(readFileSync(file, "utf8")).toBe(`${complete}plugins:\n  - skelcrew/skelcrew-github\n`);
-  expect(run.out).toStartWith("Found GitHub at simon/app (origin)\nAdding GitHub plugin\n");
+  expect(run.out).toStartWith("Found GitHub at simon/app (origin)\nAdding GitHub plugin...\n");
   expect(run.out).toContain(
     "skelcrew.yaml is there already, so Skelcrew only added skelcrew/skelcrew-github to its plugins.",
   );

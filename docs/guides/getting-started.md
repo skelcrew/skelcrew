@@ -50,7 +50,7 @@ For a repository on GitHub, it first says so, and that it adds the GitHub plugin
 
 ```
 Found GitHub at simon/app (origin)
-Adding GitHub plugin
+Adding GitHub plugin...
 ```
 
 Then it asks which coding agent the lead, builders and reviewers use. Then it writes `skelcrew.yaml`, `skelcrew.lock` and an `.agents/` folder. These tell Skelcrew how agents work on this repository. It leaves the setup and test commands to the lead, and allows 3 builders at once, which you can change in `skelcrew.yaml`.
