@@ -25,8 +25,10 @@ import {
   itemKey,
   openPr,
   picked,
+  pickSent,
   type Reply,
   replyLine,
+  type Sent,
   stillOffered,
   typeReply,
 } from "../list/actions.ts";
@@ -296,6 +298,8 @@ export async function runSidebar(
   let said: string | null = null;
   let asking: Asking | null = null;
   let working = false;
+  // The pick you said y to, while it is on its way to the daemon, which the rows show at once.
+  let sent: Sent | null = null;
   // The reply you are typing to the lead's item on a row, which takes every key until it is sent
   // or dropped, and how far the item you opened full-size with Enter is scrolled, or null.
   let replying: Reply | null = null;
@@ -486,7 +490,7 @@ export async function runSidebar(
   // pane, and its last column is left blank, so text never touches the box's line.
   const draw = () => {
     const { width, height } = size();
-    const headings = sectionHeadings(all, opened, builders);
+    const headings = sectionHeadings(pickSent(all, sent), opened, builders);
     const room = Math.max(width - 1, 1);
     const keys = narrow && !typingRight ? keyLines(lastFooter, room) : [];
     const rowsHeight = Math.max(height - 1 - keys.length, 1);
@@ -532,9 +536,10 @@ export async function runSidebar(
   const reshow = () => {
     const name = rows[here]?.name;
     const before = rows[here]?.section;
-    const moved = all.find((row) => row.name === name);
+    const listed = pickSent(all, sent);
+    const moved = listed.find((row) => row.name === name);
     if (moved && moved.section !== before && moved.section !== "lead") opened.add(moved.section);
-    rows = askingInBox(shownRows(all, opened, wholeBacklog), asking);
+    rows = askingInBox(shownRows(listed, opened, wholeBacklog), asking);
     const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
     here = at >= 0 ? at : Math.max(Math.min(here, rows.length - 1), 0);
     if (name !== undefined && rows[here]?.name !== name) follow();
@@ -577,15 +582,7 @@ export async function runSidebar(
     const windowWidth = Number(across);
     narrow = windowWidth < narrowBelow;
     notice = noticeLines(updateNotice(db), size().width);
-    // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
-    all = doing("reading the rows", () => {
-      if (empty) return [];
-      try {
-        return listRows(db, open, Date.now());
-      } catch {
-        return [];
-      }
-    });
+    all = readRows();
     builders = doing("reading how full the builders are", () => {
       if (empty) return null;
       try {
@@ -647,13 +644,26 @@ export async function runSidebar(
       lastTop = topText;
       doing("drawing the top row", () => showTop(agents, session, top));
     }
-    // The footer, also only when it changed.
-    const footer = doing("reading the footer's harness", footerText);
-    if (footer !== lastFooter) {
-      lastFooter = footer;
-      doing("drawing the footer", () => tellFooter(agents, session, footer));
-    }
+    drawFooter();
     draw();
+  };
+  // Reads the rows from the database. A repository Skelcrew no longer has has none, until the
+  // sidebar moves off it.
+  const readRows = () =>
+    doing("reading the rows", () => {
+      if (empty) return [];
+      try {
+        return listRows(db, open, Date.now());
+      } catch {
+        return [];
+      }
+    });
+  // Draws the footer, only when it changed. tmux draws it later, as the sidebar never waits for it.
+  const drawFooter = () => {
+    const footer = doing("reading the footer's harness", footerText);
+    if (footer === lastFooter) return;
+    lastFooter = footer;
+    tellFooter(agents, session, footer);
   };
 
   // Opens another repository: its rows on the left at once, on its lead's row, and its lead on
@@ -794,20 +804,34 @@ export async function runSidebar(
     if (first >= 0 && (inside || !closing)) moveTo(first);
   };
 
-  // Has the daemon start or merge once you said y, saying so meanwhile. A start says what the
-  // daemon answered, as a builder can take the last free place while you are asked, and the task
-  // then waits in the queue though the question said it would start. When the daemon or the
-  // forge refuses, the footer says why until the next key.
-  const goAhead = async (action: Question) => {
+  // Has the daemon start, merge or pick once you said y, saying so meanwhile. What you answered
+  // shows first, before anything that can be slow, such as tmux or the database: a pick on the
+  // item of the row named shows as the daemon shows it once it has it. With `asked`, the question
+  // you said y to, it goes ahead only while the rows read again still offer it, as stillOffered
+  // says. A start says what the daemon answered, as a builder can take the last free place while
+  // you are asked, and the task then waits in the queue though the question said it would start.
+  // When the daemon or the forge refuses, the footer says why until the next key.
+  const goAhead = async (action: Question, row: string | null = null, asked?: Asking) => {
     working = true;
     said = action.working;
-    refresh();
+    const { request } = action;
+    sent = row !== null && request.command === "pick" ? { row, pick: request.pick } : null;
+    reshow();
+    drawFooter();
+    draw();
+    if (sent) askInBox(sent.row);
+    if (asked) all = readRows();
+    const offer = asked ? stillOffered(asked, all) : action;
     try {
-      said = await startOrMerge(action.request);
+      said = typeof offer === "string" ? offer : await startOrMerge(offer.request);
     } catch (error) {
       said = errorText(error);
     }
     working = false;
+    const picked = sent;
+    sent = null;
+    if (picked) askInBox(picked.row);
+    refresh();
   };
 
   // Takes your answer to the lead's item on a row to the daemon, which tells the lead, and says
@@ -848,19 +872,22 @@ export async function runSidebar(
       );
     else if ("confirm" in does) {
       asking = { question: does.confirm, row: row.name, offer: "pick" };
-      askInBox(row.name, does.confirm.ask);
+      askInBox(row.name);
     } else {
       item = null;
       if ("refused" in does) said = does.refused;
       else if ("answer" in does) void answerRow(row, { pick: does.answer });
-      else void goAhead(does.run);
+      else void goAhead(does.run, row.name);
     }
   };
-  // Shows the y/n question a pick asks in its item's box on the right too, or with null takes it
-  // off, while the right side shows that task's details. A narrow screen draws the box itself.
-  const askInBox = (name: string, question: string | null) => {
+  // Shows the item's box of the row named on the right as it stands, while the right side shows
+  // that task's details: with the y/n question a pick asks, or as a pick on its way shows it. A
+  // narrow screen draws the box itself.
+  const askInBox = (name: string) => {
     if (narrow || shown !== detailsOf(name)) return;
-    showTask(agents, session, `${open.owner}/${open.repo}`, name, question ?? undefined);
+    const question = asking?.offer === "pick" && asking.row === name ? asking.question.ask : "";
+    const pick = sent?.row === name ? sent.pick : undefined;
+    showTask(agents, session, `${open.owner}/${open.repo}`, name, question, pick);
     tty = paneTty(agents, rightPane);
   };
   // Asks whether to merge a task ready for review, as m does, or says why it can't.
@@ -1023,15 +1050,10 @@ export async function runSidebar(
     if (asking) {
       const action = asking;
       asking = null;
-      if (action.offer === "pick") askInBox(action.row, null);
-      if (name !== "y") return;
+      if (name !== "y") return action.offer === "pick" ? askInBox(action.row) : undefined;
       if (action.offer === "pick") item = null;
-      refresh();
-      if (action.question.request.command === "restart") return void goAhead(action.question);
-      const offer = stillOffered(action, all);
-      if (typeof offer === "string") said = offer;
-      else void goAhead(offer);
-      return;
+      const restart = action.question.request.command === "restart";
+      return void goAhead(action.question, action.row, restart ? undefined : action);
     }
     said = null;
     if (!altPattern.test(key)) held = true;

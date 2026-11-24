@@ -151,6 +151,22 @@ export function noteRefreshes(): void {
   given.before = `PATH=${folder}:$PATH `;
 }
 
+// Puts a tmux in front of the real one that, while the test holds it, waits before a call whose
+// words match `held`, a shell pattern such as *respawn-pane*, as a slow tmux would. It must be set
+// before the screen opens.
+export function slowTmux(held: string): void {
+  const folder = join(home, "slow");
+  mkdirSync(folder);
+  writeFileSync(
+    join(folder, "tmux"),
+    `#!/bin/sh\ncase "$*" in ${held}) while test -e ${join(home, "held")}; do sleep 0.05; done ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
+    { mode: 0o755 },
+  );
+  given.before = `PATH=${folder}:$PATH `;
+}
+export const holdTmux = () => writeFileSync(join(home, "held"), "");
+export const releaseTmux = () => rmSync(join(home, "held"), { force: true });
+
 // How many refreshes the sidebar has started.
 const refreshesStarted = () => read("refreshes").split("\n").length - 1;
 
@@ -362,8 +378,8 @@ export const footer = (row = 29) =>
 // saying when a tab asked, which must never open a tab you closed, and answers with nothing to
 // say.
 // It also logs each thread started, agent restarted, PR merged and item picked, in `acted`, answering a merge with
-// `given.mergeAnswer`. While `given.holding`, those wait for `release`, so a test sees what the screen says
-// meanwhile.
+// `given.mergeAnswer`. While `given.holding`, starts, merges and picks wait for `release`, so a test sees what
+// the screen says meanwhile.
 export const asked: string[] = [];
 export const acted: string[] = [];
 const waiting: (() => void)[] = [];
@@ -420,17 +436,23 @@ export function daemon(): void {
         );
         return;
       }
-      if (command === "pick") acted.push(`pick ${repo} ${task} ${pick}`);
-      if (command !== "start" && command !== "merge") {
+      if (command !== "start" && command !== "merge" && command !== "pick") {
         connection.end("{}\n");
         return;
       }
       acted.push(
-        command === "start"
-          ? `start ${repo} ${task}${now ? " now" : ""}`
-          : `merge ${repo} ${pr} ${commit}`,
+        command === "pick"
+          ? `pick ${repo} ${task} ${pick}`
+          : command === "start"
+            ? `start ${repo} ${task}${now ? " now" : ""}`
+            : `merge ${repo} ${pr} ${commit}`,
       );
-      const said = command === "start" ? { started: `Started app-${task}.` } : given.mergeAnswer;
+      const said =
+        command === "pick"
+          ? {}
+          : command === "start"
+            ? { started: `Started app-${task}.` }
+            : given.mergeAnswer;
       const reply = () => connection.end(`${JSON.stringify(said)}\n`);
       if (given.holding) waiting.push(reply);
       else reply();
