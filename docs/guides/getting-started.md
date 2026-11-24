@@ -67,7 +67,7 @@ Next, install the plugins it names:
 Then run sc and tell your lead what to build.
 ```
 
-So run `sc install`. It installs the plugins the files name, such as the GitHub plugin. Running it is your yes, so it asks nothing. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository. From then on, Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. When this machine has every plugin already, `sc init` ends with `Run sc and tell your lead what to build.` instead.
+So run `sc install`. It installs the plugins the files name, such as the GitHub plugin. Running it is your yes, so it asks nothing. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository. From then on, Skelcrew acts on GitHub as `skelcrew[bot]`, never as you. It ends with `Run sc and tell your lead what to build.`, or `Run sc to continue.` when Skelcrew already has the repository. When this machine has every plugin already, `sc init` ends with `Run sc and tell your lead what to build.` instead.
 
 A teammate who clones the repository also needs only `sc install`.
 

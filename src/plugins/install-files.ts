@@ -1,22 +1,29 @@
 // sc install installs the plugins named by a checkout, or by its default branch when the checkout
 // has no skelcrew.yaml, and by the personal lock. It stops for a repository with no skelcrew.yaml
-// on its default branch. It never chooses harnesses, signs agents in, or sets up the daemon.
+// on its default branch. Run in a checkout, it ends by saying what to run next. It never chooses harnesses, signs agents in, or sets up the daemon.
 import { lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkoutTop, noSkelcrewYaml } from "../flow/repo.ts";
+import { checkoutTop, noSkelcrewYaml, whatToRunNext } from "../flow/repo.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { installYourPlugins } from "./install.ts";
 import { installRepositoryPlugins, repositoryNeeds } from "./repository.ts";
 
 export function installFiles(from?: string): boolean {
+  const installed = installFrom(from);
+  const root = from ? null : checkoutTop();
+  if (installed && root !== null) console.log(`\n${whatToRunNext(root)}`);
+  return installed;
+}
+
+function installFrom(from?: string): boolean {
   const temporary = from ? mkdtempSync(join(tmpdir(), "skelcrew-install-")) : null;
   try {
     let root = checkoutTop();
     const origin = root !== null && !from ? originHere(root) : null;
     const hasFile = (folder: string) =>
       lstatSync(join(folder, "skelcrew.yaml"), { throwIfNoEntry: false }) !== undefined;
-    if (root !== null && origin && !hasFile(root)) return installFiles(origin);
+    if (root !== null && origin && !hasFile(root)) return installFrom(origin);
     if (from && temporary) {
       if (!parseRemote(from)) throw new Error(`${from} isn't a repository remote`);
       root = join(temporary, "repository");
