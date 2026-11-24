@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   click,
+  closeScreen,
   endTest,
   given,
   home,
@@ -67,7 +68,7 @@ test("at 80 columns and wider, both sides show as before", async () => {
   open("lead", "one", "xterm-256color", "80");
   await ready("lead");
   press("C-\\");
-  await until(() => seen().includes("⌥Q quit"), "the sidebar's keys");
+  await until(() => seen().includes("^D^D quit"), "the sidebar's keys");
   expect(showing()).toBe("both");
   expect(header()).not.toContain("sidebar");
 });
@@ -99,12 +100,15 @@ test("Shift-Enter gives the agent the terminal on a narrow screen", async () => 
   await until(() => showing() === "agent", "the lead alone again");
 });
 
-test("the sidebar alone shows its keys, q among them, and q leaves the screen", async () => {
+test("the sidebar alone shows its keys, Ctrl-D twice among them, and q no longer leaves", async () => {
   open("lead", "one", "xterm-256color", "60");
   await leadAlone();
   press("C-\\");
-  await until(() => bottom().includes("q/⌥Q quit"), "the keys under the sidebar");
+  await until(() => bottom().includes("^D^D quit"), "the keys under the sidebar");
   type("q");
+  await Bun.sleep(300);
+  expect(existsSync(join(home, "left-one"))).toBe(false);
+  closeScreen();
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
 

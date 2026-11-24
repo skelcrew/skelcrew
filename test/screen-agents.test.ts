@@ -14,9 +14,11 @@ import {
   asked,
   attachTo,
   click,
+  closeScreen,
   daemon,
   endTest,
   env,
+  footer,
   given,
   home,
   labels,
@@ -267,35 +269,32 @@ test("a lead on a plugin's host isn't brought back while its host fails to answe
 
 // Plain sc opens the screen for a lead on a plugin's host too, through the same code plain sc
 // runs, with a stand-in daemon that hands it the lead. The host's attach here swallows every key,
-// as a host whose own key to detach never arrives would. Alt-Q and Ctrl-Q, the screen's keys,
-// still leave, as tmux takes them before the host's attach sees them.
-for (const key of ["M-q", "C-q"])
-  test(`plain sc on a lead on a plugin's host opens the screen, and ${key} leaves it`, async () => {
-    fakeHost(["fake-lead"], 'stty raw -echo; echo "I am $1 on fake"; exec cat >/dev/null\n');
-    sql(
-      "UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'",
-    );
-    mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
-    const daemon = createServer((connection) =>
-      connection.on("data", () => connection.end('{"lead":"lead","repository":"simon/app"}\n')),
-    ).listen(join(home, "run", "skelcrew.sock"));
-    try {
-      const script = join(home, "plain-sc.ts");
-      writeFileSync(
-        script,
-        `import { attachToLead } from ${JSON.stringify(source("attach.ts"))};
+// as a host whose own key to detach never arrives would. Ctrl-D twice, the screen's key, still
+// leaves, as tmux takes it before the host's attach sees it.
+test("plain sc on a lead on a plugin's host opens the screen, and Ctrl-D twice leaves it", async () => {
+  fakeHost(["fake-lead"], 'stty raw -echo; echo "I am $1 on fake"; exec cat >/dev/null\n');
+  sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
+  mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
+  const daemon = createServer((connection) =>
+    connection.on("data", () => connection.end('{"lead":"lead","repository":"simon/app"}\n')),
+  ).listen(join(home, "run", "skelcrew.sock"));
+  try {
+    const script = join(home, "plain-sc.ts");
+    writeFileSync(
+      script,
+      `import { attachToLead } from ${JSON.stringify(source("attach.ts"))};
 await attachToLead(${JSON.stringify(agents)}, false);
 await Bun.write(${JSON.stringify(join(home, "left-one"))}, "left");`,
-      );
-      const command = `TERM=xterm-256color ${process.execPath} ${script}; sleep 300`;
-      tmux(terminal, "new-session", "-d", "-s", "one", "-x", "120", "-y", "30", command);
-      await until(() => seen().includes("I am fake-lead on fake") && onLead(), "the screen");
-      press(key);
-      await until(() => existsSync(join(home, "left-one")), "the screen to leave");
-    } finally {
-      daemon.close();
-    }
-  });
+    );
+    const command = `TERM=xterm-256color ${process.execPath} ${script}; sleep 300`;
+    tmux(terminal, "new-session", "-d", "-s", "one", "-x", "120", "-y", "30", command);
+    await until(() => seen().includes("I am fake-lead on fake") && onLead(), "the screen");
+    closeScreen();
+    await until(() => existsSync(join(home, "left-one")), "the screen to leave");
+  } finally {
+    daemon.close();
+  }
+});
 
 // A host that fails to answer from the moment the screen opens hasn't said its lead ended, so
 // the sidebar doesn't take it for crashed and ask the daemon to bring it back.
@@ -336,10 +335,10 @@ test("updates on its own, with needs you in the sidebar", async () => {
   await until(() => !/[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 7\b/.test(seen()), "the done thread to go");
 });
 
-test("Alt-Q leaves the whole screen, ends no agent, and says so", async () => {
+test("Ctrl-D twice leaves the whole screen, ends no agent, and says so", async () => {
   open("lead");
   await ready("lead");
-  press("M-q");
+  closeScreen();
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
   await until(() => screenSessions().length === 0, "the session to end");
   expect(tmux(screen, "list-sessions").ok).toBe(false);
@@ -351,13 +350,41 @@ test("Alt-Q leaves the whole screen, ends no agent, and says so", async () => {
   expect(seen()).not.toContain("[exited]");
 });
 
-// A Mac terminal that doesn't send Option as Alt can't press Alt-Q, so Ctrl-Q leaves too.
-test("Ctrl-Q still leaves, though nothing shows it", async () => {
+// One Ctrl-D ends a Pi session and two end Claude Code, so no agent ever gets it.
+test("a first Ctrl-D asks for a second in the footer, reaches no agent, and leaves nothing", async () => {
   open("lead");
   await ready("lead");
-  press("C-q");
+  press("C-d");
+  await until(() => footer() === "  Press Ctrl-D again to close", "the hint");
+  await until(() => footer().startsWith("  typing to lead"), "the hint to go after 2 seconds");
+  press("C-d");
+  await Bun.sleep(300);
+  expect(existsSync(join(home, "left-one"))).toBe(false);
+  expect(read("lead.typed")).toBe("");
+  closeScreen();
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
-  await until(() => seen().includes(leaving), "the line that says what happened");
+});
+
+// The key after a first Ctrl-D still does what it would have done, the screen's own keys too.
+test("any other key after a first Ctrl-D clears the hint and still acts", async () => {
+  open("lead");
+  await ready("lead");
+  press("C-d");
+  await until(() => footer() === "  Press Ctrl-D again to close", "the hint");
+  type("x");
+  await until(() => footer().startsWith("  typing to lead"), "the hint to go");
+  press("Enter");
+  await until(() => read("lead.typed") === "x\n", "the key to reach the lead");
+  press("C-d");
+  await until(() => footer() === "  Press Ctrl-D again to close", "the hint again");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar to take your typing");
+  await until(() => !footer().includes("Press Ctrl-D"), "the hint to go again");
+  expect(existsSync(join(home, "left-one"))).toBe(false);
+  press("C-d");
+  await until(() => footer() === "  Press Ctrl-D again to close", "the hint in the sidebar");
+  press("C-d");
+  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
 
 // Ctrl-\ only leaves an agent opened alone. Were it to reach the agents' server, it would detach
@@ -391,11 +418,11 @@ test("leaving never takes the screen away from another terminal, however busy th
     Bun.spawn(["sh", "-c", asking], { env: { ...env(), TMUX: "" } }),
   );
   try {
-    for (const key of ["M-q", "C-q", "M-q", "C-q"]) {
+    for (const time of [1, 2, 3, 4]) {
       open("lead", "one");
       await ready("lead", "one");
-      press(key, "one");
-      await until(() => seen("one").includes(leaving), `${key} to leave`, "one");
+      closeScreen("one");
+      await until(() => seen("one").includes(leaving), `leaving ${time}`, "one");
       expect(seen("one")).not.toContain("server exited unexpectedly");
       expect(screenSessions()).toHaveLength(1);
       expect(seen("two")).toContain("I am lead");
@@ -479,8 +506,8 @@ test("with a terminal that sends extended keys, the screen's own keys still work
   type("hello");
   press("Enter");
   await until(() => read("app-7.typed") === "hello\n", "the typing");
-  press("C-q");
-  await until(() => existsSync(join(home, "left-one")), "Ctrl-Q to leave");
+  closeScreen();
+  await until(() => existsSync(join(home, "left-one")), "Ctrl-D twice to leave");
 });
 
 test("Ctrl-] no longer leaves", async () => {
@@ -569,7 +596,7 @@ test("every key pressed while scrolled back reaches the agent, Enter too", async
   expect(typed()).toBe(`${keys.join("")}\n`);
 });
 
-test("Ctrl-Q and switching still work while scrolled back", async () => {
+test("Ctrl-D twice and switching still work while scrolled back", async () => {
   agent("output", history);
   open("output");
   await ready("output");
@@ -577,7 +604,7 @@ test("Ctrl-Q and switching still work while scrolled back", async () => {
   await until(() => !seen().includes("I am output"), "the scrollback");
   press("M-S-Down");
   await until(() => / 12\b/.test(selected()), "the first task");
-  press("C-q");
+  closeScreen();
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
 
@@ -784,7 +811,7 @@ test("two terminals each get their own session, and leaving one leaves the other
   press("M-S-Down", "two");
   await until(() => / 12\b/.test(selected("two")), "the second to switch", "two");
   expect(onLead("one")).toBe(true);
-  press("C-q", "one");
+  closeScreen("one");
   await until(() => screenSessions().length === 1, "the first to end");
   press("M-Down", "two");
   await until(() => / 7\b/.test(selected("two")), "the second to go on working", "two");
@@ -865,7 +892,7 @@ test("the terminal's title says Skelcrew while the screen is open, and comes bac
   open("lead");
   await ready("lead");
   await until(() => title() === "Skelcrew", "the title");
-  press("C-q");
+  closeScreen();
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
   expect(title()).toBe("my shell");
 });

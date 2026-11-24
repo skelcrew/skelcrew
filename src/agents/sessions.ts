@@ -72,10 +72,18 @@ export type Labels = z.infer<typeof Labels>;
 // entered copy mode.
 const copied = `run-shell -d 0.3; send-keys -X copy-selection-no-clear; delete-buffer
   if -F "#{==:#{scroll_position},0}" { send-keys -X cancel }`;
+// Ctrl-D never reaches an agent, where one press would end it. Twice detaches, as on the screen.
+// The first moves your terminal to a key table where a second one detaches, and says so. Any
+// other key moves it back and goes on to the agent, as tmux would drop it, and Ctrl-\ detaches.
+const askToClose = `switch-client -T close; display-message "Press Ctrl-D again to close"`;
 const tmuxConfig = `set -g status off
 unbind -n M-q
 unbind -n C-q
 bind -n C-\\\\ detach-client
+bind -n C-d { ${askToClose} }
+bind -T close C-d detach-client
+bind -T close Any { switch-client -T root; send-keys }
+bind -T close C-\\\\ detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync:extkeys:clipboard"
 set -s extended-keys on
@@ -100,6 +108,7 @@ bind -n TripleClick1Pane {
 }
 unbind -a -T copy-mode
 bind -T copy-mode C-\\\\ detach-client
+bind -T copy-mode C-d { send-keys -X cancel; ${askToClose} }
 bind -T copy-mode WheelUpPane send-keys -X -N 5 scroll-up
 bind -T copy-mode WheelDownPane send-keys -X -N 5 scroll-down
 bind -T copy-mode MouseDown1Pane send-keys -X clear-selection

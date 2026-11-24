@@ -152,7 +152,7 @@ test("the help lists the screen's keys, anywhere first, then the sidebar's", () 
     "alt + ↑/↓ ",
     "alt + 0-6 ",
     "alt + w, w ",
-    "alt + q ",
+    "ctrl + d, ctrl + d ",
     "enter ",
     "shift + enter ",
     "s ",

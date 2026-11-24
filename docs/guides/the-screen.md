@@ -57,7 +57,7 @@ Some keys work from anywhere, even while you type to an agent:
 | Alt+0 to Alt+6 | Open or close a section |
 | Alt+Shift+← → | Switch to another repository's tab |
 | Alt+Tab, or Ctrl+\ | Switch your typing between the sidebar and the right side |
-| Alt+Q | Leave the screen |
+| Ctrl+D twice | Leave the screen |
 
 You can also click. A click on a row opens it, and a click on a section's heading opens or closes it.
 
@@ -87,7 +87,7 @@ Esc then Tab typed very fast in an agent's prompt looks the same as Alt+Tab to t
 
 ## Alt keys on a Mac
 
-The Alt keys, such as ⌥Tab, ⌥↑ and ⌥Q, need your terminal to send ⌥ as Alt. Most Mac terminals don't by default. Set it once:
+The Alt keys, such as ⌥Tab, ⌥↑ and ⌥W, need your terminal to send ⌥ as Alt. Most Mac terminals don't by default. Set it once:
 
 | Terminal | Setting |
 | --- | --- |
@@ -130,7 +130,7 @@ Ctrl+\ detaches you and brings you back to your shell. That is on tmux, the defa
 
 ## Leaving
 
-Alt+Q leaves the screen. Your agents keep running, and the screen says so:
+Ctrl+D twice leaves the screen. Your agents keep running, and the screen says so:
 
 ```
 Your agents keep running. Run sc to come back.

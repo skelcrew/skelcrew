@@ -1071,7 +1071,9 @@ test("every section has its heading with its count, only open ones show rows, an
     "",
     "",
   ]);
-  expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  0-6 sections  q/esc quit${" ".repeat(30)}cpu 12%`);
+  expect(lines.at(-1)).toBe(
+    ` ↑↓ move  ⏎ open  0-6 sections  esc/^D^D quit${" ".repeat(27)}cpu 12%`,
+  );
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(79);
   expect(lines).toHaveLength(29);
 });
@@ -1120,7 +1122,7 @@ test("the task queue shows its key 1 between Backlog and Building, and an empty 
       shown.find((row) => row.name === "heading task queue"),
       1,
     ),
-  ).toBe("↑↓ move  ⏎ open/close  0-6 sections  q/esc quit");
+  ).toBe("↑↓ move  ⏎ open/close  0-6 sections  esc/^D^D quit");
 });
 
 // The stages follow one another with no blank line between them, whether a stage shows rows, is
@@ -1200,9 +1202,9 @@ test("the rows shown have every heading among them, a heading you are on is shad
     "\x1b[48;5;238m",
   );
   expect(lines.some((line) => line.includes("▸"))).toBe(false);
-  expect(keysFor(shown[at], 1)).toBe("↑↓ move  ⏎ open/close  0-6 sections  q/esc quit");
+  expect(keysFor(shown[at], 1)).toBe("↑↓ move  ⏎ open/close  0-6 sections  esc/^D^D quit");
   // Needs you never closes, so Enter offers nothing on its heading.
-  expect(keysFor(shown[1], 1)).toBe("↑↓ move  0-6 sections  q/esc quit");
+  expect(keysFor(shown[1], 1)).toBe("↑↓ move  0-6 sections  esc/^D^D quit");
 });
 
 // Scrolling down onto a heading can leave it on the last line before the bottom edge, with its
@@ -1994,15 +1996,15 @@ process.exit(0);`,
   const vars = `HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")} SKELCREW_FIXED_LOAD='cpu 12%' ${path}`;
   const command = `${vars} TERM=xterm-256color ${process.execPath} ${script}; sleep 300`;
   tmux("new-session", "-d", "-s", "one", "-x", String(width), "-y", "24", command);
-  await until(() => seen().includes("q/esc quit"), "the list");
+  await until(() => seen().includes("esc/^D^D quit"), "the list");
 }
 
-test("the list opens on the first task that needs you, and q leaves it with every agent running", async () => {
+test("the list opens on the first task that needs you, and Ctrl-D twice leaves it with every agent running", async () => {
   await open();
   expect(seen()).toContain(" Skelcrew ");
   expect(seen()).toContain("site •1");
   expect(here()).toStartWith("▸ ● 12 ");
-  type("q");
+  type("\x04\x04");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   expect(seen()).toContain("Your agents keep running. Run sc --list to come back.");
   const sessions = Bun.spawnSync(["tmux", "-L", agents, "list-sessions", "-F", "#S"]);
@@ -2057,20 +2059,39 @@ test("a task leaving Needs you for a closed stage opens it, and you stay on it",
   expect(lines[lines.findIndex((line) => line.includes("▸")) - 1]).toMatch(/^ 3 Reviewing/);
 });
 
-// Leaving gives the terminal back, so a key that came with q must never act after it.
-test("a key that comes with q in one read does nothing once the list has left", async () => {
+// Leaving gives the terminal back, so a key that came with Ctrl-D must never act after it.
+test("a key that comes with Ctrl-D twice in one read does nothing once the list has left", async () => {
   await open();
   await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
-  type("q\r");
+  type("\x04\x04\r");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   await Bun.sleep(500);
   const clients = Bun.spawnSync(["tmux", "-L", agents, "list-clients"]).stdout.toString();
   expect(clients).toBe("");
 });
 
-for (const [key, name] of [
-  ["q", "q"],
-  ["\x03", "Ctrl-C"],
+test("a first Ctrl-D asks for a second, any other key clears that, and q leaves nothing", async () => {
+  await open();
+  type("q");
+  await Bun.sleep(300);
+  expect(read(join(home, "left"))).toBe("");
+  type("\x04");
+  await until(() => seen().includes("Press Ctrl-D again to close"), "the hint");
+  press("Down");
+  await until(() => seen().includes("esc/^D^D quit"), "the keys again");
+  type("\x04");
+  await until(() => seen().includes("Press Ctrl-D again to close"), "the hint again");
+  await until(() => seen().includes("esc/^D^D quit"), "the keys after 2 seconds");
+  type("\x04");
+  await Bun.sleep(300);
+  expect(read(join(home, "left"))).toBe("");
+  type("\x04");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
+});
+
+for (const [keys, name] of [
+  [["\x04", "\x04"], "Ctrl-D twice"],
+  [["\x03"], "Ctrl-C"],
 ] as const)
   test(`${name} leaves the list while a question is open, and answers nothing`, async () => {
     await open();
@@ -2078,7 +2099,10 @@ for (const [key, name] of [
     await until(() => here().startsWith("▸ ○ #31 "), "the issue's row");
     press("Enter");
     await until(() => seen().includes("Start APP#31? y/n"), "the question");
-    type(key);
+    for (const key of keys) {
+      if (key !== keys[0]) await until(() => seen().includes("Press Ctrl-D again"), "the hint");
+      type(key);
+    }
     await until(() => read(join(home, "left")) === "left", "the list to leave");
     expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   });
@@ -2093,7 +2117,7 @@ test("Enter attaches to the builder, every key reaches it, and Ctrl-\\ comes bac
   press("Enter");
   await until(() => read(join(home, "app-7.typed")) === "q m hello\n", "what was typed");
   press("C-\\");
-  await until(() => seen().includes("q/esc quit"), "the list again");
+  await until(() => seen().includes("esc/^D^D quit"), "the list again");
   expect(here()).toStartWith("▸ ○ 7 ");
   expect(read(join(home, "left"))).toBe("");
 });
@@ -2155,13 +2179,13 @@ test("Ctrl-Q no longer comes back from an agent", async () => {
   press("C-q");
   await Bun.sleep(500);
   expect(seen()).toContain("I am app-7");
-  expect(seen()).not.toContain("q/esc quit");
+  expect(seen()).not.toContain("esc/^D^D quit");
   press("C-\\");
   await until(() => here().startsWith("▸ ○ 7 "), "the list again");
 });
 
 // Ctrl-\ pressed once too often lands on the list, in whatever form your terminal sends it, and
-// only q leaves the list. Alt-Q and Ctrl-Q, which once came back from an agent, leave nothing
+// leaves nothing. Alt-Q and Ctrl-Q, which once came back from an agent, leave nothing
 // either.
 test("Ctrl-\\ in every form, Alt-Q and Ctrl-Q do nothing on the list", async () => {
   await open();
@@ -2280,7 +2304,7 @@ test("while attached the title names the agent and the key back, and the list sh
   await until(() => seen().includes("I am app-12"), "app-12's agent");
   await until(() => title() === "APP-12 · ctrl+\\ back\n", "the title");
   press("C-\\");
-  await until(() => seen().includes("q/esc quit"), "the list again");
+  await until(() => seen().includes("esc/^D^D quit"), "the list again");
   await until(() => title() === "my shell\n", "the title you had");
 });
 
@@ -2291,7 +2315,7 @@ test("an agent that ends while you are attached brings you back to the list, on 
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   type("bye");
   press("Enter");
-  await until(() => seen().includes("q/esc quit"), "the list again");
+  await until(() => seen().includes("esc/^D^D quit"), "the list again");
   expect(here()).toStartWith("▸ ○ 7 ");
   expect(read(join(home, "left"))).toBe("");
 });
@@ -2333,7 +2357,7 @@ test("an agent that ends detaches only the list's own client", async () => {
   await until(() => clients() === "app-7\napp-7", "both clients");
   type("bye");
   press("Enter");
-  await until(() => seen().includes("q/esc quit"), "the list again");
+  await until(() => seen().includes("esc/^D^D quit"), "the list again");
   expect(clients()).toBe("app-7");
 });
 
@@ -2554,7 +2578,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   type("a");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   press("Enter");
-  await until(() => seen().includes("q/esc quit"), "the list again");
+  await until(() => seen().includes("esc/^D^D quit"), "the list again");
   expect(here()).toStartWith("▸ ● 12 ");
   expect(read(join(home, "left"))).toBe("");
 });
@@ -2590,7 +2614,7 @@ test("Enter on an issue asks first: any key but y starts nothing, and y starts i
   press("Enter");
   await until(() => seen().includes("Start APP#31? y/n"), "the question");
   type("n");
-  await until(() => seen().includes("q/esc quit"), "the keys again");
+  await until(() => seen().includes("esc/^D^D quit"), "the keys again");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   press("Enter");
   await until(() => seen().includes("Start APP#31? y/n"), "the question again");
@@ -2760,7 +2784,7 @@ test("a click on a task selects it, and a second click opens it, as Enter does",
   press("C-\\");
   await until(() => here().startsWith("▸ ○ 7 "), "the list on APP-7's row");
   expect(mouseOn()).toBe(true);
-  type("q");
+  type("\x04\x04");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   expect(mouseOn()).toBe(false);
 });
@@ -2983,14 +3007,14 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   await until(() => seen().includes("a) Open the builder"), "the item");
   type("a");
   await until(
-    () => !seen().includes("q/esc quit") && !seen().includes("esc back"),
+    () => !seen().includes("esc/^D^D quit") && !seen().includes("esc back"),
     "app-12's agent",
   );
   type("hello");
   press("Enter");
   await until(() => read(join(home, "app-12.typed")) === "hello\n", "what was typed");
   press("C-\\");
-  await until(() => seen().includes("q/esc quit"), "the list again");
+  await until(() => seen().includes("esc/^D^D quit"), "the list again");
 });
 
 // app-12's description is far taller than the pane: 30 short paragraphs, the last one ending it.
@@ -3290,7 +3314,7 @@ test("the live view reads only while the list shows with its pane", async () => 
   // Nor once the list has left.
   tmux("resize-window", "-t", "=one:", "-x", String(wide));
   await until(() => seen().includes(" │ "), "the pane");
-  type("q");
+  type("\x04\x04");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   await wait(() => noReads(reads), { what: () => "the reads to stop once the list left" });
   expect(await noReads(reads)).toBe(true);
@@ -3414,18 +3438,18 @@ test("a read that answers after the list left draws nothing over your terminal",
     () => liveSeen().some((line) => line.startsWith("slow screen")),
     "the slow host's screen",
   );
-  // A read starts at once on coming back to app-12, and q leaves while it is under way.
+  // A read starts at once on coming back to app-12, and the list leaves while it is under way.
   press("Down");
   press("Up");
   await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
-  type("q");
+  type("\x04\x04");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   const reads = slowReads("started");
   // The list would draw the answer the moment it came, so a moment after it is long enough.
   await slowReadsEnded(reads);
   await Bun.sleep(300);
   expect(seen()).toContain("Your agents keep running.");
-  expect(seen()).not.toContain("q/esc quit");
+  expect(seen()).not.toContain("esc/^D^D quit");
 });
 
 test("a read under way when you move away and back is dropped, as you moved since it was asked", async () => {

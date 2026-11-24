@@ -116,7 +116,7 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
     ...now,
     ...merge,
     ...tab,
-    "q/esc quit",
+    "esc/^D^D quit",
   ].join("  ");
 }
 
