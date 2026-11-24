@@ -2,7 +2,7 @@
 // instructions Skelcrew gave them before the instructions became files.
 import { expect, test } from "bun:test";
 import { reviewerPrompt } from "../src/flow/reviewer.ts";
-import { builtInRole, readRole } from "../src/roles.ts";
+import { builtInRole, fillName, readRole, withName } from "../src/roles.ts";
 
 const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 
@@ -338,14 +338,21 @@ const titledItems = [
   ],
 ].map((pair) => pair.map(namesInLowercase));
 
+// A role as it read before it named you with {{name}}: as "the human", and "its human" once.
+const asBefore = (name: "lead" | "builder") =>
+  fillName(builtInRole(name).instructions, "the human").replace(
+    "that lead asks the human before",
+    "that lead asks its human before",
+  );
+
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // Their examples name tasks in uppercase, as people read them.
-  expect(builtInRole("lead").instructions).not.toMatch(/\bapp-t?\d+\b/);
-  expect(builtInRole("builder").instructions).not.toMatch(/\bapp-t?\d+\b/);
+  expect(asBefore("lead")).not.toMatch(/\bapp-t?\d+\b/);
+  expect(asBefore("builder")).not.toMatch(/\bapp-t?\d+\b/);
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
-  const bounds = boundsAdded(builtInRole("lead").instructions);
+  const bounds = boundsAdded(asBefore("lead"));
   expect(bounds.split("\n").length).toBe(4);
-  let lead = namesInLowercase(builtInRole("lead").instructions).replace(bounds, "");
+  let lead = namesInLowercase(asBefore("lead")).replace(bounds, "");
   for (const [before = "", now = ""] of [...titledItems, ...numberedTasks, ...inbox]) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
@@ -391,7 +398,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
     lead,
   );
   expect(sha256(without)).toBe("4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837");
-  const builder = namesInLowercase(builtInRole("builder").instructions);
+  const builder = namesInLowercase(asBefore("builder"));
   expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);
   expect(builder).toContain(asking);
@@ -535,4 +542,23 @@ test("a role file with Windows line endings is read and checked the same", () =>
     instructions: "Review it.\r\n",
   });
   expect(() => readRole("---\r\nharness: codex\r\nReview it.\r\n")).toThrow("never closes");
+});
+
+// An agent calls you by your name, never "the human", and never guesses your pronouns.
+test("an agent is told your name in its role, and to use it rather than a pronoun", () => {
+  const role = "Ask {{name}} first. {{name}}'s words count.\n- {{name}} merges.\n";
+  const named = withName(role, "Simon");
+  expect(named).toStartWith("Ask Simon first. Simon's words count.\n- Simon merges.\n\n");
+  expect(named).toContain("The person you work for is Simon.");
+  expect(named).toContain("Use their name rather than a pronoun such as he or she.");
+  const unnamed = withName(role, null);
+  expect(unnamed).toStartWith(
+    "Ask the person first. The person's words count.\n- The person merges.\n\n",
+  );
+  expect(unnamed).toContain('Write "you" when you write to them');
+  for (const name of ["lead", "builder", "reviewer"] as const) {
+    const told = withName(builtInRole(name).instructions, "Simon");
+    expect(told).not.toContain("{{name}}");
+    expect(told.replace(/never "the human"/, "")).not.toContain("human");
+  }
 });

@@ -6,7 +6,7 @@
 // limit from your settings.
 import { z } from "zod";
 import { HarnessName } from "../agents/harness.ts";
-import { roundLimit } from "../config.ts";
+import { roundLimit, yourNameForAgents } from "../config.ts";
 import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
@@ -732,7 +732,7 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
   const choices =
     left.length === 0
       ? null
-      : `'s reviewer left you ${left.length === 1 ? "a choice, which doesn't" : `${left.length} choices, which don't`} count as changes: ${left.map((choice, n) => `${n + 1}) ${choice.trim()}`).join(" ")} Decide, or ask the human, then record it with sc decide.`;
+      : `'s reviewer left you ${left.length === 1 ? "a choice, which doesn't" : `${left.length} choices, which don't`} count as changes: ${left.map((choice, n) => `${n + 1}) ${choice.trim()}`).join(" ")} Decide, or ask ${yourNameForAgents()}, then record it with sc decide.`;
   return {
     change,
     round,

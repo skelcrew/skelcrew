@@ -7,6 +7,7 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
+import { yourNameForAgents } from "../config.ts";
 import { errorText } from "../format.ts";
 import { type SkillsFrom, skillsTold } from "../skills.ts";
 import { limitOn } from "./limits.ts";
@@ -214,7 +215,7 @@ function boundsTold({ decisions, stayTrue, description }: Bounds): string | null
     const listed = decisions.map(({ by, text, words }) =>
       by === "lead"
         ? `- ${text.trim()} (the lead decided)`
-        : `- ${text.trim()} (the human decided, in their words: ${JSON.stringify(words ?? "")})`,
+        : `- ${text.trim()} (${yourNameForAgents()} decided, in their words: ${JSON.stringify(words ?? "")})`,
     );
     parts.push(
       "## Decisions\n\nThese are settled already, with why, the latest last. A later decision replaces an earlier one it contradicts. Never ask for changes that reopen one. If you think one is wrong, say so in `choices`, never in `findings`.",

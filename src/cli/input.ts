@@ -33,7 +33,9 @@ export async function readAsked(file: string): Promise<string> {
   const { readFileSync } = await import("node:fs");
   const words = readFileSync(file, "utf8");
   if (!words.trim())
-    throw new Error(`${file} is empty: write the human's words in it, exactly as they wrote them`);
+    throw new Error(
+      `${file} is empty: write the words you were given in it, exactly as they were written`,
+    );
   return words;
 }
 
@@ -77,7 +79,7 @@ function usageMessage(command: string, word?: string): string {
   if (command === "issue" || command === "pr")
     return 'issues and PRs are parts of tasks now: sc ls lists them, sc show <task> shows one with its PR, and sc add <repo> "<title>" "<body>" --issue opens an issue.';
   if (command === "needs-you")
-    return 'sc needs-you is gone: as the lead, ask the human with sc ask <task> "<text>" --title "<title>" --option "<choice>" --option "<choice>", which shows in Needs you.';
+    return 'sc needs-you is gone: as the lead, ask in Needs you with sc ask <task> "<text>" --title "<title>" --option "<choice>" --option "<choice>".';
   if (command === "task")
     return 'sc task is gone: sc show <task> shows one, and sc add <repo> "<title>" "<body>" adds one.';
   if (["remove", "setup", "plugins"].includes(command))

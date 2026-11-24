@@ -10,7 +10,7 @@ import { agentsFile, approvedAgents } from "./approved-agents.ts";
 // reviewer's tells it to assume the change is wrong, since a reviewer that trusts the builder
 // misses what the builder missed. Its {{title}}, {{body}} and {{base}} are blanks the review
 // fills in with the task and where the change starts, {{tests}} with who runs the tests, and
-// {{blocking}} with which findings block in this round.
+// {{blocking}} with which findings block in this round. Every role's {{name}} is your name.
 import builder from "./defaults/roles/builder.md" with { type: "text" };
 import lead from "./defaults/roles/lead.md" with { type: "text" };
 import reviewer from "./defaults/roles/reviewer.md" with { type: "text" };
@@ -40,6 +40,26 @@ export function readRole(text: string): Role {
   if (!front.success)
     throw new Error(`the role's frontmatter isn't valid: ${z.prettifyError(front.error)}`);
   return { frontmatter: front.data, instructions: text.slice(match[0].length) };
+}
+
+// Returns a role's instructions with `called` in each {{name}}, capitalized where it starts a
+// sentence or a list item.
+export function fillName(instructions: string, called: string): string {
+  const capital = called.charAt(0).toUpperCase() + called.slice(1);
+  return instructions.replace(/(^|[.!?]\s+|\n- )?\{\{name\}\}/g, (_, start?: string) =>
+    start === undefined ? called : `${start}${capital}`,
+  );
+}
+
+// Returns what an agent is told as it starts: its instructions with your name in each {{name}},
+// or "the person" without one, then what to call you. With a name, it uses it rather than guess
+// a pronoun.
+export function withName(instructions: string, name: string | null): string {
+  const told =
+    name === null
+      ? 'Skelcrew doesn\'t know the name of the person you work for. Write "you" when you write to them, and "the person" otherwise, never "the human".'
+      : `The person you work for is ${name}. Call them ${name}, never "the human", in everything you write, such as messages, PRs and reviews. Use their name rather than a pronoun such as he or she.`;
+  return `${fillName(instructions, name ?? "the person").replace(/\n*$/, "")}\n\n${told}\n`;
 }
 
 // Returns one of the roles Skelcrew ships, read from its built-in file.

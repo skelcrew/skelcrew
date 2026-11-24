@@ -436,7 +436,7 @@ export async function keepTrueOn(
   return checkReply(z.object({ said: z.string() }), reply).said;
 }
 
-export async function notifyTheHuman(
+export async function notifyAsked(
   message: { via: string; subject: string; text: string },
   asked: string,
 ): Promise<string> {

@@ -75,7 +75,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       });
       expect(await askOn(leadSocket(), { ...arming, asked: "force merge it" })).toEqual({
         error:
-          "the human turned off your arming merges: ask them to run sc merge --skip-review in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml",
+          "Simon turned off your arming merges: ask them to run sc merge --skip-review in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml",
       });
       expect(thread().merge_plan).toBeNull();
 
@@ -103,7 +103,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       expect(thread().merge_pinned).toBeNull();
       await until(() =>
         leadTyped().includes(
-          "#7 (APP-12) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.",
+          "#7 (APP-12) got a new commit after Simon asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.",
         ),
       );
       await morePolls();
@@ -121,14 +121,14 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
           { env: { ...env(), SKELCREW_SOCKET: leadSocket() }, stdout: "pipe", stderr: "pipe" },
         );
       leadMerging("lead: { can_merge: false }\n");
-      expect(asLead().stderr.toString()).toContain("the human turned off your arming merges");
+      expect(asLead().stderr.toString()).toContain("Simon turned off your arming merges");
       expect(thread().merge_plan).toBeNull();
       // The setting's old name still turns it on.
       leadMerging("lead: { may_arm_merges: true }\n");
       expect(
         await askOn(leadSocket(), { command: "merge skip review", repo: "app", task: "12" }),
       ).toEqual({
-        error: "give what the human asked with --asked-file, a file holding their exact words",
+        error: "give what Simon asked with --asked-file, a file holding their exact words",
       });
       const armed = asLead();
       expect(armed.stderr.toString()).toBe("");
@@ -139,7 +139,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
         merge_by: `${login()} via the lead`,
         merge_asked: words,
       });
-      const why = `the lead asked to merge #7 without Skelcrew's approval at commit ${head.slice(0, 7)}, as the human asked: ${JSON.stringify(words)}`;
+      const why = `the lead asked to merge #7 without Skelcrew's approval at commit ${head.slice(0, 7)}, as Simon asked: ${JSON.stringify(words)}`;
       expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
 
       // Green, it first records who asked on the PR, saying it is merging, as it may still not.
@@ -187,7 +187,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       expect(String(edits[0]?.body)).toEndWith(marker);
       await until(() =>
         leadTyped().includes(
-          "APP-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
+          "APP-12 is done: #7 merged into main without Skelcrew's approval, as Simon asked. Its open findings are in #13.",
         ),
       );
       await morePolls();
@@ -351,7 +351,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       await until(() => thread().status === "done");
       await until(() =>
         leadTyped().includes(
-          "APP-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
+          "APP-12 is done: #7 merged into main without Skelcrew's approval, as Simon asked. Its open findings are in #13.",
         ),
       );
       await morePolls();

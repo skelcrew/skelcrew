@@ -1,6 +1,7 @@
 // A task's decisions and what its change must keep true: the lead records them on the task, and
 // every reviewer of the task gets them, so a fresh reviewer never reopens what is settled.
 import type { Database } from "bun:sqlite";
+import { yourName } from "../config.ts";
 import { findThread, record, type Thread, threadName } from "./thread.ts";
 
 function threadToBound(db: Database, repository: string, task: string): Thread {
@@ -24,7 +25,7 @@ export function decide(
     ...(asked === undefined ? {} : { words: asked }),
   };
   const name = threadName(db, thread);
-  const who = asked === undefined ? "the lead" : "the human";
+  const who = asked === undefined ? "the lead" : (yourName() ?? "you");
   record(
     db,
     thread.folder,

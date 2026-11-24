@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { yourNameForAgents } from "../config.ts";
 import { backlogOf } from "./backlog.ts";
 import { openTasks } from "./copy.ts";
 import { leadOf } from "./lead.ts";
@@ -103,11 +104,11 @@ export function postItem(
 ): string {
   const { owner, repo } = findRepository(db, repository);
   const said = oneLine(item.text);
-  if (said === "") throw new Error("say in plain words what the human must decide");
+  if (said === "") throw new Error(`say in plain words what ${yourNameForAgents()} must decide`);
   const picks = item.options.map(oneLine);
   if (picks.length < 2)
     throw new Error(
-      "give the human at least two options to pick from with --option, or ask a yes/no question with --yes-no",
+      `give ${yourNameForAgents()} at least two options to pick from with --option, or ask a yes/no question with --yes-no`,
     );
   if (picks.some((pick) => pick === "")) throw new Error("an --option can't be empty");
   if (picks.length > letters.length)
@@ -180,7 +181,7 @@ export function answerItem(
   mkdirSync(folder, { recursive: true });
   const file = join(folder, `${about.toLowerCase()}-${Date.now()}-${crypto.randomUUID()}.txt`);
   writeFileSync(file, `${words}\n`);
-  const note = `${words}\n\nThese words are the human's: give --asked-file ${file} to what you run on this answer.`;
+  const note = `${words}\n\nThese words are ${yourNameForAgents()}'s: give --asked-file ${file} to what you run on this answer.`;
   // The item goes only with its note saved, so an answer that fails on the way keeps the item to
   // answer again.
   db.transaction(() => {
@@ -222,11 +223,11 @@ export async function pickOwnItem(
   const decision = {
     by: "human" as const,
     at: Date.now(),
-    text: `${option.label}, as the human picked on "${item.title}"`,
+    text: `${option.label}, as ${yourNameForAgents()} picked on "${item.title}"`,
     words: told,
   };
   const recorded = decides
-    ? "\n\nSkelcrew recorded this pick as the human's decision on the task."
+    ? `\n\nSkelcrew recorded this pick as ${yourNameForAgents()}'s decision on the task.`
     : "";
   const picking = pickingWord(option.act);
   db.transaction(() => {
@@ -249,7 +250,7 @@ export async function pickOwnItem(
         db,
         sessions,
         thread,
-        `The human's pick on ${name} didn't run: ${why}`,
+        `${yourNameForAgents()}'s pick on ${name} didn't run: ${why}`,
         null,
         true,
       );

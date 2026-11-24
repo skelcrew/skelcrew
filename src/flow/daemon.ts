@@ -28,6 +28,8 @@ import {
   leadCanMerge,
   repositoryCommands,
   threadTest,
+  yourName,
+  yourNameForAgents,
 } from "../config.ts";
 import {
   finishUpgrade,
@@ -482,7 +484,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     if (!("repo" in request) || !request.repo || fullNameIs(findRepository(db, request.repo), own))
       return request;
     throw new Error(
-      `you are the lead of ${own} only, so ${request.repo} isn't yours. Ask the human to open it with sc in a checkout of it: its own lead works on it.`,
+      `you are the lead of ${own} only, so ${request.repo} isn't yours. Ask ${yourNameForAgents()} to open it with sc in a checkout of it: its own lead works on it.`,
     );
   };
   // Returns the request with the task it names as Skelcrew stores it, such as t158 for APP-158
@@ -902,10 +904,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (leadOfCaller(caller) !== null) {
           if (request.asked === undefined)
             throw new Error(
-              "a lead creates an issue only when the human explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, leave out --issue, and sc add files it in the backlog.",
+              `a lead creates an issue only when ${yourNameForAgents()} explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, leave out --issue, and sc add files it in the backlog.`,
             );
           console.log(
-            `${repository.name}'s lead creates an issue, as the human asked: ${JSON.stringify(request.asked)}`,
+            `${repository.name}'s lead creates an issue, as ${yourName() ?? "you"} asked: ${JSON.stringify(request.asked)}`,
           );
         }
         const task = await createTask(db, repository, request.title, request.body);
@@ -1022,10 +1024,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (issue !== null && lead) {
           if (request.asked === undefined)
             throw new Error(
-              `a lead closes an issue only when the human explicitly asks for it: write their words to a file with your file-writing tool and add --asked-file <file>. To end the work and keep the issue open, add --keep-issue: sc rm ${name} --keep-issue`,
+              `a lead closes an issue only when ${yourNameForAgents()} explicitly asks for it: write their words to a file with your file-writing tool and add --asked-file <file>. To end the work and keep the issue open, add --keep-issue: sc rm ${name} --keep-issue`,
             );
           console.log(
-            `${repository.name}'s lead closes ${name}'s issue, as the human asked: ${JSON.stringify(request.asked)}`,
+            `${repository.name}'s lead closes ${name}'s issue, as ${yourName() ?? "you"} asked: ${JSON.stringify(request.asked)}`,
           );
         }
         // A thread that is done has no work left to end, so only its issue closes.
@@ -1092,12 +1094,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (!leadCanMerge())
           throw new Error(
             skip
-              ? "the human turned off your arming merges: ask them to run sc merge --skip-review in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml"
-              : "the human turned off your arming merges: ask them to run sc merge --when-ready in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml",
+              ? `${yourNameForAgents()} turned off your arming merges: ask them to run sc merge --skip-review in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml`
+              : `${yourNameForAgents()} turned off your arming merges: ask them to run sc merge --when-ready in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml`,
           );
         if (!request.asked?.trim())
           throw new Error(
-            "give what the human asked with --asked-file, a file holding their exact words",
+            `give what ${yourNameForAgents()} asked with --asked-file, a file holding their exact words`,
           );
         const said = armMerge(db, sessions, thread, { asked: request.asked }, skip);
         mergeSoon(thread);
@@ -1144,7 +1146,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const to = repositories(db).find((r) => r.name === request.to || fullNameIs(r, request.to));
         if (!to)
           throw new Error(
-            `${request.to} isn't in Skelcrew. Ask the human to add it in their own terminal, with sc repo add <owner/repo>.`,
+            `${request.to} isn't in Skelcrew. Ask ${yourNameForAgents()} to add it in their own terminal, with sc repo add <owner/repo>.`,
           );
         // The lead is brought back if you closed its tab by exiting it, or started if it never
         // ran, as opening the repository does, so the brief reaches it. A lead you exited this

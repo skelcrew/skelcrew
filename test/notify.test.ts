@@ -204,9 +204,9 @@ try {
   console.log(error.message);
 }
 await notify.sendNotifications(db);`);
-  expect(out).toContain("sc notify sends the human a message only when they ask for one");
+  expect(out).toContain("sc notify sends the person a message only when they ask for one");
   expect(out).toContain(
-    "no installed notifier sends by push, so it can't reach the human: the installed ones are email.",
+    "no installed notifier sends by push, so it can't reach the person: the installed ones are email.",
   );
   expect(messages(email)).toEqual([]);
   const env = { ...homeEnv(home), SKELCREW_SANDBOX: "1" };
@@ -376,6 +376,32 @@ notify.queueDigest(db);
 await notify.sendNotifications(db);`);
   const digest = messages(email).find((m) => m.type === "digest");
   expect(digest?.body).toContain("APP-13 · merged");
+});
+
+// Returns the digest's body, once a merge you asked for ended APP-13, with your config's `name`
+// line, if any.
+function digestOfMerge(name: string): unknown {
+  const email = fakePlugin(home, "email", ["notifier"]);
+  config(`${name}notify:\n  digest: email\n  digest_at: '00:00'\n`);
+  const sql = threadSql({
+    task: "13",
+    status: "done",
+    merged: 1,
+    merge_by: "simon",
+    changed: Date.now(),
+  });
+  run(`db.run(\`${sql}\`);
+notify.queueDigest(db);
+await notify.sendNotifications(db);`);
+  return messages(email).find((m) => m.type === "digest")?.body;
+}
+
+test("the digest says a merge went as you asked, by your name", () => {
+  expect(digestOfMerge("name: Simon\n")).toContain("APP-13 · merged as Simon asked");
+});
+
+test("without your name, the digest says a merge went as you asked", () => {
+  expect(digestOfMerge("")).toContain("APP-13 · merged as you asked");
 });
 
 test("the digest lists every task, however many there are", () => {

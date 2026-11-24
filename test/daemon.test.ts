@@ -631,9 +631,9 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     const [line] = claudeLines();
     expect(line).toContain("start no thread and file no issue");
     expect(line).toContain("Start these?");
-    expect(line).toContain("Run sc start or sc add --start only once the human says yes.");
+    expect(line).toContain("Run sc start or sc add --start only once the person says yes.");
     expect(line).toContain("park work for later, file it in Skelcrew's backlog with sc add");
-    expect(line).toContain("Create an issue in the tracker only when the human explicitly asks");
+    expect(line).toContain("Create an issue in the tracker only when the person explicitly asks");
     // Filing in a private repository unasked once read as leave to file without asking.
     expect(line).not.toContain("file it and say you did");
   });
@@ -1224,7 +1224,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     });
     const refused = {
       error:
-        "you are the lead of simon/app only, so web isn't yours. Ask the human to open it with sc in a checkout of it: its own lead works on it.",
+        "you are the lead of simon/app only, so web isn't yours. Ask the person to open it with sc in a checkout of it: its own lead works on it.",
     };
     expect(await askAsLead({ command: "ps", repo: "web" })).toEqual(refused);
     expect(await askAsLead({ command: "stop", repo: "web", task: "2" })).toEqual(refused);

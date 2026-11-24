@@ -819,7 +819,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     const told = read(join(builder(), "told"));
     expect(told).toContain('sc submit "<summary>"');
     expect(told).toContain(
-      "Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.",
+      "Come back to the person only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.",
     );
     expect(args).not.toContain("sc submit");
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);

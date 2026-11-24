@@ -160,7 +160,7 @@ test("a caller's reason to hold that comes up while typing waits holds the messa
   await showing("lead", claude.marks.busy);
   let held = "";
   const typing = deliver(socket, "lead", claude.marks, "hello", { moment, hold: () => held });
-  held = "the human has scrolled back in it";
+  held = "someone scrolled back in it";
   await showing("lead", claude.marks.prompt);
   await Bun.sleep(1000);
   expect(read("received.txt")).toBe("");

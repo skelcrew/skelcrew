@@ -283,7 +283,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
     const leadSocket = join(runDir, "leads", hashed("simon/app"), "skelcrew.sock");
     const closing = rmFrom(leadSocket, "started over as app-14");
     expect(closing.stderr.toString()).toContain(
-      "a lead closes an issue only when the human explicitly asks",
+      "a lead closes an issue only when Simon explicitly asks",
     );
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([]);
     expect(thread().status).toBe("waiting");

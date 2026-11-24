@@ -62,6 +62,9 @@ const File = z.looseObject({
   // its old name, still read so no config breaks, and can_merge wins where a file has both.
   can_merge: z.boolean().optional(),
   may_arm_merges: z.boolean().optional(),
+  // Your name, as agents and Skelcrew's text call you. One that isn't text counts as none, so it
+  // never stops an agent or a note.
+  name: z.string().trim().min(1).optional().catch(undefined),
   // Your personal plugins, by the GitHub repository each comes from, such as
   // skelcrew/skelcrew-github. Your own skelcrew.lock pins each one's version.
   plugins: z.array(z.string()).optional(),
@@ -101,6 +104,7 @@ export type Role = { harness: HarnessName; model?: string };
 // sessions. `leadCanMerge` is whether the lead may arm a merge when you ask it to, on unless
 // you turn it off. `notify` is the plugin each type of message to you goes through, none for a
 // type that isn't sent, and `digestAt` when the daily digest goes, 08:00 unless you say.
+// `yourName` is your name, as agents and Skelcrew's text call you, or none.
 export type Settings = {
   lead: Role;
   builder: Role;
@@ -121,6 +125,7 @@ export type Settings = {
   leadCanMerge: boolean;
   notify: Record<"needs-you" | "digest", string | undefined>;
   digestAt: string;
+  yourName: string | undefined;
 };
 type Group = keyof Settings;
 
@@ -146,6 +151,7 @@ const keysOf: Record<Group, Key[]> = {
   leadCanMerge: ["can_merge", "may_arm_merges"],
   notify: ["notify"],
   digestAt: ["notify"],
+  yourName: ["name"],
 };
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time,
@@ -170,6 +176,7 @@ const yourKeys: Key[] = [
   "can_merge",
   "may_arm_merges",
   "notify",
+  "name",
 ];
 const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker", "threads"];
 // What an override under repos: may set, besides the harness and model of its roles, which
@@ -665,5 +672,6 @@ function mergeSettings(
       digest: first((l) => l.notify?.digest),
     },
     digestAt: first((l) => l.notify?.digest_at) ?? "08:00",
+    yourName: first((l) => l.name),
   };
 }

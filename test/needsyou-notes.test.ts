@@ -92,7 +92,7 @@ exec "${tmux}" "$@"`,
     db.run("UPDATE messages SET at = at - 11 * 60000");
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "APP-12's builder hasn't got your message after 10 minutes: it is asking the human a question.",
+        "APP-12's builder hasn't got your message after 10 minutes: it is asking the person a question.",
       ),
     );
     expect(read(join(builder(), "typed"))).not.toContain("Use JSON.");
