@@ -297,7 +297,7 @@ console.log(JSON.stringify({ threads, notes }));`;
     ["app-12", "app-13", "app-15"].map((name) => ({
       owner: "simon",
       repo: "app",
-      text: `${name}'s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ${name}, and bring a question to the human.`,
+      text: `${name}'s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ${name}, and bring a question to the person.`,
     })),
   );
 });

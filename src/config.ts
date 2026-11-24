@@ -263,3 +263,19 @@ export const leadCanMerge = (): boolean => readSettings(["leadCanMerge"]).leadCa
 // digest goes. Only your config.yaml says, so no repository can send your messages elsewhere.
 // Throws when your config isn't valid.
 export const notifySettings = () => readSettings(["notify", "digestAt"]);
+
+// Returns your name, as agents and Skelcrew's text call you: name: in your config.yaml, else
+// git's global user.name, else null. It stays on this machine, in agents' instructions and
+// Skelcrew's own text. A config that can't be read falls back to git, so a note never fails on it.
+export function yourName(): string | null {
+  try {
+    const set = readSettings(["yourName"]).yourName;
+    if (set !== undefined) return set;
+  } catch {}
+  const git = Bun.spawnSync(["git", "config", "--global", "user.name"], { stderr: "ignore" });
+  const name = git.stdout.toString().trim();
+  return git.exitCode === 0 && name !== "" ? name : null;
+}
+
+// Returns what Skelcrew's notes to agents call you: your name, or "the person" without one.
+export const yourNameForAgents = (): string => yourName() ?? "the person";

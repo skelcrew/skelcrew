@@ -38,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { agentRole, checkLimit, leadCanMerge, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost, threadLimit } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { agentRole, checkLimit, leadCanMerge, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost, threadLimit, yourName } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -294,4 +294,15 @@ test("how many builders run at once comes from the repository or your override f
   expect(Number(run("console.log(reviewLimit());").out)).toBe(quarter);
   settings("harness: claude\n", "limits: { threads: 0 }\n");
   expect(run("threadLimit(app);").err).toContain("isn't valid");
+});
+
+// Agents and Skelcrew's text call you by your name: your config's wins over git's.
+test("your name comes from your config, else git's global user.name, else none", () => {
+  const name = () => run("console.log(JSON.stringify(yourName()));").out.trim();
+  settings("", null);
+  expect(name()).toBe("null");
+  writeFileSync(join(home, ".gitconfig"), "[user]\n\tname = Simon Git\n");
+  expect(name()).toBe('"Simon Git"');
+  settings("name: Simon\n", null);
+  expect(name()).toBe('"Simon"');
 });

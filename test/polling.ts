@@ -485,7 +485,7 @@ export const builderSocket = () => join(runDir(), "threads", hashed("app-12"), "
 // Where the question starts: what it says of .agents/ follows, as a poll last saw the PR.
 export const question = "Merge #7 (APP-12 Add export) when it's approved and green?";
 export const notLet =
-  "the human turned off your arming merges: ask them to run sc merge --when-ready in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml";
+  "Simon turned off your arming merges: ask them to run sc merge --when-ready in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml";
 // Writes your config with `lead`, your line for whether the lead may arm merges, or none.
 export const leadMerging = (lead: string) =>
   writeFileSync(

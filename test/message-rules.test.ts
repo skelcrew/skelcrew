@@ -265,7 +265,7 @@ console.log(JSON.stringify({ missing, asking, stopped, kept, typed: texts("app-1
   expect(JSON.parse(seen)).toEqual({
     missing: "APP-12's builder isn't running: the thread is waiting.",
     asking:
-      "APP-12's builder is asking the human a question, and typing now would answer it. Tell the human instead.",
+      "APP-12's builder is asking the person a question, and typing now would answer it. Tell the person instead.",
     stopped:
       "APP-12's builder isn't running: the thread is stopped. sc start APP-12 brings it back.",
     kept: 0,
@@ -288,7 +288,7 @@ console.log(JSON.stringify({ early, notes: texts(${JSON.stringify(lead)}) }));`)
   expect(JSON.parse(seen)).toEqual({
     early: 0,
     notes: [
-      "Skelcrew digest:\nAPP-12's builder hasn't got your message after 10 minutes: it is mid-turn (it shows ✻). Skelcrew types it in once it can. To have it sooner, ask the human to press Esc in APP-12.",
+      "Skelcrew digest:\nAPP-12's builder hasn't got your message after 10 minutes: it is mid-turn (it shows ✻). Skelcrew types it in once it can. To have it sooner, ask the person to press Esc in APP-12.",
     ],
   });
 });

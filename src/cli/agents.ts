@@ -78,7 +78,9 @@ export async function askCommand(args: string[]): Promise<void> {
     text,
     options,
   });
-  console.log(`Asked the human about ${about}. Their answer comes back to you as a note.`);
+  console.log(
+    `Posted your question about ${about} in Needs you. The answer comes back to you as a note.`,
+  );
 }
 
 export async function decideCommand(args: string[]): Promise<void> {
@@ -162,7 +164,7 @@ export async function notifyCommand(args: string[]): Promise<void> {
     throw new Error("sc notify is the lead's, to send you a message you asked it for");
   const message = text === "-" ? await Bun.stdin.text() : text;
   if (!message.trim()) throw new Error("sc notify needs the message, as words or on stdin");
-  const { notifyTheHuman } = await import("../client.ts");
+  const { notifyAsked } = await import("../client.ts");
   const asked = await readAsked(askedFile);
-  console.log(await notifyTheHuman({ via, subject, text: message }, asked));
+  console.log(await notifyAsked({ via, subject, text: message }, asked));
 }

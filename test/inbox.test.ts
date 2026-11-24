@@ -120,7 +120,7 @@ test("an item without at least two options is refused", () => {
 const tried = (options) => { try { ask("app", "t12", "Which export format?", options); return "posted"; } catch (error) { return error.message; } };
 console.log(JSON.stringify({ none: tried([]), one: tried(["CSV"]), left: db.query("SELECT COUNT(*) AS n FROM asks").get().n }));`);
   const refused =
-    "give the human at least two options to pick from with --option, or ask a yes/no question with --yes-no";
+    "give Simon at least two options to pick from with --option, or ask a yes/no question with --yes-no";
   expect(seen).toEqual({ none: refused, one: refused, left: 0 });
 });
 
@@ -177,7 +177,7 @@ console.log(JSON.stringify({ said, notes: notes(), item: itemOf(db, "simon", "ap
   const file = /--asked-file (\S+) /.exec(notes[0] ?? "")?.[1] ?? "";
   expect(file.startsWith(join(data(), "leads", "simon", "app", "answers", "app-12-"))).toBe(true);
   expect(notes[0]).toBe(
-    `${words}\n\nThese words are the human's: give --asked-file ${file} to what you run on this answer.`,
+    `${words}\n\nThese words are Simon's: give --asked-file ${file} to what you run on this answer.`,
   );
   // The file lets the lead do only what you picked: the option you didn't pick isn't in it.
   const text = await Bun.file(file).text();
@@ -373,26 +373,26 @@ console.log(JSON.stringify({ decided, before, refused, afterRefused, decisions: 
   ]);
   expect(seen.refused).toBe("CI failed");
   expect(seen.afterRefused).toBe(3);
-  expect((seen.notes as string[])[4]).toBe("The human's pick on APP-12 didn't run: CI failed");
+  expect((seen.notes as string[])[4]).toBe("Simon's pick on APP-12 didn't run: CI failed");
   const told = (seen.notes as string[]).map((note) =>
-    note.endsWith("as the human's decision on the task."),
+    note.endsWith("as Simon's decision on the task."),
   );
   expect(told).toEqual([true, true, true, true, false, true, false, false, false]);
   const decisions = seen.decisions as { by: string; text: string; words: string }[];
   expect(decisions.map(({ by, text }) => ({ by, text }))).toEqual([
     {
       by: "human",
-      text: 'Go on: fix the findings, as the human picked on "Review still wants changes after 8 rounds"',
+      text: 'Go on: fix the findings, as Simon picked on "Review still wants changes after 8 rounds"',
     },
     {
       by: "human",
-      text: 'Merge without approval, as the human picked on "Review still wants changes after 8 rounds"',
+      text: 'Merge without approval, as Simon picked on "Review still wants changes after 8 rounds"',
     },
     {
       by: "human",
-      text: 'Stop the builder, as the human picked on "Review still wants changes after 8 rounds"',
+      text: 'Stop the builder, as Simon picked on "Review still wants changes after 8 rounds"',
     },
-    { by: "human", text: 'Merge it, as the human picked on "Ready to merge"' },
+    { by: "human", text: 'Merge it, as Simon picked on "Ready to merge"' },
   ]);
   expect(decisions[1]?.words).toBe(
     "You picked b (Merge without approval) on APP-12: Review still wants changes after 8 rounds\n\nThe latest review asks:\n1. Handle an empty file",
@@ -1092,7 +1092,7 @@ describe.skipIf(insideSandbox)("the inbox, with a running daemon", () => {
       "keep going",
     ]);
     expect(posted.err).toBe("");
-    expect(posted.out).toContain("Asked the human about APP-12.");
+    expect(posted.out).toContain("Posted your question about APP-12 in Needs you.");
     await untilNeedsYou(true);
     expect(await needsYouFor()).toBe("item waits");
     expect((await skel(["show", "app-12"])).out).toContain("a) force merge");

@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { z } from "zod";
 import { hasSession } from "../agents/sessions.ts";
 import { agentsOnDefaultBranch, agentsWaiting, markApproved } from "../approved-agents.ts";
-import { roundLimit } from "../config.ts";
+import { roundLimit, yourNameForAgents } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { errorText } from "../format.ts";
 import { cloneDir } from "../paths.ts";
@@ -18,6 +18,7 @@ import {
   repositoryPlugins,
   trackerOf,
 } from "../plugins/ask.ts";
+import { fillName } from "../roles.ts";
 import { capture } from "../run.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { fileNotBlocking } from "./backlog.ts";
@@ -501,7 +502,7 @@ function noteUnapprovedAgents(db: Database, sessions: string, repository: Reposi
       db,
       sessions,
       repository,
-      `${repository.name}'s .agents/ on its default branch isn't the version the human approved. It steers agents, so new tasks keep the approved version, or the built-in roles, until the human runs sc repo trust ${repository.name} in their own terminal, which shows what changed. Tell the human.`,
+      `${repository.name}'s .agents/ on its default branch isn't the version ${yourNameForAgents()} approved. It steers agents, so new tasks keep the approved version, or the built-in roles, until ${yourNameForAgents()} runs sc repo trust ${repository.name} in their own terminal, which shows what changed. Tell ${yourNameForAgents()}.`,
     );
 }
 
@@ -532,11 +533,11 @@ async function tellRunningLead(
 
 // What a lead already running when needs you became an inbox is told of it.
 const inboxNote =
-  'Skelcrew was updated: sc needs-you is gone, and Needs you is now an inbox you write to. When a thread needs the human, post an item with sc ask APP-12 "<the question, framed for someone who has not read the code>" --title "<two to five words>" --option "<first choice> (recommended)" --option "<second choice>", with two to four options, or --yes-no for a yes or no question, or name the repository for something about it as a whole. What you propose while talking with the human, such as "Start these?", stays in this chat, as the human is right there: items are for decisions a thread raises while the human may be away. When such a decision is whether to start work, post an item with yes and no, and on a yes run sc start yourself. Asking again replaces the item, and sc ask --clear APP-12 takes it off. Don\'t also ask in this chat: tell the human in one line that an item waits. Their answer comes back as a note, which counts as their words for exactly the option they picked. Give the file it names as --asked-file to what you run on it. A thread Skelcrew marks itself shows an item of Skelcrew\'s own, with options that act directly, until you post an item for it.';
+  'Skelcrew was updated: sc needs-you is gone, and Needs you is now an inbox you write to. When a thread needs {{name}}, post an item with sc ask APP-12 "<the question, framed for someone who has not read the code>" --title "<two to five words>" --option "<first choice> (recommended)" --option "<second choice>", with two to four options, or --yes-no for a yes or no question, or name the repository for something about it as a whole. What you propose while talking with {{name}}, such as "Start these?", stays in this chat, as {{name}} is right there: items are for decisions a thread raises while {{name}} may be away. When such a decision is whether to start work, post an item with yes and no, and on a yes run sc start yourself. Asking again replaces the item, and sc ask --clear APP-12 takes it off. Don\'t also ask in this chat: tell {{name}} in one line that an item waits. Their answer comes back as a note, which counts as their words for exactly the option they picked. Give the file it names as --asked-file to what you run on it. A thread Skelcrew marks itself shows an item of Skelcrew\'s own, with options that act directly, until you post an item for it.';
 
 // What a lead already running when Skelcrew learned of flows is told of them.
 const flowsNote = (repository: Repository) =>
-  `Skelcrew was updated: each thread now runs a flow, default unless sc start --flow <name> names another. ${approvedFlowsTold(cloneDir(repository.owner, repository.repo))} When the approved .agents/ has flows other than default, pick the one that fits each thread you start or propose, read from there, not from .agents/flows/ in the clone, and add --flow <name> to sc start. Whenever you pick one other than default, tell the human, naming the flow and why. A thread keeps its flow from start to end. A thread started from the skelcrew label runs default, and you can switch it with sc start app-12 --flow <name> until its builder first submits, unless the flow builds with another role, which is another agent: then start it over with sc rm app-12 and sc start app-12 --flow <name>.`;
+  `Skelcrew was updated: each thread now runs a flow, default unless sc start --flow <name> names another. ${approvedFlowsTold(cloneDir(repository.owner, repository.repo))} When the approved .agents/ has flows other than default, pick the one that fits each thread you start or propose, read from there, not from .agents/flows/ in the clone, and add --flow <name> to sc start. Whenever you pick one other than default, tell ${yourNameForAgents()}, naming the flow and why. A thread keeps its flow from start to end. A thread started from the skelcrew label runs default, and you can switch it with sc start app-12 --flow <name> until its builder first submits, unless the flow builds with another role, which is another agent: then start it over with sc rm app-12 and sc start app-12 --flow <name>.`;
 
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
 // plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
@@ -605,10 +606,22 @@ async function pollRepository(
       } catch (error) {
         console.log(`couldn't tell ${owner}/${repo}'s lead of its flows: ${errorText(error)}`);
       }
-      await tellRunningLead(db, sessions, repository, "lead_briefs", briefsNote).catch((error) =>
+      await tellRunningLead(
+        db,
+        sessions,
+        repository,
+        "lead_briefs",
+        fillName(briefsNote, yourNameForAgents()),
+      ).catch((error) =>
         console.log(`couldn't tell ${owner}/${repo}'s lead of briefs: ${errorText(error)}`),
       );
-      await tellRunningLead(db, sessions, repository, "lead_inbox", inboxNote).catch((error) =>
+      await tellRunningLead(
+        db,
+        sessions,
+        repository,
+        "lead_inbox",
+        fillName(inboxNote, yourNameForAgents()),
+      ).catch((error) =>
         console.log(`couldn't tell ${owner}/${repo}'s lead of the inbox: ${errorText(error)}`),
       );
     }

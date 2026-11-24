@@ -302,7 +302,7 @@ test("a lead's sc add --issue is refused without the human's words, and goes thr
   await untilCloned();
   const lead = await leadEnv();
   const refused = await runSkel(["add", "app", "Add import", "From CSV", "--issue"], lead);
-  expect(refused.err).toContain("a lead creates an issue only when the human explicitly asks");
+  expect(refused.err).toContain("a lead creates an issue only when Simon explicitly asks");
   expect(refused.err).toContain("leave out --issue");
   const words = join(home, "asked.txt");
   writeFileSync(words, "");
@@ -351,7 +351,7 @@ test("sc rm closes an issue that never started, and the lead needs the human's w
   expect(no).toContain("Skelcrew didn't remove APP#12.");
   expect(closes()).toEqual([]);
   const refused = await runSkel(["rm", "app#12"], lead);
-  expect(refused.err).toContain("a lead closes an issue only when the human explicitly asks");
+  expect(refused.err).toContain("a lead closes an issue only when Simon explicitly asks");
   expect(refused.err).toContain("sc rm APP#12 --keep-issue");
   const kept = await runSkel(["rm", "app#12", "--keep-issue"], lead);
   expect(kept.err).toBe(

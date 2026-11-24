@@ -232,10 +232,10 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       });
       const { asked: _, ...unquoted } = request;
       expect(await askOn(leadSocket(), unquoted)).toEqual({
-        error: "give what the human asked with --asked-file, a file holding their exact words",
+        error: "give what Simon asked with --asked-file, a file holding their exact words",
       });
       expect(await askOn(leadSocket(), { ...request, asked: "  " })).toMatchObject({
-        error: expect.stringContaining("give what the human asked"),
+        error: expect.stringContaining("give what Simon asked"),
       });
       expect(await askOn(join(home, "run", "skelcrew.sock"), request)).toEqual({
         error: "--asked-file is the lead's: at your terminal, sc merge asks you y/N",
@@ -257,7 +257,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       expect(existsSync(ran)).toBe(false);
       // The thread's log and the daemon's keep your words exactly. The lead tells you itself,
       // so Skelcrew types it no note of its own, which would say it twice in your conversation.
-      const why = `the lead asked to merge #7 once it's approved and green, as the human asked: ${JSON.stringify(words)}`;
+      const why = `the lead asked to merge #7 once it's approved and green, as Simon asked: ${JSON.stringify(words)}`;
       // Each line of the thread's log is JSON, so its quotes are escaped there.
       expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
       await until(() => read(daemonLog()).includes(`APP-12: ${why}`));
@@ -419,7 +419,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       rmSync(join(plugin, "hold-merge-pr"));
       await until(() => thread().status === "done" && !existsSync(clone()));
       await until(() =>
-        leadTyped().includes("APP-12 is done: #7 merged into main when ready, as the human asked"),
+        leadTyped().includes("APP-12 is done: #7 merged into main when ready, as Simon asked"),
       );
     }, 90_000);
 
@@ -482,7 +482,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
       await until(() => merges().length === 1, 30_000);
       await until(() => thread().status === "done");
       const filedAs =
-        /APP-12 is done: #7 merged into main when ready, as the human asked\. Its not-blocking findings are in APP-(\d+)\./;
+        /APP-12 is done: #7 merged into main when ready, as Simon asked\. Its not-blocking findings are in APP-(\d+)\./;
       await until(() => filedAs.test(leadTyped()));
       const number = leadTyped().match(filedAs)?.[1];
       const remote = join(home, "github", "simon", "app.git");

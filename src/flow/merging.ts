@@ -5,6 +5,7 @@
 // itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { yourName, yourNameForAgents } from "../config.ts";
 import { flowRoles } from "../flows.ts";
 import { errorText } from "../format.ts";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
@@ -195,7 +196,7 @@ export function armMerge(
   const why =
     asked === null
       ? `you asked to ${what}`
-      : `the lead asked to ${what}, as the human asked: ${JSON.stringify(asked)}`;
+      : `the lead asked to ${what}, as ${yourName() ?? "you"} asked: ${JSON.stringify(asked)}`;
   // Arming it past the round limit is your decision about the limit, which stays made though the
   // plan later ends, such as when a push cancels it, until the next review asks again.
   record(db, thread.folder, { ...plan, ...limitDecided(thread, Date.now()) }, why);
@@ -323,7 +324,7 @@ export async function mergeIfReady(
       db,
       sessions,
       thread,
-      `#${thread.pr} (${name}) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.`,
+      `#${thread.pr} (${name}) got a new commit after ${yourNameForAgents()} asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.`,
     );
     return;
   }
@@ -393,7 +394,7 @@ export async function mergeIfReady(
       try {
         const said =
           (await finishSkippedMerge(db, readThread(db, folder), pr)) ??
-          `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`;
+          `is done: #${thread.pr} merged into ${pr.base} when ready, as ${yourNameForAgents()} asked`;
         const note = await fileNotBlocking(db, sessions, readThread(db, folder), said);
         await endThread(
           db,
@@ -491,7 +492,7 @@ export async function finishSkippedMerge(
   // Read again, as a review may have ended while the forge took the edit: its findings are the
   // ones still asked for.
   const filed = await fileFollowUps(db, readThread(db, thread.folder));
-  return `is done: #${thread.pr} merged into ${pr.base} without Skelcrew's approval, as the human asked.${filed}`;
+  return `is done: #${thread.pr} merged into ${pr.base} without Skelcrew's approval, as ${yourNameForAgents()} asked.${filed}`;
 }
 
 // Files what Skelcrew's latest review still asked for, once its PR merged without its approval, as

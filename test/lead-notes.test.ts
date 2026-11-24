@@ -487,18 +487,19 @@ console.log(JSON.stringify({ saved, received: received() }));`);
 });
 
 // What Skelcrew tells a lead running from before briefs names the <asked> and <brief> elements,
-// which must reach it as they are, so it can tell the human's words from the proposal.
+// which must reach it as they are, so it can tell your words from the proposal.
 test("Skelcrew's own note of the brief rules reaches a lead with the element names intact", () => {
   const typed = run(`
 const { briefsNote } = await import(${JSON.stringify(source("flow/messages.ts"))});
+const { fillName } = await import(${JSON.stringify(source("roles.ts"))});
 await lead();
-skelcrewNoteForLead(db, tmux, app, briefsNote);
-await until(() => waiting() === 0 && received().includes("Tell the human"));
+skelcrewNoteForLead(db, tmux, app, fillName(briefsNote, "Simon"));
+await until(() => waiting() === 0 && received().includes("Tell Simon"));
 await Bun.sleep(500);
 console.log(JSON.stringify(received()));`);
   const received: string = JSON.parse(typed.trim().split("\n").at(-1) ?? '""');
   expect(received).toContain(
-    "the human's own words in its <asked> element, apart from the brief in its <brief> element",
+    "Simon's own words in its <asked> element, apart from the brief in its <brief> element",
   );
 });
 

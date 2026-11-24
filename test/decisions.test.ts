@@ -71,7 +71,7 @@ const { threadsDir } = await import(${JSON.stringify(source("paths.ts"))});
 const lines = readFileSync(join(threadsDir(), "app-12.log"), "utf8").trim().split("\\n");
 const last = JSON.parse(lines.at(-1));
 console.log(JSON.stringify({ why: last.why, decisions: last.decisions }));`);
-  expect(seen.why).toBe("the human decided: Never save provider text.");
+  expect(seen.why).toBe("you decided: Never save provider text.");
   expect(seen.decisions).toEqual([
     {
       by: "human",

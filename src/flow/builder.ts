@@ -23,6 +23,7 @@ import {
   repositoryCommands,
   roundLimit,
   sessionHost,
+  yourName,
 } from "../config.ts";
 import { flowRoles } from "../flows.ts";
 import { errorText } from "../format.ts";
@@ -31,7 +32,7 @@ import { trackerOf } from "../plugins/ask.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { needsInstall } from "../plugins/repository.ts";
 import { filesFor, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
-import { repositoryRole } from "../roles.ts";
+import { repositoryRole, withName } from "../roles.ts";
 import { capture } from "../run.ts";
 import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { openTasks, threadTask } from "./copy.ts";
@@ -574,10 +575,13 @@ async function startOnConfiguredHost(
     ...(existsSync(cloneDir(thread.owner, thread.repo))
       ? { origin: cloneDir(thread.owner, thread.repo) }
       : {}),
-    system: builderInstructions(
-      repositoryRole(flowRoles(thread).build, thread).instructions,
-      repositoryCommands(thread),
-      thread.setup_thread,
+    system: withName(
+      builderInstructions(
+        repositoryRole(flowRoles(thread).build, thread).instructions,
+        repositoryCommands(thread),
+        thread.setup_thread,
+      ),
+      yourName(),
     ),
     skills: thread,
     files,

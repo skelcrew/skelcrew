@@ -732,7 +732,7 @@ export function verdictReached(thread: Thread, reached: Reached): Reaching {
   const choices =
     left.length === 0
       ? null
-      : `'s reviewer left you ${left.length === 1 ? "a choice, which doesn't" : `${left.length} choices, which don't`} count as changes: ${left.map((choice, n) => `${n + 1}) ${choice.trim()}`).join(" ")} Decide, or ask the human, then record it with sc decide.`;
+      : `'s reviewer left you ${left.length === 1 ? "a choice, which doesn't" : `${left.length} choices, which don't`} count as changes: ${left.map((choice, n) => `${n + 1}) ${choice.trim()}`).join(" ")} Decide, or ask in Needs you, then record it with sc decide.`;
   return {
     change,
     round,

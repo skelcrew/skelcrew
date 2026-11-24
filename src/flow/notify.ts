@@ -2,7 +2,7 @@
 // needing you, the daily digest, and what the lead sends when you ask, each through a notifier.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { notifySettings } from "../config.ts";
+import { notifySettings, yourNameForAgents } from "../config.ts";
 import { errorText } from "../format.ts";
 import { pluginsWithJob } from "../plugins/ask.ts";
 import { callPlugin, installedPlugins, readManifest } from "../plugins/plugin.ts";
@@ -208,7 +208,7 @@ function notifierFor(db: Database, via: string): string {
       ? "none is installed"
       : `the installed ones are ${notifiers.map((n) => (n.channel ? `${n.name} (${n.channel})` : n.name)).join(", ")}`;
   throw new Error(
-    `no installed notifier sends by ${via}, so it can't reach the human: ${have}. The human adds one with sc plugin add -g`,
+    `no installed notifier sends by ${via}, so it can't reach ${yourNameForAgents()}: ${have}. ${yourNameForAgents()} adds one with sc plugin add -g`,
   );
 }
 
@@ -218,7 +218,7 @@ export async function sendAsked(
 ): Promise<string> {
   if (!asked.words?.trim())
     throw new Error(
-      "sc notify sends the human a message only when they ask for one: write their words exactly to a file with your file-writing tool and add --asked-file <file>",
+      `sc notify sends ${yourNameForAgents()} a message only when they ask for one: write their words exactly to a file with your file-writing tool and add --asked-file <file>`,
     );
   const via = notifierFor(db, asked.via);
   if (asked.text.length > bodyLimit.asked)
@@ -229,7 +229,7 @@ export async function sendAsked(
   const id = save(db, "asked", message, via, "sending", Date.now());
   const error = await deliver(db, id);
   if (error !== null) throw new Error(`${via} didn't send it: ${error}`);
-  return `Sent "${removeControlCodes(asked.subject).trim()}" to the human through ${via}.`;
+  return `Sent "${removeControlCodes(asked.subject).trim()}" to ${yourNameForAgents()} through ${via}.`;
 }
 
 export function digestDue(now: Date, at: string, last: number | null): boolean {
@@ -276,7 +276,7 @@ export function digestOf(db: Database, since: number): Message {
     };
     const merged = threads
       .filter((t) => t.status === "done" && t.merged && (t.changed ?? 0) >= since)
-      .map((t) => named(t, "merged"));
+      .map((t) => named(t, t.merge_by === null ? "merged" : "merged as you asked"));
     const live = threads.filter((t) => t.status !== "done");
     const waitsFor = (t: Thread) => itemOf(db, r.owner, r.repo, t.task)?.text ?? needsYouFor(t);
     const repoItem = itemOf(db, r.owner, r.repo, "");

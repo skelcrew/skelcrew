@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { yourNameForAgents } from "./config.ts";
 import { stuckWait } from "./flow/decide.ts";
 import { dataDir, dbLogFile, threadsDir } from "./paths.ts";
 
@@ -1039,11 +1040,14 @@ export function moveTurnEnded(db: Database): void {
   const unmoved = "turn_ended IS NULL";
   // One transaction, so a move cut short leaves every thread to the next start.
   db.transaction(() => {
-    db.run(`INSERT INTO notes (owner, repo, text)
-      SELECT th.owner, th.repo, r.name || '-' || th.task || '''s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ' || r.name || '-' || th.task || ', and bring a question to the human.'
+    db.run(
+      `INSERT INTO notes (owner, repo, text)
+      SELECT th.owner, th.repo, r.name || '-' || th.task || '''s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ' || r.name || '-' || th.task || ', and bring a question to ' || ? || '.'
       FROM threads th JOIN repositories r ON r.owner = th.owner AND r.repo = th.repo
       WHERE th.${unmoved} AND th.stalled = 1 AND th.status IN ('working', 'waiting')
-      ORDER BY th.rowid`);
+      ORDER BY th.rowid`,
+      [yourNameForAgents()],
+    );
     // Only a thread that no longer needs you loses its note. One that still does keeps it.
     db.run(`UPDATE threads SET noting = NULL WHERE ${unmoved} AND stalled = 1 AND needs_you = 0
       AND asking = 0 AND (erred = 0 OR limited = 1)`);
@@ -1132,7 +1136,7 @@ function adoptOldLead(db: Database): void {
     db.run("INSERT INTO notes (owner, repo, text) VALUES (?, ?, ?)", [
       owner,
       repo,
-      `Skelcrew now gives each repository a lead of its own, and you are the lead of ${name} (${owner}/${repo}). Work only on ${name} from now on. For another repository, ask the human to open it with sc in a checkout of it: it gets a lead of its own.`,
+      `Skelcrew now gives each repository a lead of its own, and you are the lead of ${name} (${owner}/${repo}). Work only on ${name} from now on. For another repository, ask ${yourNameForAgents()} to open it with sc in a checkout of it: it gets a lead of its own.`,
     ]);
   }
   db.run("DROP TABLE lead");
