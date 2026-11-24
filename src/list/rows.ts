@@ -445,15 +445,12 @@ function buildersOf(db: Database, open: Open) {
   return { ...counted(db, open), limit };
 }
 
-export type BuildersNote = { text: string; full: boolean };
+export type BuildersNote = { running: number; limit: number; queued: number };
 
 export function buildersNote(db: Database, open: Open): BuildersNote | null {
   const { running, queued, limit } = buildersOf(db, open);
   if (limit === null) return null;
-  return {
-    text: `${running}/${limit} threads${queued > 0 ? ` · ${queued} queued` : ""}`,
-    full: running >= limit,
-  };
+  return { running, limit, queued };
 }
 
 // Returns the repository's rows as the database has them now, at a moment in milliseconds: its
@@ -785,20 +782,13 @@ export type Heading = {
   section: Section;
   count: number;
   open: boolean;
-  note: BuildersNote | null;
 };
 
-export function sectionHeadings(
-  rows: Row[],
-  opened: Set<Section>,
-  builders: BuildersNote | null = null,
-): Heading[] {
+export function sectionHeadings(rows: Row[], opened: Set<Section>): Heading[] {
   return sections.flatMap((section) => {
     const ours = rows.filter((row) => row.section === section);
     if (section === "needs you" && ours.length === 0) return [];
-    const note = section === "task queue" ? builders : null;
-    const count = ours.length;
-    return [{ section, count, open: opened.has(section), note }];
+    return [{ section, count: ours.length, open: opened.has(section) }];
   });
 }
 

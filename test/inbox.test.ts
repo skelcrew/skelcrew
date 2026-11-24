@@ -855,7 +855,7 @@ const rows = shownRows(all(), sections, true);
 const at = rows.findIndex((r) => r.name === "APP-12");
 const selectedRow = rows[at];
 const pane = drawPane(selectedRow, readDetails(db, open, selectedRow.task, Date.now(), selectedRow.changed), null, 80, 35);
-const frame = drawList(rows, sectionHeadings(all(), sections), at, 0, { versions: ["test"], where: "", name: "app", tabs: [], notice: "", bottom: "", load: "" }, { width: 160, height: 40 }, pane.lines, 0);
+const frame = drawList(rows, sectionHeadings(all(), sections), at, 0, { versions: ["test"], where: "", name: "app", tabs: [], notice: "", builders: null, bottom: "", load: "" }, { width: 160, height: 40 }, pane.lines, 0);
 const frameLines = frame.lines.map(Bun.stripANSI);
 console.log(JSON.stringify({ left: frameLines.map((line) => line.split(" │ ")[0]).join("\\n"), right: pane.lines.map(Bun.stripANSI).join("\\n"), pick: itemKey(selectedRow, at, frame.targets, "b", pane.picks) }));`);
   expect(seen.left).toContain("Needs you");

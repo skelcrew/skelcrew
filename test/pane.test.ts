@@ -502,6 +502,7 @@ const frame: Frame = {
   tabs: [{ name: "app", fullName: "simon/app", needYou: 0, colour: "yellow", ready: 0 }],
   notice: "",
   bottom: "↑↓ move",
+  builders: null,
   load: "cpu 12%",
 };
 

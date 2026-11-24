@@ -33,6 +33,7 @@ import {
   typeReply,
 } from "../list/actions.ts";
 import {
+  buildersLine,
   drawItem,
   drawRows,
   enterAttaches,
@@ -274,7 +275,7 @@ export async function runSidebar(
   let all: Row[] = [];
   let rows: Row[] = [];
   const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
-  // What Task queue's heading says of the builders, read with the rows.
+  // How full the repository's builders are, on the sidebar's top line, read with the rows.
   let builders: ReturnType<typeof buildersNote> = null;
   let wholeBacklog = false;
   let here = 0;
@@ -486,11 +487,12 @@ export async function runSidebar(
     return agentFooter(name, harnessOf(about()));
   };
 
-  // Draws the sidebar, the notice above the rest, only when it changed. Every line fills the
-  // pane, and its last column is left blank, so text never touches the box's line.
+  // Draws the sidebar, only when it changed: how full the builders are on its top line, then the
+  // notice, then the rest. Every line fills the pane, and its last column is left blank, so text
+  // never touches the box's line.
   const draw = () => {
     const { width, height } = size();
-    const headings = sectionHeadings(pickSent(all, sent), opened, builders);
+    const headings = sectionHeadings(pickSent(all, sent), opened);
     const room = Math.max(width - 1, 1);
     const keys = narrow && !typingRight ? keyLines(lastFooter, room) : [];
     const rowsHeight = Math.max(height - 1 - keys.length, 1);
@@ -504,13 +506,13 @@ export async function runSidebar(
         ? { lines: read.lines, targets: read.targets, top, spins: [] }
         : drawRows(rows, headings, here, top, room, rowsHeight, spinning);
     top = drawn.top;
-    spins = drawn.spins.map((spin) => ({ ...spin, line: notice.length + 1 + spin.line }));
-    targets = [...notice.map((): Target => null), null, ...drawn.targets];
+    spins = drawn.spins.map((spin) => ({ ...spin, line: 1 + notice.length + spin.line }));
+    targets = [null, ...notice.map((): Target => null), ...drawn.targets];
     const below = Math.max(rowsHeight - drawn.lines.length, 0);
     const padded = closing || keys.length > 0;
     const shownLines = padded ? [...drawn.lines, ...Array<string>(below).fill("")] : drawn.lines;
-    const lines = ["", ...shownLines, ...keys].map((line) => filled(line, width));
-    const frame = [...notice, ...lines].join("\n");
+    const lines = [...shownLines, ...keys].map((line) => filled(line, width));
+    const frame = [filled(buildersLine(builders, room), width), ...notice, ...lines].join("\n");
     if (frame === lastFrame) return;
     lastFrame = frame;
     doing("drawing the sidebar", () =>

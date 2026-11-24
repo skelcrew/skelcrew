@@ -479,7 +479,13 @@ ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", nee
 }
 
 // The notice comes from the database, which the daemon writes once it installed a release.
+// How full the builders are stays on the sidebar's top line, above the notice.
 test("a release installed in the background shows as a notice above the lead", async () => {
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "tracker: github\nsetup: []\ntest: []\nlimits: { threads: 5 }\n",
+  );
   sql("INSERT INTO installed (release) VALUES ('9.9.9');");
   open("lead");
   await ready("lead");
@@ -489,6 +495,7 @@ test("a release installed in the background shows as a notice above the lead", a
   const lines = left();
   const at = lines.findIndex((line) => line.includes("9.9.9 installed"));
   expect(at).toBeLessThan(lines.findIndex((line) => line.includes("lead")));
+  expect(lines[at - 1]).toMatch(/ \d\/5 threads$/);
 });
 
 // A queued task shows in the task queue, and Shift-Up there has the daemon move it earlier in the
