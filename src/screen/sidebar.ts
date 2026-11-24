@@ -33,6 +33,7 @@ import {
   typeReply,
 } from "../list/actions.ts";
 import {
+  buildersLine,
   drawItem,
   drawRows,
   enterAttaches,
@@ -274,7 +275,7 @@ export async function runSidebar(
   let all: Row[] = [];
   let rows: Row[] = [];
   const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
-  // What Task queue's heading says of the builders, read with the rows.
+  // How full the repository's builders are, on the sidebar's top line, read with the rows.
   let builders: ReturnType<typeof buildersNote> = null;
   let wholeBacklog = false;
   let here = 0;
@@ -490,7 +491,7 @@ export async function runSidebar(
   // pane, and its last column is left blank, so text never touches the box's line.
   const draw = () => {
     const { width, height } = size();
-    const headings = sectionHeadings(pickSent(all, sent), opened, builders);
+    const headings = sectionHeadings(pickSent(all, sent), opened);
     const room = Math.max(width - 1, 1);
     const keys = narrow && !typingRight ? keyLines(lastFooter, room) : [];
     const rowsHeight = Math.max(height - 1 - keys.length, 1);
@@ -509,7 +510,9 @@ export async function runSidebar(
     const below = Math.max(rowsHeight - drawn.lines.length, 0);
     const padded = closing || keys.length > 0;
     const shownLines = padded ? [...drawn.lines, ...Array<string>(below).fill("")] : drawn.lines;
-    const lines = ["", ...shownLines, ...keys].map((line) => filled(line, width));
+    const lines = [buildersLine(builders, room), ...shownLines, ...keys].map((line) =>
+      filled(line, width),
+    );
     const frame = [...notice, ...lines].join("\n");
     if (frame === lastFrame) return;
     lastFrame = frame;

@@ -120,7 +120,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   // and so does a whole Backlog once you asked for it, which shows its newest issues until then.
   let all: Row[] = [];
   let rows: Row[] = [];
-  // What Task queue's heading says of the builders, read with the rows.
+  // How full the repository's builders are, on the line above the rows, read with the rows.
   let builders: ReturnType<typeof buildersNote> = null;
   const opened = new Set<Section>(["needs you", "task queue", "building", "reviewing", "checks"]);
   let wholeBacklog = false;
@@ -176,6 +176,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       name,
       tabs,
       notice,
+      builders,
       bottom: bottom(tabs.length),
       load: shownLoad,
     };
@@ -231,7 +232,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
     const drawn = drawList(
       rows,
-      sectionHeadings(all, opened, builders),
+      sectionHeadings(all, opened),
       here,
       top,
       frameWith(bottom, load),
@@ -280,12 +281,13 @@ export async function runList(agents: string, repository: string): Promise<void>
   // whole, with every stage open, and without colours, and sc returns.
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     rows = listRows(db, open, Date.now());
+    builders = buildersNote(db, open);
     // Tall enough for every row at two lines, the most one takes, every heading and the blank
     // line after each, so nothing scrolls out of the print.
     const size = { width: 100, height: rows.length * 2 + sections.length * 2 + 8 };
     const { lines } = drawList(
       rows,
-      sectionHeadings(rows, new Set(sections), buildersNote(db, open)),
+      sectionHeadings(rows, new Set(sections)),
       -1,
       0,
       frameWith(() => "", ""),

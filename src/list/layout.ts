@@ -20,6 +20,7 @@ import {
 } from "../screen/look.ts";
 import {
   type Ask,
+  type BuildersNote,
   type Ci,
   type Heading,
   numbered,
@@ -31,13 +32,15 @@ import {
 // What the list shows besides its rows: the names of the version of Skelcrew running here, longest
 // first, such as v0.4.2 or 6f1c2ab (checkout), where it runs on a remote, or empty on this machine,
 // the open repository's name, every repository's tab, the notice of a release waiting for a
-// restart, or empty, the bottom line's text, and the load.
+// restart, or empty, how full its builders are, or null when that can't be read, the bottom
+// line's text, and the load.
 export type Frame = {
   versions: string[];
   where: string;
   name: string;
   tabs: Tab[];
   notice: string;
+  builders: BuildersNote | null;
   bottom: string;
   load: string;
 };
@@ -150,26 +153,29 @@ function headingLine(heading: Heading, countWidth: number, width: number): strin
   const count = String(heading.count).padStart(countWidth);
   const plain = ` ${key} ${name} ${count}`;
   const colour = heading.section === "needs you" ? yellow : heading.count === 0 ? grey : "";
-  const note = heading.note;
-  if (note && Bun.stringWidth(`${plain}  ${note.text}`) > width) {
-    const capacity = note.text.split(" · ")[0] ?? note.text;
-    const space = Math.max(width - Bun.stringWidth(plain) - 2, Bun.stringWidth(capacity));
-    const text = fitted(
-      space === Bun.stringWidth(capacity) ? capacity : note.text,
-      Math.min(space, width),
-    );
-    const room = width - Bun.stringWidth(text) - 2;
-    const prefix = room > 0 ? `${fitted(plain, room)}  ` : "";
-    return `${colour ? paint(colour, prefix) : prefix}${note.full ? text : paint(grey, text)}`;
-  }
   if (Bun.stringWidth(plain) > width) {
     const cut = fitted(plain, width);
     return colour ? paint(colour, cut) : cut;
   }
   const style = [heading.open ? "1" : "", colour].filter(Boolean).join(";");
   const shown = style ? paint(style, name) : name;
-  const extra = note ? `  ${note.full ? note.text : paint(grey, note.text)}` : "";
-  return ` ${paint(grey, key)} ${shown} ${colour ? paint(colour, count) : count}${extra}`;
+  return ` ${paint(grey, key)} ${shown} ${colour ? paint(colour, count) : count}`;
+}
+
+// Returns the line above the rows, `width` columns wide: how full the repository's builders are,
+// on its right, such as 3/5 threads · 2 queued. A narrow one drops the word threads, then the
+// queue. It is grey while a builder is free, and white once all are busy.
+export function buildersLine(builders: BuildersNote | null, width: number): string {
+  if (builders === null) return "";
+  const { running, limit, queued } = builders;
+  const count = `${running}/${limit}`;
+  const waiting = queued > 0 ? ` · ${queued} queued` : "";
+  const fits = [`${count} threads${waiting}`, `${count}${waiting}`, count].find(
+    (text) => text.length < width,
+  );
+  const text = fits ?? fitted(count, width);
+  const shown = running >= limit ? text : paint(grey, text);
+  return `${" ".repeat(Math.max(width - Bun.stringWidth(text), 0))}${shown}`;
 }
 
 // A repository's tab on the top line, the columns it takes, counted from 1 as your terminal
@@ -771,7 +777,7 @@ export function drawList(
   const beside = pane === null ? 0 : paneWidth(size.width);
   const width = beside > 0 ? whole - beside - paneEdge.length : whole;
   const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, width))] : [];
-  const head = [topParts(frame, whole).line, ...notice, ""];
+  const head = [topParts(frame, whole).line, ...notice, buildersLine(frame.builders, width)];
   const room = size.height - head.length - 2;
   const opened = rows[here];
   const read =

@@ -15,6 +15,8 @@ The screen starts on the lead, so what you type first goes to the lead.
 
 ## The sidebar
 
+The sidebar's top line says, on its right, how many builders run out of the repository's limit, such as `3/5 threads · 2 queued`. It turns white once every builder is busy. `sc --list` shows it on the line above its rows.
+
 The lead is the first row. Below it, tasks are grouped in sections:
 
 | Section | What is in it |
