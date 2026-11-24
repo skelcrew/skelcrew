@@ -4,13 +4,14 @@ const esc = "\x1b";
 // Splits what the terminal sent into keys. Every escape sequence is one key, read or not. That
 // covers keys such as Right, Home, F5 or Alt-x, and the answers a terminal sends to tmux's
 // questions. In order: a terminal's string ended by ST or BEL, a CSI sequence, an SS3 one, Alt
-// with a key, then any single character, a lone Esc included.
+// with a key, then any single character, a lone Esc included. Esc then Ctrl-D, typed fast, are
+// two keys, so the Ctrl-D is still caught.
 export const keyPattern = new RegExp(
   [
     `${esc}[P\\]X^_][\\s\\S]*?(?:${esc}\\\\|\\x07)`,
     `${esc}\\[[0-?]*[ -/]*[@-~]`,
     `${esc}O[\\s\\S]`,
-    `${esc}[^${esc}]`,
+    `${esc}[^${esc}\\x04]`,
     "[\\s\\S]",
   ].join("|"),
   "g",

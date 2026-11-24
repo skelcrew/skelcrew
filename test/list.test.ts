@@ -2381,10 +2381,10 @@ test("a Ctrl-D that comes with Enter never reaches the agent", async () => {
   const labels = { repository: "simon/app", role: "builder" as const, task: "app-7" };
   startSession(agents, "app-7", { folder: home, command: [script], env: {}, labels });
   await arrowTo("▸ ○ 7 ");
-  type("\r\x04\x1b[100;5u\x1b[27;5;100~a");
-  await until(() => read(join(home, "raw.typed")) === "a", "what was typed");
+  type("\r\x04\x1b[100;5u\x1b[27;5;100~a\x1b\x04");
+  await until(() => read(join(home, "raw.typed")) === "a\x1b", "what was typed");
   type("b");
-  await until(() => read(join(home, "raw.typed")) === "ab", "the next key");
+  await until(() => read(join(home, "raw.typed")) === "a\x1bb", "the next key");
 });
 
 // You may have the agent open in a terminal of your own too, which isn't the list's to close.
@@ -2667,9 +2667,12 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await Bun.sleep(20);
   type(";5uy");
   await until(() => read(join(home, "host.typed")) === "xy", "the key after it");
+  // Esc then Ctrl-D, typed fast, are two keys, not Alt with Ctrl-D.
+  type("\x1b\x04z");
+  await until(() => read(join(home, "host.typed")) === "xy\x1bz", "Esc without the Ctrl-D");
   type("\x04\x04");
   await until(() => seen().includes("esc/^D^D quit"), "the list again");
-  expect(read(join(home, "host.typed"))).toBe("xy");
+  expect(read(join(home, "host.typed"))).toBe("xy\x1bz");
   expect(read(join(home, "left"))).toBe("");
 });
 
