@@ -745,6 +745,16 @@ async function completeSkelcrewYaml(root: string): Promise<string[]> {
   return lacked;
 }
 
+function gitHubToAdd(root: string, remote: string): { owner: string; repo: string } | null {
+  const found = parseRemote(remote);
+  if (found?.host !== "github.com") return null;
+  try {
+    return repositoryPlugins(root).plugins.length === 0 ? found : null;
+  } catch {
+    return null;
+  }
+}
+
 function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
   if (parseRemote(remote)?.host !== "github.com") return null;
   try {
@@ -796,6 +806,9 @@ export async function initRepo(): Promise<void> {
     );
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+  const github = gitHubToAdd(root, remote);
+  if (github)
+    console.log(`Found GitHub at ${github.owner}/${github.repo} (origin)\nAdding GitHub plugin...`);
   if (!hasConfig) writeFileSync(file, await newSkelcrewYaml(), { flag: "wx" });
   const completed = hasConfig ? await completeSkelcrewYaml(root) : [];
   const forge = addForgePlugin(root, remote);
