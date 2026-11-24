@@ -451,9 +451,9 @@ test("refuses to install a service that runs sc from a worktree", async () => {
 });
 
 // Runs sc as it runs on a Mac, with fake launchctl and sandbox-exec.
-function skelOnMac(typed = "", path = bin) {
+function skelOnMac(typed = "", path = bin, args: string[] = []) {
   const preload = join(import.meta.dir, "as-mac.ts");
-  return skel(typed, path, main(), home, { BUN_OPTIONS: `--preload ${preload}` });
+  return skel(typed, path, main(), home, { BUN_OPTIONS: `--preload ${preload}` }, args);
 }
 
 // Sets up the fakes a Mac has, and takes away what only Linux has.
@@ -695,6 +695,39 @@ test("on a Mac, reports a failed load while launchd still has the old agent", as
   expect(calls()).not.toContain("kickstart");
   expect(readFileSync(plist(), "utf8")).toContain("<string>up</string>");
 }, 30_000);
+
+test("on a Mac, reports why launchd won't start the agent it loaded", async () => {
+  asMac();
+  await skelOnMac("sk-ant-oat01-good\n");
+  writeFileSync(plist(), readFileSync(plist(), "utf8").replace("serve", "up"));
+  slowBootout(0, ': > "$HOME/loaded"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5');
+  const refused = readFileSync(join(bin, "launchctl"), "utf8").replace(
+    '  kickstart) : > "$HOME/started" ;;',
+    '  kickstart) echo "Service is disabled" >&2; exit 119 ;;',
+  );
+  writeFileSync(join(bin, "launchctl"), refused);
+  const run = await skelOnMac();
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("couldn't start Skelcrew's daemon: Service is disabled");
+});
+
+test("on a Mac, sc restart loads a lost agent with no wait or second try", async () => {
+  asMac();
+  await skelOnMac("sk-ant-oat01-good\n");
+  slowBootout(0, 'echo "Bootstrap failed: 5: Input/output error" >&2; exit 5');
+  rmSync(join(home, "loaded"));
+  rmSync(join(home, "started"));
+  const refused = readFileSync(join(bin, "launchctl"), "utf8").replace(
+    '  kickstart) : > "$HOME/started" ;;',
+    '  kickstart) echo "Could not find service" >&2; exit 113 ;;',
+  );
+  writeFileSync(join(bin, "launchctl"), refused);
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac("", bin, ["restart"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("couldn't load Skelcrew's daemon: Bootstrap failed: 5");
+  expect(calls().match(/bootstrap/g)).toHaveLength(1);
+});
 
 test("on a Mac, escapes a PATH for the agent's definition", async () => {
   asMac();
