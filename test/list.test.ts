@@ -2089,6 +2089,21 @@ test("a first Ctrl-D asks for a second, any other key clears that, and q leaves 
   await until(() => read(join(home, "left")) === "left", "the list to leave");
 });
 
+// Ctrl-\ pressed once too often lands on the list, and is another key between two Ctrl-Ds.
+test("Ctrl-\\ between two Ctrl-Ds clears the hint, and the list stays", async () => {
+  await open();
+  type("\x04");
+  await until(() => seen().includes("Press Ctrl-D again to close"), "the hint");
+  press("C-\\");
+  type("\x04");
+  await Bun.sleep(500);
+  expect(read(join(home, "left"))).toBe("");
+  press("C-\\");
+  await until(() => seen().includes("esc/^D^D quit"), "the hint to go");
+  await Bun.sleep(1000);
+  expect(seen()).toContain("esc/^D^D quit");
+});
+
 for (const [keys, name] of [
   [["\x04", "\x04"], "Ctrl-D twice"],
   [["\x03"], "Ctrl-C"],
@@ -2333,6 +2348,24 @@ test("keys that come with Enter reach the agent, not the list", async () => {
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   press("C-\\");
   await until(() => here().startsWith("▸ ○ 7 "), "the list again");
+});
+
+// One Ctrl-D ends a Pi session, so one typed with Enter, before the list attaches, never reaches
+// the agent. This agent reads its terminal raw, so it records a Ctrl-D as it comes.
+test("a Ctrl-D that comes with Enter never reaches the agent", async () => {
+  await open();
+  const script = join(home, "raw.sh");
+  writeFileSync(script, '#!/bin/sh\necho "I am raw"\nstty raw -echo\nexec cat > raw.typed\n', {
+    mode: 0o755,
+  });
+  Bun.spawnSync(["tmux", "-L", agents, "kill-session", "-t", "=app-7"]);
+  const labels = { repository: "simon/app", role: "builder" as const, task: "app-7" };
+  startSession(agents, "app-7", { folder: home, command: [script], env: {}, labels });
+  await arrowTo("▸ ○ 7 ");
+  type("\r\x04a");
+  await until(() => read(join(home, "raw.typed")) === "a", "what was typed");
+  type("b");
+  await until(() => read(join(home, "raw.typed")) === "ab", "the next key");
 });
 
 // You may have the agent open in a terminal of your own too, which isn't the list's to close.
@@ -2580,6 +2613,38 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   press("Enter");
   await until(() => seen().includes("esc/^D^D quit"), "the list again");
   expect(here()).toStartWith("▸ ● 12 ");
+  expect(read(join(home, "left"))).toBe("");
+});
+
+// The host's attach runs in the list's terminal, where no tmux of Skelcrew's takes Ctrl-D, so the
+// list keeps it from the agent itself. Twice comes back to the list.
+test("Ctrl-D never reaches an agent on a plugin's host, and twice comes back to the list", async () => {
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "attach.sh"),
+    `echo "I am $1 on fake"; stty raw -echo; exec cat > ${JSON.stringify(join(home, "host.typed"))}\n`,
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
+  await open();
+  await until(() => here().startsWith("▸ ● 12 "), "APP-12's row");
+  press("Enter");
+  await until(() => seen().includes("a) Open the builder"), "the item");
+  type("a");
+  await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
+  type("\x04");
+  type("x");
+  await until(() => read(join(home, "host.typed")) === "x", "what was typed");
+  type("\x04");
+  await Bun.sleep(100);
+  type("\x04");
+  await until(() => seen().includes("esc/^D^D quit"), "the list again");
+  expect(read(join(home, "host.typed"))).toBe("x");
   expect(read(join(home, "left"))).toBe("");
 });
 

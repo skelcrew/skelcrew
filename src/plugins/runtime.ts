@@ -188,15 +188,59 @@ export async function askHost<T>(
   }
 }
 
+// Ctrl-D as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
+const ctrlD = new RegExp(["\x04", "\x1b\\[100;5(?::\\d+)?u", "\x1b\\[27;5;100~"].join("|"), "g");
+
 // Attaches your terminal full screen to a session on the host, by running the plugin's attach
-// command in it with the session's ID after its own words, and returns once you detach.
-export function attachOnHost(host: PluginHost, id: string): void {
+// command in it with the session's ID after its own words, and returns once you detach. The
+// command runs in a terminal of its own between it and yours, as no tmux of Skelcrew's is there
+// to keep Ctrl-D from the agent, where one would end it. Ctrl-D twice within 2 seconds, with no
+// other key between, ends the attach, as it closes the screen. Without a terminal, it runs the
+// command as it is.
+export async function attachOnHost(host: PluginHost, id: string): Promise<void> {
   const { argv, env } = commandFor(host.plugin, host.attach);
-  Bun.spawnSync([...argv, id], {
-    cwd: host.folder,
-    env: { ...process.env, ...env },
-    stdio: ["inherit", "inherit", "inherit"],
+  const options = { cwd: host.folder, env: { ...process.env, ...env } };
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    await Bun.spawn([...argv, id], { ...options, stdio: ["inherit", "inherit", "inherit"] }).exited;
+    return;
+  }
+  const stty = (...args: string[]) =>
+    Bun.spawnSync(["stty", ...args], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
+  const saved = stty("-g").stdout.toString().trim();
+  stty("raw", "-echo");
+  const terminal = new Bun.Terminal({
+    cols: process.stdout.columns || 80,
+    rows: process.stdout.rows || 24,
+    name: process.env.TERM ?? "xterm-256color",
+    data: (_terminal, bytes) => {
+      process.stdout.write(bytes);
+    },
   });
+  const command = Bun.spawn([...argv, id], { ...options, terminal });
+  let closeBy = 0;
+  const typed = (bytes: Uint8Array) => {
+    const text = Buffer.from(bytes).toString("latin1");
+    const rest = text.replace(ctrlD, "");
+    if (rest) closeBy = 0;
+    if (rest !== text) {
+      if (Date.now() < closeBy) command.kill();
+      closeBy = Date.now() + 2000;
+    }
+    if (rest && !terminal.closed) terminal.write(Buffer.from(rest, "latin1"));
+  };
+  const resized = () => terminal.resize(process.stdout.columns || 80, process.stdout.rows || 24);
+  process.stdin.on("data", typed);
+  process.stdin.resume();
+  process.on("SIGWINCH", resized);
+  try {
+    await command.exited;
+  } finally {
+    process.stdin.off("data", typed);
+    process.stdin.pause();
+    process.off("SIGWINCH", resized);
+    terminal.close();
+    if (saved) stty(saved);
+  }
 }
 
 // Returns a line for sh that runs the plugin's attach command on a session, in the plugin's folder

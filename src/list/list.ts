@@ -350,7 +350,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   // screen is Skelcrew's. The title you had is saved first and put back after, on terminals
   // that keep one. Mouse reports among those keys are the list's, such as the rest of the click
   // that attached, and would reach the agent's prompt as text, so they are dropped, and so is the
-  // start of one cut off at the end of a read.
+  // start of one cut off at the end of a read. A Ctrl-D is dropped too, as one would end a Pi
+  // session.
   const attach = async (session: string, name: string, host: Host = agents) => {
     attached = true;
     process.stdin.pause();
@@ -358,7 +359,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const after =
       typed
         .splice(0)
-        .filter((key) => !mousePattern.test(key.sent))
+        .filter((key) => !mousePattern.test(key.sent) && keyNames[key.sent] !== "close")
         .map((key) => key.sent)
         .join("") + rest;
     partial = "";
@@ -370,7 +371,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       process.stdout.write(`\x1b[22;0t\x1b]2;${title}\x07`);
       failed = await attachSession(host, session);
       process.stdout.write("\x1b[23;0t");
-    } else attachOnHost(host, session);
+    } else await attachOnHost(host, session);
     takeTerminal();
     process.stdin.resume();
     attached = false;
@@ -638,10 +639,12 @@ export async function runList(agents: string, repository: string): Promise<void>
   let leave: () => void = () => {};
   let left = false;
   const press = async (key: string) => {
-    if (working || left || key === "back") return;
+    if (working || left) return;
     if (key === "close" && Date.now() < closeBy) return leave();
-    if (said === closeHint) said = null;
+    const hinted = said === closeHint;
+    if (hinted) said = null;
     closeBy = 0;
+    if (key === "back") return hinted ? draw() : undefined;
     if (key === "close") {
       closeBy = Date.now() + closeWithin;
       said = closeHint;
@@ -758,6 +761,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     void act();
   };
   process.stdin.on("data", (bytes) => {
+    if (attached) return;
     clearTimeout(flush);
     const text = partial + bytes.toString();
     partial = text.match(endOfSequence)?.[0] ?? "";
