@@ -131,12 +131,12 @@ export async function updateItself(file: string): Promise<void> {
   }
   console.log(`Updated Skelcrew ${release} → ${installed}.`);
   if (!(await daemonStatus())) return;
-  const moved = Bun.spawnSync([file, "serve", "--bg"], {
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  if (!moved.success)
+  const run = (...args: string[]) =>
+    Bun.spawnSync([file, ...args], { stdio: ["inherit", "inherit", "inherit"] }).success;
+  const moved = run("serve", "--bg") && (installed !== release || run("restart"));
+  if (!moved)
     throw new Error(
-      `Skelcrew ${installed} is installed, but couldn't restart the daemon on it. Run sc serve --bg.`,
+      `Skelcrew ${installed} is installed, but couldn't restart the daemon on it. Run sc serve --bg, then sc restart.`,
     );
 }
 

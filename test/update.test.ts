@@ -468,6 +468,17 @@ test("sc update installs the latest release over Skelcrew and restarts the daemo
   expect(done.out).toBe("Updated Skelcrew 0.4.2 → 0.4.3.\n");
 });
 
+// Such as the arm64 build replacing an x64 one under Rosetta: the daemon runs the same release,
+// so only a restart moves it to the new file.
+test("sc update restarts the daemon on a new build of the same release", async () => {
+  latest(`${binary("0.4.2")}# the native build\n`);
+  await daemon({}, {});
+  const done = await update();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe("sc serve --bg\nsc restart\n");
+});
+
 test("sc update says how to restart the daemon when the new release can't", async () => {
   latest(`${binary("0.4.3")}exit 1\n`);
   await daemon({}, {});
