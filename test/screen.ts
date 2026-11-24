@@ -436,6 +436,7 @@ export function daemon(): void {
         );
         return;
       }
+      if (command === "answer") acted.push(`answer ${repo} ${task} ${pick}`);
       if (command !== "start" && command !== "merge" && command !== "pick") {
         connection.end("{}\n");
         return;

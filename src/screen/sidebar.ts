@@ -62,7 +62,7 @@ import { dropAnswerOption, dropAsk, dropNoticeOption, escapeTime, unfinished } f
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, grey, pad, paint, removeControlCodes } from "./look.ts";
 import { attachedMark, leadOnHost, narrowBelow, panes, sidebarFor, zoomIn } from "./screen.ts";
-import { attachTask, showTask } from "./task.ts";
+import { attachTask, picksBeside, showTask } from "./task.ts";
 import { drawTop, sidebarRange } from "./top.ts";
 
 // The repository open in the sidebar, by its owner and name, and its lead's session.
@@ -1014,6 +1014,12 @@ export async function runSidebar(
     enter();
   };
 
+  // Returns the options of `row`'s item shown on the right, while the right shows its details.
+  const beside = (row: Row) =>
+    !narrow && row.ask && shown === detailsOf(row.name)
+      ? picksBeside(agents, rightPane, row.ask)
+      : [];
+
   const press = (key: string) => {
     if (key === dropAsk) return answerDrop();
     const name = keyNames[key] ?? key;
@@ -1058,11 +1064,7 @@ export async function runSidebar(
     said = null;
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
-    const visible =
-      !narrow && item !== null && row?.ask && /^[a-dr]$/.test(key)
-        ? screenTmux(agents, ["capture-pane", "-p", "-t", rightPane]).out.split("\n")
-        : [];
-    const pick = itemKey(row, here, targets, key, visible);
+    const pick = itemKey(row, here, targets, key, row && /^[a-dr]$/.test(key) ? beside(row) : []);
     if (pick && row) return pickOn(row, pick);
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
     if ((name === "earlier" || name === "later") && row)

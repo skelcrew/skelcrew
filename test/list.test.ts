@@ -2788,6 +2788,16 @@ test("a merge picked on an item asks in its box, any other key leaves it, and y 
   await until(() => asked.includes("pick simon/app 14 a"), "the pick");
 });
 
+// The options show in the box beside the row without Enter, so their letters pick at once.
+test("a letter picks an option shown beside its row without Enter", async () => {
+  await open({ width: wide });
+  press("Down");
+  await until(() => here().startsWith("▸ ● 14 ") && seen().includes("a) Merge it"), "the item");
+  expect(seen()).not.toContain("esc back");
+  type("a");
+  await until(() => seen().includes("│ Merge app#41 into main? y/n"), "the question in the box");
+});
+
 test("m on a task ready for review asks first, and y merges it at the commit you saw", async () => {
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.

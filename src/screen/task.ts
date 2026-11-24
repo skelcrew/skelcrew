@@ -1,5 +1,5 @@
-// The screen's right pane shows the item and task details, with scrolling.
-// Enter attaches to the builder; leaving the builder returns to the details.
+// The screen's right pane shows the item and task details, with scrolling, and tells the sidebar
+// which of the item's options it shows. Enter attaches to the builder; leaving it returns here.
 import { attachUntilEnded } from "../agents/sessions.ts";
 import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
@@ -8,8 +8,9 @@ import { builderSession, readThread } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
 import { pickSent } from "../list/actions.ts";
 import { type Details, readDetails } from "../list/details.ts";
+import type { Pick } from "../list/layout.ts";
 import { drawPane } from "../list/pane.ts";
-import { listRows, type Open, type Row } from "../list/rows.ts";
+import { type Ask, listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine } from "../plugins/runtime.ts";
 import { attachedMark, panes, skelcrewCommand, zoomIn } from "./screen.ts";
@@ -126,6 +127,7 @@ export async function attachTask(
 }
 
 export async function runTaskDetails(
+  agents: string,
   repository: string,
   name: string,
   confirm = "",
@@ -139,6 +141,7 @@ export async function runTaskDetails(
   let lastFrame = "";
   let scroll = 0;
   let room = 0;
+  let toldPicks: string | null = null;
 
   const draw = () => {
     const width = process.stdout.columns || 80;
@@ -147,9 +150,13 @@ export async function runTaskDetails(
     scroll = pane.scroll;
     room = pane.room;
     const text = `\x1b[?25l\x1b[H${pane.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
-    if (text === lastFrame) return;
+    if (text !== lastFrame) process.stdout.write(text);
     lastFrame = text;
-    process.stdout.write(text);
+    const picks = `${process.pid} ${row?.ask ? itemId(row.ask) : "-"} ${pane.picks.join(",")}`;
+    const here = process.env.TMUX_PANE;
+    if (picks === toldPicks || !here) return;
+    toldPicks = picks;
+    screenTmux(agents, ["set", "-p", "-t", here, "@picks", picks]);
   };
 
   const pick = letters.find((letter) => letter === sent);
@@ -179,4 +186,19 @@ export async function runTaskDetails(
   refresh();
   setInterval(refresh, 1000);
   await new Promise(() => {});
+}
+
+// Names an item by what it asks and what its options do, so a replaced item has another name.
+const itemId = (ask: Ask) =>
+  Bun.hash(JSON.stringify([ask.title, ask.text, ask.options, ask.acts])).toString(36);
+
+// Returns the options of `ask` that the details in the screen's pane `target` show now, as the
+// details told the pane. Anything else in the pane, such as a builder attached there, details
+// still starting, or details still showing an item since replaced, tells nothing.
+export function picksBeside(agents: string, target: string, ask: Ask): Pick[] {
+  const told = screenTmux(agents, ["display", "-p", "-t", target, "#{pane_pid} #{@picks}"]);
+  const [pid, from, item, picks = ""] = told.out.trim().split(" ");
+  if (!told.ok || !pid || pid !== from || item !== itemId(ask)) return [];
+  const all: Pick[] = [...letters, "reply"];
+  return all.filter((pick) => picks.split(",").includes(pick));
 }

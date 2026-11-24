@@ -189,7 +189,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       const pane = drawPane(row, null, null, beside, size.height - 2, false, paneScroll);
       paneScroll = pane.scroll;
       paneRoom = pane.room;
-      return pane.lines;
+      return pane;
     }
     if (details?.name !== row.name)
       details = { name: row.name, read: readDetails(db, open, row.task, Date.now(), row.changed) };
@@ -206,7 +206,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     );
     paneScroll = pane.scroll;
     paneRoom = pane.room;
-    return pane.lines;
+    return pane;
   };
 
   // Draws what shows, filling the terminal, only when it changed.
@@ -236,7 +236,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       top,
       frameWith(bottom, load),
       size,
-      paneFor(size),
+      paneFor(size)?.lines ?? null,
       item,
     );
     top = drawn.top;
@@ -662,16 +662,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     said = null;
     const row = rows[here];
-    const pick = itemKey(
-      row,
-      here,
-      targets,
-      key,
-      item !== null
-        ? (paneFor({ width: process.stdout.columns || 80, height: process.stdout.rows || 24 }) ??
-            [])
-        : [],
-    );
+    const beside = paneFor({
+      width: process.stdout.columns || 80,
+      height: process.stdout.rows || 24,
+    });
+    const pick = itemKey(row, here, targets, key, beside?.picks ?? []);
     if (pick && row) return pickOn(row, pick);
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if ((key === "earlier" || key === "later") && row)
