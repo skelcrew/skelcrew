@@ -40,6 +40,7 @@ import {
   githubPlugin,
   installedReadOnly,
   lockStart,
+  namedPlugins,
   namePlugin,
   pinRepositoryPlugin,
   pluginsToInstall,
@@ -749,7 +750,7 @@ function gitHubToAdd(root: string, remote: string): { owner: string; repo: strin
   const found = parseRemote(remote);
   if (found?.host !== "github.com") return null;
   try {
-    return repositoryPlugins(root).plugins.length === 0 ? found : null;
+    return namedPlugins(root).length === 0 ? found : null;
   } catch {
     return found;
   }

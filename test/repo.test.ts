@@ -12,6 +12,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -1679,6 +1680,21 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
     "# Written by sc plugin add and sc plugin update. Commit it.\n",
   );
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
+});
+
+test("init says nothing of GitHub for a skelcrew.yaml that names plugins, whatever its skelcrew.lock holds", async () => {
+  const checkout = onGitHub("simon/app", "WRITE", false, {});
+  githubInstalledAsYours();
+  writeFileSync(
+    join(checkout, "skelcrew.yaml"),
+    `setup: [make]\ntest: [make test]\n${limitAndCrew}plugins: [simon/skelcrew-other]\n`,
+  );
+  const lock = join(checkout, "skelcrew.lock");
+  writeFileSync(lock, "not: [a lock\n");
+  expect((await skel(["init"], "", checkout)).out).not.toContain("GitHub");
+  rmSync(lock);
+  symlinkSync(join(checkout, "skelcrew.yaml"), lock);
+  expect((await skel(["init"], "", checkout)).out).not.toContain("GitHub");
 });
 
 // Only sc install installs plugins. A plugin the files named already runs nothing in sc init,
