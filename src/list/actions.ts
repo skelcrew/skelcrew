@@ -150,7 +150,7 @@ function ownPick(row: Row, pick: Letter, repo: string): Question | null {
 
 // Returns what a key does on the row at `here`, when it has the lead's item: a letter picks that
 // option, and r starts a reply in your own words. Only a line drawn on screen answers, by the
-// targets of the last draw or the `visible` lines of the row's box on the right, so a key never
+// targets of the last draw or the options `beside` it in the details on the right, so a key never
 // picks an option you can't see. Any other key, or a
 // row with no item, does nothing here.
 export function itemKey(
@@ -158,12 +158,12 @@ export function itemKey(
   here: number,
   targets: Target[],
   key: string,
-  visible: string[] = [],
+  beside: Pick[] = [],
 ): Pick | null {
   if (!row?.ask) return null;
   const pick = key === "r" ? "reply" : letters.find((letter) => letter === key);
   const shown =
-    visible.some((line) => Bun.stripANSI(line).trimStart().startsWith(`│ ${key}) `)) ||
+    beside.some((one) => one === pick) ||
     targets.some(
       (target) => target !== null && "row" in target && target.row === here && target.pick === pick,
     );

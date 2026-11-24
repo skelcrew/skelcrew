@@ -2,7 +2,6 @@
 // screen below, and where it goes beside the list's lines. Drawing reads nothing, so these need
 // no terminal and no database.
 import { expect, test } from "bun:test";
-import { itemKey } from "../src/list/actions.ts";
 import type { Details } from "../src/list/details.ts";
 import { drawList, type Frame, paneWidth } from "../src/list/layout.ts";
 import { drawPane } from "../src/list/pane.ts";
@@ -615,17 +614,31 @@ test("details taller than the pane scroll, say there is more below, and leave th
   expect(stopped.slice(17)).toEqual(["↓ more", "─".repeat(50), "Builder not running", "", ""]);
 });
 
-// The builder's own screen can show a line like an option, which its item's letter must never
-// pick once the item's box scrolled out of sight. While the box shows, the letter picks.
-test("a letter picks only the item's options the details show, never a line of the builder's screen", () => {
-  const body = Array.from({ length: 30 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
+// Text in the details can look like an option: the builder's screen, a quote in the task's
+// description, or the item's own question. Only the item's option lines count, while they show.
+test("the pane counts only the item's option lines it shows, never text that looks like one", () => {
+  const body = ["> a) yes", ...Array.from({ length: 30 }, (_, i) => `Paragraph ${i}.`)].join(
+    "\n\n",
+  );
   const tall: Details = { ...details, view: { ...details.view, body } };
+  const asking: Row = row.ask
+    ? { ...row, ask: { ...row.ask, text: "a) per user, or per key?" } }
+    : row;
   const live = { screen: "│ a) yes\n│ b) no" };
-  const shown = drawPane(row, tall, live, 50, 22);
-  const away = drawPane(row, tall, live, 50, 22, false, 1000);
-  expect(plain(away.lines)).toContain("│ a) yes");
-  expect(itemKey(row, 0, [], "a", shown.details)).toBe("a");
-  expect(itemKey(row, 0, [], "a", away.details)).toBeNull();
+  const at = (scroll: number) => drawPane(asking, tall, live, 50, 22, false, scroll);
+  expect(at(0).picks).toEqual(["a", "b"]);
+  const quoted = plain(drawPane(asking, tall, null, 50, 500).lines).indexOf("│ a) yes");
+  expect(quoted).toBeGreaterThan(0);
+  const past = at(quoted - 1);
+  expect(plain(past.lines)).toContain("│ a) yes");
+  expect(past.picks).toEqual([]);
+  const question = plain(at(0).lines).findIndex((line) => line.includes("a) per user"));
+  const options = plain(at(0).lines).findIndex((line) => line.includes("a) Open the builder"));
+  expect(at(options + 1).picks).toEqual(["b"]);
+  expect(at(options + 2).picks).toEqual([]);
+  const alone = drawPane(asking, tall, null, 50, 1, false, question);
+  expect(plain(alone.lines)).toEqual([`│ ${"a) per user, or per key?".padEnd(46)} │`]);
+  expect(alone.picks).toEqual([]);
 });
 
 // A merged PR can leave the forge's copy, and its row keeps the link saved for it.

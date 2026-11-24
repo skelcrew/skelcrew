@@ -13,7 +13,7 @@ import {
   yellow,
 } from "../screen/look.ts";
 import type { Details } from "./details.ts";
-import { drawItem, itemBox, sectionNames } from "./layout.ts";
+import { drawItem, itemBox, type Pick, sectionNames } from "./layout.ts";
 import { markdownLines } from "./markdown.ts";
 import type { Row } from "./rows.ts";
 
@@ -150,7 +150,8 @@ function linkLines(id: string, given: string, width: number): string[] {
   return [fitted(id, width), ...folded(link, width).map((piece) => linked(link, piece))];
 }
 
-function detailLines(row: Row, details: Details, width: number): string[] {
+// Returns the lines of a task's details, each with the option of its item it shows, if any.
+function detailLines(row: Row, details: Details, width: number): { text: string; pick: Pick | null }[] {
   const { view, findings, events, updates } = details;
   const text = Math.min(width, textWidth);
   const value = Math.max(width - labelWidth, 1);
@@ -172,7 +173,7 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     return `${shown}${gap}${paint(markColours[row.mark.colour], stage)}`;
   });
   const top = [...title, paint(grey, "─".repeat(width))];
-  const callout = row.ask ? itemBox(row.ask, width).map((line) => line.text) : [];
+  const callout = row.ask ? itemBox(row.ask, width) : [];
   const word = row.waits || row.says;
   const rest = [row.step, details.changed].filter(Boolean).join(" · ");
   const nowPlain = [word, rest].filter(Boolean).join(" · ");
@@ -239,10 +240,12 @@ function detailLines(row: Row, details: Details, width: number): string[] {
   const kept = view.mustStayTrue.map((item, n) => `${n + 1}. ${item}`).join("\n");
   const stayTrue = kept === "" ? [] : section("Must stay true", markdownLines(kept, text));
   const activity = events.length === 0 ? [] : section("Activity", dated(events, width, folded));
-  const parts = [callout, card, task, decisions, stayTrue, told, activity].filter(
+  const plain = (lines: string[]) => lines.map((text) => ({ text, pick: null }));
+  const parts = [callout, ...[card, task, decisions, stayTrue, told, activity].map(plain)].filter(
     (part) => part.length > 0,
   );
-  return [...top, ...parts.flatMap((part, i) => (i === 0 ? part : ["", ...part]))];
+  const gap = { text: "", pick: null };
+  return [...plain(top), ...parts.flatMap((part, i) => (i === 0 ? part : [gap, ...part]))];
 }
 
 // Returns text from an agent's screen safe to show, its colours kept: every escape sequence but
@@ -299,10 +302,10 @@ const liveLeast = 3;
 // ask for the whole of it, so the details have the rest of the pane.
 const stripLines = 3;
 
-// What the pane drew: its lines, the lines of the details among them, without the agent's live
-// screen, how far the details are scrolled, which is never past their end, and how many lines of
-// them it has room for, so a key can scroll a page.
-export type Pane = { lines: string[]; details: string[]; scroll: number; room: number };
+// What the pane drew: its lines, the options of the row's item whose lines are among them, how far
+// the details are scrolled, which is never past their end, and how many lines of them it has room
+// for, so a key can scroll a page.
+export type Pane = { lines: string[]; picks: Pick[]; scroll: number; room: number };
 
 export function drawPane(
   row: Row | undefined,
@@ -316,9 +319,12 @@ export function drawPane(
   const blank = (count: number) => Array.from({ length: Math.max(count, 0) }, () => "");
   if (row?.part === "ask" && row.ask && details === null) {
     const item = drawItem(row, 0, width, height, scroll);
-    return { lines: item.lines, details: item.lines, scroll: item.scroll, room: height };
+    const picks = item.targets.flatMap((target) =>
+      target && "pick" in target && target.pick ? [target.pick] : [],
+    );
+    return { lines: item.lines, picks, scroll: item.scroll, room: height };
   }
-  if (!row || details === null) return { lines: blank(height), details: [], scroll: 0, room: 0 };
+  if (!row || details === null) return { lines: blank(height), picks: [], scroll: 0, room: 0 };
   const least = full ? liveLeast : stripLines + 1;
   const room = Math.max(
     live === null
@@ -328,17 +334,16 @@ export function drawPane(
         : height - least,
     0,
   );
-  const all = detailLines(row, details, width);
+  const marked = detailLines(row, details, width);
+  const all = marked.map((line) => line.text);
   const farthest = Math.max(all.length - room, 0);
   const at = Math.min(Math.max(scroll, 0), farthest);
   const more = room > 1 && at < farthest ? [paint(grey, fitted("↓ more", width))] : [];
   const top = [...all.slice(at, at + room - more.length), ...more];
-  const drawn = (lines: string[]) => ({
-    lines: lines.slice(0, height),
-    details: top.slice(0, height),
-    scroll: at,
-    room,
-  });
+  const picks = marked
+    .slice(at, at + room - more.length)
+    .flatMap((line) => (line.pick ? [line.pick] : []));
+  const drawn = (lines: string[]) => ({ lines: lines.slice(0, height), picks, scroll: at, room });
   if (live === null) return drawn([...top, ...blank(height - top.length)]);
   const gap = full ? (height - top.length > least ? [""] : []) : blank(room - top.length);
   const rule = paint(grey, "─".repeat(width));

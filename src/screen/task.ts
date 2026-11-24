@@ -1,11 +1,13 @@
-// The screen's right pane shows the item and task details, with scrolling.
-// Enter attaches to the builder; leaving the builder returns to the details.
+// The screen's right pane shows the item and task details, with scrolling, and tells the sidebar
+// which of the item's options it shows. Enter attaches to the builder; leaving it returns here.
 import { attachUntilEnded } from "../agents/sessions.ts";
 import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
+import { letters } from "../flow/requests.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { errorText } from "../format.ts";
 import { type Details, readDetails } from "../list/details.ts";
+import type { Pick } from "../list/layout.ts";
 import { drawPane } from "../list/pane.ts";
 import { listRows, type Open, type Row } from "../list/rows.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
@@ -109,6 +111,7 @@ export async function attachTask(
 }
 
 export async function runTaskDetails(
+  agents: string,
   repository: string,
   name: string,
   confirm?: string,
@@ -121,6 +124,7 @@ export async function runTaskDetails(
   let lastFrame = "";
   let scroll = 0;
   let room = 0;
+  let toldPicks: string | null = null;
 
   const draw = () => {
     const width = process.stdout.columns || 80;
@@ -132,6 +136,11 @@ export async function runTaskDetails(
     if (text === lastFrame) return;
     lastFrame = text;
     process.stdout.write(text);
+    const picks = `${process.pid} ${pane.picks.join(",")}`;
+    const here = process.env.TMUX_PANE;
+    if (picks === toldPicks || !here) return;
+    toldPicks = picks;
+    screenTmux(agents, ["set", "-p", "-t", here, "@picks", picks]);
   };
 
   const refresh = () => {
@@ -159,4 +168,15 @@ export async function runTaskDetails(
   refresh();
   setInterval(refresh, 1000);
   await new Promise(() => {});
+}
+
+// Returns the options of the item that the details in the screen's pane `target` show now, as the
+// details told the pane. Anything else in the pane, such as a builder attached there, or details
+// still starting, tells nothing, as only the details running in the pane now count.
+export function picksBeside(agents: string, target: string): Pick[] {
+  const told = screenTmux(agents, ["display", "-p", "-t", target, "#{pane_pid} #{@picks}"]);
+  const [pid, from, picks = ""] = told.out.trim().split(" ");
+  if (!told.ok || !pid || pid !== from) return [];
+  const all: Pick[] = [...letters, "reply"];
+  return all.filter((pick) => picks.split(",").includes(pick));
 }

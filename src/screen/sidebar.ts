@@ -60,7 +60,7 @@ import { dropAnswerOption, dropAsk, dropNoticeOption, escapeTime, unfinished } f
 import { agentFooter, tellFooter } from "./footer.ts";
 import { filled, grey, pad, paint, removeControlCodes } from "./look.ts";
 import { attachedMark, leadOnHost, narrowBelow, panes, sidebarFor, zoomIn } from "./screen.ts";
-import { attachTask, showTask } from "./task.ts";
+import { attachTask, picksBeside, showTask } from "./task.ts";
 import { drawTop, sidebarRange } from "./top.ts";
 
 // The repository open in the sidebar, by its owner and name, and its lead's session.
@@ -987,14 +987,9 @@ export async function runSidebar(
     enter();
   };
 
-  // Returns the lines on the right while they show the details of `row`, with its item's box,
-  // or none: on a narrow screen, on another row's details, or with a builder attached there.
-  const boxOf = (row: Row) => {
-    if (narrow || !row.ask || shown !== detailsOf(row.name)) return [];
-    const command = screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_start_command}"]);
-    if (command.out.includes(attachedMark)) return [];
-    return screenTmux(agents, ["capture-pane", "-p", "-t", rightPane]).out.split("\n");
-  };
+  // Returns the options of `row`'s item shown on the right, while the right shows its details.
+  const beside = (row: Row) =>
+    !narrow && row.ask && shown === detailsOf(row.name) ? picksBeside(agents, rightPane) : [];
 
   const press = (key: string) => {
     if (key === dropAsk) return answerDrop();
@@ -1049,7 +1044,7 @@ export async function runSidebar(
     said = null;
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
-    const pick = itemKey(row, here, targets, key, row && /^[a-dr]$/.test(key) ? boxOf(row) : []);
+    const pick = itemKey(row, here, targets, key, row && /^[a-dr]$/.test(key) ? beside(row) : []);
     if (pick && row) return pickOn(row, pick);
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
     if ((name === "earlier" || name === "later") && row)

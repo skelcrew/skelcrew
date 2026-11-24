@@ -667,7 +667,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       width: process.stdout.columns || 80,
       height: process.stdout.rows || 24,
     });
-    const pick = itemKey(row, here, targets, key, beside?.details ?? []);
+    const pick = itemKey(row, here, targets, key, beside?.picks ?? []);
     if (pick && row) return pickOn(row, pick);
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if ((key === "earlier" || key === "later") && row)
