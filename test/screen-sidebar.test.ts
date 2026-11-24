@@ -14,6 +14,7 @@ import {
   endTest,
   footer,
   home,
+  noteRefreshes,
   onDetails,
   onLead,
   open,
@@ -26,6 +27,7 @@ import {
   seen,
   selected,
   sidebar,
+  sidebarRefreshedTwice,
   sql,
   startTest,
   tmux,
@@ -337,6 +339,40 @@ test("a letter picks nothing while the right shows another item on the same row"
   expect(right()).not.toContain("Merge app#41 into main?");
   tmux(screen, "set", "-p", "-t", pane, "@picks", `${pid} ${item} a,b`);
   await pickedAtOnce();
+});
+
+// An item can change where the details are scrolled out of view, while its options still show.
+// The frame stays the same, but a letter must answer the item as it is now.
+test("a letter picks after the item changed out of view, its options still shown", async () => {
+  daemon();
+  noteRefreshes();
+  const body = Array.from({ length: 30 }, (_, at) => `Paragraph ${at}.`).join("\n\n");
+  sql(`${itemSql("app", "task", 12, "Rate limit", "2026-11-05T10:00:00Z", { body })}
+INSERT INTO asks (owner, repo, task, title, text, options, posted)
+    VALUES ('simon', 'app', 't12', 'Add web?', 'Add simon/web too?', '["yes","no"]', 1)`);
+  open("lead");
+  await ready("lead");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar's typing");
+  press("M-S-Down");
+  await until(() => / 12\b/.test(selected()) && right().includes("a) yes"), "APP-12's item");
+  press("Enter");
+  await until(() => footer().includes("esc back"), "the item open");
+  for (let presses = 0; presses < 10 && right().includes("Add simon/web too?"); presses++) {
+    const before = right();
+    press("Down");
+    await until(() => right() !== before, "the details to scroll");
+  }
+  expect(right()).not.toContain("Add simon/web too?");
+  expect(right()).toContain("a) yes");
+  const pane = `=${screenSessions()[0] ?? ""}:.${panes.right}`;
+  const told = () => tmux(screen, "display", "-p", "-t", pane, "#{@picks}").out.trim();
+  const before = told();
+  sql("UPDATE asks SET text = 'Add simon/docs too?' WHERE task = 't12'");
+  await until(() => told() !== before, "the details to tell the item as it is now");
+  await sidebarRefreshedTwice();
+  type("a");
+  await until(() => acted.includes("answer simon/app t12 a"), "the answer");
 });
 
 // A builder you attached to stays on the right after a click gives the sidebar your typing. What

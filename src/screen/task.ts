@@ -133,9 +133,8 @@ export async function runTaskDetails(
     scroll = pane.scroll;
     room = pane.room;
     const text = `\x1b[?25l\x1b[H${pane.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
-    if (text === lastFrame) return;
+    if (text !== lastFrame) process.stdout.write(text);
     lastFrame = text;
-    process.stdout.write(text);
     const picks = `${process.pid} ${row?.ask ? itemId(row.ask) : "-"} ${pane.picks.join(",")}`;
     const here = process.env.TMUX_PANE;
     if (picks === toldPicks || !here) return;
