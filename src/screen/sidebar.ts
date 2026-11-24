@@ -487,8 +487,9 @@ export async function runSidebar(
     return agentFooter(name, harnessOf(about()));
   };
 
-  // Draws the sidebar, the notice above the rest, only when it changed. Every line fills the
-  // pane, and its last column is left blank, so text never touches the box's line.
+  // Draws the sidebar, only when it changed: how full the builders are on its top line, then the
+  // notice, then the rest. Every line fills the pane, and its last column is left blank, so text
+  // never touches the box's line.
   const draw = () => {
     const { width, height } = size();
     const headings = sectionHeadings(pickSent(all, sent), opened);
@@ -505,15 +506,13 @@ export async function runSidebar(
         ? { lines: read.lines, targets: read.targets, top, spins: [] }
         : drawRows(rows, headings, here, top, room, rowsHeight, spinning);
     top = drawn.top;
-    spins = drawn.spins.map((spin) => ({ ...spin, line: notice.length + 1 + spin.line }));
-    targets = [...notice.map((): Target => null), null, ...drawn.targets];
+    spins = drawn.spins.map((spin) => ({ ...spin, line: 1 + notice.length + spin.line }));
+    targets = [null, ...notice.map((): Target => null), ...drawn.targets];
     const below = Math.max(rowsHeight - drawn.lines.length, 0);
     const padded = closing || keys.length > 0;
     const shownLines = padded ? [...drawn.lines, ...Array<string>(below).fill("")] : drawn.lines;
-    const lines = [buildersLine(builders, room), ...shownLines, ...keys].map((line) =>
-      filled(line, width),
-    );
-    const frame = [...notice, ...lines].join("\n");
+    const lines = [...shownLines, ...keys].map((line) => filled(line, width));
+    const frame = [filled(buildersLine(builders, room), width), ...notice, ...lines].join("\n");
     if (frame === lastFrame) return;
     lastFrame = frame;
     doing("drawing the sidebar", () =>
