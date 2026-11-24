@@ -43,7 +43,6 @@ Press Alt+Tab (⌥Tab on a Mac) or Ctrl+\ to bring your typing to the sidebar. T
 | `s` | Start a task from the Backlog |
 | `m` | Merge a task that is `ready to merge` |
 | Shift+R | Restart the row's agent, keeping its conversation |
-| Tab or Shift+Tab | Give your typing back to the right side |
 
 Each key asks before it starts, merges or restarts anything.
 
@@ -82,7 +81,7 @@ On a task's details, with no agent to go back to, your typing stays in the sideb
 
 Ctrl+\ does the same as Alt+Tab, and needs no Alt key. If backslash is awkward on your keyboard, Ctrl+4 does the same in most terminals.
 
-Plain Tab and Shift+Tab reach the agent on the right. In the sidebar they give your typing back to the right side, as Alt+Tab does, so a missed Alt never switches repository.
+Plain Tab and Shift+Tab reach the agent on the right. In the sidebar they do nothing, so a missed Alt never does something else. Enter on the lead's row gives your typing to the lead.
 
 Esc then Tab typed very fast in an agent's prompt looks the same as Alt+Tab to the screen, so it switches too.
 
