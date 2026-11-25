@@ -157,7 +157,7 @@
       "prUrl": "https://github.com/simon/app/pull/40",
       "checks": "running",
       "review": {
-        "state": "failed",
+        "state": "reviewing",
         "round": 2,
         "at": "2026-11-10T09:01:10.000Z"
       },

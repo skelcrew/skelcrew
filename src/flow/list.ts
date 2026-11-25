@@ -15,12 +15,11 @@ import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, issueRef, openTasks, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { itemOf } from "./inbox.ts";
-import { lastReviewed, nextRound, roundOf } from "./ledger.ts";
+import { lastReviewed, nextRound, roundOf, roundStillFailed } from "./ledger.ts";
 import { messagesWaiting } from "./messages.ts";
 import { ownItem } from "./own-items.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { letters } from "./requests.ts";
-import { roundRunning } from "./round.ts";
 import { Stage, taskStage } from "./stage.ts";
 import { mergeShown, needsYou, needsYouFor } from "./status.ts";
 import { queuedForReview, Thread, taskName, threadName, threadOn } from "./thread.ts";
@@ -153,21 +152,19 @@ function ciOf(
   return word === "none" && noCi ? "no CI" : word;
 }
 
-// Returns where a thread's review stands, for sc ps. It reads only the thread's own review, as
-// a question, an error or the round limit can come on top of a review under way without
-// changing it. A saved submit or commit under review is the next round: running while its
-// round runs, and failed once the round ended without clearing it, such as on a failed push.
-// Otherwise it is the latest review's verdict and round. A stopped or ended thread has no round
-// running, so it shows its latest verdict.
+// Returns where a thread's review stands, for sc ps, sc ls, sc show and the screen's pane. It
+// reads only the thread's saved round, as these run outside the daemon too, and a question, an
+// error or the round limit can come on top of a review under way without changing it. A saved
+// submit or commit under review is the next round: failed once the round failed, such as on a
+// failed push, until something runs it again, and running otherwise. Otherwise it is the latest review's verdict
+// and round. A stopped or ended thread has no round running, so it shows its latest verdict.
 function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   const round = roundOf(thread);
   const at = round.review_at === null ? null : new Date(round.review_at).toISOString();
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && (round.submitting !== null || round.reviewing !== null)) {
-    // A submit its flow doesn't review has no round, and no review to fail: it says it isn't
-    // reviewed, while its status says it needs you when its push or check failed.
     if (round.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
-    const state = roundRunning(thread.folder) ? "reviewing" : "failed";
+    const state = roundStillFailed(thread) ? "failed" : "reviewing";
     return { state, round: nextRound(thread), at };
   }
   if (round.verdict === null) return { state: "none", round: null, at: null };

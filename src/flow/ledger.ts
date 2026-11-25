@@ -314,6 +314,19 @@ export const passedReviewStage = (thread: Recorded) => passed(roundOf(thread));
 // Returns whether a round passed its review stage.
 const passed = (round: Round) => round.verdict === "approve" || round.verdict === "not reviewed";
 
+// Returns whether the thread's latest round failed and nothing has run it again since: a submit,
+// sc review, or the daemon carrying on with it as it starts. The builder working again ends the
+// failure as a word, but its submit or commit still waits to be run, so it still failed.
+export function roundStillFailed(thread: Recorded): boolean {
+  let failed = false;
+  for (const event of recordOf(thread)) {
+    if (event.kind === "before") failed = event.round.review_failed;
+    else if (event.kind === "round failed") failed = true;
+    else if (event.kind === "submitted" || event.kind === "review asked") failed = false;
+  }
+  return failed;
+}
+
 // Returns the number the thread's next review round gets, counted from 1 over the thread's whole
 // life, which the PR's review and sc ps show. It is one above the highest round a review that
 // gave a verdict took, so a review that failed is run again under the same number. It never goes

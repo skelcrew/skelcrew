@@ -12,7 +12,13 @@ import { issueRef, openTasks, prOf } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
 import { type Item, itemOf, itemsOf } from "../flow/inbox.ts";
 import { leadOf } from "../flow/lead.ts";
-import { limitOf, nextRound, passedReviewStage, roundOf } from "../flow/ledger.ts";
+import {
+  limitOf,
+  nextRound,
+  passedReviewStage,
+  roundOf,
+  roundStillFailed,
+} from "../flow/ledger.ts";
 import {
   type Badge,
   badgeOf,
@@ -418,7 +424,8 @@ const verdictColours: Record<Exclude<NonNullable<Thread["verdict"]>, "not review
 };
 
 // Returns a task's review as its row shows it: its round, green once approved, yellow while it
-// runs or after it asked for changes, and red when it failed. A round under way is the next
+// runs or after it asked for changes, and red when it failed, until something runs it again.
+// A round under way is the next
 // one, and a task its flow doesn't review, or none reviewed yet, has none. Only the thread is
 // read, as the list draws every second.
 function reviewOf(thread: Thread): Row["review"] {
@@ -426,7 +433,7 @@ function reviewOf(thread: Thread): Row["review"] {
   if (round.verdict === "not reviewed") return null;
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && (round.submitting !== null || round.reviewing !== null))
-    return { round: nextRound(thread), colour: round.review_failed ? "red" : "yellow" };
+    return { round: nextRound(thread), colour: roundStillFailed(thread) ? "red" : "yellow" };
   if (round.verdict === null || round.review_round === null) return null;
   return { round: round.review_round, colour: verdictColours[round.verdict] };
 }

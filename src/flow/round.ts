@@ -57,6 +57,7 @@ import {
   reviewStarted,
   roundFailed,
   roundOf,
+  roundStillFailed,
   submitted,
   submittedBefore,
   summariesSubmitted,
@@ -1132,14 +1133,6 @@ type Round = {
 // Each thread's latest round, by its folder.
 const latestRounds = new Map<string, Round>();
 
-// Returns whether the thread's latest round is still pushing or reviewing, for sc ps. A round
-// that failed has ended, while its submit or commit stays saved for sc review to try again, so
-// the saved columns alone can't tell a running review from a failed one.
-export function roundRunning(folder: string): boolean {
-  const round = latestRounds.get(folder);
-  return round !== undefined && !round.ended;
-}
-
 // Saves the round as the thread's latest. When `rest`, the rest of the round, fails, it marks
 // the thread needs you with the reason, unless the round was cancelled, such as by a newer
 // round. `pushed`
@@ -1502,7 +1495,8 @@ export function rerunReview(
 // place, and one that was running goes ahead of every review that waited. The daemon asks for
 // the reviews before anything else can start one, in that order, as the first to join a queue
 // with room starts at once. Such a review may end before its builder is back, so its changes
-// wait for `builderBack`, which the daemon settles once the builder is back or has failed.
+// wait for `builderBack`, which the daemon settles once the builder is back or has failed. A
+// round that had failed runs again too, so it no longer shows as failed.
 export function resumeRound(
   db: Database,
   sessions: string,
@@ -1517,6 +1511,8 @@ export function resumeRound(
   const { submitting, reviewing, telling } = roundOf(saved);
   const cancel = new AbortController();
   const none = Promise.resolve();
+  if (roundStillFailed(saved) && (submitting !== null || reviewing !== null))
+    record(db, folder, reviewAsked(saved, reviewing, Date.now()), "the failed round runs again");
   if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined);
   else if (reviewing !== null)
     trackRound(
