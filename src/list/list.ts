@@ -303,6 +303,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     said = text;
     draw();
   };
+  const waitFirst = () =>
+    say("The daemon is still on your last choice: try again once it is done.");
 
   // Takes the terminal for the list: the alternate screen, so leaving puts back what was there,
   // no cursor, raw keys, and clicks, which 1000 and 1006 ask your terminal to report, so a click
@@ -356,12 +358,13 @@ export async function runList(agents: string, repository: string): Promise<void>
     refresh();
   };
 
-  // Has the daemon start or merge once you said y, saying so meanwhile. The keys come back once
-  // it is done, and the list shows the row move as the database changes. A start says what the
+  // Has the daemon start or merge once you said y, saying so meanwhile. The keys still move
+  // while it works, and the list shows the row move as the database changes. A start says what the
   // daemon answered, as a builder can take the last free place while you are asked, and the task
   // then waits in the queue though the question said it would start. When the daemon or the
   // forge refuses, the line says why until the next key.
   const goAhead = async (action: Question) => {
+    if (working) return waitFirst();
     working = true;
     say(action.working);
     try {
@@ -380,6 +383,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     given: { pick: Exclude<Pick, "reply"> } | { reply: string },
   ) => {
     if (!row.ask) return draw();
+    if (working) return waitFirst();
     working = true;
     item = null;
     try {
@@ -394,6 +398,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   // answers it, a reply, which you then type, or an option of Skelcrew's own, which does what it
   // says, as picked says. Opening the builder attaches once the daemon told the lead.
   const pickOn = async (row: Row, pick: Pick) => {
+    if (working) return waitFirst();
     const does = picked(row, pick, `${open.owner}/${open.repo}`);
     if (does === null) return draw();
     if (does === "reply") {
@@ -415,13 +420,14 @@ export async function runList(agents: string, repository: string): Promise<void>
       return reshow();
     }
     item = null;
-    if ("answer" in does) return answerRow(row, { pick: does.answer });
-    return goAhead(does.run);
+    if ("answer" in does) return void answerRow(row, { pick: does.answer });
+    void goAhead(does.run);
   };
   // Asks whether to merge a task ready for review, as m does, or says why it can't.
   const mergeRow = (row: Row) => {
     if (row.merge && "refused" in row.merge) return say(row.merge.refused);
     if (row.merge) {
+      if (working) return waitFirst();
       asking = { question: row.merge, row: row.name, offer: "merge" };
       return draw();
     }
@@ -451,6 +457,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       return reshow();
     }
     if (row.part === "backlog" && row.start) {
+      if (working) return waitFirst();
       asking = { question: row.start, row: row.name, offer: "start" };
       return draw();
     }
@@ -518,6 +525,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (row.task === null || row.section !== "task queue") return draw();
     if (row.place === null)
       return say(`${row.name} is paused: sc start ${row.name} brings it back`);
+    if (working) return waitFirst();
     working = true;
     try {
       said = await moveQueued(`${open.owner}/${open.repo}`, typedTask(row.task), by);
@@ -618,8 +626,9 @@ export async function runList(agents: string, repository: string): Promise<void>
   let leave: () => void = () => {};
   let left = false;
   const press = async (key: string) => {
-    if (working || left) return;
-    if (key === "close" && Date.now() < closeBy) return leave();
+    if (left) return;
+    const leaveNow = () => (working ? waitFirst() : leave());
+    if (key === "close" && Date.now() < closeBy) return leaveNow();
     const hinted = said === closeHint;
     if (hinted) said = null;
     closeBy = 0;
@@ -638,7 +647,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       const reply = replying;
       const typed = typeReply(reply, key);
       replying = typeof typed === "string" ? null : typed;
-      return typed === "send" ? answerRow(reply.row, { reply: reply.text }) : draw();
+      return typed === "send" ? void answerRow(reply.row, { reply: reply.text }) : draw();
     }
     if (item !== null && !asking) {
       const by = { up: -1, down: 1, "page up": -10, "page down": 10 }[key];
@@ -652,7 +661,7 @@ export async function runList(agents: string, repository: string): Promise<void>
         return draw();
       }
     }
-    if (key === "leave" || (key === "escape" && !asking)) return leave();
+    if (key === "leave" || (key === "escape" && !asking)) return leaveNow();
     if (asking) {
       const action = asking;
       asking = null;
@@ -660,9 +669,9 @@ export async function runList(agents: string, repository: string): Promise<void>
       if (action.offer === "pick") item = null;
       refresh();
       const offer = stillOffered(action, all);
-      return typeof offer === "string" ? say(offer) : goAhead(offer);
+      return typeof offer === "string" ? say(offer) : void goAhead(offer);
     }
-    said = null;
+    if (!working) said = null;
     const row = rows[here];
     const beside = paneFor({
       width: process.stdout.columns || 80,
@@ -672,7 +681,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (pick && row) return pickOn(row, pick);
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if ((key === "earlier" || key === "later") && row)
-      return reorder(row, key === "earlier" ? -1 : 1);
+      return void reorder(row, key === "earlier" ? -1 : 1);
     if (key === "next repository") return nextRepository(1);
     if (key === "previous repository") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
@@ -686,10 +695,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     if ((key === "page up" || key === "page down") && row?.task)
       return scrollPane((key === "page up" ? -1 : 1) * Math.max(paneRoom - 1, 1));
     if (key === "s" && row?.part === "backlog" && row.start) {
+      if (working) return waitFirst();
       asking = { question: row.start, row: row.name, offer: "start" };
       return draw();
     }
     if (key === "f" && row?.startNow) {
+      if (working) return waitFirst();
       asking = { question: row.startNow, row: row.name, offer: "startNow" };
       return draw();
     }
@@ -702,8 +713,8 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   takeTerminal();
   refresh();
-  // Keys are acted on one after another, as attaching or asking the daemon takes a while and
-  // keys typed meanwhile must not race it. They wait in `typed`, as your terminal sent them, with
+  // Keys are acted on one after another, as attaching takes a while and keys typed meanwhile
+  // must not race it. They wait in `typed`, as your terminal sent them, with
   // the read each came in, so attaching can hand those after Enter to the agent. Whatever Enter
   // did, and whenever a key asks a question, the rest of its read was typed before you could see
   // it, such as a y that would answer that question, so the list never acts on it.

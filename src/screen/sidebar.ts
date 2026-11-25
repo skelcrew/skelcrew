@@ -1126,7 +1126,10 @@ export async function runSidebar(
     for (const [key] of text.matchAll(keyPattern)) {
       if (key === "\x1b[200~" || key === "\x1b[201~") pasting = key === "\x1b[200~";
       else if (!pasting) doing("acting on a key", () => press(key));
-      else if (replying) typeInReply(replying, key);
+      if (working && asking) {
+        asking = null;
+        waitFirst();
+      } else if (replying) typeInReply(replying, key);
     }
   };
   // A sequence a read ends inside, such as a paste's start or end cut in two, waits for its rest

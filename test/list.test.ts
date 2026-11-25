@@ -50,6 +50,8 @@ const passed = [{ name: "test", id: "1", state: "passed" }];
 // What the stand-in daemon answers when asked for a lead, and to merge.
 let leadAnswer: object = {};
 let mergeAnswer: object = { merged: "Merged." };
+// While a list, the stand-in daemon holds its answers to picks there, as a slow merge does.
+let heldPicks: (() => void)[] | null = null;
 // The clock the rows are read at: 19 November 2026, 15:00, in this machine's time zone.
 const now = new Date(2026, 10, 19, 15, 0).getTime();
 
@@ -97,6 +99,7 @@ afterEach(() => {
   asked.length = 0;
   leadAnswer = {};
   mergeAnswer = { merged: "Merged." };
+  heldPicks = null;
   for (const socket of [terminal, agents]) {
     Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "ignore" });
     // tmux leaves the socket file behind after kill-server.
@@ -1887,7 +1890,9 @@ function daemon(): void {
             : command === "queue move"
               ? { said: `APP-${task.replace(/^t/, "")} starts next` }
               : mergeAnswer;
-      connection.end(`${JSON.stringify(said)}\n`);
+      const answer = () => connection.end(`${JSON.stringify(said)}\n`);
+      if (command === "pick" && heldPicks) heldPicks.push(answer);
+      else answer();
     }),
   );
   mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
@@ -2783,6 +2788,31 @@ test("a merge picked on an item asks in its box, any other key leaves it, and y 
   await until(inBox, "the question in the box again");
   type("y");
   await until(() => asked.includes("pick simon/app 14 a"), "the pick");
+});
+
+// A merge can take the forge seconds. Meanwhile the keys still move, and nothing else goes to the
+// daemon beside it: a second choice waits for it, saying so.
+test("keys still move while a picked merge is on its way, and nothing else is sent meanwhile", async () => {
+  heldPicks = [];
+  await open();
+  press("Down");
+  await until(() => here().startsWith("▸ ● 14 "), "the ready row");
+  press("Enter");
+  await until(() => seen().includes("a) Merge it") && seen().includes("esc back"), "the item open");
+  type("a");
+  await until(() => seen().includes("│ Merge app#41 into main? y/n"), "the question in the box");
+  type("y");
+  await until(() => asked.includes("pick simon/app 14 a"), "the pick");
+  press("Up");
+  await until(() => !here().startsWith("▸ ● 14 "), "a move while the merge is on its way");
+  press("Down");
+  await until(() => here().startsWith("▸ ● 14 "), "a move back");
+  type("m");
+  await until(() => seen().includes("still on your last choice"), "the line saying to wait");
+  expect(seen()).not.toContain("Merge app#41 into main? y/n");
+  expect(asked.filter((line) => /^(pick|merge) /.test(line))).toEqual(["pick simon/app 14 a"]);
+  for (const answer of heldPicks.splice(0)) answer();
+  await until(() => !seen().includes("still on your last choice"), "the daemon's answer");
 });
 
 // The options show in the box beside the row without Enter, so their letters pick at once.

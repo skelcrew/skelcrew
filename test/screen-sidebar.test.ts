@@ -309,6 +309,10 @@ ${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "
   await until(() => selected() === before, "a move back");
   await until(onItem, "APP-14's item again");
   type("a");
+  type("m");
+  await until(() => footer().includes("still on your last choice"), "the footer saying to wait");
+  expect(footer()).not.toContain("Merge app#41 into main?");
+  press("Escape");
   type("w");
   await until(() => footer().includes("still on your last choice"), "the footer saying to wait");
   expect(right()).not.toContain("Merge app#41 into main?");
