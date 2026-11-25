@@ -296,7 +296,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       expect(merges()).toHaveLength(1);
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
       expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
-        error: "APP-12 is merging on its forge right now, so it can't be cancelled",
+        error: "APP-12's PR has merged already, so it can't be cancelled",
       });
       // A review that ended while the forge took the edit, asking for something else.
       const db = new Database(join(data(), "skelcrew.db"));
