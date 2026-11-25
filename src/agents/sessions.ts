@@ -567,13 +567,17 @@ export function stagePaste(host: Host, name: string, text: string): string {
   return staged;
 }
 
-// Pastes text stagePaste readied into the named session as one bracketed paste, so the agent
-// reads it as a whole, however long, and newlines in it don't send it. Throws when the session
-// is gone.
-export async function pasteStaged(host: Host, name: string, staged: string): Promise<void> {
-  if (typeof host !== "string")
+export async function pasteStaged(host: Host, name: string, staged: string): Promise<boolean> {
+  if (typeof host !== "string") {
     await askHost(host, { ask: "paste", id: name, text: staged }, z.unknown());
-  else mustTmux(host, ["paste-buffer", "-p", "-b", staged, "-t", `=${name}:`]);
+    return true;
+  }
+  const since = Math.floor(Date.now() / 1000) - 2;
+  const ours = "#{==:#{client_session},#{session_name}}";
+  const typed = `#{L:#{?#{&&:${ours},#{e|>=:#{client_activity},${since}}},typed,}}`;
+  const paste = `paste-buffer -p -b '${staged}' -t '=${name}:' ; display-message -p pasted`;
+  const args = ["if-shell", "-F", "-t", `=${name}:`, `#{==:${typed},}`, paste];
+  return mustTmux(host, args).trim() === "pasted";
 }
 
 // Forgets text stagePaste readied, pasted or not, so the server keeps no copy an agent could

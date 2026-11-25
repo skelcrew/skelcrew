@@ -459,6 +459,58 @@ exec "${real}" "$@"
   }
 });
 
+test("a key pressed just before the paste holds the message, which then goes in after it", async () => {
+  await start("lead", harness());
+  await showing("lead", claude.marks.prompt);
+  // A terminal of the test's own, attached to the agent, as a person's is. The stand-in shows
+  // nothing typed, as Claude Code may not have drawn a key yet when Skelcrew looks.
+  const terminal = `${socket}-terminal`;
+  const attach = `env -u TMUX tmux -L ${socket} attach -t =lead`;
+  Bun.spawnSync(["tmux", "-L", terminal, "new-session", "-d", "-x", "80", "-y", "20", attach]);
+  // A tmux in front of the real one presses a key in that terminal once Skelcrew has taken its
+  // last look and sends the paste, which makes that moment happen every time.
+  const real = Bun.which("tmux") ?? "tmux";
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "tmux"),
+    `#!/bin/sh
+case " $* " in *paste-buffer*)
+  if [ -f "${home}/race" ]; then
+    rm "${home}/race"
+    "${real}" -L ${terminal} send-keys -l w
+    sleep 0.3
+  fi
+esac
+exec "${real}" "$@"
+`,
+    { mode: 0o755 },
+  );
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    await until(
+      () => Bun.spawnSync(["tmux", "-L", socket, "list-clients"]).stdout.toString() !== "",
+    );
+    // Attaching counts as typing, so the terminal sits still a while first.
+    await Bun.sleep(3000);
+    writeFileSync(join(home, "race"), "");
+    const typing = deliver(socket, "lead", claude.marks, "hello", { moment });
+    await until(() => !existsSync(join(home, "race")));
+    // The stand-in reads whole lines, so nothing shows in what it received before the Enter.
+    await Bun.sleep(1500);
+    expect(read("received.txt")).toBe("");
+    expect(await typing).toBe("typed");
+    await until(() => read("received.txt").endsWith("\n"));
+    expect(read("received.txt")).toBe("w\x1b[200~hello\x1b[201~\n");
+  } finally {
+    process.env.PATH = path;
+    Bun.spawnSync(["tmux", "-L", terminal, "kill-server"], { stderr: "pipe" });
+    const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+    rmSync(join(folder, terminal), { force: true });
+  }
+});
+
 // A daemon that starts again finds its agents by their labels, and the sidebar shows which run.
 test("a session carries its labels, and the list shows them with whether its agent runs", async () => {
   await start("builder", ["sleep", "30"]);

@@ -1,5 +1,5 @@
 // Gets messages into agents through their session host, waiting for an idle prompt.
-// Unsent drafts and startup questions keep messages waiting.
+// Unsent drafts, your typing moments ago and startup questions keep messages waiting.
 import { z } from "zod";
 import { askHost, type Host, type PluginHost } from "../plugins/runtime.ts";
 import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
@@ -203,60 +203,44 @@ async function typeNow(
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
-  // The text readied on each pass, the last of which is pasted.
   const staged: string[] = [];
+  let typed = "";
   try {
-    // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
-    // Check the signal after each wait too: the thread may have stopped meanwhile.
     let unsent = waits.unsent ?? false;
     while (true) {
       if (waits.signal?.aborted) return "not typed";
       const why = await whyBusy(socket, name, marks, waits);
       if (waits.signal?.aborted) return "not typed";
-      // The draft is this message, left unsent for a question that is over now: send it. A bare
-      // prompt means a person sent or cleared it, so it is typed afresh, and a draft after that
-      // is a person's.
       if (why === draftReason && unsent) {
         await sendKey(socket, name, "Enter");
         return "typed";
       }
       if (why === "") unsent = false;
-      // The caller's reason is asked before readying the text, as readying it leaves copy mode.
       const held = why === "" ? (waits.hold?.() ?? "") : "";
       if (waits.signal?.aborted) return "not typed";
       if (why === "" && held === "") {
         staged.push(stagePaste(socket, name, text));
-        // A person can start typing after the last look, and the paste would send their draft
-        // along with the message. So the text is readied first, then the screen looked at once
-        // more right before pasting, and typing waits again if the prompt isn't bare. A moment
-        // remains, but only as long as the paste itself.
         if (
           notReady(await readSession(socket, name), marks) === "" &&
-          (waits.hold?.() ?? "") === ""
-        )
-          break;
+          (waits.hold?.() ?? "") === "" &&
+          !waits.signal?.aborted
+        ) {
+          if (await pasteStaged(socket, name, staged.at(-1) ?? "")) break;
+          typed = "someone typed into it moments ago";
+        }
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
-        // A person's draft gets a plain answer, as it isn't the agent being busy.
         if (why === draftReason)
           throw new Error(
             `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
           );
-        throw new Error(`${name} wasn't idle for ${waited} (${why || held}), so nothing was typed`);
+        throw new Error(
+          `${name} wasn't idle for ${waited} (${why || held || typed}), so nothing was typed`,
+        );
       }
     }
-    // The hold's last look may have cancelled the message, such as one that went stale. The
-    // last look can also take a while on a plugin's host, and the agent may have asked a
-    // question meanwhile, which the paste would land in.
-    if (waits.signal?.aborted) return "not typed";
-    // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
-    // and the message is never sent. So the Enter goes on its own, a moment after the paste.
-    await pasteStaged(socket, name, staged.at(-1) ?? "");
     waits.pasted?.();
     await Bun.sleep(moment);
-    // Someone who scrolled back since the paste would take the Enter into copy mode, and the
-    // message would sit at the prompt unsent. So the Enter waits while the caller holds it. The
-    // message is in by now, so a hold that cancels it no longer stops the Enter.
     while ((waits.hold?.() ?? "") !== "") await Bun.sleep(moment);
     if (waits.signal?.aborted && waits.signal.reason === forQuestion) return "left unsent";
     await sendKey(socket, name, "Enter");
