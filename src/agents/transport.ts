@@ -2,14 +2,7 @@
 // Unsent drafts, your typing moments ago and startup questions keep messages waiting.
 import { z } from "zod";
 import { askHost, type Host, type PluginHost } from "../plugins/runtime.ts";
-import {
-  dropStaged,
-  pasteStaged,
-  readSession,
-  sendKey,
-  stagePaste,
-  typedLately,
-} from "./sessions.ts";
+import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
@@ -211,9 +204,7 @@ async function typeNow(
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
   const staged: string[] = [];
-  const holding = () =>
-    (waits.hold?.() ?? "") ||
-    (typedLately(socket, name) ? "someone typed into it moments ago" : "");
+  let typed = "";
   try {
     let unsent = waits.unsent ?? false;
     while (true) {
@@ -225,22 +216,29 @@ async function typeNow(
         return "typed";
       }
       if (why === "") unsent = false;
-      const held = why === "" ? holding() : "";
+      const held = why === "" ? (waits.hold?.() ?? "") : "";
       if (waits.signal?.aborted) return "not typed";
       if (why === "" && held === "") {
         staged.push(stagePaste(socket, name, text));
-        if (notReady(await readSession(socket, name), marks) === "" && holding() === "") break;
+        if (
+          notReady(await readSession(socket, name), marks) === "" &&
+          (waits.hold?.() ?? "") === "" &&
+          !waits.signal?.aborted
+        ) {
+          if (await pasteStaged(socket, name, staged.at(-1) ?? "")) break;
+          typed = "someone typed into it moments ago";
+        }
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
         if (why === draftReason)
           throw new Error(
             `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
           );
-        throw new Error(`${name} wasn't idle for ${waited} (${why || held}), so nothing was typed`);
+        throw new Error(
+          `${name} wasn't idle for ${waited} (${why || held || typed}), so nothing was typed`,
+        );
       }
     }
-    if (waits.signal?.aborted) return "not typed";
-    await pasteStaged(socket, name, staged.at(-1) ?? "");
     waits.pasted?.();
     await Bun.sleep(moment);
     while ((waits.hold?.() ?? "") !== "") await Bun.sleep(moment);

@@ -30,9 +30,10 @@ that covers the code you are about to write.
   menu also shows the mark before text, and isn't a draft.
 - **A key you just pressed shows on no screen yet.** Claude Code draws a key a moment after it
   arrives, so a prompt can look bare while your typing is on its way, and a paste then lands
-  beside it. So typing also waits while a terminal attached to the session pressed a key in
+  beside it. So the paste waits while a terminal attached to the session pressed a key in
   the last few seconds, by tmux's `client_activity`. It counts whole seconds, and only keys
-  and the mouse move it, never the agent's output. tmux can't hold your keys back while a
+  and the mouse move it, never the agent's output. The check and the paste are one tmux
+  command, an `if-shell -F`, as a key can land between two. tmux can't hold your keys back while a
   paste goes in: a binding that waits loses the key that ran it, and later keys skip past it.
 - **Pass the first message on the command line, not by typing it.** Typed into the input, a
   long message collapses to "[Pasted text]" and can miss its Enter.

@@ -533,16 +533,6 @@ export function scrolledBack(socket: string, name: string): boolean {
   );
 }
 
-export function typedLately(host: Host, name: string): boolean {
-  if (typeof host !== "string") return false;
-  const now = Math.floor(Date.now() / 1000);
-  const clients = tmux(host, ["list-clients", "-t", `=${name}`, "-F", "#{client_activity}"]).out;
-  return clients
-    .split("\n")
-    .filter((line) => line !== "")
-    .some((activity) => now - Number(activity) < 3);
-}
-
 // Sends one key to the agent in the named session, such as Enter after a pasted message.
 export async function sendKey(host: Host, name: string, key: "Enter" | "Escape"): Promise<void> {
   if (typeof host !== "string") await askHost(host, { ask: "keys", id: name, key }, z.unknown());
@@ -577,13 +567,17 @@ export function stagePaste(host: Host, name: string, text: string): string {
   return staged;
 }
 
-// Pastes text stagePaste readied into the named session as one bracketed paste, so the agent
-// reads it as a whole, however long, and newlines in it don't send it. Throws when the session
-// is gone.
-export async function pasteStaged(host: Host, name: string, staged: string): Promise<void> {
-  if (typeof host !== "string")
+export async function pasteStaged(host: Host, name: string, staged: string): Promise<boolean> {
+  if (typeof host !== "string") {
     await askHost(host, { ask: "paste", id: name, text: staged }, z.unknown());
-  else mustTmux(host, ["paste-buffer", "-p", "-b", staged, "-t", `=${name}:`]);
+    return true;
+  }
+  const since = Math.floor(Date.now() / 1000) - 2;
+  const ours = "#{==:#{client_session},#{session_name}}";
+  const typed = `#{L:#{?#{&&:${ours},#{e|>=:#{client_activity},${since}}},typed,}}`;
+  const paste = `paste-buffer -p -b '${staged}' -t '=${name}:' ; display-message -p pasted`;
+  const args = ["if-shell", "-F", "-t", `=${name}:`, `#{==:${typed},}`, paste];
+  return mustTmux(host, args).trim() === "pasted";
 }
 
 // Forgets text stagePaste readied, pasted or not, so the server keeps no copy an agent could
