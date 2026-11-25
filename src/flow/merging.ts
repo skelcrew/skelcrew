@@ -22,7 +22,7 @@ import {
 import { beingRemoved, endThread } from "./events.ts";
 import { itemOpen } from "./inbox.ts";
 import { limitDecided, limitUndecided, roundMoved, roundOf } from "./ledger.ts";
-import { noteForLead } from "./messages.ts";
+import { letInNow, noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
 import { openFindings } from "./status.ts";
@@ -241,7 +241,8 @@ export function cancelMerge(db: Database, thread: Thread): string {
   // would be untrue. A PR the forge merged by itself, which a poll is finishing, is the same.
   if (merging.has(thread.folder))
     throw new Error(`${name} is merging on its forge right now, so it can't be cancelled`);
-  if (thread.pr !== null && prOf(db, thread.owner, thread.repo, thread.pr)?.state === "merged")
+  const state = thread.pr !== null && prOf(db, thread.owner, thread.repo, thread.pr)?.state;
+  if (thread.merged || state === "merged")
     throw new Error(`${name}'s PR has merged already, so it can't be cancelled`);
   const none = {
     merge_plan: null,
@@ -289,10 +290,9 @@ const merging = new Set<string>();
 // at the commit you saw, and a push after you asked cancels the plan and tells the lead. Either
 // merges at a poll after the one that posted a review on the PR saying who asked for it.
 // Whether the PR merges cleanly is the forge's to say as it merges: a refusal keeps the plan
-// armed, with the forge's reason as what it waits on. Once merged without approval, what the
-// review still asked for is filed as one issue. Then it ends the thread, and the lead's one note
-// says how it merged. Otherwise it saves what the merge waits on, for the thread's row, and
-// tells the lead once per review round when that needs someone to act.
+// armed, with the forge's reason as what it waits on. Once merged, it ends the thread as
+// endMerged does. Otherwise it saves what the merge waits on, for the thread's row, and tells
+// the lead once per review round when that needs someone to act.
 export async function mergeIfReady(
   db: Database,
   sessions: string,
@@ -302,6 +302,7 @@ export async function mergeIfReady(
   const { folder } = before;
   const thread = readThread(db, folder);
   if (thread.merge_plan !== "armed" || thread.status === "done" || beingRemoved(folder)) return;
+  if (thread.merged) return;
   // `pr` is what the forge said while this poll ran. A round that moved on meanwhile, such as
   // a review that started or ended, or a saved verdict this poll just posted, makes it stale: the checks of the new round may not be in
   // it yet. The next poll acts on the PR as it is after the round.
@@ -378,8 +379,7 @@ export async function mergeIfReady(
     // The thread and PR were read at this poll's start, with nothing waited on since, and the
     // thread is marked as merging before the forge is asked, so a cancel either came first and
     // this never merges, or comes after and is refused. A merged PR stays marked until its thread
-    // has ended, as editing its record and filing its findings take a while, and a cancel then
-    // would say it won't merge after it did.
+    // is marked merged, which refuses a cancel from then on.
     let refused: string | null = null;
     if (waits === null) {
       merging.add(folder);
@@ -392,17 +392,13 @@ export async function mergeIfReady(
     }
     if (waits === null && refused === null) {
       try {
-        const said =
-          (await finishSkippedMerge(db, readThread(db, folder), pr)) ??
-          `is done: #${thread.pr} merged into ${pr.base} when ready, as ${yourNameForAgents()} asked`;
-        const note = await fileNotBlocking(db, sessions, readThread(db, folder), said);
-        await endThread(
+        endMerged(
           db,
           sessions,
           thread,
+          pr,
           `PR #${thread.pr} was merged ${pinned === null ? "when ready" : "without approval"}`,
-          note,
-          true,
+          `is done: #${thread.pr} merged into ${pr.base} when ready, as ${yourNameForAgents()} asked`,
         );
       } finally {
         merging.delete(folder);
@@ -464,22 +460,64 @@ function recordBody(thread: Thread, commit: string, verb: "Merging" | "Merged"):
   return `${verb} ${how}, as asked by ${thread.merge_by ?? "you"} on ${day}.\n\n${recordMarker(thread, commit)}`;
 }
 
-// Finishes a merge without approval once its PR merged at the pinned commit, and returns the
-// lead's note, or null when the thread had no such plan. It edits the PR's record to say it
-// merged, and files what the review still asked for. Both the merge itself and a poll that
-// finds the PR merged call it, so a daemon that stopped between the forge's merge and these
-// steps still does them. The thread is read as it is now, and again before filing, so a review
-// that ended during the merge or the edit counts.
-export async function finishSkippedMerge(
+const finishing = new Set<string>();
+
+export function endMerged(
   db: Database,
+  sessions: string,
+  thread: Thread,
+  pr: PullRequest | null,
+  why: string,
+  said: string,
+): void {
+  const { folder } = thread;
+  const now = readThread(db, folder);
+  const same = now.started === thread.started && now.status !== "done";
+  if (finishing.has(folder) || !same || beingRemoved(folder)) return;
+  if (!now.merged) {
+    const skipped = pr !== null && skippedMerge(now, pr);
+    const how = skipped
+      ? `is done: #${now.pr} merged into ${pr.base} without Skelcrew's approval, as ${yourNameForAgents()} asked.`
+      : said;
+    const filed = [
+      now.merge_followup === null ? "" : ` Its open findings are in #${now.merge_followup}.`,
+      now.not_blocking_task === null
+        ? ""
+        : ` Its not-blocking findings are in ${taskName(repositoryOf(db, now).name, now.not_blocking_task)}.`,
+    ].join("");
+    const line = `${threadName(db, now)} ${filed === "" ? how : `${how.replace(/\.?$/, ".")}${filed}`}`;
+    const merged = { merged: true, needs_you: false, needs_you_for: null, picking: null };
+    db.transaction(() => {
+      noteForLead(db, sessions, now, line.replace(/\s+/g, " "), folder, true);
+      letInNow(db, sessions, now);
+      record(db, folder, merged, `${why}: told the lead`);
+    })();
+  }
+  finishing.add(folder);
+  const finish = async () => {
+    if (pr !== null) await finishSkippedMerge(db, sessions, readThread(db, folder), pr);
+    await fileNotBlocking(db, sessions, readThread(db, folder));
+    await endThread(db, sessions, thread, why, null, true);
+  };
+  finish()
+    .catch((error) => console.log(`couldn't end ${threadName(db, now)}: ${errorText(error)}`))
+    .finally(() => finishing.delete(folder));
+}
+
+const skippedMerge = (thread: Thread, pr: PullRequest) =>
+  thread.merge_plan === "armed" &&
+  thread.merge_pinned !== null &&
+  thread.pr !== null &&
+  (pr.head === null || pr.head === thread.merge_pinned);
+
+async function finishSkippedMerge(
+  db: Database,
+  sessions: string,
   thread: Thread,
   pr: PullRequest,
-): Promise<string | null> {
+): Promise<void> {
   const pinned = thread.merge_pinned;
-  if (thread.merge_plan !== "armed" || pinned === null || thread.pr === null) return null;
-  if (pr.head !== null && pr.head !== pinned) return null;
-  // A forge that can't edit the record leaves "Merging", which the merge made true. The edit
-  // keeps the verdict the record was posted with, the reviewer's last.
+  if (!skippedMerge(thread, pr) || pinned === null || thread.pr === null) return;
   if (thread.merge_record === `${thread.merge_id} ${pinned}` && thread.merge_record_id !== null)
     await editReview(db, repositoryOf(db, thread), {
       pr: thread.pr,
@@ -489,27 +527,15 @@ export async function finishSkippedMerge(
     }).catch((error) =>
       console.log(`${threadName(db, thread)}: couldn't edit its merge record: ${errorText(error)}`),
     );
-  // Read again, as a review may have ended while the forge took the edit: its findings are the
-  // ones still asked for.
-  const filed = await fileFollowUps(db, readThread(db, thread.folder));
-  return `is done: #${thread.pr} merged into ${pr.base} without Skelcrew's approval, as ${yourNameForAgents()} asked.${filed}`;
+  await fileFollowUps(db, sessions, readThread(db, thread.folder));
 }
 
-// Files what Skelcrew's latest review still asked for, once its PR merged without its approval, as
-// one issue that links back to the PR, so the findings aren't lost with the thread. Returns what
-// the lead's note adds about it, such as " Its open findings are in #13.", or nothing with no
-// findings. It files once: the issue's ID is saved on the thread, and given again after that, and
-// an issue filed but not yet saved is found again by its marker. An issue that can't be filed, such
-// as with no tracker or a tracker that fails, is said in the note instead, so you can file it.
-async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
-  if (thread.merge_followup !== null) return ` Its open findings are in #${thread.merge_followup}.`;
+async function fileFollowUps(db: Database, sessions: string, thread: Thread): Promise<void> {
   const findings = openFindings(thread);
-  if (findings.length === 0) return "";
+  if (thread.merge_followup !== null || findings.length === 0) return;
   const repository = repositoryOf(db, thread);
+  const name = threadName(db, thread);
   const listed = findings.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
-  // A hidden marker names the plan. An issue the tracker made just before the daemon stopped,
-  // with its ID not saved yet, is found by it in Skelcrew's copy, which the poll brought up to
-  // date first, so a restart never files a second one.
   const marker = `<!-- skelcrew:follow-ups plan=${thread.merge_id} -->`;
   const body = `Skelcrew's reviewer still asked for these when #${thread.pr} merged without its approval, as asked by ${thread.merge_by ?? "you"}:\n\n${listed}\n\nFrom #${thread.pr}.\n\n${marker}`;
   try {
@@ -517,15 +543,19 @@ async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
     const issue =
       openTasks(db, thread.owner, thread.repo).find((task) => task.body.includes(marker)) ??
       (await createTask(db, repository, `Follow-ups from #${thread.pr}'s review`, body));
-    record(
-      db,
-      thread.folder,
-      { merge_followup: issue.id },
-      `filed the open findings of #${thread.pr}'s review as #${issue.id}`,
-    );
-    return ` Its open findings are in #${issue.id}.`;
+    db.transaction(() => {
+      record(
+        db,
+        thread.folder,
+        { merge_followup: issue.id },
+        `filed the open findings of #${thread.pr}'s review as #${issue.id}`,
+      );
+      const line = `${name}'s open findings are in #${issue.id}.`;
+      noteForLead(db, sessions, repository, line, null, true);
+    })();
   } catch (error) {
-    console.log(`${threadName(db, thread)}: couldn't file its open findings: ${errorText(error)}`);
-    return ` Its open findings couldn't be filed as an issue: ${errorText(error)}`;
+    console.log(`${name}: couldn't file its open findings: ${errorText(error)}`);
+    const line = `${name}'s open findings couldn't be filed as an issue: ${errorText(error)}`;
+    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "), null, true);
   }
 }

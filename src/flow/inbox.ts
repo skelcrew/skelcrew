@@ -8,7 +8,7 @@ import { yourNameForAgents } from "../config.ts";
 import { backlogOf } from "./backlog.ts";
 import { openTasks } from "./copy.ts";
 import { leadOf } from "./lead.ts";
-import { noteForLead, typeLeadNotes } from "./messages.ts";
+import { noteForLead, typeLeadNotes, youWroteToLead } from "./messages.ts";
 import { noticeItem } from "./notify.ts";
 import { type Act, handedKey, ownItem, pickingWord } from "./own-items.ts";
 import { findRepository } from "./repo.ts";
@@ -187,8 +187,8 @@ export function answerItem(
   db.transaction(() => {
     noteForLead(db, sessions, { owner, repo }, note, null, true);
     db.run("DELETE FROM asks WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, item.task]);
+    youWroteToLead(db, sessions, { owner, repo });
   })();
-  typeLeadNotes(db, sessions);
   const thread = task === null ? null : threadOn(db, repository, task);
   if (thread !== null) {
     log(db, thread, words.split("\n")[0]);
@@ -239,6 +239,7 @@ export async function pickOwnItem(
       ...(decides ? { decisions: [...thread.decisions, decision] } : {}),
     };
     record(db, thread.folder, change, words);
+    youWroteToLead(db, sessions, thread);
   })();
   let said: string;
   try {

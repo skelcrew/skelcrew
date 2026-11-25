@@ -14,14 +14,15 @@ import { findRepository } from "./repo.ts";
 import { readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
 
 // Returns how many of the repository's builders run, its threads at work or waiting, those still
-// setting up included, and how many of its tasks wait in the queue. The list shows both, such as
+// setting up included, but not one whose work merged, as its place is free once the lead hears
+// of it. Also how many of its tasks wait in the queue. The list shows both, such as
 // `4/4 threads · 3 queued`.
 export function counted(db: Database, { owner, repo }: { owner: string; repo: string }) {
   const row = db
     .query(
-      `SELECT COUNT(*) FILTER (WHERE status IN ('working', 'waiting')) AS running,
+      `SELECT COUNT(*) FILTER (WHERE status IN ('working', 'waiting') AND NOT merged) AS running,
         COUNT(*) FILTER (WHERE status = 'queued') AS queued
-      FROM threads WHERE owner = ? AND repo = ?`,
+      FROM task_threads WHERE owner = ? AND repo = ?`,
     )
     .get(owner, repo);
   return z.object({ running: z.number(), queued: z.number() }).parse(row);

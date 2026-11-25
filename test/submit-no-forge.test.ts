@@ -88,7 +88,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     git(work, "commit", "-q", "-m", "Add export");
     git(work, "push", "-q", bare, "main");
     await until(() => log().includes("is merged into main"), 30_000);
-    expect(row()).toMatchObject({ status: "done" });
+    await until(() => Object(row()).status === "done", 30_000);
     await until(() =>
       read(join(lead(), "typed")).includes(
         `APP-1 is done: its branch skelcrew/1-add-export merged into main`,

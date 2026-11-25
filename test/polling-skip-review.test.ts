@@ -185,11 +185,12 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
         `Merged without Skelcrew's approval, as asked by ${login()} via the lead on `,
       );
       expect(String(edits[0]?.body)).toEndWith(marker);
-      await until(() =>
-        leadTyped().includes(
-          "APP-12 is done: #7 merged into main without Skelcrew's approval, as Simon asked. Its open findings are in #13.",
-        ),
-      );
+      const done =
+        "APP-12 is done: #7 merged into main without Skelcrew's approval, as Simon asked.";
+      const filedLine = "APP-12's open findings are in #13.";
+      await until(() => leadTyped().includes(filedLine));
+      expect(leadTyped().indexOf(done)).toBeGreaterThan(-1);
+      expect(leadTyped().indexOf(done)).toBeLessThan(leadTyped().indexOf(filedLine));
       await morePolls();
       const filed = asked(plugin).filter((q) => q.ask === "create task");
       expect(filed).toHaveLength(1);
@@ -295,7 +296,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       expect(merges()).toHaveLength(1);
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
       expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
-        error: "APP-12 is merging on its forge right now, so it can't be cancelled",
+        error: "APP-12's PR has merged already, so it can't be cancelled",
       });
       // A review that ended while the forge took the edit, asking for something else.
       const db = new Database(join(data(), "skelcrew.db"));
@@ -349,11 +350,12 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       });
       changes([issue12(), filedBefore, merged]);
       await until(() => thread().status === "done");
-      await until(() =>
-        leadTyped().includes(
-          "APP-12 is done: #7 merged into main without Skelcrew's approval, as Simon asked. Its open findings are in #13.",
-        ),
-      );
+      const done =
+        "APP-12 is done: #7 merged into main without Skelcrew's approval, as Simon asked.";
+      const filedLine = "APP-12's open findings are in #13.";
+      await until(() => leadTyped().includes(filedLine));
+      expect(leadTyped().indexOf(done)).toBeGreaterThan(-1);
+      expect(leadTyped().indexOf(done)).toBeLessThan(leadTyped().indexOf(filedLine));
       await morePolls();
       const edits = asked(plugin).filter((q) => q.ask === "edit review");
       expect(edits).toHaveLength(1);

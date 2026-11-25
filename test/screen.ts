@@ -390,7 +390,20 @@ export const release = () => {
 export function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by, now, verb, pick } = z
+      const {
+        command,
+        from,
+        tab,
+        repo,
+        task,
+        pr,
+        commit,
+        by,
+        now,
+        verb,
+        pick,
+        reply: replied,
+      } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
@@ -403,6 +416,7 @@ export function daemon(): void {
           now: z.boolean().default(false),
           verb: z.enum(["close", "remove"]).default("close"),
           pick: z.string().default(""),
+          reply: z.string().default(""),
         })
         .parse(JSON.parse(data.toString()));
       // Ends the lead as the daemon does.
@@ -436,7 +450,7 @@ export function daemon(): void {
         );
         return;
       }
-      if (command === "answer") acted.push(`answer ${repo} ${task} ${pick}`);
+      if (command === "answer") acted.push(`answer ${repo} ${task} ${pick || `reply ${replied}`}`);
       if (command !== "start" && command !== "merge" && command !== "pick") {
         connection.end("{}\n");
         return;

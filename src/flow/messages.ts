@@ -636,8 +636,8 @@ export function briefLead(
 
 // How long Skelcrew's routine notes collect before they go into a lead together. Each note wakes
 // the lead, and its reply scrolls the chat the human may be reading, so reports that need
-// nothing soon, such as a task's end, arrive at most this often, in milliseconds. Tests of the
-// daemon set SKELCREW_DIGEST_MS to 0, so each note they wait for goes in as it comes.
+// nothing soon, such as a PR closed without merging, arrive at most this often, in milliseconds.
+// Tests of the daemon set SKELCREW_DIGEST_MS to 0, so each note they wait for goes in as it comes.
 const digestEvery = z.coerce
   .number()
   .min(0)
@@ -670,12 +670,30 @@ export function leadTurnStarted(
     repo,
   ]);
   if (!yours) return;
-  // Any window ends now, open or not. The human's message takes its place in the notes'
-  // sequence: what came before it goes in once the lead has answered, though the answer opens a
-  // new window, and what comes after waits for that window.
+  youWroteToLead(db, sessions, repository);
+}
+
+export function letInNow(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+): void {
+  db.run("UPDATE repositories SET reading_released = ? WHERE owner = ? AND repo = ?", [
+    nextSequence(db),
+    repository.owner,
+    repository.repo,
+  ]);
+  typeLeadNotes(db, sessions);
+}
+
+export function youWroteToLead(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+): void {
   db.run(
     "UPDATE repositories SET reading_until = 0, reading_released = ? WHERE owner = ? AND repo = ?",
-    [nextSequence(db), owner, repo],
+    [nextSequence(db), repository.owner, repository.repo],
   );
   typeLeadNotes(db, sessions);
 }
@@ -934,11 +952,11 @@ export function typeLeadNotes(db: Database, sessions: string): void {
 // Saves a note for the lead of a repository, and has the daemon type it in. Notes already
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
 // `ended` is the folder of the thread whose end or failure the note reports, if it does. An
-// `urgent` note, such as a thread needing you or failing, goes in at once. The rest only report,
-// such as a task's end, and wait for the next digest. A note can quote outside text, such as an
-// issue's title, which could hold a skelcrew tag and pass for a message from an agent, or a brief
-// marked asked="yes". So the start of any such tag in it is escaped: only Skelcrew's own wrapping
-// of an agent's message, which saveNote keeps, carries one.
+// `urgent` note, such as a thread needing you, failing or merged, goes in at once. The rest only
+// report, such as a PR closed without merging, and wait for the next digest. A note can quote
+// outside text, such as an issue's title, which could hold a skelcrew tag and pass for a message
+// from an agent, or a brief marked asked="yes". So the start of any such tag in it is escaped:
+// only Skelcrew's own wrapping of an agent's message, which saveNote keeps, carries one.
 export function noteForLead(
   db: Database,
   sessions: string,

@@ -680,6 +680,63 @@ console.log(JSON.stringify({ before, after: received(), waiting: waiting() }));`
   expect(seen.waiting).toBe(1);
 });
 
+// A pick in Needs you is the human answering the lead, so it goes in at once: the human is done
+// reading the lead's last answer, and the lead may be waiting on it to go on. It goes in while what
+// the pick runs, here a merge that takes a while, is still on its way.
+test("a pick in Needs you goes into the lead at once, during a reading window and a slow merge", () => {
+  const head = "9fc11d177dbffac496ad6b3496b3f91775d9057f";
+  const ready = threadSql({
+    task: "14",
+    status: "waiting",
+    needs_you: 1,
+    verdict: "approve",
+    checks: "passing",
+    ci_passed: 1,
+    pr: 41,
+    review_round: 1,
+    reviewed_commit: head,
+  });
+  const seen = JSON.parse(
+    run(`
+import { itemOpen, pickOwnItem } from ${JSON.stringify(source("flow/inbox.ts"))};
+import { ownItem } from ${JSON.stringify(source("flow/own-items.ts"))};
+db.run(\`${ready}\`);
+await lead();
+leadTurnStarted(db, tmux, app, "Start the next three once APP-14 merges.");
+leadTurnEnded(db, tmux, app);
+const thread = readThread(db, "app-14");
+const item = ownItem(thread, itemOpen(db, thread));
+let merged = false;
+const merging = new Promise(() => {});
+void pickOwnItem(db, tmux, "app", "t14", { title: item.title, text: item.text }, "a", () => merging.then(() => { merged = true; }));
+await until(() => received().includes("You picked a (Merge it) on APP-14: Ready to merge"));
+console.log(JSON.stringify({ merged, picking: readThread(db, "app-14").picking }));`),
+  );
+  expect(seen).toEqual({ merged: false, picking: "merging…" });
+});
+
+// The task shows as merged at once, and the lead may be waiting on the merge to go on, so its
+// note goes in though the lead's answer to the human is still being read. What waited goes in
+// with it. A note that comes after it still waits for the window.
+test("a merge's note goes into the lead during a reading window, and what comes after still waits", () => {
+  const seen = JSON.parse(
+    run(`
+import { endMerged } from ${JSON.stringify(source("flow/merging.ts"))};
+await lead();
+leadTurnStarted(db, tmux, app, "Start the next three once APP-12 merges.");
+leadTurnEnded(db, tmux, app);
+noteForLead(db, tmux, app, "started app-13 from github: Add import");
+endMerged(db, tmux, readThread(db, "app-12"), null, "its branch is merged into main", "is done: its branch merged into main");
+await until(() => received().includes("APP-12 is done: its branch merged into main"));
+messageLead(db, tmux, readThread(db, "app-12"), "Later news.");
+await Bun.sleep(2000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
+  );
+  expect(seen.received).toContain("started app-13 from github: Add import");
+  expect(seen.received).not.toContain("Later news.");
+  expect(seen.waiting).toBe(1);
+});
+
 // The lead's harness reports Skelcrew's own paste as typed in too. A turn started by it is the
 // lead answering a note, not the human reading, so it opens no window.
 test("a turn that a note started opens no reading window", () => {

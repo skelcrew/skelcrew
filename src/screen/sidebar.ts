@@ -299,6 +299,9 @@ export async function runSidebar(
   let said: string | null = null;
   let asking: Asking | null = null;
   let working = false;
+  const waitFirst = () => {
+    said = "The daemon is still on your last choice: try again once it is done.";
+  };
   // The pick you said y to, while it is on its way to the daemon, which the rows show at once.
   let sent: Sent | null = null;
   // The reply you are typing to the lead's item on a row, which takes every key until it is sent
@@ -721,6 +724,7 @@ export async function runSidebar(
   // The question takes your typing, leaving full screen if an agent had it, and keeps where your
   // typing was, so Esc can put it back. tmux shows every pane again once the sidebar's is selected.
   const askToClose = () => {
+    if (working) return waitFirst();
     const tab = tabs.find((one) => one.fullName === `${open.owner}/${open.repo}`);
     if (empty || !tab) return;
     const asked = (format: string) =>
@@ -857,6 +861,7 @@ export async function runSidebar(
   // which you then type. An option of Skelcrew's own item does what it says, as picked says, and
   // opening the builder attaches once the daemon told the lead.
   const pickOn = (row: Row, pick: Pick) => {
+    if (working) return waitFirst();
     const does = picked(row, pick, `${open.owner}/${open.repo}`);
     if (does === null) return;
     if (does === "reply") replying = { row, text: "" };
@@ -910,6 +915,7 @@ export async function runSidebar(
   // queues it, so the footer says that instead.
   const reorder = async (row: Row, by: -1 | 1) => {
     if (row.task === null || row.section !== "task queue") return;
+    if (working) return waitFirst();
     if (row.place === null) {
       said = `${row.name} is paused: sc start ${row.name} brings it back`;
       return;
@@ -1027,8 +1033,7 @@ export async function runSidebar(
     const name = keyNames[key] ?? key;
     if (name === "switch") return switchTyping();
     if (name === "nothing") return;
-    if (working) return;
-    if (closing) return answerClosing(closing, name);
+    if (closing) return working ? undefined : answerClosing(closing, name);
     if (replying) return typeInReply(replying, name === "enter" || name === "esc" ? name : key);
     if (item !== null && !asking) {
       const by = { up: -1, down: 1, "page up": -10, "page down": 10 }[name];
@@ -1060,11 +1065,12 @@ export async function runSidebar(
       const action = asking;
       asking = null;
       if (name !== "y") return action.offer === "pick" ? askInBox(action.row) : undefined;
+      if (working) return waitFirst();
       if (action.offer === "pick") item = null;
       const restart = action.question.request.command === "restart";
       return void goAhead(action.question, action.row, restart ? undefined : action);
     }
-    said = null;
+    if (!working) said = null;
     if (!altPattern.test(key)) held = true;
     const row = rows[here];
     const pick = itemKey(row, here, targets, key, row && /^[a-dr]$/.test(key) ? beside(row) : []);
@@ -1119,8 +1125,13 @@ export async function runSidebar(
   const act = (text: string) => {
     for (const [key] of text.matchAll(keyPattern)) {
       if (key === "\x1b[200~" || key === "\x1b[201~") pasting = key === "\x1b[200~";
-      else if (!pasting) doing("acting on a key", () => press(key));
-      else if (replying) typeInReply(replying, key);
+      else if (pasting) {
+        if (replying) typeInReply(replying, key);
+      } else doing("acting on a key", () => press(key));
+      if (working && asking) {
+        asking = null;
+        waitFirst();
+      }
     }
   };
   // A sequence a read ends inside, such as a paste's start or end cut in two, waits for its rest

@@ -481,9 +481,13 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
       changes([issue12(), pr7]);
       await until(() => merges().length === 1, 30_000);
       await until(() => thread().status === "done");
-      const filedAs =
-        /APP-12 is done: #7 merged into main when ready, as Simon asked\. Its not-blocking findings are in APP-(\d+)\./;
+      const filedAs = /APP-12's not-blocking findings are in APP-(\d+)\./;
       await until(() => filedAs.test(leadTyped()));
+      const done = leadTyped().indexOf(
+        "APP-12 is done: #7 merged into main when ready, as Simon asked",
+      );
+      expect(done).toBeGreaterThan(-1);
+      expect(done).toBeLessThan(leadTyped().search(filedAs));
       const number = leadTyped().match(filedAs)?.[1];
       const remote = join(home, "github", "simon", "app.git");
       expect(git(remote, "log", "-1", "--format=%B", `refs/skelcrew/tasks/t${number}`)).toContain(
