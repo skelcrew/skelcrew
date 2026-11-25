@@ -322,6 +322,29 @@ ${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "
   await until(() => !footer().includes("still on your last choice"), "the daemon's answer");
 });
 
+// r opens a reply to the lead's item, which takes each key you type once, and Enter sends it.
+test("a reply typed in the sidebar reaches the daemon as typed", async () => {
+  daemon();
+  sql(`INSERT INTO asks (owner, repo, task, title, text, options, posted)
+    VALUES ('simon', 'app', 't12', 'Add web?', 'Add simon/web too?', '["yes","no"]', 1);
+${threadSql({ task: "12", title: "Rate limit" })}`);
+  open("lead");
+  await ready("lead");
+  press("C-\\");
+  await until(typingToSidebar, "the sidebar's typing");
+  press("M-S-Down");
+  await until(() => / 12\b/.test(selected()) && right().includes("a) yes"), "APP-12's item");
+  type("r");
+  await Bun.sleep(300);
+  type("yes");
+  await until(() => footer().includes("yes"), "the reply typed");
+  press("Enter");
+  await until(() => acted.some((line) => line.startsWith("answer")), "the answer");
+  expect(acted.filter((line) => line.startsWith("answer"))).toEqual([
+    "answer simon/app t12 reply yes",
+  ]);
+});
+
 // The person saw an item's options on the right, pressed a and nothing happened: a letter picked
 // only once Enter had opened the item. Each way of reaching the row, and a redraw meanwhile,
 // must let the letter pick at once, as long as the box on the right shows that row's options.
