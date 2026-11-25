@@ -285,6 +285,39 @@ ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", nee
   );
 });
 
+// A merge can take the forge seconds. Meanwhile the keys still move, and nothing else goes to the
+// daemon beside it: a second pick or the close key's question waits for it, saying so.
+test("keys still move while a picked merge is on its way, and nothing else is sent meanwhile", async () => {
+  daemon();
+  given.holding = true;
+  const head = "9fc11d177dbffac496ad6b3496b3f91775d9057f";
+  const checks = [{ name: "test", id: "1", state: "passed" }];
+  sql(`${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head, checks })};
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1, reviewed_commit: head })};
+${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", pr: 45 })}`);
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(onItem, "APP-14's item on the right");
+  await pickedAtOnce();
+  type("y");
+  await until(() => acted.includes("pick simon/app 14 a"), "the pick");
+  const before = selected();
+  press("Down");
+  await until(() => selected() !== before, "a move while the merge is on its way");
+  press("Up");
+  await until(() => selected() === before, "a move back");
+  await until(onItem, "APP-14's item again");
+  type("a");
+  type("w");
+  await until(() => footer().includes("still on your last choice"), "the footer saying to wait");
+  expect(right()).not.toContain("Merge app#41 into main?");
+  expect(seen()).not.toContain("esc cancel");
+  expect(acted.filter((line) => line.startsWith("pick"))).toEqual(["pick simon/app 14 a"]);
+  release();
+  await until(() => !footer().includes("still on your last choice"), "the daemon's answer");
+});
+
 // The person saw an item's options on the right, pressed a and nothing happened: a letter picked
 // only once Enter had opened the item. Each way of reaching the row, and a redraw meanwhile,
 // must let the letter pick at once, as long as the box on the right shows that row's options.
