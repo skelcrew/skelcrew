@@ -483,6 +483,32 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     );
   }, 120_000);
 
+  // Starting the daemon again runs a failed round again, so sc ps says it is reviewing, not
+  // failed, while it runs.
+  test("a failed round the daemon runs again as it starts shows as reviewing", async () => {
+    addApp();
+    writeFileSync(join(plugin, "fail-status"), "the forge is down");
+    const first = serve();
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    const review = async () => {
+      const rows: { thread: string; review: { state: string } | null }[] = JSON.parse(
+        (await skel(["ps", "app", "--json"])).out,
+      );
+      return rows.find((row) => row.thread === "APP-12")?.review?.state;
+    };
+    await until(() => thread().review_failed === 1, longWait);
+    expect(await review()).toBe("failed");
+    first.kill();
+    await first.exited;
+    rmSync(join(plugin, "fail-status"));
+    writeFileSync(join(plugin, "hold-status"), "");
+    serve();
+    await until(() => existsSync(join(plugin, "held-status")), longWait);
+    expect(await review()).toBe("reviewing");
+    rmSync(join(plugin, "hold-status"));
+  }, 120_000);
+
   // The first poll brings only open tasks, while the thread's task may have closed: the thread
   // saved its task as it started.
   test("runs again a review cut short by an upgrade, though the thread's task is closed", async () => {

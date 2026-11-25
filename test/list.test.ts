@@ -255,6 +255,28 @@ printTasks(listTasks(db, "app"), false);`;
   expect(rows().find((row) => row.name === "APP-14")?.says).toBe("submit failed");
 });
 
+// The screen's pane, sc ps, sc ls and sc show run outside the daemon, so they tell a review
+// under way from one that failed by the thread's saved round alone.
+test("a review under way shows as reviewing outside the daemon, and a failed one as failed", () => {
+  const states = () => {
+    const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { listTasks, listThreads, readTask } from ${JSON.stringify(source("flow/list.ts"))};
+const db = openDb();
+const ps = listThreads(db, "app").find((t) => t.thread === "APP-14");
+const ls = listTasks(db, "app").find((t) => t.task === "APP-14");
+const pane = readTask(db, { repo: "app", task: "t14" });
+console.log(JSON.stringify([ps?.review, ls?.review, pane.review]));`;
+    const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+    if (!run.success) throw new Error(run.stderr.toString());
+    const reviews: { state: string; round: number }[] = JSON.parse(run.stdout.toString());
+    return reviews.map((review) => `${review.state} r${review.round}`);
+  };
+  sql("UPDATE tasks SET submitting = 'Round 2' WHERE task = 't14';");
+  expect(states()).toEqual(["reviewing r1", "reviewing r1", "reviewing r1"]);
+  sql("UPDATE threads SET review_failed = 1 WHERE folder = 'app-14';");
+  expect(states()).toEqual(["failed r1", "failed r1", "failed r1"]);
+});
+
 // sc ps shows no review in a repository with no forge, but a task its flow didn't review is
 // ready on its branch with nobody having looked at it, so it says so.
 test("sc ps says not reviewed for a task on a flow with no review, in a repository with no forge", () => {
