@@ -193,6 +193,36 @@ console.log(JSON.stringify({ atOnce, notes: notes(), status: after.status, filed
   });
 });
 
+// The task filed for the findings and the line telling the lead are saved in one step. One that
+// fails, as when the disk is full, saves neither, so the next poll's end files it and tells the
+// lead then, once.
+test("a findings line that couldn't be saved is told when the next end files them", () => {
+  const seen = withThread(`import { endMerged } from ${JSON.stringify(source("flow/merging.ts"))};
+const print = console.log;
+console.log = () => {};
+const verdict = { kind: "verdict", at: 1, round: 1, verdict: "approve", limit: 8, by: "claude", commit: "abc", line: "approved", findings: [], notBlocking: ["P2: Name the flag better"], changes: null, posting: null };
+record(db, thread.folder, { round_log: [verdict] });
+db.run("CREATE TRIGGER fail_notes BEFORE INSERT ON notes WHEN NEW.text LIKE '%not-blocking%' BEGIN SELECT RAISE(ABORT, 'disk full'); END");
+const merge = () => endMerged(db, socket, thread, null, "its branch is merged into main", "is done: its branch merged into main");
+merge();
+await Bun.sleep(1500);
+const between = { filed: readThread(db, thread.folder).not_blocking_task, status: readThread(db, thread.folder).status };
+db.run("DROP TRIGGER fail_notes");
+merge();
+for (let i = 0; i < 400 && readThread(db, thread.folder).status !== "done"; i++) await Bun.sleep(25);
+const notes = db.query("SELECT text FROM notes ORDER BY id").all().map((note) => note.text);
+console.log = print;
+console.log(JSON.stringify({ between, notes, filed: readThread(db, thread.folder).not_blocking_task }));`);
+  expect(seen).toEqual({
+    between: { filed: null, status: "working" },
+    notes: [
+      "APP-1 is done: its branch merged into main",
+      "APP-1's not-blocking findings are in APP-2.",
+    ],
+    filed: "t2",
+  });
+});
+
 // A note that a thread ended can wait while the lead is busy. If the thread starts over first,
 // the note would name the new thread, and the lead would drop it, so it goes when the thread
 // starts over. Other notes for the lead stay.

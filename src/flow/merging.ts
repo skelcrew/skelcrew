@@ -22,7 +22,7 @@ import {
 import { beingRemoved, endThread } from "./events.ts";
 import { itemOpen } from "./inbox.ts";
 import { limitDecided, limitUndecided, roundMoved, roundOf } from "./ledger.ts";
-import { noteForLead } from "./messages.ts";
+import { letInNow, noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
 import { openFindings } from "./status.ts";
@@ -489,6 +489,7 @@ export function endMerged(
     const merged = { merged: true, needs_you: false, needs_you_for: null, picking: null };
     db.transaction(() => {
       noteForLead(db, sessions, now, line.replace(/\s+/g, " "), folder, true);
+      letInNow(db, sessions, now);
       record(db, folder, merged, `${why}: told the lead`);
     })();
   }
@@ -537,22 +538,24 @@ async function fileFollowUps(db: Database, sessions: string, thread: Thread): Pr
   const listed = findings.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
   const marker = `<!-- skelcrew:follow-ups plan=${thread.merge_id} -->`;
   const body = `Skelcrew's reviewer still asked for these when #${thread.pr} merged without its approval, as asked by ${thread.merge_by ?? "you"}:\n\n${listed}\n\nFrom #${thread.pr}.\n\n${marker}`;
-  let line: string;
   try {
     if (trackerOf(db, repository) === null) throw new Error("its repository has no tracker");
     const issue =
       openTasks(db, thread.owner, thread.repo).find((task) => task.body.includes(marker)) ??
       (await createTask(db, repository, `Follow-ups from #${thread.pr}'s review`, body));
-    record(
-      db,
-      thread.folder,
-      { merge_followup: issue.id },
-      `filed the open findings of #${thread.pr}'s review as #${issue.id}`,
-    );
-    line = `${name}'s open findings are in #${issue.id}.`;
+    db.transaction(() => {
+      record(
+        db,
+        thread.folder,
+        { merge_followup: issue.id },
+        `filed the open findings of #${thread.pr}'s review as #${issue.id}`,
+      );
+      const line = `${name}'s open findings are in #${issue.id}.`;
+      noteForLead(db, sessions, repository, line, thread.folder, true);
+    })();
   } catch (error) {
     console.log(`${name}: couldn't file its open findings: ${errorText(error)}`);
-    line = `${name}'s open findings couldn't be filed as an issue: ${errorText(error)}`;
+    const line = `${name}'s open findings couldn't be filed as an issue: ${errorText(error)}`;
+    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "), thread.folder, true);
   }
-  noteForLead(db, sessions, repository, line.replace(/\s+/g, " "), thread.folder, true);
 }

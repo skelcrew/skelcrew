@@ -715,6 +715,28 @@ console.log(JSON.stringify({ merged, picking: readThread(db, "app-14").picking }
   expect(seen).toEqual({ merged: false, picking: "merging…" });
 });
 
+// The task shows as merged at once, and the lead may be waiting on the merge to go on, so its
+// note goes in though the lead's answer to the human is still being read. What waited goes in
+// with it. A note that comes after it still waits for the window.
+test("a merge's note goes into the lead during a reading window, and what comes after still waits", () => {
+  const seen = JSON.parse(
+    run(`
+import { endMerged } from ${JSON.stringify(source("flow/merging.ts"))};
+await lead();
+leadTurnStarted(db, tmux, app, "Start the next three once APP-12 merges.");
+leadTurnEnded(db, tmux, app);
+noteForLead(db, tmux, app, "started app-13 from github: Add import");
+endMerged(db, tmux, readThread(db, "app-12"), null, "its branch is merged into main", "is done: its branch merged into main");
+await until(() => received().includes("APP-12 is done: its branch merged into main"));
+messageLead(db, tmux, readThread(db, "app-12"), "Later news.");
+await Bun.sleep(2000);
+console.log(JSON.stringify({ received: received(), waiting: waiting() }));`),
+  );
+  expect(seen.received).toContain("started app-13 from github: Add import");
+  expect(seen.received).not.toContain("Later news.");
+  expect(seen.waiting).toBe(1);
+});
+
 // The lead's harness reports Skelcrew's own paste as typed in too. A turn started by it is the
 // lead answering a note, not the human reading, so it opens no window.
 test("a turn that a note started opens no reading window", () => {

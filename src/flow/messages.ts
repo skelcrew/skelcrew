@@ -673,6 +673,19 @@ export function leadTurnStarted(
   youWroteToLead(db, sessions, repository);
 }
 
+export function letInNow(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+): void {
+  db.run("UPDATE repositories SET reading_released = ? WHERE owner = ? AND repo = ?", [
+    nextSequence(db),
+    repository.owner,
+    repository.repo,
+  ]);
+  typeLeadNotes(db, sessions);
+}
+
 export function youWroteToLead(
   db: Database,
   sessions: string,

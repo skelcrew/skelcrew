@@ -281,18 +281,19 @@ export async function fileNotBlocking(
   const title = `Not-blocking findings from ${merged}'s review`;
   const body = `Skelcrew's reviewer found these in ${merged} and didn't let them block it, so they wait here:\n\n${listed}\n\nFrom ${merged}, ${threadName(db, thread)}.`;
   try {
-    const saved = (task: string) =>
+    const saved = (task: string) => {
       record(
         db,
         thread.folder,
         { not_blocking_task: task },
         `filed its review's not-blocking findings as ${named(task)}`,
       );
+      const line = `${threadName(db, thread)}'s not-blocking findings are in ${named(task)}.`;
+      noteForLead(db, sessions, repository, line, thread.folder, true);
+    };
     const clone = cloneDir(repository.owner, repository.repo);
     const given = { title, body, by: "skelcrew" };
-    const { task } = await fileTask(db, repository, clone, given, saved);
-    const line = `${threadName(db, thread)}'s not-blocking findings are in ${named(task)}.`;
-    noteForLead(db, sessions, repository, line, thread.folder, true);
+    await fileTask(db, repository, clone, given, saved);
   } catch (error) {
     console.log(
       `${threadName(db, thread)}: couldn't file its not-blocking findings: ${errorText(error)}`,
