@@ -41,10 +41,12 @@ beforeEach(() => {
   socket = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
 });
 afterEach(() => {
-  Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
-  // tmux leaves the socket file behind after kill-server.
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
-  rmSync(join(folder, socket), { force: true });
+  for (const server of [socket, `${socket}-you`]) {
+    Bun.spawnSync(["tmux", "-L", server, "kill-server"], { stderr: "pipe" });
+    // tmux leaves the socket file behind after kill-server.
+    rmSync(join(folder, server), { force: true });
+  }
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -251,6 +253,56 @@ test("an Enter after the paste waits while the caller holds it, such as someone 
   expect(await typing).toBe("typed");
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
+// Attaches a terminal of your own to the named session, from a tmux server of its own, and
+// returns what types into it as you would.
+async function attachYou(name: string): Promise<(keys: string) => void> {
+  const you = ["tmux", "-L", `${socket}-you`, "-f", "/dev/null"];
+  Bun.spawnSync([...you, "new-session", "-d", "-x", "80", "-y", "20", "sh"]);
+  const attach = `unset TMUX; tmux -L ${socket} -f /dev/null attach -t =${name}`;
+  Bun.spawnSync([...you, "send-keys", attach, "Enter"]);
+  await until(
+    () =>
+      Bun.spawnSync(["tmux", "-L", socket, "list-clients", "-t", `=${name}`])
+        .stdout.toString()
+        .trim() !== "",
+  );
+  return (keys) => {
+    Bun.spawnSync([...you, "send-keys", "-l", keys]);
+  };
+}
+
+test("a message waits while you type into the agent, and goes in once you stop", async () => {
+  await start("lead", harness());
+  await showing("lead", claude.marks.prompt);
+  const type = await attachYou("lead");
+  const typing = deliver(socket, "lead", claude.marks, "hello", { moment });
+  let done = false;
+  typing.then(() => {
+    done = true;
+  });
+  for (let i = 0; i < 6; i++) {
+    type("w");
+    await Bun.sleep(500);
+  }
+  expect(done).toBe(false);
+  type("\r");
+  expect(await typing).toBe("typed");
+  await until(() => read("received.txt").split("\n").length === 3);
+  expect(read("received.txt")).toBe("wwwwww\n\x1b[200~hello\x1b[201~\n");
+}, 20_000);
+
+test("keys you type while a message pastes go in after its Enter", async () => {
+  await start("lead", harness());
+  await showing("lead", claude.marks.prompt);
+  const type = await attachYou("lead");
+  const pasted = () => type("abc\r");
+  expect(await deliver(socket, "lead", claude.marks, "hello", { moment: 1000, pasted })).toBe(
+    "typed",
+  );
+  await until(() => read("received.txt").split("\n").length === 3);
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\nabc\n");
 });
 
 // A stand-in for Claude Code that draws the screen given, laid out as Claude Code's: what the
@@ -666,6 +718,8 @@ test("Ctrl-\\ and Ctrl-D twice detach with no prefix, scrolled back too, and the
   expect(tmux(["show-options", "-g", "assume-paste-time"])).toBe("assume-paste-time 0\n");
   expect(tmux(["list-keys", "-T", "close", "Any"])).toContain("send-keys");
   expect(tmux(["list-keys", "-T", "close", "C-\\"])).toContain("detach-client");
+  expect(tmux(["list-keys", "-T", "pasting", "C-\\"])).toContain("detach-client");
+  expect(tmux(["list-keys", "-T", "pasting", "C-d"])).toContain("switch-client -T close");
   expect(tmux(["list-keys", "-T", "root", "M-q"])).toBe("");
   expect(tmux(["list-keys", "-T", "root", "C-q"])).toBe("");
   expect(tmux(["list-keys", "-T", "copy-mode", "C-q"])).toBe("");

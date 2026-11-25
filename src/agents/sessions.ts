@@ -78,6 +78,7 @@ const copied = `run-shell -d 0.3; send-keys -X copy-selection-no-clear; delete-b
 // Keys that arrive together are still read as keys, not as a paste that skips these bindings, so
 // fast typing never hands Ctrl-D on. A paste that matters comes bracketed anyway.
 const askToClose = `switch-client -T close; display-message "Press Ctrl-D again to close"`;
+const afterPaste = `run-shell 'n=0; while [ $n -lt 50 ] && [ -n "$(tmux show -qv -t #{q:session_id} @skelcrew-pasting)" ]; do sleep 0.1; n=$((n + 1)); done'`;
 const tmuxConfig = `set -g status off
 unbind -n M-q
 unbind -n C-q
@@ -87,6 +88,9 @@ bind -n C-d { ${askToClose} }
 bind -T close C-d detach-client
 bind -T close Any { switch-client -T root; send-keys }
 bind -T close C-\\\\ detach-client
+bind -T pasting Any { ${afterPaste}; switch-client -T root; send-keys }
+bind -T pasting C-d { ${afterPaste}; switch-client -T root; ${askToClose} }
+bind -T pasting C-\\\\ detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync:extkeys:clipboard"
 set -s extended-keys on
@@ -533,6 +537,18 @@ export function scrolledBack(socket: string, name: string): boolean {
   );
 }
 
+export function lastTyped(host: Host, name: string): number {
+  if (typeof host !== "string") return 0;
+  const shown = tmux(host, [
+    "display-message",
+    "-p",
+    "-t",
+    `=${name}:`,
+    "#{?session_attached,#{session_activity},0}",
+  ]);
+  return Number(shown.out.trim()) * 1000 || 0;
+}
+
 // Sends one key to the agent in the named session, such as Enter after a pasted message.
 export async function sendKey(host: Host, name: string, key: "Enter" | "Escape"): Promise<void> {
   if (typeof host !== "string") await askHost(host, { ask: "keys", id: name, key }, z.unknown());
@@ -548,20 +564,13 @@ export async function interruptSession(host: Host, name: string): Promise<void> 
 // How many paste buffers this process has made, so each gets a name of its own.
 let buffersMade = 0;
 
-// Pasting goes in steps, so the caller can take its last look at the screen after the slow
-// part and just before the paste: a person may start a draft at any moment, and the paste would
-// send it. stagePaste readies the text, pasteStaged pastes it, and dropStaged forgets it.
-
-// Readies text for pasteStaged into the named session, and returns the name it is kept under.
-// Someone scrolled back would swallow the Enter that follows a paste, and the message would
-// never be sent. Being scrolled back shows nowhere in the pane's text, so it is left here,
-// whether or not anyone is. That fails when nobody is, which is fine. A plugin's host keeps
-// nothing in between, so the text itself is what pasteStaged gets.
 export function stagePaste(host: Host, name: string, text: string): string {
   if (typeof host !== "string") return text;
   const socket = host;
-  // A paste buffer of its own, so two daemons or two messages never paste each other's text.
   const staged = `skelcrew-${process.pid}-${buffersMade++}`;
+  tmux(socket, ["set-option", "-t", `=${name}:`, "@skelcrew-pasting", staged]);
+  for (const client of attached(socket, name, "root"))
+    tmux(socket, ["switch-client", "-c", client, "-T", "pasting"]);
   tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
   mustTmux(socket, ["load-buffer", "-b", staged, "-"], text);
   return staged;
@@ -576,10 +585,26 @@ export async function pasteStaged(host: Host, name: string, staged: string): Pro
   else mustTmux(host, ["paste-buffer", "-p", "-b", staged, "-t", `=${name}:`]);
 }
 
-// Forgets text stagePaste readied, pasted or not, so the server keeps no copy an agent could
-// read back. A plugin's host kept none.
-export function dropStaged(host: Host, staged: string): void {
-  if (typeof host === "string") tmux(host, ["delete-buffer", "-b", staged]);
+export function dropStaged(host: Host, name: string, staged: string): void {
+  if (typeof host !== "string") return;
+  tmux(host, ["delete-buffer", "-b", staged]);
+  tmux(host, ["set-option", "-u", "-t", `=${name}:`, "@skelcrew-pasting"]);
+  for (const client of attached(host, name, "pasting"))
+    tmux(host, ["switch-client", "-c", client, "-T", "root"]);
+}
+
+function attached(socket: string, name: string, table: string): string[] {
+  const clients = tmux(socket, [
+    "list-clients",
+    "-t",
+    `=${name}`,
+    "-F",
+    "#{client_key_table} #{client_name}",
+  ]);
+  return clients.out
+    .split("\n")
+    .filter((line) => line.startsWith(`${table} `))
+    .map((line) => line.slice(table.length + 1));
 }
 
 // Returns whether this machine knows the terminal. tmux refuses one it doesn't, such as Ghostty's

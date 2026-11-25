@@ -738,8 +738,8 @@ const leadTyping = new Map<string, AbortController>();
 // message. Then the digest is cut short and goes in with it: threads needing you first, then the
 // notes in the order they came, routine ones in a row making one digest. The lead's chat is the
 // human's too, so typing waits while the lead is busy, while a person's unsent draft is at its
-// prompt, and while the human has scrolled back in it, as the paste would throw them back to the
-// bottom. Everything that waited then goes in as one message, its parts a blank line apart, so
+// prompt, while the human typed into it in the last few seconds, and while they have scrolled
+// back in it, as the paste would throw them back to the bottom. Everything that waited then goes in as one message, its parts a blank line apart, so
 // the chat jumps once. A lead that isn't running, or never started, gets nothing: its notes stay
 // saved until it starts. While the lead's reading window is open, nothing that came during it
 // goes in, urgent or not. Once it ends, by itself or as the human writes to the lead, everything

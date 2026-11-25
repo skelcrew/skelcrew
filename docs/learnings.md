@@ -28,6 +28,12 @@ that covers the code you are about to write.
   typing wait. A person can start a draft after the last look, so look again right before
   the paste. Codex's draft replaces its placeholder, so its mark alone is `›`. A numbered
   menu also shows the mark before text, and isn't a draft.
+- **A bare prompt doesn't mean nobody is typing.** A person can press a key just after the
+  last look, so the paste lands after it, or between the paste and its Enter, which then sends
+  their keys with it. Seen on 0.4.7 with the lead. tmux's `#{session_activity}` holds when a key
+  last reached the session, to the second, and pastes don't change it, so typing waits a few
+  seconds after it. While the paste goes in, an attached client's keys go to a key table whose
+  binding blocks in `run-shell` until the paste is done, and later keys queue behind it in order.
 - **Pass the first message on the command line, not by typing it.** Typed into the input, a
   long message collapses to "[Pasted text]" and can miss its Enter.
 - **Never paste into the lead while you scroll back or type there.** A paste throws a
