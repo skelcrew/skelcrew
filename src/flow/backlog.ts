@@ -289,7 +289,7 @@ export async function fileNotBlocking(
         `filed its review's not-blocking findings as ${named(task)}`,
       );
       const line = `${threadName(db, thread)}'s not-blocking findings are in ${named(task)}.`;
-      noteForLead(db, sessions, repository, line, thread.folder, true);
+      noteForLead(db, sessions, repository, line, null, true);
     };
     const clone = cloneDir(repository.owner, repository.repo);
     const given = { title, body, by: "skelcrew" };
@@ -300,7 +300,7 @@ export async function fileNotBlocking(
     );
     const each = found.map((finding, n) => `${n + 1}) ${finding}`).join(" ");
     const line = `${threadName(db, thread)}'s not-blocking findings couldn't be filed in the backlog (${errorText(error)}). File them with sc add: ${each}`;
-    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "), thread.folder, true);
+    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "), null, true);
   }
 }
 

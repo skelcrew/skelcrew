@@ -551,11 +551,11 @@ async function fileFollowUps(db: Database, sessions: string, thread: Thread): Pr
         `filed the open findings of #${thread.pr}'s review as #${issue.id}`,
       );
       const line = `${name}'s open findings are in #${issue.id}.`;
-      noteForLead(db, sessions, repository, line, thread.folder, true);
+      noteForLead(db, sessions, repository, line, null, true);
     })();
   } catch (error) {
     console.log(`${name}: couldn't file its open findings: ${errorText(error)}`);
     const line = `${name}'s open findings couldn't be filed as an issue: ${errorText(error)}`;
-    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "), thread.folder, true);
+    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "), null, true);
   }
 }

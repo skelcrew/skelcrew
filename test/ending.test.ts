@@ -169,7 +169,8 @@ console.log(JSON.stringify({ failed, after, status: readThread(db, thread.folder
 // same moment the task shows as merged. Filing the review's not-blocking findings and ending the
 // builder take a while, so they come after, and the task filed gets a line of its own. Its place
 // under limits.threads is free at once, so what the lead starts next doesn't queue behind it. An
-// end that comes again, as the next poll's does, tells the lead nothing more.
+// end that comes again, as the next poll's does, tells the lead nothing more. Starting the task
+// over drops the done note still waiting, but never the findings line: it names a task to act on.
 test("a merge tells the lead at once, then files its findings with a line of their own", () => {
   const seen = withThread(`import { endMerged } from ${JSON.stringify(source("flow/merging.ts"))};
 import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
@@ -185,13 +186,17 @@ for (let i = 0; i < 400 && readThread(db, thread.folder).status !== "done"; i++)
 merge();
 await Bun.sleep(200);
 const after = readThread(db, thread.folder);
-console.log(JSON.stringify({ atOnce, notes: notes(), status: after.status, filed: after.not_blocking_task }));`);
+const ended = notes();
+await Bun.sleep(5);
+await startThread(db, { repo: "app", task: "t1" });
+console.log(JSON.stringify({ atOnce, notes: ended, status: after.status, filed: after.not_blocking_task, startedOver: notes() }));`);
   const done = { text: "APP-1 is done: its branch merged into main", urgent: 1 };
   expect(seen).toEqual({
     atOnce: { notes: [done], stage: "merged", filed: null, running: 0 },
     notes: [done, { text: "APP-1's not-blocking findings are in APP-2.", urgent: 1 }],
     status: "done",
     filed: "t2",
+    startedOver: [{ text: "APP-1's not-blocking findings are in APP-2.", urgent: 1 }],
   });
 });
 
