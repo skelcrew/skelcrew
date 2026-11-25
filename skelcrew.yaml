@@ -3,3 +3,10 @@ setup: [bun install]
 test: [bun run check]
 limits: { threads: 5 }
 plugins: [skelcrew/skelcrew-github]
+roles:
+  lead:
+    harness: claude
+  builder:
+    harness: claude
+  reviewer:
+    harness: codex
