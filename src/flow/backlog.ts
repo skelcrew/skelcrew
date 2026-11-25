@@ -267,26 +267,15 @@ export function fileTask(
   });
 }
 
-// Files what the thread's latest review found that didn't block as one task of the backlog, once
-// its work merged, so none is lost with the thread. It names the PR, or the branch without one.
-// Returns the lead's note of the merge, `said`, with what was filed after it, or as it was when
-// the latest review found none, as they were all fixed. It files once: the task's name is saved on the thread as the filing is
-// settled, and a filing cut short is found again by its words, which every try gives the same.
-// Findings that can't be filed are never lost: they stay on the task, where sc show lists them,
-// and a note of their own gives the lead each one, to file with sc add.
 export async function fileNotBlocking(
   db: Database,
   sessions: string,
   thread: Thread,
-  said: string,
-): Promise<string> {
+): Promise<void> {
   const repository = repositoryOf(db, thread);
   const named = (task: string) => taskName(repository.name, task);
-  const then = (more: string) => `${said.replace(/\.?$/, ".")} ${more}`;
-  if (thread.not_blocking_task !== null)
-    return then(`Its not-blocking findings are in ${named(thread.not_blocking_task)}.`);
   const found = lastReviewed(thread)?.notBlocking ?? [];
-  if (found.length === 0) return said;
+  if (thread.not_blocking_task !== null || found.length === 0) return;
   const listed = found.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
   const merged = thread.pr === null ? `branch ${thread.branch}` : `#${thread.pr}`;
   const title = `Not-blocking findings from ${merged}'s review`;
@@ -302,15 +291,15 @@ export async function fileNotBlocking(
     const clone = cloneDir(repository.owner, repository.repo);
     const given = { title, body, by: "skelcrew" };
     const { task } = await fileTask(db, repository, clone, given, saved);
-    return then(`Its not-blocking findings are in ${named(task)}.`);
+    const line = `${threadName(db, thread)}'s not-blocking findings are in ${named(task)}.`;
+    noteForLead(db, sessions, repository, line, thread.folder, true);
   } catch (error) {
     console.log(
       `${threadName(db, thread)}: couldn't file its not-blocking findings: ${errorText(error)}`,
     );
     const each = found.map((finding, n) => `${n + 1}) ${finding}`).join(" ");
     const line = `${threadName(db, thread)}'s not-blocking findings couldn't be filed in the backlog (${errorText(error)}). File them with sc add: ${each}`;
-    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "));
-    return then("Its not-blocking findings couldn't be filed: the note before lists them.");
+    noteForLead(db, sessions, repository, line.replace(/\s+/g, " "), thread.folder, true);
   }
 }
 

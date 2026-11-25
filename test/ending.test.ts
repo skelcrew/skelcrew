@@ -165,6 +165,34 @@ console.log(JSON.stringify({ failed, after, status: readThread(db, thread.folder
   });
 });
 
+// The lead may be waiting on a merge to start what depended on it, so it hears at once, in the
+// same moment the task shows as merged. Filing the review's not-blocking findings and ending the
+// builder take a while, so they come after, and the task filed gets a line of its own. An end that
+// comes again, as the next poll's does, tells the lead nothing more.
+test("a merge tells the lead at once, then files its findings with a line of their own", () => {
+  const seen = withThread(`import { endMerged } from ${JSON.stringify(source("flow/merging.ts"))};
+import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
+const verdict = { kind: "verdict", at: 1, round: 1, verdict: "approve", limit: 8, by: "claude", commit: "abc", line: "approved", findings: [], notBlocking: ["P2: Name the flag better"], changes: null, posting: null };
+record(db, thread.folder, { round_log: [verdict] });
+const notes = () => db.query("SELECT text, urgent FROM notes ORDER BY id").all();
+const merge = () => endMerged(db, socket, thread, null, "its branch is merged into main", "is done: its branch merged into main");
+merge();
+const now = readThread(db, thread.folder);
+const atOnce = { notes: notes(), stage: taskStage(now, false), filed: now.not_blocking_task };
+for (let i = 0; i < 400 && readThread(db, thread.folder).status !== "done"; i++) await Bun.sleep(25);
+merge();
+await Bun.sleep(200);
+const after = readThread(db, thread.folder);
+console.log(JSON.stringify({ atOnce, notes: notes(), status: after.status, filed: after.not_blocking_task }));`);
+  const done = { text: "APP-1 is done: its branch merged into main", urgent: 1 };
+  expect(seen).toEqual({
+    atOnce: { notes: [done], stage: "merged", filed: null },
+    notes: [done, { text: "APP-1's not-blocking findings are in APP-2.", urgent: 1 }],
+    status: "done",
+    filed: "t2",
+  });
+});
+
 // A note that a thread ended can wait while the lead is busy. If the thread starts over first,
 // the note would name the new thread, and the lead would drop it, so it goes when the thread
 // starts over. Other notes for the lead stay.

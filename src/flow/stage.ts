@@ -20,7 +20,8 @@ export type Stage = z.infer<typeof Stage>;
 export function taskStage(thread: Thread | null, issueOpen: boolean): Stage {
   const ended = issueOpen ? "issue" : "closed";
   if (thread === null) return ended;
-  if (thread.status === "done") return thread.merged ? "merged" : ended;
+  if (thread.merged) return "merged";
+  if (thread.status === "done") return ended;
   const live = thread.status === "working" || thread.status === "waiting";
   return live && readyToMerge(thread) ? "ready for review" : "working";
 }

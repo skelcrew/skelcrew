@@ -86,9 +86,12 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     await until(() => thread().status === "done");
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    const filedAs =
-      /APP-12 is done: #7 merged into main\. Its not-blocking findings are in APP-(\d+)\./;
+    const filedAs = /APP-12's not-blocking findings are in APP-(\d+)\./;
     await until(() => filedAs.test(leadTyped()));
+    const done = leadTyped().indexOf("APP-12 is done: #7 merged into main");
+    expect(done).toBeGreaterThan(-1);
+    expect(done).toBeLessThan(leadTyped().search(filedAs));
+    expect(leadTyped().split("APP-12 is done").length - 1).toBe(1);
     const number = leadTyped().match(filedAs)?.[1];
     const remote = join(home, "github", "simon", "app.git");
     const kept = git(remote, "log", "-1", "--format=%B", `refs/skelcrew/tasks/t${number}`);
@@ -121,13 +124,9 @@ echo '{"verdict":"approve","body":"Ready.","findings":[{"finding":"Name the flag
     await until(() => thread().status === "done");
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
     await until(() =>
-      leadTyped().includes(
-        "Its not-blocking findings couldn't be filed: the note before lists them.",
-      ),
+      leadTyped().includes("APP-12's not-blocking findings couldn't be filed in the backlog"),
     );
-    expect(leadTyped()).toContain(
-      "APP-12's not-blocking findings couldn't be filed in the backlog",
-    );
+    expect(leadTyped()).toContain("APP-12 is done: #7 merged into main");
     expect(leadTyped()).toContain("File them with sc add: 1) P2: Name the flag better");
     expect(thread().not_blocking_task).toBeNull();
     const shown = Bun.spawnSync([process.execPath, main, "show", "app-12"], {

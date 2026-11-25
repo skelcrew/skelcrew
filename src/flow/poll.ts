@@ -21,7 +21,6 @@ import {
 import { fillName } from "../roles.ts";
 import { capture } from "../run.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
-import { fileNotBlocking } from "./backlog.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openPrs, openTasks, prOf, saveItems } from "./copy.ts";
 import {
@@ -43,7 +42,7 @@ import {
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { roundMoved, roundOf } from "./ledger.ts";
-import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
+import { endMerged, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { markMissingPlugin } from "./missing-plugins.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
@@ -326,13 +325,9 @@ async function actOnPr(
     // the thread ends, so an sc start that starts it over once it is done assigns you after.
     if (pr.state === "closed") unassignIssue(db, folder);
     // A merge without approval the forge did before the daemon could finish it, such as across
-    // a restart, still gets its record edited and its findings filed, with its own note.
-    // A merge files what the latest review found that didn't block, so it isn't lost.
-    const merged = pr.state === "merged";
-    const skipped = merged ? await finishSkippedMerge(db, thread, pr) : null;
-    const said = skipped ?? decision.note;
-    const note = merged ? await fileNotBlocking(db, sessions, readThread(db, folder), said) : said;
-    await endThread(db, sessions, thread, decision.end, note, merged);
+    // a restart, still gets its record edited and its findings filed, as endMerged says.
+    if (pr.state === "merged") endMerged(db, sessions, thread, pr, decision.end, decision.note);
+    else await endThread(db, sessions, thread, decision.end, decision.note, false);
   }
   // Left unhandled, so a stopped or queued thread's events reach its builder once it starts.
   else if (["stopped", "queued"].includes(thread.status) || tellingEvents.has(folder) || stale)
@@ -461,14 +456,13 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   const done = merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim();
   if (done && unchanged()) {
     const said = `is done: its branch ${thread.branch} merged into ${base}`;
-    const note = await fileNotBlocking(db, sessions, readThread(db, thread.folder), said);
-    await endThread(
+    endMerged(
       db,
       sessions,
       thread,
+      null,
       `its branch ${thread.branch} is merged into ${base}`,
-      note,
-      true,
+      said,
     );
   }
   // A branch still open may have moved on the remote without its builder, such as by someone
