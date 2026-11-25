@@ -533,6 +533,16 @@ export function scrolledBack(socket: string, name: string): boolean {
   );
 }
 
+export function typedLately(host: Host, name: string): boolean {
+  if (typeof host !== "string") return false;
+  const now = Math.floor(Date.now() / 1000);
+  const clients = tmux(host, ["list-clients", "-t", `=${name}`, "-F", "#{client_activity}"]).out;
+  return clients
+    .split("\n")
+    .filter((line) => line !== "")
+    .some((activity) => now - Number(activity) < 3);
+}
+
 // Sends one key to the agent in the named session, such as Enter after a pasted message.
 export async function sendKey(host: Host, name: string, key: "Enter" | "Escape"): Promise<void> {
   if (typeof host !== "string") await askHost(host, { ask: "keys", id: name, key }, z.unknown());

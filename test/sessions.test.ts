@@ -459,6 +459,34 @@ exec "${real}" "$@"
   }
 });
 
+test("a message waits while a person types into the agent, then goes in after their keys", async () => {
+  await start("lead", harness());
+  await showing("lead", claude.marks.prompt);
+  // A terminal of the test's own, attached to the agent, as a person's is. The stand-in shows
+  // nothing typed, as Claude Code may not have drawn a key yet when Skelcrew looks.
+  const terminal = `${socket}-terminal`;
+  const attach = `env -u TMUX tmux -L ${socket} attach -t =lead`;
+  Bun.spawnSync(["tmux", "-L", terminal, "new-session", "-d", "-x", "80", "-y", "20", attach]);
+  try {
+    await until(
+      () => Bun.spawnSync(["tmux", "-L", socket, "list-clients"]).stdout.toString() !== "",
+    );
+    Bun.spawnSync(["tmux", "-L", terminal, "send-keys", "-l", "w"]);
+    await Bun.sleep(moment);
+    const typing = deliver(socket, "lead", claude.marks, "hello", { moment });
+    // The stand-in reads whole lines, so nothing shows in what it received before the Enter.
+    await Bun.sleep(1500);
+    expect(read("received.txt")).toBe("");
+    expect(await typing).toBe("typed");
+    await until(() => read("received.txt").endsWith("\n"));
+    expect(read("received.txt")).toBe("w\x1b[200~hello\x1b[201~\n");
+  } finally {
+    Bun.spawnSync(["tmux", "-L", terminal, "kill-server"], { stderr: "pipe" });
+    const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+    rmSync(join(folder, terminal), { force: true });
+  }
+});
+
 // A daemon that starts again finds its agents by their labels, and the sidebar shows which run.
 test("a session carries its labels, and the list shows them with whether its agent runs", async () => {
   await start("builder", ["sleep", "30"]);

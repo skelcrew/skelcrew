@@ -28,6 +28,12 @@ that covers the code you are about to write.
   typing wait. A person can start a draft after the last look, so look again right before
   the paste. Codex's draft replaces its placeholder, so its mark alone is `›`. A numbered
   menu also shows the mark before text, and isn't a draft.
+- **A key you just pressed shows on no screen yet.** Claude Code draws a key a moment after it
+  arrives, so a prompt can look bare while your typing is on its way, and a paste then lands
+  beside it. So typing also waits while a terminal attached to the session pressed a key in
+  the last few seconds, by tmux's `client_activity`. It counts whole seconds, and only keys
+  and the mouse move it, never the agent's output. tmux can't hold your keys back while a
+  paste goes in: a binding that waits loses the key that ran it, and later keys skip past it.
 - **Pass the first message on the command line, not by typing it.** Typed into the input, a
   long message collapses to "[Pasted text]" and can miss its Enter.
 - **Never paste into the lead while you scroll back or type there.** A paste throws a
