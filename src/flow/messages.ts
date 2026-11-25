@@ -670,12 +670,17 @@ export function leadTurnStarted(
     repo,
   ]);
   if (!yours) return;
-  // Any window ends now, open or not. The human's message takes its place in the notes'
-  // sequence: what came before it goes in once the lead has answered, though the answer opens a
-  // new window, and what comes after waits for that window.
+  youWroteToLead(db, sessions, repository);
+}
+
+export function youWroteToLead(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+): void {
   db.run(
     "UPDATE repositories SET reading_until = 0, reading_released = ? WHERE owner = ? AND repo = ?",
-    [nextSequence(db), owner, repo],
+    [nextSequence(db), repository.owner, repository.repo],
   );
   typeLeadNotes(db, sessions);
 }
