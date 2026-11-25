@@ -135,6 +135,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   // The open question, with the row it is about and whether it is a merge or a start.
   let asking: Asking | null = null;
   let working = false;
+  let left = false;
   let attached = false;
   // The reply you are typing to the lead's item on a row, which takes every key until it is sent
   // or dropped, and how far the item you opened full-size with Enter is scrolled, or null.
@@ -218,7 +219,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       selections++;
       paneScroll = 0;
     }
-    if (attached) return;
+    if (attached || left) return;
     // What the bottom line says can come from outside, such as a forge's reason for refusing a
     // merge, so its control codes never reach your terminal.
     const bottom = (tabs: number) =>
@@ -270,7 +271,7 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   // Reads the rows again, from the database as it is now.
   const refresh = () => {
-    if (attached) return;
+    if (attached || left) return;
     details = null;
     all = listRows(db, open, Date.now());
     builders = buildersNote(db, open);
@@ -622,13 +623,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     draw();
   };
 
-  // Leaves the list, once the list is ready to leave. `left` says it has.
+  // Leaves the list, once the list is ready to leave.
   let leave: () => void = () => {};
-  let left = false;
   const press = async (key: string) => {
     if (left) return;
-    const leaveNow = () => (working ? waitFirst() : leave());
-    if (key === "close" && Date.now() < closeBy) return leaveNow();
+    if (key === "close" && Date.now() < closeBy) return leave();
     const hinted = said === closeHint;
     if (hinted) said = null;
     closeBy = 0;
@@ -661,7 +660,7 @@ export async function runList(agents: string, repository: string): Promise<void>
         return draw();
       }
     }
-    if (key === "leave" || (key === "escape" && !asking)) return leaveNow();
+    if (key === "leave" || (key === "escape" && !asking)) return leave();
     if (asking) {
       const action = asking;
       asking = null;

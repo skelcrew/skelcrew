@@ -2815,6 +2815,27 @@ test("keys still move while a picked merge is on its way, and nothing else is se
   await until(() => !seen().includes("still on your last choice"), "the daemon's answer");
 });
 
+// A merge the forge is slow on, or stuck in, never keeps you in the list. The daemon goes on with
+// it, and its answer, when it comes, draws nothing over your shell.
+test("Ctrl-D twice leaves the list while a picked merge is on its way", async () => {
+  heldPicks = [];
+  await open();
+  press("Down");
+  await until(() => here().startsWith("▸ ● 14 "), "the ready row");
+  press("Enter");
+  await until(() => seen().includes("a) Merge it") && seen().includes("esc back"), "the item open");
+  type("a");
+  await until(() => seen().includes("│ Merge app#41 into main? y/n"), "the question in the box");
+  type("y");
+  await until(() => asked.includes("pick simon/app 14 a"), "the pick");
+  type("\x04\x04");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
+  for (const answer of heldPicks.splice(0)) answer();
+  await Bun.sleep(500);
+  expect(seen()).toContain("Your agents keep running. Run sc --list to come back.");
+  expect(seen()).not.toContain("Needs you");
+});
+
 // The options show in the box beside the row without Enter, so their letters pick at once.
 test("a letter picks an option shown beside its row without Enter", async () => {
   await open({ width: wide });
