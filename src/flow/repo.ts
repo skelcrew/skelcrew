@@ -47,6 +47,7 @@ import {
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
 import type { RoleName } from "../roles.ts";
+import { capture } from "../run.ts";
 import { dropsFolder } from "../screen/drops.ts";
 import { refreshBacklog } from "./backlog.ts";
 import {
@@ -109,10 +110,37 @@ function requirePlugins(folder: string): void {
     );
 }
 
+// Throws noSkelcrewYaml when the default branch at the remote URL has no skelcrew.yaml, read with
+// your own git and no forge, so a new repository is told to run sc init before its forge asks for
+// any setup. A bare owner/name, or a remote your git can't read alone, is left to the forge.
+async function requireSkelcrewYamlFirst(remote: string): Promise<void> {
+  if (!remote.includes(":")) return;
+  const temporary = mkdtempSync(join(tmpdir(), "skelcrew-peek-"));
+  const run = (...args: string[]) =>
+    capture(["git", "-C", temporary, ...args], {
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+  try {
+    await run("init", "-q");
+    const fetched = await run("fetch", "-q", "--depth=1", "--filter=blob:none", remote, "HEAD");
+    if (fetched.ok) {
+      const listed = await run("ls-tree", "--name-only", "FETCH_HEAD", "skelcrew.yaml");
+      if (listed.ok && listed.out.trim() === "") throw new Error(noSkelcrewYaml);
+      return;
+    }
+    const refs = await run("ls-remote", remote);
+    const empty = refs.out.split("\n").every((line) => !line.includes("\trefs/heads/"));
+    if (refs.ok && empty) throw new Error(noSkelcrewYaml);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
 // Checks the repository plain sc runs for before anything else, so sc says what to run before it
 // sets anything up. One Skelcrew has needs a skelcrew.yaml on its default branch. A new one is
-// cloned to a temporary folder, with its forge's login when an installed forge claims it, as
-// bringing it in would, and also needs the plugins its files name. Returns what Skelcrew found of
+// first read with your own git, as requireSkelcrewYamlFirst does. Then it is cloned to a temporary
+// folder, with its forge's login when an installed forge claims it, as bringing it in would, and
+// also needs the plugins its files name. Returns what Skelcrew found of
 // a new one, for bringInFrom, so its forge is asked once. Throws, stopping sc, when it can't tell
 // which repository that is, such as when a forge fails or needs a setup no one is there to run.
 export async function checkRepository(from: string | undefined): Promise<RepositoryDetails | null> {
@@ -124,6 +152,7 @@ export async function checkRepository(from: string | undefined): Promise<Reposit
     await requireSkelcrewYaml(db, known);
     return null;
   }
+  await requireSkelcrewYamlFirst(named);
   const details = await identifyRepository(db, named);
   const { owner, repo, remote, claimed } = details;
   const repository = {
@@ -666,6 +695,7 @@ export async function addRepo(
     await openAgain(db, sessions, had);
     return undefined;
   }
+  await requireSkelcrewYamlFirst(url);
   const details = await identifyRepository(db, url);
   await bringIn(db, details);
   return repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);

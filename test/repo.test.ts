@@ -1015,6 +1015,7 @@ describe("a repository no forge claims", () => {
     const work = join(home, "code", "other-notes");
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "README"), "other notes\n");
+    writeFileSync(join(work, "skelcrew.yaml"), complete);
     git(work, "init", "-q", "-b", "main");
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "start");
@@ -2072,6 +2073,18 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     expect(existsSync(clone("simon/app"))).toBe(false);
     expect(calls()).not.toContain("daemon lead");
   }, 60_000);
+
+  // A new repository needs sc init before anything its forge asks for, so sc reads its default
+  // branch with your own git first and names sc init without asking the forge.
+  test("a repository with no skelcrew.yaml names sc init before the forge's setup", async () => {
+    const checkout = onGitHub("simon/app", "WRITE", false, {});
+    needsSetup();
+    expect(await skel([], "", checkout)).toEqual({ out: noFile, err: "", code: 1 });
+    const repoAdd = await skel(["repo", "add"], "", checkout);
+    expect(repoAdd.err).toBe(`Skelcrew: ${noFile}`);
+    expect(existsSync(join(forge, "asked"))).toBe(false);
+    expect(existsSync(clone("simon/app"))).toBe(false);
+  });
 
   test("with no terminal, nothing runs, and the error names the command that fixes it", async () => {
     const checkout = onGitHub("simon/app", "WRITE");
