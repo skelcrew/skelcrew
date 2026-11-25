@@ -48,7 +48,6 @@ import { fetchInto, noMaintenance, pushCommit } from "./git.ts";
 import {
   approvalFound,
   checkSet,
-  failureOver,
   lastReviewed,
   letGoOn,
   nextRound,
@@ -58,6 +57,7 @@ import {
   reviewStarted,
   roundFailed,
   roundOf,
+  roundStillFailed,
   submitted,
   submittedBefore,
   summariesSubmitted,
@@ -1508,11 +1508,11 @@ export function resumeRound(
   if (latestRounds.has(folder)) return;
   const saved = readThread(db, folder);
   const { queued } = saved;
-  const { submitting, reviewing, telling, review_failed } = roundOf(saved);
+  const { submitting, reviewing, telling } = roundOf(saved);
   const cancel = new AbortController();
   const none = Promise.resolve();
-  if (review_failed && (submitting !== null || reviewing !== null))
-    record(db, folder, failureOver(saved, Date.now(), true), "the failed round runs again");
+  if (roundStillFailed(saved) && (submitting !== null || reviewing !== null))
+    record(db, folder, reviewAsked(saved, reviewing, Date.now()), "the failed round runs again");
   if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined);
   else if (reviewing !== null)
     trackRound(

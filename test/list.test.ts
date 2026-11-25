@@ -255,10 +255,14 @@ printTasks(listTasks(db, "app"), false);`;
   expect(rows().find((row) => row.name === "APP-14")?.says).toBe("submit failed");
 });
 
-// The screen's pane, sc ps, sc ls and sc show run outside the daemon, so they tell a review
-// under way from one that failed by the thread's saved round alone.
+// The screen's pane, sc ps, sc ls, sc show and the sidebar run outside the daemon, so they tell
+// a review under way from one that failed by the thread's saved round alone. A failed round
+// stays failed though the builder works again, until a review or submit runs it again.
 test("a review under way shows as reviewing outside the daemon, and a failed one as failed", () => {
-  const states = () => {
+  const log: unknown[] = [];
+  const states = (event: Record<string, unknown>) => {
+    log.push({ at: now, ...event });
+    sql(`UPDATE tasks SET round_log = '${JSON.stringify(log)}' WHERE task = 't14';`);
     const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { listTasks, listThreads, readTask } from ${JSON.stringify(source("flow/list.ts"))};
 const db = openDb();
@@ -269,12 +273,15 @@ console.log(JSON.stringify([ps?.review, ls?.review, pane.review]));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
     if (!run.success) throw new Error(run.stderr.toString());
     const reviews: { state: string; round: number }[] = JSON.parse(run.stdout.toString());
-    return reviews.map((review) => `${review.state} r${review.round}`);
+    const sidebar = rows().find((row) => row.name === "APP-14")?.review;
+    return [...reviews.map((review) => `${review.state} r${review.round}`), sidebar?.colour];
   };
-  sql("UPDATE tasks SET submitting = 'Round 2' WHERE task = 't14';");
-  expect(states()).toEqual(["reviewing r1", "reviewing r1", "reviewing r1"]);
-  sql("UPDATE threads SET review_failed = 1 WHERE folder = 'app-14';");
-  expect(states()).toEqual(["failed r1", "failed r1", "failed r1"]);
+  const reviewing = ["reviewing r1", "reviewing r1", "reviewing r1", "yellow"];
+  const failed = ["failed r1", "failed r1", "failed r1", "red"];
+  expect(states({ kind: "submitted", summary: "Round 1", unreviewed: false })).toEqual(reviewing);
+  expect(states({ kind: "round failed" })).toEqual(failed);
+  expect(states({ kind: "failure over" })).toEqual(failed);
+  expect(states({ kind: "review asked", commit: null })).toEqual(reviewing);
 });
 
 // sc ps shows no review in a repository with no forge, but a task its flow didn't review is

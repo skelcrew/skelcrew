@@ -15,7 +15,7 @@ import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, issueRef, openTasks, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { itemOf } from "./inbox.ts";
-import { lastReviewed, nextRound, roundOf } from "./ledger.ts";
+import { lastReviewed, nextRound, roundOf, roundStillFailed } from "./ledger.ts";
 import { messagesWaiting } from "./messages.ts";
 import { ownItem } from "./own-items.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
@@ -155,8 +155,8 @@ function ciOf(
 // Returns where a thread's review stands, for sc ps, sc ls, sc show and the screen's pane. It
 // reads only the thread's saved round, as these run outside the daemon too, and a question, an
 // error or the round limit can come on top of a review under way without changing it. A saved
-// submit or commit under review is the next round: failed once the round was marked failed,
-// such as on a failed push, and running otherwise. Otherwise it is the latest review's verdict
+// submit or commit under review is the next round: failed once the round failed, such as on a
+// failed push, until something runs it again, and running otherwise. Otherwise it is the latest review's verdict
 // and round. A stopped or ended thread has no round running, so it shows its latest verdict.
 function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   const round = roundOf(thread);
@@ -164,7 +164,7 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && (round.submitting !== null || round.reviewing !== null)) {
     if (round.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
-    const state = round.review_failed ? "failed" : "reviewing";
+    const state = roundStillFailed(thread) ? "failed" : "reviewing";
     return { state, round: nextRound(thread), at };
   }
   if (round.verdict === null) return { state: "none", round: null, at: null };
