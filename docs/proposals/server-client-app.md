@@ -28,7 +28,7 @@ The same binary runs locally with no setup, or on a server shared by a team.
 - Runs task flows: project leads, builders, reviewers, sandboxes, plugins.
 - Holds all state in SQLite.
 - Exposes one API plus an event stream. Everything else is a consumer of these.
-- Serves the app as static files on the same port.
+- Serves the app on the same port.
 
 ### Client: `sc <harness>`
 
@@ -40,10 +40,12 @@ The same binary runs locally with no setup, or on a server shared by a team.
 
 ### App
 
-- Static single page app, embedded in the `sc` binary, served by the server.
-- Reads JSON from the API, live updates over Server-Sent Events.
+- Server-rendered HTML, written as plain TypeScript functions. No framework and no build step.
+- One small script listens to the event stream and refreshes what changed.
+- Plain CSS in one file. Phone layout first.
 - Four screens: tasks, task (timeline, PR links, attach command), inbox (things that need you), settings (projects, plugins and secrets, people).
-- Phone layout first. Every screen has a URL.
+- Every screen has a URL.
+- Tests fetch a page and check the HTML.
 - Deliberately absent: chat, diffs, log streaming, editing. Talking happens in the harness, reviews on GitHub.
 
 ## Local and server
