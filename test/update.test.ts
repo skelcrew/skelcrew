@@ -88,9 +88,9 @@ const env = () => ({
 });
 
 // Runs code that uses Skelcrew's modules in a process of its own with the test's home, as Skelcrew
-// stamped with `build` and the fake release server would run it, and returns what it printed.
-// `more` adds to its environment.
-async function inProcess(code: string, build?: string, more: Record<string, string> = {}) {
+// stamped with `build` and the releases at `at` on the fake release server would run it, and
+// returns what it printed. `more` adds to its environment.
+async function inProcess(code: string, build?: string, more: Record<string, string> = {}, at = "") {
   const define =
     build === undefined
       ? []
@@ -98,7 +98,7 @@ async function inProcess(code: string, build?: string, more: Record<string, stri
           "--define",
           `SKELCREW_BUILD=${JSON.stringify(build)}`,
           "--define",
-          `SKELCREW_RELEASES=${JSON.stringify(`http://127.0.0.1:${releases.port}`)}`,
+          `SKELCREW_RELEASES=${JSON.stringify(`http://127.0.0.1:${releases.port}${at}`)}`,
         ];
   const run = Bun.spawn([process.execPath, ...define, "-e", code], {
     env: { ...env(), ...more },
@@ -454,6 +454,33 @@ await updateItself(${JSON.stringify(installed())});`,
   const calls = existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
   return { ...done, calls };
 }
+
+// Releases moved from skelcrew/skelcrew to skelcrew/releases. Each 0.4 release looks in the old
+// place, so the bridge release is published in both, and finds the next release in the new place.
+test("a 0.4 release finds the bridge release in the old place, and the bridge updates from the new", async () => {
+  const install = readFileSync(join(import.meta.dir, "..", "install.sh"), "utf8");
+  const moved = new URL(install.match(/SKELCREW_DOWNLOAD_BASE:-([^}]+)}/)?.[1] ?? "").pathname;
+  const old = "/skelcrew/skelcrew/releases";
+  expect(moved).toBe("/skelcrew/releases/releases");
+  const publish = (base: string, text: string) => {
+    files.set(`${base}/latest/download/${asset}`, text);
+    files.set(`${base}/latest/download/SHA256SUMS`, `${sum(text)}  ${asset}\n`);
+  };
+  publish(old, binary("0.5.0"));
+  publish(moved, binary("0.5.0"));
+  const run = (build: string, at: string) =>
+    inProcess(
+      `import { updateItself } from ${JSON.stringify(source("machine/update.ts"))};
+await updateItself(${JSON.stringify(installed())});`,
+      build,
+      {},
+      at,
+    );
+  expect((await run("0.4.2", old)).out).toBe("Updated Skelcrew 0.4.2 → 0.5.0.\n");
+  publish(moved, binary("0.5.1"));
+  expect((await run("0.5.0", moved)).out).toBe("Updated Skelcrew 0.5.0 → 0.5.1.\n");
+  expect(readFileSync(installed(), "utf8")).toBe(binary("0.5.1"));
+});
 
 // The new release itself points the service at its file and restarts the daemon on it, as the
 // service could run another copy of Skelcrew than the one updated.

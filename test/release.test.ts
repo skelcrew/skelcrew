@@ -94,6 +94,13 @@ test("each binary knows where releases live, from the one line in the install sc
   expect(calls.split(`--define SKELCREW_RELEASES="${releases}"`)).toHaveLength(5);
 });
 
+// The install script is published with each release, so the latest one is always at
+// .../releases/latest/download/install.sh.
+test("the release carries the install script", () => {
+  build("0.4.2");
+  expect(dist("install.sh")).toBe(readFileSync(join(root, "install.sh"), "utf8"));
+});
+
 test("a stray .env or bunfig.toml beside a user's project can't reach the binaries", () => {
   build("0.4.2");
   const calls = readFileSync(join(home, "calls"), "utf8");
@@ -142,20 +149,24 @@ test("a build leaves nothing of an earlier one behind, and no checksums to go st
   writeFileSync(join(home, "dist", "skel-old"), "");
   writeFileSync(join(home, "dist", "SHA256SUMS"), "");
   build("0.4.2");
-  expect(readdirSync(join(home, "dist")).sort()).toEqual([...assets, "notes.md"].sort());
+  expect(readdirSync(join(home, "dist")).sort()).toEqual(
+    [...assets, "install.sh", "notes.md"].sort(),
+  );
 });
 
 const Step = z.object({
+  if: z.string().optional(),
   run: z.string().optional(),
   uses: z.string().optional(),
   with: z.looseObject({ name: z.string().optional(), path: z.string().optional() }).optional(),
+  env: z.record(z.string(), z.string()).optional(),
 });
 const Steps = z.array(Step);
 type Steps = z.infer<typeof Steps>;
 
 const Workflow = z.object({
   on: z.object({ push: z.object({ tags: z.array(z.string()) }) }),
-  env: z.object({ RELEASES_REPO: z.string() }),
+  env: z.object({ RELEASES_REPO: z.string(), ALSO_PUBLISH_FOR_V0_4: z.boolean().optional() }),
   jobs: z.object({
     test: z.object({
       strategy: z.object({
@@ -260,7 +271,7 @@ test("the workflow runs on a version tag, tests, checks, builds, signs, then pub
   expect(jobs.sign.needs).toBe("build");
   expect(jobs.publish.needs).toBe("sign");
   const published = runs(jobs.publish.steps);
-  const publish = stepRunning(jobs.publish.steps, "gh release create");
+  const publish = stepRunning(jobs.publish.steps, '--repo "$RELEASES_REPO"');
   expect(published.indexOf(publish)).toBeGreaterThan(
     published.indexOf(stepRunning(jobs.publish.steps, "sha256sum")),
   );
@@ -268,6 +279,7 @@ test("the workflow runs on a version tag, tests, checks, builds, signs, then pub
   expect(publish).toContain("--notes-file dist/notes.md");
   expect(publish).toContain("dist/skelcrew-*");
   expect(publish).toContain("dist/SHA256SUMS");
+  expect(publish).toContain("dist/install.sh");
   const all = [...runs(jobs.test.steps), ...built, ...runs(jobs.sign.steps), ...published];
   for (const run of all) expect(Bun.spawnSync(["sh", "-n", "-c", run]).success).toBe(true);
 });
@@ -348,4 +360,29 @@ test("the workflow and the install script are the only places that say where rel
   expect(workflowText().split(RELEASES_REPO)).toHaveLength(2);
   const install = readFileSync(join(root, "install.sh"), "utf8");
   expect(install.match(/https:\/\//g)).toHaveLength(1);
+  expect(install).toContain(`:-https://github.com/${RELEASES_REPO}/releases}`);
+});
+
+test("the release goes to the new place with its own token, and the install script goes with it", () => {
+  const { build, publish } = workflow().jobs;
+  const step = publish.steps.find((one) => one.run?.includes('--repo "$RELEASES_REPO"'));
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub's syntax, not JavaScript's.
+  expect(step?.env?.GH_TOKEN).toBe("${{ secrets.RELEASES_TOKEN }}");
+  const passed = uploads(build.steps).filter((one) => one.with?.name === "publish-linux");
+  expect(passed[0]?.with?.path).toContain("dist/install.sh");
+});
+
+// Each 0.4 release looks for updates only in skelcrew/skelcrew's releases. Setting
+// ALSO_PUBLISH_FOR_V0_4 to false turns the bridge off.
+test("while the bridge is on, each release also goes to this repository, after the new place", () => {
+  const steps = workflow().jobs.publish.steps;
+  const main = steps.findIndex((one) => one.run?.includes('--repo "$RELEASES_REPO"'));
+  const bridge = steps.findIndex((one) => one.run?.includes('--repo "$GITHUB_REPOSITORY"'));
+  expect(bridge).toBeGreaterThan(main);
+  expect(steps[bridge]?.if).toBe("env.ALSO_PUBLISH_FOR_V0_4 == 'true'");
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub's syntax, not JavaScript's.
+  expect(steps[bridge]?.env?.GH_TOKEN).toBe("${{ github.token }}");
+  expect(steps[bridge]?.run?.replace("$GITHUB_REPOSITORY", "$RELEASES_REPO")).toBe(
+    steps[main]?.run,
+  );
 });
