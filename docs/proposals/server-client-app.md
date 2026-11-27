@@ -32,21 +32,56 @@ The same binary runs locally with no setup, or on a server shared by a team.
 
 ### Client: `sc <harness>`
 
-- Wraps the harness in a pty, so messages can be pushed into it.
+- Runs your harness as your lead inside a session host: tmux, or a runtime plugin such as herdr. `sc` never draws panes itself.
+- Inside an existing session it splits the current window and doesn't nest.
 - Gives the lead the `sc` commands (`sc tasks`, `sc ask <project> "..."`, `sc start "..."`) and a short skill explaining how to act as a lead.
 - Holds one connection to a server. No state of its own beyond which factory and who you are.
-- Delivers pushed events ("task 12 needs you") by typing them into the harness when it is idle. They are clearly prefixed, batched, and filtered by what is worth a turn.
-- `sc open` opens the app in the browser, logged in via a one-time link. `sc open 12` deep links to a task.
+- Pushed events ("task 12 needs you") are typed in through the session host. A harness hook says when the harness is idle. `docs/learnings.md` covers the traps of typing into a session.
+- With no session host, nothing can be typed in. A hook fetches the inbox at turn boundaries instead, and that limit is stated plainly.
+- `sc open 12` opens a task in the app. `sc open 12/spec` opens one of its artifacts.
+
+An earlier draft had `sc` wrap the harness in a pty of its own. The session host makes that unnecessary.
+
+### Sidebar
+
+- A toggled split in the session host, running `sc tasks --watch`.
+- Read-only: a list of what is running, with status.
+- Selecting a task opens it. One key attaches to the builder, another opens the task in the app.
+- Reads the same API and event stream as the app, and holds no state of its own.
+- The sidebar shows what is running. The app shows one task. Neither repeats the other.
+
+### Who a message is for
+
+Today builders' messages land in the chat you share with the lead. Here the server sorts each message before it reaches a session.
+
+- **Status**, such as "PR opened": the task list only. Nobody's chat.
+- **Questions an agent can answer:** the project lead.
+- **Needs you:** your harness and the inbox, batched. Only this.
 
 ### App
 
 - Server-rendered HTML, written as plain TypeScript functions. No framework and no build step.
 - One small script listens to the event stream and refreshes what changed.
 - Plain CSS in one file. Phone layout first.
-- Four screens: tasks, task (timeline, PR links, attach command), inbox (things that need you), settings (projects, plugins and secrets, people).
-- Every screen has a URL.
+- Screens: tasks, task (timeline, artifacts, PR links, attach command), inbox (questions and other things that need you), settings (projects, plugins and secrets, people).
+- Every screen has a URL, so it works against a remote factory, on a phone and for teammates.
 - Tests fetch a page and check the HTML.
 - Deliberately absent: chat, diffs, log streaming, editing. Talking happens in the harness, reviews on GitHub.
+
+### Artifacts
+
+- Specs, review pages and questions are artifacts: files attached to a task and served by the server at a URL.
+- An agent adds one with `sc artifact add 12 spec.html`.
+- `sc open 12/spec` opens it in a normal browser window. A bare window, such as Chromium's `--app`, is an option.
+- Questions also show in the inbox. PRs link to GitHub.
+
+### Agent-written HTML is untrusted
+
+An artifact is written by an agent, from text that may come from anywhere. If it ran with your login, it could act as you. So from day one:
+
+- Artifacts are served from an origin of their own, apart from the app and the API.
+- They are shown in a sandboxed frame, under a strict content security policy.
+- An artifact can't call the API, read the session cookie or reach the network.
 
 ## Local and server
 
@@ -106,8 +141,9 @@ A client can know several factories, such as a local one for personal projects a
 ## What changes from v6
 
 - Client and server separate, talking over the API (localhost or network).
-- The harness wrapper replaces the screen.
-- The web page replaces the sidebar.
+- You talk to your own agent, and it talks to the leads. Today you talk to a repository's lead.
+- The sidebar becomes a read-only split you toggle.
+- The web page shows a task, its artifacts and the inbox.
 
 Everything else (flows, leads, builders, reviewers, plugins, sandboxes) stays.
 
@@ -124,19 +160,25 @@ v6 keeps running throughout. If the audit shows the engine can't be separated fr
 ## Suggested build order
 
 1. Server API and event stream.
-2. Client: `sc <harness>` against a local factory, started automatically.
-3. Client against a remote server over ssh (`sc join`).
-4. App: tasks and inbox first, settings after.
-5. Opt-in usage stats and `sc feedback`.
-6. Tailscale detection, if it is under half a day.
-7. Relay, when a team asks to skip the networking.
+2. Message sorting, so status stops landing in chats. This can ship in v6 first.
+3. Client: `sc <harness>` in a session host, against a local factory. tmux first, since it is built in. herdr second.
+4. Sidebar: `sc tasks --watch` in a split.
+5. Client against a remote server over ssh (`sc join`).
+6. Artifacts, served sandboxed, with the task page and the inbox.
+7. The rest of the app: settings.
+8. Opt-in usage stats and `sc feedback`.
+9. Tailscale detection, if it is under half a day.
+10. Relay, when a team asks to skip the networking.
 
 ## Open questions
 
 - Is the unit a repository, as in the spec, or a project that can hold several repositories?
 - Do project leads live forever in the factory, or wake per conversation?
 - When two people's leads ask a project lead for conflicting things, how is that surfaced?
-- Is Bun's terminal support solid enough for wrapping a full harness? Needs a spike.
+- With no multiplexer, does `sc` run the harness in a private tmux of its own, or with no session host at all?
+- Which harnesses have hooks good enough to say "idle", and what happens for one that has none?
+- May your agent answer a "needs you" itself, and which kinds must reach you word for word?
+- Locally, with one person and one repository, is a project lead needed, or can your agent start builders?
 - Where does identity live before the relay exists: ssh keys, tailnet users, or local accounts?
 - Exact Tailscale Serve flags and identity headers need checking against current docs.
 - How does a local factory's state move to a server when someone upgrades?
