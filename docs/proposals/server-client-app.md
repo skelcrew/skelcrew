@@ -4,7 +4,7 @@ Nov 26, 2026 · @Simon · a proposal from a brainstorm. Nothing here is decided.
 
 This is not the spec. `docs/spec.md` still describes Skelcrew as built, and it wins where the two disagree. This document describes a possible next shape, so an audit can map today's code against it.
 
-A note on words. "Your lead" is new here: your own harness, on your laptop. "Project lead" is the spec's lead, the one that knows the repository. Whether the unit is a repository or a project is an open question below.
+A note on words. "Your lead" is new here: your own harness, on your laptop. "Project lead" is the spec's lead, here knowing a whole project: a home repository and the repositories listed in it. "Factory" means the server.
 
 ## The idea in short
 
@@ -86,18 +86,117 @@ Today builders' messages land in the chat you share with the lead. Here the serv
 
 ### Artifacts
 
-- Specs, review pages and questions are artifacts: files attached to a task and served by the server at a URL.
-- An agent adds one with `sc artifact add 12 spec.html`.
+- A human review needs something to read. Specs, PR pages and questions are artifacts: files attached to a task and served by the server at a URL.
+- An agent writes an artifact as markdown, with images. The server renders it to HTML with one stylesheet.
+- An agent adds one with `sc artifact add 12 spec.md`.
 - `sc open 12/spec` opens it in a normal browser window. A bare window, such as Chromium's `--app`, is an option.
 - Questions also show in the inbox. PRs link to GitHub.
 
+**The spec artifact** is the spec itself, nicely formatted.
+
+**The PR page** explains the reasoning behind the code, in a fixed shape:
+
+1. What changed and why.
+2. How it maps to the spec: each point done, changed or left out.
+3. Decisions and trade-offs.
+4. How it was checked: which tests ran, and their result.
+5. What the reviewer found, and how each finding was resolved.
+6. Where to look: the one or two files worth your eyes.
+7. Screenshots, when the change is visual.
+
+- Screenshots come from running the code, taken by a tool. A repository that wants them names a `preview:` command next to `setup` and `test`.
+- The same text goes on the PR on GitHub, with a link to the page.
+- The two shapes are skills in the project's `.agents/skills/`, so a project can adjust them.
+
 ### Agent-written HTML is untrusted
 
-An artifact is written by an agent, from text that may come from anywhere. If it ran with your login, it could act as you. So from day one:
+Markdown rendered by the server is not code, so most artifacts need nothing more. An artifact that is real HTML is written by an agent, from text that may come from anywhere. If it ran with your login, it could act as you. So from day one:
 
-- Artifacts are served from an origin of their own, apart from the app and the API.
+- HTML artifacts are served from an origin of their own, apart from the app and the API.
 - They are shown in a sandboxed frame, under a strict content security policy.
 - An artifact can't call the API, read the session cookie or reach the network.
+
+## Projects and configuration
+
+Configuration has three homes, sorted by who owns it.
+
+| Home | Where | What |
+| --- | --- | --- |
+| Yours | `~/.config/skelcrew/config.yaml` on your computer | How you sit at the server: multiplexer, shortcut, harness, which servers you joined, how you are notified |
+| The server's | On the server | Which projects it serves, who has a seat, secrets, the machine's limits |
+| The project's | The project's home repository | Roles, skills, plugins, limits, member repositories, risky paths |
+
+Your own config never changes how agents work. The project's setup never holds a secret.
+
+### A project has a home repository
+
+A project's setup lives in one repository, its home. Other repositories join the project by being listed there, and need no Skelcrew files of their own.
+
+```yaml
+# skelcrew/skelcrew.yaml
+setup: [bun install]
+test: [bun run check]
+limits: { threads: 5 }
+plugins: [skelcrew/skelcrew-github]
+risky: [src/db.ts, src/machine/**, src/sandbox/**]
+
+repos:
+  skelcrew/skelcrew-website:
+    setup: [npm ci]
+    test: [npm run lint, npm run build]
+  skelcrew/skelcrew-github:
+    setup: [bun install]
+    test: [bun test]
+```
+
+- A member repository carries its own `setup`, `test`, `preview` and `risky`. Roles, skills, plugins and the lead come from the home repository.
+- One lead knows the whole project, so a change across two repositories is one task.
+- How to write code in a member repository stays in that repository's own `AGENTS.md`.
+- An unrelated project has a home repository of its own. One server can serve both.
+- The server reads a project's setup from the main branch only. A builder can propose a change to it, and it takes effect once a human merges it.
+- `sc repo add` could have the lead read a repository, propose its entry and open a PR on the home repository.
+
+### Roles and skills
+
+These stay as the spec has them: a role is a markdown file in `.agents/roles/`, and a skill is a folder in `.agents/skills/`. What changes is that both reach builders working in member repositories.
+
+Three roles are enough: lead, builder and reviewer. There is no planner. A builder that writes the spec keeps what it learned when it starts to build.
+
+## How a task goes
+
+There are no flow files. Every task goes through one pipeline, and triage decides which phases it includes.
+
+| Phase | Who | Can be skipped | Review |
+| --- | --- | --- | --- |
+| Triage | Project lead | No | None |
+| Spec | Builder | Yes | You, when required |
+| Build | Builder | No | Reviewer, and you when required |
+| Ship | Server, and you merge | No | Checks must be green |
+
+Triage picks one of three presets:
+
+- **Small:** build, review by the reviewer, ship.
+- **Normal:** spec, build, review by the reviewer, ship. Nothing waits for you.
+- **Risky:** spec with your approval, build, review by the reviewer, your review, ship.
+
+A builder that finds a task bigger than triaged says so, writes a spec and stops.
+
+### The lead decides, the server guarantees
+
+- The lead orchestrates: it triages, briefs the builder, answers its questions, judges the back and forth, and decides when something needs you.
+- The server holds each task's state and the rules for moving on. The lead asks to advance, and the server refuses a move that is not allowed.
+- What is mechanical and certain, the server does without asking: CI failed, so the builder is woken with the log.
+- What needs judgement wakes the lead. What needs you is sent up by the lead, or by a floor.
+- Deciding which moves are legal is pure, as `AGENTS.md` asks. The server no longer scripts the work. It only says what may happen next.
+
+### Floors
+
+Triage may add phases, and never removes a required one.
+
+- **Risky paths.** The `risky` list is checked twice. At triage the lead predicts. At the PR the server compares the changed files with the list, which is a fact. A PR that touches a risky path needs your review before merge, whatever triage said.
+- **Risky by default:** the setup file, the spec, CI config and dependency files. The list protects itself this way.
+- **The project's own floors**, such as "the reviewer always reviews".
+- The list starts short and grows from incidents.
 
 ## Local and server
 
@@ -125,9 +224,9 @@ A server becomes worth it at three moments. Work should continue without you, yo
 
 `sc serve` on a box, `sc join user@server` on the laptop. Nothing about the way of working changes, only where the factory lives.
 
-### More than one factory
+### More than one server
 
-A client can know several factories, such as a local one for personal projects and a team one for work. Each project names its factory in the repository's config, so `sc <harness>` picks the right one by directory.
+A client can know several servers, such as a local one for personal projects and a team one for work. `sc <harness>` asks the servers you have joined which one serves this repository, so it picks the right one by directory.
 
 ## Principles
 
@@ -160,8 +259,11 @@ A client can know several factories, such as a local one for personal projects a
 - You talk to your own agent, and it talks to the leads. Today you talk to a repository's lead.
 - The sidebar becomes a read-only list you toggle: an overlay, or a split in your multiplexer.
 - The web page shows a task, its artifacts and the inbox.
+- A project's setup reaches its member repositories. Today each repository needs a setup of its own.
+- One pipeline with presets replaces flow files.
+- A spec stage, and two artifacts for human review: the spec and the PR page.
 
-Everything else (flows, leads, builders, reviewers, plugins, sandboxes) stays.
+Everything else (leads, builders, reviewers, roles, skills, plugins, sandboxes) stays.
 
 ## How to get there
 
@@ -181,15 +283,23 @@ v6 keeps running throughout. If the audit shows the engine can't be separated fr
 4. Client: `sc <harness>` in the wrapper, against a local factory.
 5. Sidebar: `sc tasks --watch` as an overlay, and as a split in tmux. herdr after.
 6. Client against a remote server over ssh (`sc join`).
-7. Artifacts, served sandboxed, with the task page and the inbox.
-8. The rest of the app: settings.
-9. Opt-in usage stats and `sc feedback`.
-10. Tailscale detection, if it is under half a day.
-11. Relay, when a team asks to skip the networking.
+7. Home and member repositories, so one setup serves a whole project.
+8. The pipeline with presets and floors, with the `risky` check on PRs.
+9. Artifacts, rendered from markdown, with the task page and the inbox.
+10. The rest of the app: settings.
+11. Opt-in usage stats and `sc feedback`.
+12. Tailscale detection, if it is under half a day.
+13. Relay, when a team asks to skip the networking.
 
 ## Open questions
 
-- Is the unit a repository, as in the spec, or a project that can hold several repositories?
+- May a member repository override the home repository's setup, or is that refused?
+- Is a listed repository with no `test` an error, or a warning?
+- Does every agent get every skill, or does a role list its own?
+- What does "ship" include: only the merge, or a deploy as well?
+- May the reviewer's review ever be turned off, and for which changes?
+- Should a very large change count as risky, by a line threshold?
+- Do you ask for changes to a spec in words through your agent, or as comments on the page?
 - Do project leads live forever in the factory, or wake per conversation?
 - When two people's leads ask a project lead for conflicting things, how is that surfaced?
 - If the pty spike fails on Bun, does `sc` fall back to a private tmux underneath?
