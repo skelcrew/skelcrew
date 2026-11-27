@@ -32,19 +32,35 @@ The same binary runs locally with no setup, or on a server shared by a team.
 
 ### Client: `sc <harness>`
 
-- Runs your harness as your lead inside a session host: tmux, or a runtime plugin such as herdr. `sc` never draws panes itself.
-- Inside an existing session it splits the current window and doesn't nest.
+- Starts your harness in a pty and sits between it and your terminal. Everything passes straight through, so the harness looks and behaves as usual.
+- The wrapper is there in every case, also inside tmux or herdr.
 - Gives the lead the `sc` commands (`sc tasks`, `sc ask <project> "..."`, `sc start "..."`) and a short skill explaining how to act as a lead.
 - Holds one connection to a server. No state of its own beyond which factory and who you are.
-- Pushed events ("task 12 needs you") are typed in through the session host. A harness hook says when the harness is idle. `docs/learnings.md` covers the traps of typing into a session.
-- With no session host, nothing can be typed in. A hook fetches the inbox at turn boundaries instead, and that limit is stated plainly.
+- Pushed events ("task 12 needs you") are written into the pty, as if you had typed them. This is the one way a push arrives.
+- The wrapper sees your keystrokes, so it waits while you are typing. A harness hook says when the harness is idle. `docs/learnings.md` covers the traps of typing into a session.
+- It catches one shortcut key before the harness does. The key is configurable.
 - `sc open 12` opens a task in the app. `sc open 12/spec` opens one of its artifacts.
 
-An earlier draft had `sc` wrap the harness in a pty of its own. The session host makes that unnecessary.
+The wrapper is thin. It never keeps a virtual screen or draws the harness into part of the terminal. That would be a multiplexer.
+
+### The wrapper talks, the multiplexer lays out
+
+A multiplexer is your own choice, set in your own config, such as `~/.config/skelcrew/config.yaml`. It decides only where the sidebar goes.
+
+| How you start | What you get |
+| --- | --- |
+| No session setting | The harness in the wrapper. The shortcut shows the task list as a full screen overlay. |
+| `session: tmux`, started outside tmux | `sc` opens a tmux session, with the harness in one pane and the sidebar in another. |
+| Started inside tmux | The harness runs in your current pane. The shortcut opens the sidebar as a split of your window. No nesting. |
+
+- An adapter for a multiplexer has one job: open a split that runs `sc tasks --watch`. tmux is built in, and herdr is a few lines.
+- `sc` never splits your window unasked. Inside an existing session the sidebar appears only when you press the shortcut.
+- Inside tmux the split is offered even with no session setting.
+- The spec's `session:` setting says where builders' sessions run. With a remote factory that is the server, and this setting is the laptop's. The two need telling apart, by file or by a second key.
 
 ### Sidebar
 
-- A toggled split in the session host, running `sc tasks --watch`.
+- `sc tasks --watch`, in a split or as the overlay.
 - Read-only: a list of what is running, with status.
 - Selecting a task opens it. One key attaches to the builder, another opens the task in the app.
 - Reads the same API and event stream as the app, and holds no state of its own.
@@ -142,7 +158,7 @@ A client can know several factories, such as a local one for personal projects a
 
 - Client and server separate, talking over the API (localhost or network).
 - You talk to your own agent, and it talks to the leads. Today you talk to a repository's lead.
-- The sidebar becomes a read-only split you toggle.
+- The sidebar becomes a read-only list you toggle: an overlay, or a split in your multiplexer.
 - The web page shows a task, its artifacts and the inbox.
 
 Everything else (flows, leads, builders, reviewers, plugins, sandboxes) stays.
@@ -161,21 +177,22 @@ v6 keeps running throughout. If the audit shows the engine can't be separated fr
 
 1. Server API and event stream.
 2. Message sorting, so status stops landing in chats. This can ship in v6 first.
-3. Client: `sc <harness>` in a session host, against a local factory. tmux first, since it is built in. herdr second.
-4. Sidebar: `sc tasks --watch` in a split.
-5. Client against a remote server over ssh (`sc join`).
-6. Artifacts, served sandboxed, with the task page and the inbox.
-7. The rest of the app: settings.
-8. Opt-in usage stats and `sc feedback`.
-9. Tailscale detection, if it is under half a day.
-10. Relay, when a team asks to skip the networking.
+3. A spike: can Bun run a harness in a pty, pass everything through and write a paste into it?
+4. Client: `sc <harness>` in the wrapper, against a local factory.
+5. Sidebar: `sc tasks --watch` as an overlay, and as a split in tmux. herdr after.
+6. Client against a remote server over ssh (`sc join`).
+7. Artifacts, served sandboxed, with the task page and the inbox.
+8. The rest of the app: settings.
+9. Opt-in usage stats and `sc feedback`.
+10. Tailscale detection, if it is under half a day.
+11. Relay, when a team asks to skip the networking.
 
 ## Open questions
 
 - Is the unit a repository, as in the spec, or a project that can hold several repositories?
 - Do project leads live forever in the factory, or wake per conversation?
 - When two people's leads ask a project lead for conflicting things, how is that surfaced?
-- With no multiplexer, does `sc` run the harness in a private tmux of its own, or with no session host at all?
+- If the pty spike fails on Bun, does `sc` fall back to a private tmux underneath?
 - Which harnesses have hooks good enough to say "idle", and what happens for one that has none?
 - May your agent answer a "needs you" itself, and which kinds must reach you word for word?
 - Locally, with one person and one repository, is a project lead needed, or can your agent start builders?
