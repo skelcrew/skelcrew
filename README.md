@@ -18,7 +18,7 @@ The script runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bi
 curl -fsSL https://skelcrew.dev/install.sh | sh
 ```
 
-Skelcrew updates itself in the background. `sc update` installs the latest release at once.
+Skelcrew updates itself in the background. `sc update` installs the latest release at once. Releases, with the install script, are published in [skelcrew/releases](https://github.com/skelcrew/releases/releases).
 
 Plain `sc` checks for `tmux`, `git` and a sandbox (`bwrap` 0.11 or newer on Linux, `sandbox-exec` on a Mac). It names the command that fixes a missing tool or a sandbox that cannot start. It installs the background service and asks for a harness login when an agent needs one. No personal `config.yaml` is required.
 

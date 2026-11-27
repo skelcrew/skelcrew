@@ -1,8 +1,8 @@
 // The release build: makes Skelcrew for macOS and Linux, on arm64 and x64, from this one machine,
-// with the release notes, into dist/. Run by the release workflow on a version tag, as
+// with the release notes and the install script, into dist/. Run by the release workflow on a version tag, as
 // bun scripts/build-release.ts 0.4.2. It publishes nothing. It makes no checksums, as the
 // workflow signs the Mac binaries afterwards, and signing changes them.
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { errorText } from "../src/format.ts";
 
@@ -18,11 +18,12 @@ const targets = [
 
 const dist = "dist";
 const main = join(import.meta.dir, "..", "src", "main.ts");
+const installScript = join(import.meta.dir, "..", "install.sh");
 
 // Returns where releases live, from the install script's line that says so, so that moving them
 // stays a change to that one line.
 function releases(): string {
-  const install = readFileSync(join(import.meta.dir, "..", "install.sh"), "utf8");
+  const install = readFileSync(installScript, "utf8");
   const found = install.match(/SKELCREW_DOWNLOAD_BASE:-([^}]+)}/)?.[1];
   if (!found) throw new Error("install.sh doesn't say where releases live");
   return found;
@@ -61,6 +62,7 @@ function build(version: string): void {
   mkdirSync(dist);
   for (const [file, target] of targets) compile(version, file, target);
   writeFileSync(join(dist, "notes.md"), releaseNotes());
+  copyFileSync(installScript, join(dist, "install.sh"));
 }
 
 try {

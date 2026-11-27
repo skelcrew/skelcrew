@@ -398,6 +398,8 @@ Sessions keep running when the daemon stops, so agents keep working through a re
 
 **Updates.** A release installs a newer one in the background and says so in the list, such as `Skelcrew 0.6.2 installed · restart to use it`. The next `sc` restarts the daemon on it. `sc update` installs the latest release at once, from the same place and with the same checksum check as the install script. It replaces the file `sc` runs from, through a rename, so a failed download or checksum leaves it as it was and says why. If a daemon runs, the new release then does what `sc serve --bg` does, so the service runs it and the daemon restarts on it. It says `Updated Skelcrew 0.6.1 → 0.6.2.`, or `Skelcrew 0.6.2 is the latest.` when there is nothing newer. From a checkout it changes nothing and says to `git pull` instead. Agents can't run it. A Skelcrew run from a checkout does the same after `git pull`, when the daemon started on another commit of that checkout. Changes not committed don't count. Agents keep running through it. `sc --version` prints `Skelcrew 0.6.2`, and a build from a checkout says so and names its commit.
 
+Releases are published in the public repository `skelcrew/releases`: the binaries, their checksums and the install script. So `https://github.com/skelcrew/releases/releases/latest/download/install.sh` is always the current script. The install script, updates and a server's install all download from there. Releases up to 0.4 look for updates in `skelcrew/skelcrew` instead, so for now each release is published there too.
+
 ## The flow
 
 One task, in the `default` flow, in a repository with GitHub as its tracker and forge.

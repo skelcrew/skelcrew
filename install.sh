@@ -7,8 +7,8 @@ set -eu
 # file are under $base/latest/download, and those of v0.4.2 under $base/download/v0.4.2, which
 # is how GitHub lays them out. The release build reads this line, so that Skelcrew can fetch its own
 # release for a server. To move releases, change this line and RELEASES_REPO in
-# .github/workflows/release.yml, and keep that layout.
-base="${SKELCREW_DOWNLOAD_BASE:-https://github.com/skelcrew/skelcrew/releases}"
+# .github/workflows/release.yml, and keep that layout. Each release carries this script too.
+base="${SKELCREW_DOWNLOAD_BASE:-https://github.com/skelcrew/releases/releases}"
 
 # Says why Skelcrew can't be installed and stops, leaving things as they were.
 fail() {

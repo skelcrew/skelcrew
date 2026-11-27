@@ -9,9 +9,12 @@ on:
 
 env:
   # The one place that says where releases are published. The install script and Skelcrew itself
-  # download from the `base` line in install.sh, so to move releases change both. A repository
-  # other than this one also needs a RELEASES_TOKEN secret that can write to it.
-  RELEASES_REPO: skelcrew/skelcrew
+  # download from the `base` line in install.sh, so to move releases change both. The
+  # RELEASES_TOKEN secret must be able to write to it.
+  RELEASES_REPO: skelcrew/releases
+  # The bridge: installs on 0.4 look for updates only in this repository's releases, so each
+  # release is published here too. Set it to false once every install runs a later release.
+  ALSO_PUBLISH_FOR_V0_4: true
 
 permissions:
   contents: write
@@ -74,6 +77,7 @@ jobs:
           path: |
             dist/skelcrew-linux-*
             dist/notes.md
+            dist/install.sh
           if-no-files-found: error
 
   # Bun's cross-built Mac binaries carry a signature that fails verification, and macOS can kill
@@ -122,8 +126,17 @@ jobs:
       - run: |
           cd dist
           sha256sum skelcrew-darwin-arm64 skelcrew-darwin-x64 skelcrew-linux-arm64 skelcrew-linux-x64 > SHA256SUMS
+      # The install script goes with the binaries, so the latest release always serves the
+      # current one at .../releases/latest/download/install.sh.
       - run: |
-          gh release create "$GITHUB_REF_NAME" dist/skelcrew-* dist/SHA256SUMS \
+          gh release create "$GITHUB_REF_NAME" dist/skelcrew-* dist/SHA256SUMS dist/install.sh \
             --repo "$RELEASES_REPO" --title "Skelcrew ${GITHUB_REF_NAME#v}" --notes-file dist/notes.md
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      # After the main publish, so a 0.4 install only moves to a release the new place has too.
+      - if: env.ALSO_PUBLISH_FOR_V0_4 == 'true'
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/skelcrew-* dist/SHA256SUMS dist/install.sh \
+            --repo "$GITHUB_REPOSITORY" --title "Skelcrew ${GITHUB_REF_NAME#v}" --notes-file dist/notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
